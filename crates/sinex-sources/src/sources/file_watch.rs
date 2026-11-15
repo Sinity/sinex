@@ -325,7 +325,7 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
         name: "file-watch",
         accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
-            owner: sinex_source_core::discovery::Owner::Session,
+            captured_by: sinex_source_core::discovery::CapturedBy::Session,
             locations: &[],
             capabilities: &[],
             credentials: &[],

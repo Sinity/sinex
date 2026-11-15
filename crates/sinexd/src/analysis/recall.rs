@@ -1,5 +1,5 @@
 //! Recall answers are read at one commit position and presented from the rows
-//! of that read; an ordinary interactive recall stores nothing.
+//! of that read; an interactive recall stores nothing.
 use serde_json::Value;
 use sinex_analysis::finding::{Finding, Template};
 use sinex_analysis::presentation::Section;
@@ -115,7 +115,7 @@ fn description(row: &Value) -> String {
     }
     row.to_string()
 }
-fn evidence(row: &Value, parents: &[EventId]) -> Vec<String> {
+fn citations(row: &Value, parents: &[EventId]) -> Vec<String> {
     row["id"]
         .as_str()
         .map(|id| vec![format!("sinex:ev/{id}")])
@@ -142,7 +142,7 @@ pub(crate) fn sections(answer: &Value, parents: &[EventId]) -> Vec<Section> {
                 description: description(row),
             },
             caveats: vec![],
-            evidence: evidence(row, parents),
+            evidence: citations(row, parents),
         };
         if event_type.starts_with("command.")
             || event_type.starts_with("shell.")

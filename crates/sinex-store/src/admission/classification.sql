@@ -1,6 +1,6 @@
 -- The writer owns this stage and the live tables for the whole transaction.
--- Keep payloads out of the classification snapshot and encode each logical
--- key once, before any live-key comparison.
+-- Keep payloads out of the classification snapshot and encode each key
+-- once, before any live-key comparison.
 WITH s AS MATERIALIZED (
     SELECT st.ord, st.source, st.event_type, st.material_id, st.record_offset,
            st.output_index, st.equivalence_key IS NOT NULL AS keyed,

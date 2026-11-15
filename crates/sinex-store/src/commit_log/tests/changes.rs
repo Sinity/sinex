@@ -71,7 +71,7 @@ fn tuple(entry: &crate::commit_log::CommittedChange) -> Option<(i64, Uuid, &'sta
     }
 }
 #[devkit::test]
-async fn canonical_reader_preserves_event_and_visibility_order_across_tiny_pages(
+async fn changes_reader_preserves_event_and_visibility_order_across_tiny_pages(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
@@ -136,7 +136,7 @@ async fn tombstone_fixture(conn: &mut PgConnection, n: i64) {
     tx.commit().await.unwrap();
 }
 #[devkit::test]
-async fn pruning_retains_tombstone_order_and_unknown_history_is_a_named_gap(
+async fn pruning_keeps_tombstone_order_and_unknown_history_is_a_named_gap(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
@@ -210,7 +210,7 @@ async fn one_hundred_thousand_sibling_changes_do_not_form_a_page_or_checkpoint_c
                     assert_eq!(seen, N);
                     complete = true
                 }
-                _ => panic!("only archive siblings before their barrier"),
+                _ => panic!("only archive siblings before their completion marker"),
             }
         }
         cursor = page.next.unwrap();
@@ -229,7 +229,7 @@ async fn reference_pages_preserve_partial_positions_and_at_head_checks(
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
-    let origin = crate::commit_log::HistoryOrigin::establish(&mut conn)
+    let start = crate::commit_log::StreamStart::establish(&mut conn)
         .await
         .unwrap();
     let mut first = event("first reference", 1);
@@ -254,7 +254,7 @@ async fn reference_pages_preserve_partial_positions_and_at_head_checks(
     let mut actual = Vec::new();
     let mut last = 0;
     loop {
-        let page = crate::commit_log::stream_changes_after_origin(&mut conn, cursor, &origin, 1, 1)
+        let page = crate::commit_log::stream_changes_after_start(&mut conn, cursor, &start, 1, 1)
             .await
             .unwrap();
         assert!(page.gap.is_none());
@@ -295,20 +295,20 @@ async fn reference_pages_preserve_partial_positions_and_at_head_checks(
         .execute(&mut *conn)
         .await
         .unwrap();
-    let page = crate::commit_log::stream_changes_after_origin(
+    let page = crate::commit_log::stream_changes_after_start(
         &mut conn,
         ChangeCursor::after(last),
-        &origin,
+        &start,
         10,
         4096,
     )
     .await
     .unwrap();
     assert!(page.entries.is_empty());
-    let mut wrong = origin.clone();
+    let mut wrong = start.clone();
     wrong.store = "other synthetic store".into();
     assert!(
-        crate::commit_log::stream_changes_after_origin(
+        crate::commit_log::stream_changes_after_start(
             &mut conn,
             ChangeCursor::after(last),
             &wrong,
@@ -323,7 +323,7 @@ async fn reference_pages_preserve_partial_positions_and_at_head_checks(
         .execute(&mut *conn)
         .await
         .unwrap();
-    // Generic readers retain their historical-gap refusal even at the head.
+    // Generic readers keep their historical-gap refusal even at the head.
     sqlx::raw_sql(
         "ALTER TABLE core.event_tombstones DROP CONSTRAINT tombstone_history_complete;
       INSERT INTO core.event_tombstones(event_id,source,event_type,operation_id)

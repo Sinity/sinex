@@ -94,7 +94,7 @@ fn operations(c: &Checks) -> String {
     )
 }
 
-/// Live keys keep all digest bits and distinguish their logical string forms.
+/// Live keys keep all digest bits and distinguish their prefixed string forms.
 const ENCODE_EQUIVALENCE_KEY: &str = r#"CREATE FUNCTION core.encode_equivalence_key(key text)
 RETURNS bytea LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
   SELECT CASE
@@ -123,7 +123,7 @@ const QUERY_CURSOR_KEY: &str = "CREATE TABLE core.query_cursor_key (
 )";
 const QUERY_CURSOR_KEY_INIT: &str = "INSERT INTO core.query_cursor_key (id, secret) VALUES (true, decode(replace(gen_random_uuid()::text || gen_random_uuid()::text, '-', ''), 'hex'))";
 
-/// One edge per exact parent. Chain walks do not scan compressed payloads.
+/// One edge per parent. Chain walks do not scan compressed payloads.
 const EVENT_CHILDREN: &str = "CREATE TABLE core.event_children (
   parent uuid NOT NULL,
   child uuid NOT NULL,
@@ -161,7 +161,7 @@ const LIVE_EQUIVALENCE_EVENT: &str =
 /// Feed pages read events in commit order.
 const EVENTS_FEED: &str = "CREATE INDEX events_feed ON core.events (commit_seq,id)";
 
-/// Record locations follow physical order: materials are UUIDv7 and record offsets
+/// Record locations follow on-disk order: materials are UUIDv7 and record offsets
 /// ascend within a material, so a block-range summary finds a record's rows
 /// without a B-tree entry per event. Small ranges keep a point lookup to a
 /// few pages. Per-source and all-kind time questions read the
@@ -178,7 +178,7 @@ const COMMIT_LOG: &str = "CREATE TABLE core.commit_log (
   persisted_at timestamptz DEFAULT now()
 )";
 
-/// Receipt authority and diagnostics read frames by their requested keys,
+/// Acknowledgment lookups and diagnostics read frames by their requested keys,
 /// not all frames.
 const FRAMES_BY_MATERIAL: &str = "CREATE INDEX ingress_frames_material ON core.ingress_frames (material_id, number) WHERE material_id IS NOT NULL";
 const FRAMES_REFUSED_AT: &str = "CREATE INDEX ingress_frames_refused_at ON core.ingress_frames (received_at) WHERE refusal IS NOT NULL";
@@ -200,7 +200,7 @@ const PARSER_COLUMNS: &str = "  parser text,\n  parser_version integer,";
 const PARSER_WITH_VERSION: &str =
     "CONSTRAINT parser_with_version CHECK ((parser IS NULL) = (parser_version IS NULL))";
 
-/// The private materialized signal state per host; ordinary events hold the
+/// The private materialized signal state per host; events hold the
 /// rules and deliveries.
 const SIGNAL_CHECKPOINTS: &str = "CREATE TABLE core.signal_checkpoints (
   host text PRIMARY KEY,
@@ -327,7 +327,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         FRAMES_BY_MATERIAL.into(),
         FRAMES_REFUSED_AT.into(),
         FRAMES_MALFORMED_BY_PRODUCER.into(),
-        // The archive is logical: archived rows stay in core.events. This is
+        // Archiving moves nothing: archived rows stay in core.events. This is
         // the current state; archive_changes holds every transition.
         format!("CREATE TABLE audit.archived (
   event_id uuid PRIMARY KEY,
@@ -367,7 +367,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   size bigint NOT NULL CHECK (size >= 0),
   -- Segment extents are synced before this row and its citations commit.
   -- `deleting` records a tombstone's unshared bytes before their extents are
-  -- punched; ordinary writer startup finishes that work before admitting new
+  -- punched; writer startup finishes that work before admitting new
   -- references. `removed` keeps the name of bytes no longer held.
   status text NOT NULL CHECK (status IN ('present', 'deleting', 'removed')),
   registered_at timestamptz NOT NULL DEFAULT now()
@@ -522,7 +522,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   PRIMARY KEY (derivation, key, event_id)
 )".into(),
         "CREATE INDEX outputs_event ON derivation.outputs (event_id)".into(),
-        // Keys whose outputs wait for evidence outside their window (an open
+        // Keys whose outputs wait for inputs outside their window (an open
         // interval); recomputed whenever the derivation runs.
         "CREATE TABLE derivation.waiting (
   derivation text NOT NULL,
@@ -569,7 +569,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   ended boolean NOT NULL DEFAULT false
 )", class = c.class),
         "CREATE INDEX rules_name ON privacy.rules (name, seq DESC)".into(),
-        // A source's class floor, set by the operator; newest row wins.
+        // A source's minimum class, set by the operator; newest row wins.
         format!("CREATE TABLE privacy.source_classes (
   seq bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   source text NOT NULL,
@@ -641,7 +641,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
 }
 
 /// Hypertables, indexes and guards. Events are partitioned by `id` (UUIDv7, so
-/// chunks follow minting time) with chunk skipping on `ts_orig`, because
+/// chunks follow ID creation time) with chunk skipping on `ts_orig`, because
 /// `ts_orig` can be unknown and historical imports put old times in new chunks.
 pub(crate) fn after_tables() -> Vec<String> {
     let mut out = vec![archive_history_function().into(), event_guard().into()];
@@ -773,7 +773,8 @@ fn kind_columns() -> String {
     )
 }
 
-/// Exact event/stream pairs; bounds select pages, never individual messages.
+/// Each event/stream-sequence pair is its own row; bounds select pages, never
+/// individual messages.
 /// One row per acknowledged copy, including redelivery after deduplication expires.
 const PUBLISHED: &str = "CREATE TABLE core.published (
   event_id uuid NOT NULL,
@@ -808,7 +809,7 @@ const BLOB_EXTENTS: &str = "CREATE TABLE core.blob_extents (
   deleting boolean NOT NULL DEFAULT false
 )";
 
-/// Writer-owned order counters retain digests rather than source record keys.
+/// The writer's order counters keep digests rather than source record keys.
 const PRODUCER_ORDERS: &str = "CREATE TABLE core.producer_orders (
   source text NOT NULL,
   event_type text NOT NULL,

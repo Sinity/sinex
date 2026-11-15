@@ -222,7 +222,7 @@ fn document_discovery_excludes_owned_subtrees_and_reports_symlink_roots() {
         context.exclude.insert(
             source.into(),
             Some(sinex_source_core::discovery::Exclusion {
-                reason: "separate owner".into(),
+                reason: "separate reader".into(),
             }),
         );
     }
@@ -239,13 +239,13 @@ fn document_discovery_excludes_owned_subtrees_and_reports_symlink_roots() {
     assert!(events.iter().any(|e| e.payload["path"] == ".hidden.md"));
 }
 #[devkit::test]
-fn native_document_names_remain_distinct_from_utf8_names() {
+fn raw_byte_document_names_stay_distinct_from_utf8() {
     use std::os::unix::ffi::OsStringExt;
     let temp = tempfile::tempdir().unwrap();
     std::fs::write(
         temp.path()
             .join(std::ffi::OsString::from_vec(b"file-\xff.bin".to_vec())),
-        b"native",
+        b"raw",
     )
     .unwrap();
     std::fs::write(temp.path().join("file-%FF.bin"), b"utf8").unwrap();

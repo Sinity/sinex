@@ -1,4 +1,4 @@
-//! Actual state endpoints are independent of an event's occurrence clock.
+//! State span endpoints are independent of an event's occurrence clock.
 use super::*;
 
 async fn marks(conn: &mut crate::AdmissionContext) {
@@ -51,9 +51,7 @@ async fn marks(conn: &mut crate::AdmissionContext) {
 }
 
 #[devkit::test]
-async fn matched_endpoints_keep_actual_spans_and_half_open_membership(
-    db: devkit::pg::TestDatabase,
-) {
+async fn matched_endpoints_keep_spans_and_half_open_membership(db: devkit::pg::TestDatabase) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
@@ -78,7 +76,7 @@ async fn matched_endpoints_keep_actual_spans_and_half_open_membership(
 }
 
 #[devkit::test]
-async fn missing_actual_span_is_unknown_and_known_matches_win(db: devkit::pg::TestDatabase) {
+async fn missing_span_is_unknown_and_known_matches_win(db: devkit::pg::TestDatabase) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
@@ -87,7 +85,7 @@ async fn missing_actual_span_is_unknown_and_known_matches_win(db: devkit::pg::Te
     let missing=ask(&mut conn,"commands where NOT near (events where event_type = operator.mark) within 1h at match.start").await;
     assert_eq!(
         missing.total, 0,
-        "negation does not turn absent span evidence into a match"
+        "negation does not turn an absent span into a match"
     );
     let mixed=ask(&mut conn,"commands where near (events where event_type:(command.fused|operator.mark)) within 0s at match.start").await;
     assert_eq!(

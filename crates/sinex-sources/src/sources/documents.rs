@@ -141,30 +141,30 @@ pub fn driver(root: PathBuf, host: String) -> DirSnapshot {
 }
 
 use sinex_source_core::discovery::{
-    Availability, Cause, DiscoveredInput, DiscoveryContext, DiscoverySpec, Location, Owner,
+    Availability, CapturedBy, Cause, DiscoveredInput, DiscoveryContext, DiscoverySpec, Location,
 };
 
 fn discover(format: &InputFormat, context: &DiscoveryContext) -> Vec<DiscoveredInput> {
     let mut found = crate::discovery::discover_format(format, context);
-    // Declared roots retain their owner when that owner's reader is excluded.
-    let mut owners = context.clone();
-    owners.exclude.remove(super::notes::SPEC.name);
-    owners.exclude.remove(super::library::SCAN.name);
-    let mut owned = Vec::new();
+    // Roots that notes or the library read stay theirs even when that reader is excluded.
+    let mut readers = context.clone();
+    readers.exclude.remove(super::notes::SPEC.name);
+    readers.exclude.remove(super::library::SCAN.name);
+    let mut claimed = Vec::new();
     for format in [super::notes::FORMAT, super::library::FORMAT] {
-        for input in (format.discover)(&format, &owners) {
+        for input in (format.discover)(&format, &readers) {
             if let Some(path) = input.input {
-                owned.push(std::fs::canonicalize(&path).unwrap_or(path));
+                claimed.push(std::fs::canonicalize(&path).unwrap_or(path));
             }
         }
     }
     for input in &mut found {
         if let Some(path) = &input.input {
             let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
-            if owned.iter().any(|other| resolved.starts_with(other)) {
+            if claimed.iter().any(|other| resolved.starts_with(other)) {
                 input.bindings.clear();
                 input.availability = Availability::Excluded;
-                input.reason = Some("root is owned by notes or the library".into());
+                input.reason = Some("root is read by notes or the library".into());
                 continue;
             }
             if std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
@@ -173,7 +173,10 @@ fn discover(format: &InputFormat, context: &DiscoveryContext) -> Vec<DiscoveredI
                     resolved.display()
                 ));
             }
-            let excluded: Vec<_> = owned.iter().filter(|p| p.starts_with(&resolved)).collect();
+            let excluded: Vec<_> = claimed
+                .iter()
+                .filter(|p| p.starts_with(&resolved))
+                .collect();
             for binding in &mut input.bindings {
                 let mut options = match Options::from_settings(&binding.settings) {
                     Ok(options) => options,
@@ -200,7 +203,7 @@ pub const FORMAT: InputFormat = InputFormat {
     name: "documents",
     accepts: &[],
     discovery: DiscoverySpec {
-        owner: Owner::System,
+        captured_by: CapturedBy::System,
         locations: &[
             Location {
                 root: "declared",

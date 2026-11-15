@@ -52,7 +52,7 @@ async fn outputs_of_removed_derivations_are_archived_once_through_the_lifecycle(
     assert_eq!(w.count(operations).await, 1);
     let _again = w.runner().await;
     assert_eq!(w.count(operations).await, 1);
-    // The archive is an ordinary operation: undo brings the record back.
+    // The archive is a recorded operation: undo brings the record back.
     let operation: uuid::Uuid = {
         let mut conn = PgConnection::connect(&w.url).await.unwrap();
         sqlx::query_scalar("SELECT id FROM core.operations WHERE actor = 'sinex'")

@@ -1,4 +1,4 @@
-//! Projection values and names remain separate from relation identity and order.
+//! Selected field values and names remain separate from relation identity and order.
 use super::*;
 
 async fn fixture(db: &devkit::pg::TestDatabase) -> crate::AdmissionContext {
@@ -14,7 +14,7 @@ async fn fixture(db: &devkit::pg::TestDatabase) -> crate::AdmissionContext {
 }
 
 #[devkit::test]
-async fn projected_private_name_keeps_public_value_and_cursor_identity(
+async fn selected_private_name_keeps_public_value_and_cursor_identity(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = fixture(&db).await;
@@ -38,7 +38,7 @@ async fn projected_private_name_keeps_public_value_and_cursor_identity(
         if cursor.is_none() {
             break;
         }
-        assert!(rows.len() < 3, "cursor repeated a projection row");
+        assert!(rows.len() < 3, "cursor repeated a selected row");
     }
     assert_eq!(
         rows,
@@ -51,7 +51,7 @@ async fn projected_private_name_keeps_public_value_and_cursor_identity(
 }
 
 #[devkit::test]
-async fn projected_expressions_and_aliases_feed_filters_sorts_and_groups(
+async fn selected_expressions_and_aliases_feed_filters_sorts_and_groups(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = fixture(&db).await;
@@ -66,7 +66,7 @@ async fn projected_expressions_and_aliases_feed_filters_sorts_and_groups(
 }
 
 #[devkit::test]
-async fn projection_preserves_order_when_replacing_the_sort_column(db: devkit::pg::TestDatabase) {
+async fn fields_preserve_order_when_replacing_the_sort_column(db: devkit::pg::TestDatabase) {
     let mut conn = fixture(&db).await;
     let answer = ask(
         &mut conn,
@@ -139,7 +139,7 @@ async fn grouping_keeps_event_contributors_after_public_identity_is_hidden(
 }
 
 #[devkit::test]
-async fn pair_relations_keep_all_matches_child_order_and_exact_event_contributors(
+async fn pair_relations_keep_all_matches_child_order_and_event_contributors(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
@@ -296,9 +296,7 @@ async fn first_in_each_group_keeps_original_rows_order_and_page_identity(
 }
 
 #[devkit::test]
-async fn generated_snippets_and_actual_span_bounds_remain_projectable(
-    db: devkit::pg::TestDatabase,
-) {
+async fn generated_snippets_and_span_bounds_remain_selectable(db: devkit::pg::TestDatabase) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
@@ -361,7 +359,7 @@ async fn explicit_match_order_preserves_outer_order_identity_and_near_ties(
 }
 
 #[devkit::test]
-async fn during_can_select_the_earliest_actual_span_without_changing_outer_grain(
+async fn during_can_select_the_earliest_span_without_changing_outer_grain(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
@@ -382,7 +380,7 @@ async fn during_can_select_the_earliest_actual_span_without_changing_outer_grain
 }
 
 #[devkit::test]
-async fn source_identity_projection_is_the_existing_binding_key(db: devkit::pg::TestDatabase) {
+async fn source_identity_field_is_the_existing_binding_key(db: devkit::pg::TestDatabase) {
     let mut conn = fixture(&db).await;
     let answer = ask(
         &mut conn,

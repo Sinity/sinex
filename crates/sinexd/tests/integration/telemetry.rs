@@ -67,13 +67,13 @@ async fn daemon_samples_admission_and_failures_through_public_commands() {
         "telemetry where payload.component = writer",
     );
     assert_eq!(answer["total"], 1, "{answer}");
-    let ordinary = query(
+    let by_kind = query(
         binary,
         &database,
         &store,
         "events where event_type = sinex.telemetry AND payload.component = writer",
     );
-    assert_eq!(ordinary["total"], 1, "{ordinary}");
+    assert_eq!(by_kind["total"], 1, "{by_kind}");
     let status: serde_json::Value = serde_json::from_str(&finish(&mut run(
         binary,
         &database,
@@ -99,7 +99,7 @@ async fn daemon_samples_admission_and_failures_through_public_commands() {
     let broken: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events e LEFT JOIN raw.materials m ON m.id=e.material_id WHERE e.event_type='sinex.telemetry' AND (m.id IS NULL OR e.commit_seq < 1)").fetch_one(&mut conn).await.unwrap();
     assert_eq!(
         broken, 0,
-        "every daemon sample has ordinary material and a commit position"
+        "every daemon sample has material and a commit position"
     );
     let activity: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events e WHERE e.parents && ARRAY(SELECT id FROM core.events WHERE event_type='sinex.telemetry')").fetch_one(&mut conn).await.unwrap();
     assert_eq!(

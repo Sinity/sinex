@@ -24,20 +24,21 @@ async fn apply_one(conn: &mut PgConnection, id: Uuid, payload: &Value, class: &s
     } else {
         serde_json::from_value::<TextEmbedding>(payload.clone()).ok()
     };
-    let (target, space, dimensions, projected, coverage, reason) = if let Some(embedding) = parsed {
+    let (target, space, dimensions, index_text, coverage, reason) = if let Some(embedding) = parsed
+    {
         match embedding.validate() {
             Ok(()) => {
                 let space = embedding.space.id();
-                let projection = project(&embedding.vector);
+                let index_vector = index_vector(&embedding.vector);
                 let dimensions = i64::try_from(embedding.space.dimensions).ok();
                 if let Some(dimensions) = dimensions {
                     sqlx::query!("INSERT INTO core.embedding_spaces(space,provider,model,revision,settings_hash,dimensions) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING",
                         space,embedding.space.provider,embedding.space.model,embedding.space.revision,embedding.space.settings_hash,dimensions).execute(&mut *conn).await?;
                 }
-                if projection.coverage == "indexed" {
+                if index_vector.coverage == "indexed" {
                     ensure_index(conn, &space, embedding.vector.len()).await?;
                 }
-                let text = projection.values.as_ref().map(|values| {
+                let text = index_vector.values.as_ref().map(|values| {
                     format!(
                         "[{}]",
                         values
@@ -52,8 +53,8 @@ async fn apply_one(conn: &mut PgConnection, id: Uuid, payload: &Value, class: &s
                     Some(space),
                     dimensions,
                     text,
-                    projection.coverage,
-                    projection.reason,
+                    index_vector.coverage,
+                    index_vector.reason,
                 )
             }
             Err(_) => (
@@ -85,7 +86,7 @@ async fn apply_one(conn: &mut PgConnection, id: Uuid, payload: &Value, class: &s
         SELECT e.id,$2,$3,$4,$5::text::vector,$6,$7 FROM core.events e WHERE e.id=$1
         ON CONFLICT(embedding_id) DO UPDATE SET target_id=EXCLUDED.target_id,space=EXCLUDED.space,
         dimensions=EXCLUDED.dimensions,projected=EXCLUDED.projected,coverage=EXCLUDED.coverage,reason=EXCLUDED.reason"#,
-        id,target,space,dimensions,projected,coverage,reason).execute(conn).await?;
+        id,target,space,dimensions,index_text,coverage,reason).execute(conn).await?;
     Ok(())
 }
 async fn ensure_index(conn: &mut PgConnection, space: &str, dimensions: usize) -> Result<()> {
@@ -103,9 +104,9 @@ async fn ensure_index(conn: &mut PgConnection, space: &str, dimensions: usize) -
     Ok(())
 }
 
-/// New consumers and explicit rebuilds read retained events, so pruned commit
+/// New consumers and explicit rebuilds read stored events, so pruned commit
 /// log rows cannot skip historical embeddings. Each transfer page is bounded;
-/// the projection and its scalar checkpoint become visible together.
+/// the index vectors and their scalar checkpoint become visible together.
 pub async fn rebuild(conn: &mut PgConnection) -> Result<()> {
     let mut tx = conn.begin().await?;
     sqlx::query("LOCK TABLE core.embedding_vectors IN SHARE ROW EXCLUSIVE MODE")

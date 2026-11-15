@@ -95,7 +95,7 @@ pub struct Cursor {
     pub material: Option<MaterialId>,
     pub part_index: u32,
     /// Rows that were still open (matched the mutable predicate) when last
-    /// read; re-read by rowid until they settle.
+    /// read; re-read by rowid until they stop changing.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub open: Vec<i64>,
     /// How many bytes of `material` the stored readings cover; a restart

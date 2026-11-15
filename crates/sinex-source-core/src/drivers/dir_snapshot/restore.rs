@@ -29,12 +29,11 @@ impl DirState {
         removed_at_source: bool,
     ) -> Result<bool, DriverError> {
         let saved_through = crate::drivers::dir_snapshot::saved_through(memory)?;
-        let admitted = admitted.ok_or_else(|| {
-            DriverError::Cursor("directory memory has no admitted-prefix evidence".into())
-        })?;
+        let admitted = admitted
+            .ok_or_else(|| DriverError::Cursor("directory memory has no admitted prefix".into()))?;
         if memory_part.is_some_and(|memory_part| admitted > memory_part.length) {
             return Err(DriverError::Cursor(
-                "directory memory has contradictory admitted-prefix evidence".into(),
+                "directory memory has a contradictory admitted prefix".into(),
             ));
         }
         if saved_through > admitted {
@@ -115,7 +114,7 @@ impl DirState {
             if member.details.contains_key("read_error") {
                 continue;
             }
-            let path = paths::native(member)?;
+            let path = paths::member_path(member)?;
             if self.remembered.contains(&path) {
                 continue;
             }
@@ -227,7 +226,7 @@ impl DirState {
             if member.details.contains_key("read_error") {
                 continue;
             }
-            let path = paths::native(member)?;
+            let path = paths::member_path(member)?;
             if self.saved_memory && !self.files.contains_key(&path) {
                 continue;
             }

@@ -102,7 +102,7 @@ pub fn request_source() -> DeclaredSource<RequestParser> {
     }
 }
 
-/// Keep request bytes with server-owned authorship and recording time.
+/// Keep request bytes with the author and time Sinex records.
 pub fn request_material(record: QueryRecord, actor: &str, host: &str, at: Timestamp) -> Acquired {
     let line = match record {
         QueryRecord::Mark(x) => Line::Mark(x),
@@ -150,7 +150,7 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
         name: "query",
         accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
-            owner: sinex_source_core::discovery::Owner::System,
+            captured_by: sinex_source_core::discovery::CapturedBy::System,
             locations: &[],
             capabilities: &[],
             credentials: &[],

@@ -44,8 +44,8 @@ fn act(cwd: &str, repo: Option<&str>) -> Event {
         "work.act",
         json!({"act":"act","session":"session","episode":null,"at_evidence":{"quality":"intrinsic","precision":"instant","until":null},
         "objective":repo.map(|repo| json!({"kind":"task","reference":"task-1","repository":repo})),
-        "label":null,"label_source":evidence(&seed),"machine":"box","at":at(0),"ended_at":null,
-        "evidence":evidence(&seed),"agency":"operator","action":"prompt","path":null,"failed":false,"cwd":cwd}),
+        "label":null,"label_source":cite(&seed),"machine":"box","at":at(0),"ended_at":null,
+        "evidence":cite(&seed),"agency":"operator","action":"prompt","path":null,"failed":false,"cwd":cwd}),
     )
 }
 fn span(id: &str, scope: &str, acts: &[Event], start: i64, end: i64) -> Event {
@@ -54,7 +54,7 @@ fn span(id: &str, scope: &str, acts: &[Event], start: i64, end: i64) -> Event {
         json!({"span_id":id,"scope":scope,"day":"2023-11-14",
         "partition_start":at(0),"partition_end":at(3600),"started_at":at(start),"ended_at":at(end),
         "window":null,"agency":"operator","delegated":false,
-        "agency_evidence":acts.iter().map(evidence).collect::<Vec<_>>(),"presence":"present",
+        "agency_evidence":acts.iter().map(cite).collect::<Vec<_>>(),"presence":"present",
         "presence_method":"physical","presence_claims":[],"focus":[],"apps":[],"titles":[],
         "display":"unknown","playback":false,"input_records":0,"operator_present_s":end-start,
         "profile":"test","continuation_before":false,"continuation_after":false,"provisional":false}),
@@ -99,7 +99,7 @@ fn exact_roots_match_components_and_the_recorded_effective_period() {
 }
 #[devkit::test]
 fn worktrees_join_by_captured_git_identity_without_a_live_lookup() {
-    let mut act = act("/retired/worktree", None);
+    let mut act = act("/removed/worktree", None);
     act.payload["git_identity"] =
         json!({"common_dir":"/old/app/.git","root_commits":["root"],"head":"sha","branch":"work"});
     let span = span("span", "box", std::slice::from_ref(&act), 0, 600);
@@ -111,7 +111,7 @@ fn worktrees_join_by_captured_git_identity_without_a_live_lookup() {
     assert_eq!(output[0].ladder_rung, Some(3));
 }
 #[devkit::test]
-fn competing_exact_owners_leave_time_unallocated_and_keep_evidence() {
+fn competing_projects_leave_time_unallocated() {
     let first = act("/a", Some("org/a"));
     let second = act("/b", Some("org/b"));
     let span = span("span", "box", &[first.clone(), second.clone()], 0, 600);

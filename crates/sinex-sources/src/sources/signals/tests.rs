@@ -1,11 +1,11 @@
 use super::*;
 #[devkit::test]
 fn signal_frame_replay_preserves_whole_original_json_and_host_line_offsets() {
-    let native=b"  {\n \"kind\": \"signals\",\n \"frame\": \"synthetic\",\n \"reports\": [],\n \"class\": \"open\"\n}\n  ";
-    assert_eq!(frame(native, true), (vec![(0, native.len())], native.len()));
-    for split in 0..native.len() {
+    let bytes=b"  {\n \"kind\": \"signals\",\n \"frame\": \"synthetic\",\n \"reports\": [],\n \"class\": \"open\"\n}\n  ";
+    assert_eq!(frame(bytes, true), (vec![(0, bytes.len())], bytes.len()));
+    for split in 0..bytes.len() {
         assert_eq!(
-            frame(&native[..split], false),
+            frame(&bytes[..split], false),
             (vec![], 0),
             "transport frame prefix {split} is not a different source record"
         );
@@ -59,7 +59,7 @@ fn forwarded_reports_carry_their_producer_and_refuse_another_product() {
             received_at: at,
         }))]
     );
-    for foreign in [
+    for other_report in [
         signals::Report::Progress {
             product: "sinex".into(),
             at: 1,
@@ -70,6 +70,6 @@ fn forwarded_reports_carry_their_producer_and_refuse_another_product() {
             id: "rule".into(),
         },
     ] {
-        assert!(forwarded_reports(&frame_with(foreign), "primary", "polylogue", at).is_err());
+        assert!(forwarded_reports(&frame_with(other_report), "primary", "polylogue", at).is_err());
     }
 }

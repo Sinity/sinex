@@ -488,7 +488,7 @@ async fn admitted_and_archived_readings_mark_dirty_keys(db: devkit::pg::TestData
     let out = tx.admit(&batch(events), &ByDay).await.unwrap();
     tx.commit().await.unwrap();
     // One stored payload per event, so one key per event (docs/privacy.md:
-    // "Stored payloads stay raw"; there is no second, projected payload).
+    // "Stored payloads stay raw"; there is no second, transformed payload).
     assert_eq!(out.dirty_keys, 2, "each event marks its one input key");
     let n: i64 = sqlx::query_scalar!(
         r#"SELECT count(*) AS "n!" FROM derivation.dirty WHERE derivation = 'daily'"#
@@ -503,11 +503,11 @@ async fn admitted_and_archived_readings_mark_dirty_keys(db: devkit::pg::TestData
     .fetch_one(&mut conn)
     .await
     .unwrap();
-    let (_, frontier) = out.commit_seq.unwrap();
+    let (_, last_position) = out.commit_seq.unwrap();
     assert_eq!(
         (first, last),
-        (frontier, frontier),
-        "the atomic batch first marks its key at the completed frontier of every original and projected input"
+        (last_position, last_position),
+        "the atomic batch first marks its key at the last completed position of every original and derived input"
     );
     let op = crate::lifecycle::begin(
         &mut conn,
@@ -543,13 +543,13 @@ async fn admitted_and_archived_readings_mark_dirty_keys(db: devkit::pg::TestData
     .unwrap();
     assert_eq!(
         (archived_at, end_seq),
-        (frontier + 1, Some(frontier + 1)),
+        (last_position + 1, Some(last_position + 1)),
         "the one-batch archive takes the next position and ends there"
     );
     assert_eq!(changed.0, first, "archival preserves the first dirty mark");
     assert_eq!(
         changed.1, archived_at,
-        "and advances the last one to its actual lifecycle position"
+        "and advances the last one to its lifecycle position"
     );
 }
 #[devkit::test]
@@ -858,7 +858,7 @@ async fn assigned_order_retry_and_rollback_share_the_admission_transaction(
 }
 
 /// Admitted and refused frames are recorded as typed outcomes that decode
-/// from their real rows, and an exact retry answers from the stored counts.
+/// from their real rows, and an identical retry answers from the stored counts.
 #[devkit::test]
 async fn stored_frame_outcome_decodes(db: devkit::pg::TestDatabase) {
     use crate::commit_log::{FrameOutcome, FrameResult};
@@ -958,7 +958,7 @@ mod output_ordinals;
 mod registration;
 
 #[devkit::test]
-async fn native_sources_keep_exact_labels_and_transport_provenance_on_initial_insert(
+async fn built_in_sources_keep_labels_and_transport_provenance_on_first_insert(
     db: devkit::pg::TestDatabase,
 ) {
     let mut catalog = PgConnection::connect(&db.url(None)).await.unwrap();

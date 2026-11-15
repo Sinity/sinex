@@ -21,7 +21,7 @@ pub(crate) async fn assert_commit_log(conn: &mut PgConnection) {
     .await;
     assert_eq!(
         shared, 0,
-        "one original position per retained reading or tombstone skeleton"
+        "one original position per stored reading or tombstone skeleton"
     );
     let invalid = count(
         conn,
@@ -66,9 +66,9 @@ pub(crate) async fn assert_commit_log(conn: &mut PgConnection) {
     .await;
     assert_eq!(
         invalid_history, 0,
-        "only replacements and their exact recomputed descendants may share the replacement Event position"
+        "only replacements and their recomputed descendants may share the replacement Event position"
     );
-    let projection = count(
+    let archive_mismatches = count(
         conn,
         "WITH latest AS (SELECT DISTINCT ON(event_id) event_id,archived FROM audit.archive_changes
              ORDER BY event_id,commit_seq DESC)
@@ -78,7 +78,7 @@ pub(crate) async fn assert_commit_log(conn: &mut PgConnection) {
     )
     .await;
     assert_eq!(
-        projection, 0,
+        archive_mismatches, 0,
         "visibility history and current archive state agree"
     );
 }

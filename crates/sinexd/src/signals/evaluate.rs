@@ -1,4 +1,4 @@
-//! Sinex's rules read through the ordinary query engine and feed the shared
+//! Sinex's rules read through the query engine and feed the shared
 //! evaluator; the evaluator alone decides what fires.
 use super::*;
 use crate::Result;
@@ -149,7 +149,7 @@ pub(super) async fn evaluate(
                 rows.push(::signals::Row {
                     occurrence: ::signals::Occurrence {
                         id: row.identity.clone(),
-                        // Native keys and record coordinates already tell
+                        // Source keys and record coordinates already tell
                         // occurrences apart; a reread clock is not a new fact.
                         period: "native".into(),
                     },

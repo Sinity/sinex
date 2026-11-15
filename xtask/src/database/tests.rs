@@ -18,12 +18,12 @@ fn checked_queries_rebuild_for_schema_changes_and_manual_database_changes() {
     std::fs::write(
         root.join("build.rs"),
         format!(
-            r#"mod owner {{
+            r#"mod store_build {{
     include!({build:?});
     pub fn run() {{ main(); }}
 }}
 fn main() {{
-    owner::run();
+    store_build::run();
     use std::io::Write;
     let mut log = std::fs::OpenOptions::new().create(true).append(true)
         .open(std::env::var_os("BUILD_RUN_LOG").unwrap()).unwrap();

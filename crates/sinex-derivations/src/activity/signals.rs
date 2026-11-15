@@ -5,7 +5,7 @@ use std::borrow::Cow;
 pub(super) enum Signal {
     Operator,
     Physical,
-    Claim,
+    PresenceReport,
     Absent,
     Focus,
     Playback,
@@ -82,7 +82,7 @@ pub(super) fn pieces(inputs: &[Event]) -> Vec<Piece<'_>> {
             {
                 (Signal::Physical, None)
             }
-            "presence.span" | "presence.interval" => (Signal::Claim, None),
+            "presence.span" | "presence.interval" => (Signal::PresenceReport, None),
             "state.interval" => match (payload["state_kind"].as_str(), payload["label"].as_str()) {
                 (Some("desktop.lock"), Some("locked")) => (Signal::Absent, Some("lock")),
                 (Some("desktop.display"), Some("off")) => (Signal::Absent, Some("display_off")),
@@ -197,12 +197,13 @@ pub(super) fn pieces(inputs: &[Event]) -> Vec<Piece<'_>> {
     pieces
 }
 
-pub(super) fn barrier(piece: &Piece<'_>, from: i128, until: i128) -> bool {
+/// Whether this piece is an absence overlapping `from..=until`.
+pub(super) fn absence_overlaps(piece: &Piece<'_>, from: i128, until: i128) -> bool {
     piece.signal == Signal::Absent && piece.start <= until && piece.end >= from
 }
 
 /// Sleep describes the person across devices. Suspend describes every seat
-/// on its captured host; a lock with no captured seat does not claim another.
+/// on its captured host; a lock with no captured seat does not cover another.
 pub(super) fn absence_scope(piece: &Piece<'_>, other: &str) -> bool {
     if piece.scope == other || piece.reason == Some("sleep") {
         return true;

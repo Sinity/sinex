@@ -12,7 +12,7 @@ fn encoding(root: &Path, bytes: &[u8]) -> (EncodedBlob, Vec<u8>) {
 #[devkit::test]
 fn chunks_survive_reopen_and_conflicting_or_overflowing_resends_are_refused() {
     let root = tempfile::tempdir().unwrap();
-    let bytes = b"exact bytes across a restart";
+    let bytes = b"same bytes across a restart";
     let blob = name(bytes);
     let (descriptor, encoded) = encoding(root.path(), bytes);
     let receive =
@@ -251,7 +251,7 @@ mod group;
 fn a_real_input_io_failure_keeps_its_os_code_and_source() {
     let root = tempfile::tempdir().unwrap();
     // Linux rejects reads from unmapped address zero with EIO. This reaches
-    // frame custody through the codec's actual filesystem reader.
+    // frame custody through the codec's own filesystem reader.
     let input = std::fs::File::open("/proc/self/mem").unwrap();
     let failure = write(root.path(), "node", "read-failure", &name(b"x"), 1, input).unwrap_err();
     let source = std::error::Error::source(&failure)
@@ -296,20 +296,20 @@ fn a_real_descriptor_persist_failure_keeps_its_os_code() {
 }
 
 #[devkit::test]
-fn pinned_local_custody_survives_retired_source_names() {
+fn pinned_local_custody_survives_removed_source_names() {
     let root = tempfile::tempdir().unwrap();
     let spool = tempfile::tempdir().unwrap();
     let bytes = b"immutable spool bytes";
     let (descriptor, data) = encoding(spool.path(), bytes);
-    let source = spool.path().join("owned");
+    let source = spool.path().join("spooled");
     std::fs::write(&source, data).unwrap();
     let file = std::fs::File::open(&source).unwrap();
     std::fs::remove_file(&source).unwrap();
-    link_file(root.path(), "node", "retired", &descriptor, &source, file).unwrap();
+    link_file(root.path(), "node", "removed", &descriptor, &source, file).unwrap();
     let mut decoded = reader(
         root.path(),
         "node",
-        "retired",
+        "removed",
         &descriptor.hash.to_string(),
         bytes.len() as u64,
     )

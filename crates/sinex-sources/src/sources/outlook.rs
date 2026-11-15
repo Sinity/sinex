@@ -4,7 +4,7 @@
 //! No maintained Rust reader understands PST, so a store is staged first:
 //! `readpst` (libpst) converts each folder to an mbox file, and those files are
 //! read like any mbox export, as the source `communication.outlook`. Sinex
-//! retains the native PST and converter version before admitting converted
+//! stores the original PST and converter version before admitting converted
 //! material, whose manifest cites that acquisition. Folder readers share a private
 //! conversion directory until the last reader closes; bindings identify the
 //! original PST and folder. The
@@ -177,7 +177,7 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
         name: "outlook",
         accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
-            owner: sinex_source_core::discovery::Owner::System,
+            captured_by: sinex_source_core::discovery::CapturedBy::System,
             locations: &[sinex_source_core::discovery::Location {
                 root: "input",
                 path: "outlook",
@@ -200,7 +200,7 @@ pub const CSV_FORMAT: sinex_source_core::binding::InputFormat =
         name: "outlook-csv",
         accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
-            owner: sinex_source_core::discovery::Owner::System,
+            captured_by: sinex_source_core::discovery::CapturedBy::System,
             locations: &[sinex_source_core::discovery::Location {
                 root: "input",
                 path: "outlook-csv",

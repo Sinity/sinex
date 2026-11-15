@@ -3,8 +3,8 @@ use sqlx::{Connection, Executor};
 
 /// Run the real storage APIs over one fixture.
 async fn reads(conn: &mut PgConnection, ids: &[Uuid]) -> serde_json::Value {
-    let mut owners = material_owners(conn, ids).await.unwrap();
-    owners.sort();
+    let mut families = material_families(conn, ids).await.unwrap();
+    families.sort();
     let unknown = family_unknown(conn, "p", ids, "family-a").await.unwrap();
     let family = material_family(conn, ids[0]).await.unwrap();
     let mut sources = material_sources(conn, ids).await.unwrap();
@@ -13,14 +13,12 @@ async fn reads(conn: &mut PgConnection, ids: &[Uuid]) -> serde_json::Value {
     registered.sort();
     let refusals = crate::diagnostics::ingress_refusals(conn).await.unwrap();
     let errors = crate::diagnostics::producer_errors(conn).await.unwrap();
-    serde_json::json!({"owners":owners,"unknown":unknown,"family":family,
+    serde_json::json!({"families":families,"unknown":unknown,"family":family,
         "sources":sources,"registered":registered,"refusals":refusals,"errors":errors})
 }
 
 #[devkit::test]
-async fn receipt_authority_and_diagnostics_report_only_relevant_frames(
-    db: devkit::pg::TestDatabase,
-) {
+async fn ack_lookups_and_diagnostics_report_only_relevant_frames(db: devkit::pg::TestDatabase) {
     let mut setup = PgConnection::connect(&db.url(None)).await.unwrap();
     setup.execute("INSERT INTO core.ingress_frames(producer,frame,material_id,outcome,family,source_name,source_version)
         SELECT 'p','success-'||n,uuidv7(),'{\"result\":\"admitted\"}','unrelated','unrelated.source',1
@@ -28,8 +26,8 @@ async fn receipt_authority_and_diagnostics_report_only_relevant_frames(
     let ids = [Uuid::from_u128(1), Uuid::from_u128(2)];
     sqlx::query("INSERT INTO core.ingress_frames(producer,frame,material_id,outcome,refusal,family,write_kind_prefixes,source_name,source_version,received_at) VALUES
         ('p','unknown-origin',$1,'{\"result\":\"refused\",\"kind\":\"malformed\",\"source\":null,\"event_types\":[]}','old unknown',NULL,NULL,NULL,NULL,now()-interval '2 days'),
-        ('p','first-owner',$1,'{\"result\":\"admitted\"}',NULL,'family-a',ARRAY['example.'],'example.source',3,now()),
-        ('q','other-owner',$1,'{\"result\":\"admitted\"}',NULL,'family-b',ARRAY['other.'],'other.source',4,now()),
+        ('p','first-frame',$1,'{\"result\":\"admitted\"}',NULL,'family-a',ARRAY['example.'],'example.source',3,now()),
+        ('q','other-frame',$1,'{\"result\":\"admitted\"}',NULL,'family-b',ARRAY['other.'],'other.source',4,now()),
         ('p','recent-refusal',$2,'{\"result\":\"refused\",\"kind\":\"malformed\",\"source\":null,\"event_types\":[]}','bad shape',NULL,NULL,NULL,NULL,now()-interval '1 hour'),
         ('p','split-kind',NULL,'{\"result\":\"refused\",\"kind\":\"invalid\",\"source\":\"example.source\",\"event_types\":[\"example.a\",\"example.b\"]}','bad content',NULL,NULL,NULL,NULL,now()),
         ('p','last-malformed',NULL,'{\"result\":\"refused\",\"kind\":\"malformed\",\"source\":null,\"event_types\":[]}','last shape',NULL,NULL,NULL,NULL,now()-interval '2 days'),
@@ -49,7 +47,7 @@ async fn receipt_authority_and_diagnostics_report_only_relevant_frames(
     let mut tx = conn.begin().await.unwrap();
     let found = reads(&mut tx, &ids).await;
     assert_eq!(
-        found["owners"],
+        found["families"],
         serde_json::json!([[ids[0], "family-a"], [ids[0], "family-b"]])
     );
     assert_eq!(found["unknown"], true);

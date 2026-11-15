@@ -61,13 +61,13 @@ pub const REQUEST: SourceSpec = SourceSpec {
     ),
 };
 
-/// Library roots are ordinary bindings; library requests are supplied by the API.
+/// Library roots are bindings like any other; library requests are supplied by the API.
 pub const FORMAT: sinex_source_core::binding::InputFormat =
     sinex_source_core::binding::InputFormat {
         name: "library",
         accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
-            owner: sinex_source_core::discovery::Owner::System,
+            captured_by: sinex_source_core::discovery::CapturedBy::System,
             locations: &[sinex_source_core::discovery::Location {
                 root: "declared",
                 path: "library",

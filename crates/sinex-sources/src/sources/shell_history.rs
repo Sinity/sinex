@@ -65,9 +65,9 @@ impl Seen {
         if start > seen.latest {
             seen.latest = start;
             // Keys sort by start, so the expired ones are at the front.
-            let floor = start - SEEN_WINDOW_SECS;
+            let window_start = start - SEEN_WINDOW_SECS;
             while let Some(((oldest, _), _)) = seen.counts.get_min() {
-                if *oldest >= floor {
+                if *oldest >= window_start {
                     break;
                 }
                 let first = seen.counts.get_min().map(|(k, _)| *k).expect("checked");

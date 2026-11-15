@@ -1,7 +1,7 @@
 //! The daemon samples its own state every minute (how far the publisher, the
 //! search index and each derivation are behind, how many keys wait, each
 //! source's counts) and spools one line per part. The `sinex.telemetry`
-//! binding reads the spool like any live capture. Samples use ordinary event
+//! binding reads the spool like any live capture. Samples share event
 //! admission, visibility, replay and the commit log.
 use crate::Result;
 use sinex_model::Timestamp;

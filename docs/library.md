@@ -4,19 +4,19 @@ The library is how the operator and agents keep, describe, organize, find, judge
 
 ## Purpose
 
-The library is a native workflow that makes other library applications dispensable. Importing another tool's files alone does not deliver it; adding, describing, organizing, finding, comparing and using media inside Sinex does. It is a general media library, not tied to any one tool. (ruling 2026-10-18, cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:afc6b7b2-5100-4255-8ace-7d6b09ec801e).
+The library is Sinex's own workflow that makes other library applications dispensable. Importing another tool's files alone does not deliver it; adding, describing, organizing, finding, comparing and using media inside Sinex does. It is a general media library, not tied to any one tool. (ruling 2026-10-18, cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:afc6b7b2-5100-4255-8ace-7d6b09ec801e).
 
 The principles that shape every feature below:
 
 - **Exact bytes and acquisition context are kept.** Item identity, byte identity and evidence that two copies correspond are three separate things.
 - **Primary data is on disk as materials, and the library is rebuildable from them by replay.** (ruling 2026-06-04, cc-queued:6785a302-980f-4cd0-bc7c-b5e4b3f0f1e9@2026-06-04T16:15:54Z).
 - **Generated outputs are kept and reused, not regenerated.** (ruling 2026-06-09, cc-queued:70929a29-e133-4051-9646-34e8505cb67f@2026-06-09T12:21:22Z).
-- **The library is built from ordinary sources and derivations**, and authored curation is Sinex's own authored input. There is no library service, database or plugin framework beside Sinex.
+- **The library is built from the same sources and derivations as the rest of Sinex**, and authored curation is Sinex's own authored input. There is no library service, database or plugin framework beside Sinex.
 - **Rendering uses existing media tools; queries use the one query language and its paging.** Nothing truncates a valid selection.
 - **Missing content, uncertainty and conflicts are reported, never hidden.** A successful command or an imported catalog is not evidence of a useful library.
 - **Nothing expires.** There is no media tiering or retention: media is kept until the operator archives it.
 
-Decided target (2026-11-01). The current build is a file library whose curation records share their revision rules with Polylogue's assertions through common's `authored` crate, with computed authorship, order-key entry positions and Plackett–Luce rankings. The decided design keeps this page's behaviour and adds three things: an item is anything with a native locator; encounters link every event to the item it touched; and page capture and the Polylogue link are specified. Sections marked as decided target describe what is not built.
+Decided target (2026-11-01). The current build is a file library whose curation records share their revision rules with Polylogue's assertions through common's `authored` crate, with computed authorship, order-key entry positions and Plackett–Luce rankings. The decided design keeps this page's behaviour and adds three things: an item is anything with a locator; encounters link every event to the item it touched; and page capture and the Polylogue link are specified. Sections marked as decided target describe what is not built.
 
 ## Curation as authored input
 
@@ -108,7 +108,7 @@ Its reference is `sinex:curation/<root>@<rev>`. A revision's payload never chang
 
 ### Shown values
 
-The shown values are kept in the `library_shown` projection: one row per target and tag or property with its state, level, value and supporters. The writer refreshes it inside every transaction that admits, archives or restores a curation record (a request, a replay, a lifecycle operation), for the items those records are about and every record their withdrawals reach, so it equals the precedence over the live records at every commit and needs no rebuild.
+The shown values are kept in the `library_shown` read model: one row per target and tag or property with its state, level, value and supporting records. The writer refreshes it inside every transaction that admits, archives or restores a curation record (a request, a replay, a lifecycle operation), for the items those records are about and every record their withdrawals reach, so it equals the precedence over the live records at every commit and needs no rebuild.
 
 The value the library shows for a property or tag is computed from the current curation records of its target by a precedence with two axes, both computed by the daemon:
 
@@ -120,9 +120,9 @@ The order is the operator's authored value (an explicit empty included), then an
 - Two different values at the winning level are a **conflict**; no value at any level is **unknown**. Unknown, withheld, conflicting, explicitly empty and a real empty string are five distinguishable states.
 - An explicit empty stops fallback to lower levels; withdrawing it permits fallback again.
 - A tag applies while its deciding level applies it: withdrawing the operator's application leaves an agent's or an import's. Reads show every supporting record and its author, even when the values agree.
-- Rejecting an imported or proposed tag is its own explicit record (`reject`: a tag record whose value is `false`), not a reserved leading character in a tag label; any label with text, punctuation included, is an ordinary tag.
+- Rejecting an imported or proposed tag is its own explicit record (`reject`: a tag record whose value is `false`), not a reserved leading character in a tag label; any label with text, punctuation included, is a tag.
 - Shown-value precedence is the library's own: Polylogue's assertions have no imported level to rank, while booru imports, catalog sidecars and reading-service tags make imported values the library's common case.
-- **The shown-value projection** (`library_shown`: item, target, tag or property, state, level, value, supporters) is maintained by the writer in every transaction that admits, archives or restores curation records, through the common currency function, so reads never recompute currency over the archive.
+- **The shown-value read model** (`library_shown`: item, target, tag or property, state, level, value, supporting records) is maintained by the writer in every transaction that admits, archives or restores curation records, through the common currency function, so reads never recompute currency over the archive.
 - Proposals (classifier or model output) are the lowest level and never overwrite an authored value. Model execution follows [the model output contract](derivations.md#the-contract-every-model-output-follows); imported model outputs are captured regardless.
 
 ## Items, locators and copies
@@ -135,7 +135,7 @@ An **item** is the continuing thing the operator curates. A **revision** fixes a
 
 ### Locators
 
-Decided target (2026-11-01). An item is anything with a native **locator**, the native address of a thing at first sight, canonicalized by a declared rule and kept as the key forever:
+Decided target (2026-11-01). An item is anything with a **locator**, the address a thing has at first sight, canonicalized by a declared rule and kept as the key forever:
 
 | Locator | Canonical form | Where the address comes from |
 |---|---|---|
@@ -167,18 +167,18 @@ Decided target (2026-11-01). An item is anything with a native **locator**, the 
 - The current state follows recorded capture order, not file time, processing time or whichever row a read returns first.
 - A complete scan finding a path gone changes that copy's availability, not the existence of stored originals.
 - Inaccessible, incomplete, reference-only, stored-but-unreadable and derivative-only are distinct availability states. A disconnected root or an incomplete traversal never claims deletion.
-- Finding matching bytes elsewhere offers a verified location; it never merges separately curated items. A reference-only original is re-found by its actual hash.
+- Finding matching bytes elsewhere offers a verified location; it never merges separately curated items. A reference-only original is re-found by its content hash.
 
-## Intake
+## Adding items
 
-A file, directory, archive member or outside-producer acquisition goes through the existing reader, material store and writer ([materials](materials.md), [sources](sources.md)); the library has no intake path of its own.
+A file, directory, archive member or outside-producer acquisition goes through the existing reader, material store and writer ([materials](materials.md), [sources](sources.md)); the library has no path of its own for adding items.
 
-- An ordinary addition keeps the exact bytes. Indexing by reference only is an explicit choice made per addition, and its consequences appear in results.
+- An addition keeps the exact bytes. Indexing by reference only is an explicit choice made per addition, and its consequences appear in results.
 - Any file can be stored and retrieved even when decoding it is unsupported. Type comes from content, with an explicit unknown state; a misleading extension does not decide it.
 - Recorded source bytes and request bytes are immutable.
 - Storing bytes and admitting the event agree on the same observed content: a later reopen of a changed source cannot supply different bytes under the earlier digest. A file mutated during acquisition ends as a complete matching acquisition or a visible retry or failure.
-- Explicit selection never silently excludes a valid file because of its suffix or a hidden name. Partial scans, unreadable entries, symlinks, changing files and sidecar recognition report their actual coverage. A scan of one file neither reads its siblings nor reports them removed.
-- Intake resumes from committed progress after an interruption between preparation and admission.
+- Explicit selection never silently excludes a valid file because of its suffix or a hidden name. Partial scans, unreadable entries, symlinks, changing files and sidecar recognition report their coverage. A scan of one file neither reads its siblings nor reports them removed.
+- Adding resumes from committed progress after an interruption between preparation and admission.
 
 ### Encounters
 
@@ -197,7 +197,7 @@ Decided target (2026-11-01). An **encounter** is a derived reading linking an ev
 
 - **Attention is honest.** `attention` is a known duration only when the source measured it (active-tab time from the extension, the player's playback position, an e-reader's page time). Otherwise it is unknown, and sums over unknowns are marked `lower bound`. An open tab is not attention.
 - Encounters are readings, so replay recomputes them and archiving a visit's material archives its encounters. Curation never depends on an encounter.
-- **Item statistics** (`first_seen`, `last_seen`, `seen_count`, known attention and the count of unknown, `saved_in`, `made_by`) are views over encounters, kept in the item projection.
+- **Item statistics** (`first_seen`, `last_seen`, `seen_count`, known attention and the count of unknown, `saved_in`, `made_by`) are views over encounters, kept in the item read model.
 - Imported aggregate view counts are encounters with `count: N` and their original scope, never expanded into invented individual events.
 - "Pages I read while that build failed" and "the track playing when I wrote this commit" are each one query, because encounters are events with a time and an item.
 
@@ -223,7 +223,7 @@ Every original, crop, preview or transcode fixes the item revision, its exact co
 ## Tags and properties
 
 - **Property definitions** declare type, cardinality, allowed choices where applicable (a single-choice property allows exactly one) and the selection rule used for shown values.
-- **Tags** have stable identity, labels, namespaces and aliases. Renaming a tag keeps its tag records. Real labels that begin with punctuation are ordinary labels.
+- **Tags** have stable identity, labels, namespaces and aliases. Renaming a tag keeps its tag records. Real labels that begin with punctuation are labels like any other.
 - **Tag relations**: `alias` makes two tag IDs one shown tag, so merging two tags is an alias; `implies` adds the implied tag to the shown set, marked `implied by <tag>`, at the implying assignment's level. A cycle is refused at write. `tag:x` matches direct and implied assignments; `tag_direct:x` matches direct ones only. Relations are recorded and cycles refused today; shown tags do not yet follow aliases and implications.
 - **Tag and property records** target an item, a fixed revision, a rendition or a part, and carry author, origin, source evidence, root, immutable revision and the revisions they revise. Two records about two distinct regions of one rendition are two records.
 - Rescanning, reimporting and rerunning a classifier keep the operator's corrections, because those are authored records ranked above imported and proposed values.
@@ -231,7 +231,7 @@ Every original, crop, preview or transcode fixes the item revision, its exact co
 
 ## Notes and edits
 
-Notes and annotations use the same target model and are ordinary attributed records; free text is a note, not an untyped special property. Notes are created, read, edited and withdrawn like any curation record, and a correction cites its subject in its payload.
+Notes and annotations use the same target model and are attributed records; free text is a note, not an untyped special property. Notes are created, read, edited and withdrawn like any curation record, and a correction cites its subject in its payload.
 
 An **external edit** starts from a fixed rendition and revision, and the edited content returns as a new rendition, revision or record naming that starting point. Two concurrent edits both keep their results and expose a conflict; timestamps do not decide a winner. An edit returned against an old original is recorded against that original.
 
@@ -251,7 +251,7 @@ A **collection** is an ordered list of entries with a stable ID independent of i
 - A **live set** or reading list is a [saved query](query.md#saved-queries) plus arguments, evaluated in the one query language and cited by its query identity. Updating its query text creates a new revision, even when the label stays. Setting a property on items is `property set`, a different operation. The shipped saved queries include `query:reading` (over the `status` property, ordered by the `reading` collection when one exists), `query:uncurated` (new items nobody has curated) and `query:resurface` (saved or highly rated items not encountered for a year, one or two a day in Today).
 - A **fixed selection** is a [kept result](query.md#kept-results) (`QUERY keep` → `result:<id>`): the query, its read context and the ordered references it resolved to, with unavailable ones and their reasons. Decided target: this replaces the separate `library.selection` record, which was the same object. A collection can take entries from it (`collect --from result:<id>`).
 - Set membership and collection entries mean different things. A collection keeps its own order and multiplicity.
-- A saved query offers **suggestions** to a collection without changing it. Accepting a suggestion creates an ordinary entry; refreshing adds, removes or reorders no existing entry. A **dismissal** is scoped to the collection, the target and the saved query's revision, so it does not carry over to a new revision.
+- A saved query offers **suggestions** to a collection without changing it. Accepting a suggestion creates an entry; refreshing adds, removes or reorders no existing entry. A **dismissal** is scoped to the collection, the target and the saved query's revision, so it does not carry over to a new revision.
 - Paging and the language's set operations apply before a bulk action, and no hidden maximum truncates a valid selection. A failed member of a bulk action is reported per member. A single-valued property set over more than one target needs `--each`, so one pass cannot silently overwrite many operator values; many-valued tags and notes need no flag.
 
 ## Ratings
@@ -295,7 +295,7 @@ Similarity (64-bit dHash and pHash for images and sampled video keyframes, audio
 ## Filename hints and extracted text
 
 - Author, title, year and external-ID **hints** are derived from recorded copy paths and kept separate from authored metadata. Inner dashes and syntactically isolated four-digit years are kept, with no fixed upper year. A 32-hex external hint is not a verified MD5. A rename changes the hint's input evidence; it is not an operator correction.
-- **Captions, OCR text and face candidates**, imported or produced, are library records targeting a rendition part, with producer, model and run metadata. They are kept and reused, not regenerated. An imported model output is acquired evidence with its supplied model and run metadata; a Sinex extraction is a derivation with its actual parents.
+- **Captions, OCR text and face candidates**, imported or produced, are library records targeting a rendition part, with producer, model and run metadata. They are kept and reused, not regenerated. An imported model output is acquired evidence with its supplied model and run metadata; a Sinex extraction is a derivation with its parents.
 - Document text, imported OCR and speech transcripts cite the exact content and revision and a page, region or time selector, so search results open at the exact page.
 - Reference-only items are not fetched just to extract text: extraction and preview show "unavailable without stored content", because reference-only was the operator's explicit choice for that item.
 - Unavailable and unsupported extraction are visible states.
@@ -371,7 +371,7 @@ Agents have every library power the operator has: add, import, open, preview, cu
 
 ## Surfaces
 
-Decided target (2026-11-01). Verbs follow a query or a reference, as everywhere in `sinexctl`; `library` keeps only the intake verbs, so curation is never an island command.
+Decided target (2026-11-01). Verbs follow a query or a reference, as everywhere in `sinexctl`; `library` keeps only the verbs that add items, so curation is never an island command.
 
 ```
 sinexctl library add PATH… [--reference] [--root NAME]
@@ -397,7 +397,7 @@ sinexctl collection create NAME [--suggest-from QUERY]
 
 Every write prints the request ID, the records written with their revisions, and conflicts with the current revision and its author; exit 3 is refused, 5 is partial in a bulk act.
 
-Over MCP, intake (`add`, `import`, `save`), `open` and `viewed` are rows of `sinex_act`; every curation act is one atomic request through `sinex_write` (`writes: [{act, target or query, …, expects?}]`); `judge next` and `rank` are rows of `sinex_query`; items and collections are read through `sinex_query` and `sinex_read`. The deployed `sinex_library-*` tools fold into these rows.
+Over MCP, adding items (`add`, `import`, `save`), `open` and `viewed` are rows of `sinex_act`; every curation act is one atomic request through `sinex_write` (`writes: [{act, target or query, …, expects?}]`); `judge next` and `rank` are rows of `sinex_query`; items and collections are read through `sinex_query` and `sinex_read`. The deployed `sinex_library-*` tools fold into these rows.
 
 | Unit | Rows |
 |---|---|
@@ -407,7 +407,7 @@ Over MCP, intake (`add`, `import`, `save`), `open` and `viewed` are rows of `sin
 
 Curation predicates: `tag:x`, `tag_direct:x`, `tag_by:(operator|agent|import)`, `prop(name) = v`, `rating(scale) >= 4`, `rank(scale) <= 10` with `judges:`, `conflict:any`, `value_state(prop) = unknown|empty|conflict|withheld`. Relations: `encountered_by:ACTOR`, `encountered during(Q)`, `corresponds(rel, REF)`, `captured: during|after|archive|none`. Bare words search titles, tags, notes and extracted content, and hits carry their rendition and selector, so `@1 open` lands at the hit. References: `sinex:item/<id>[@<rev>][#selector]`, `sinex:collection/<id>[@<rev>]`, `sinex:scale/<name>`, `sinex:content/<blake3>`, `sinex:curation/<root>@<rev>`; a pasted URL resolves to its item through the canonicalizer.
 
-Web views come from common `web-shell` and print the CLI and MCP call that reproduces them: the **grid** over any `items` query (`/q?q=…&layout=grid`, thumbnails loaded only for visible tiles, video tiles scrubbing sprite sheets, audio only on explicit request, facets including the origin of shown values); the **item** page (preview, values with level and supporters, the encounter strip, captures with grades, copies and availability, correspondences, collections, *In AI sessions*, notes, history); the **reader** (`/item/<id>/read`); **judge** (`/judge?q=…&scale=…`, two-up or up to six-up with the scale's question on top, `←`/`→` or `1`–`6`, `=` tie, `s` skip, `u` undo, `b` blind, the ranking panel updating after each comparison); **collection** and **duplicates**.
+Web views come from common `web-shell` and print the CLI and MCP call that reproduces them: the **grid** over any `items` query (`/q?q=…&layout=grid`, thumbnails loaded only for visible tiles, video tiles scrubbing sprite sheets, audio only on explicit request, facets including the origin of shown values); the **item** page (preview, values with level and supporting records, the encounter strip, captures with grades, copies and availability, correspondences, collections, *In AI sessions*, notes, history); the **reader** (`/item/<id>/read`); **judge** (`/judge?q=…&scale=…`, two-up or up to six-up with the scale's question on top, `←`/`→` or `1`–`6`, `=` tie, `s` skip, `u` undo, `b` blind, the ranking panel updating after each comparison); **collection** and **duplicates**.
 
 ## Privacy
 
@@ -418,14 +418,14 @@ The library is private. (ruling 2026-10-11, cc-queued:56c7f026-fd50-4480-b484-72
 
 ## Performance
 
-- Intake, import, page capture and cache materialization stream bytes, with memory governed by buffers and metadata, not by total file or body size. Large valid files and records are processed whole; paging and batching change how work is allocated without losing input.
+- Adding items, import, page capture and cache materialization stream bytes, with memory governed by buffers and metadata, not by total file or body size. Large valid files and records are processed whole; paging and batching change how work is allocated without losing input.
 - Unchanged content is hashed only when the configured observation and integrity policy calls for verification, and results distinguish reused metadata from freshly verified bytes.
 - Blocking work (a slow hash, an HTTP request, a decoder) shares the scheduling of other sources, so it never stops the API or the writer.
 - Reads meet the interface [latency budgets](interfaces.md#latency-budgets), measured end to end including shown values and metadata.
 - The library benchmark ([benchmarks](testing.md#benchmarks)) runs one recorded synthetic corpus scaled in both file count and bytes: small files, an unchanged repeat, one changed file, one very large file, mixed media, independent sidecars, a large collection and many comparisons. It reports scan, hash, store, admission and derivation time separately; bytes read and written; files hashed; peak memory; cold and warm first-page, item-read and open latency; ranking time and fit status; cancellation latency; captured page bytes per day and retry backlog. Its baseline comparisons are a configured source binding against an explicit add, a first against an unchanged or restarted scan, 1× against 10× file size, and 1× against 10× item count.
 - No cap on items, bodies or comparisons stands in for this.
 
-Budgets (p95, warm, decided target): grid first page of 60 tiles over 1 M items and 10 M curation records ≤ 100 ms; facet counts for one field ≤ 20 ms; a warm thumbnail tile ≤ 5 ms and immutable by digest; an item page with 10,000 encounters ≤ 100 ms; a curation write visible ≤ 30 ms of writer time; a bulk tag of 10,000 items ≤ 2 s; a warm-started ranking fit over 10,000 items and 200,000 comparisons ≤ 150 ms; `judge next` over 10,000 items ≤ 50 ms; content search over 50 GB of extracted text ≤ 250 ms; open to player launch ≤ 150 ms. They rest on the item projection (one row per item with its encounter statistics, maintained from the commit log), the shown-value projection, roaring value bitmaps per shown tag and closed-set value (facets are bitmap intersections), a rank cache warm-started from the previous scores, and perceptual hashes in a radius index.
+Budgets (p95, warm, decided target): grid first page of 60 tiles over 1 M items and 10 M curation records ≤ 100 ms; facet counts for one field ≤ 20 ms; a warm thumbnail tile ≤ 5 ms and immutable by digest; an item page with 10,000 encounters ≤ 100 ms; a curation write visible ≤ 30 ms of writer time; a bulk tag of 10,000 items ≤ 2 s; a warm-started ranking fit over 10,000 items and 200,000 comparisons ≤ 150 ms; `judge next` over 10,000 items ≤ 50 ms; content search over 50 GB of extracted text ≤ 250 ms; open to player launch ≤ 150 ms. They rest on the item read model (one row per item with its encounter statistics, maintained from the commit log), the shown-value read model, roaring value bitmaps per shown tag and closed-set value (facets are bitmap intersections), a rank cache warm-started from the previous scores, and perceptual hashes in a radius index.
 
 ## Records
 

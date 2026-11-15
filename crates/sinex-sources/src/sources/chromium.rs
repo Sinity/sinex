@@ -70,7 +70,7 @@ fn profile(context: &RecordContext<'_>) -> Result<String, RecordError> {
 fn database_generation(context: &RecordContext<'_>) -> Result<String, RecordError> {
     context.manifest.detail("database_generation").as_str()
         .map(str::to_owned)
-        .ok_or_else(|| RecordError::new("Chromium database generation is unknown; retain this material and establish its original generation before replay"))
+        .ok_or_else(|| RecordError::new("Chromium database generation is unknown; keep this material and establish its original generation before replay"))
 }
 
 const VISIT_KNOWN: &[&str] = &[
@@ -272,7 +272,7 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
         name: "chromium",
         accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
-            owner: sinex_source_core::discovery::Owner::System,
+            captured_by: sinex_source_core::discovery::CapturedBy::System,
             locations: &[
                 sinex_source_core::discovery::Location {
                     root: "config",

@@ -255,7 +255,7 @@ async fn arbitrary_original_vectors_use_explicit_fallback_and_rebuild_after_prun
 }
 
 #[devkit::test]
-async fn vector_grants_and_projection_rollback_follow_the_source_parent(
+async fn vector_grants_and_read_model_rollback_follow_the_source_parent(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = AdmissionContext::connect(&db.url(None)).await.unwrap();

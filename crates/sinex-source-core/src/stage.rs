@@ -1,4 +1,4 @@
-//! Strict parser selection for `stage PATH`. A format declares the exact
+//! Strict parser selection for `stage PATH`. A format declares the
 //! structures it accepts: a database's tables, a text file's first line, an
 //! archive's member layout. Detection tests only these declarations; it never
 //! guesses from a file name, and a format that declares nothing is assigned

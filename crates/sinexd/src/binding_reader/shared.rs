@@ -117,10 +117,10 @@ pub(super) async fn read_shared(
     let Reading::Shared(shared) = &readers[pass.indices[slots[0]]].reading else {
         unreachable!("only bindings read in a shared pass are grouped")
     };
-    let native = shared.acquisition().cloned();
-    let acquisition_material = match native {
-        Some(native) => Some(
-            acquisition::retain(
+    let original = shared.acquisition().cloned();
+    let acquisition_material = match original {
+        Some(original) => Some(
+            acquisition::store_original(
                 conn,
                 blobs,
                 writer,
@@ -130,7 +130,7 @@ pub(super) async fn read_shared(
                 &readers[pass.indices[slots[0]]],
                 pass.class,
                 access,
-                native,
+                original,
                 totals[slots[0]].as_mut().map_err(|error| error.clone())?,
             )
             .await?,
@@ -225,13 +225,13 @@ pub(super) async fn read_shared(
         let b = &mut readers[index];
         let result = async {
             let mut acquired = delivery.acquired?;
-            if let (Some(native), Some(material)) =
+            if let (Some(original), Some(material)) =
                 (acquisition_material, acquired.material.as_mut())
             {
                 material
                     .manifest
                     .details
-                    .insert("acquisition_material".into(), serde_json::json!(native));
+                    .insert("acquisition_material".into(), serde_json::json!(original));
             }
             material.check()?;
             let (cursor, carry) = positions::load(conn, &b.binding.name)
@@ -243,7 +243,7 @@ pub(super) async fn read_shared(
                 .await?;
             let total = totals[slot].as_mut().map_err(|e| e.clone())?;
             let checked_stop = stop.clone();
-            crate::intake::Intake {
+            crate::submit::Submitter {
                 host: Some(&b.binding.settings.host),
                 writer,
                 run: *runs[pass.indices[slot]].as_ref().map_err(Clone::clone)?,

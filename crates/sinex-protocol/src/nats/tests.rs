@@ -233,7 +233,7 @@ fn recorded_continuations_are_optional_comparisons_without_an_identity_override(
         "source",
         "family",
         "allowed",
-        "owner_instance",
+        "daemon_instance",
         "scope",
     ] {
         let mut forged = request.clone();
@@ -246,7 +246,7 @@ fn recorded_continuations_are_optional_comparisons_without_an_identity_override(
 }
 
 #[devkit::test]
-fn backup_reply_authority_does_not_alias_any_ordinary_producer_inbox() {
+fn backup_reply_inbox_is_apart_from_producer_inboxes() {
     let subjects = Subjects::sinex();
     let (publish, subscribe) = subjects.producer_permissions("backup", None);
     assert!(

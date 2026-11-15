@@ -93,7 +93,7 @@ impl Broker {
 
     /// A copy of the broker's store, taken while it is stopped.
     fn copy_store(&mut self) -> tempfile::TempDir {
-        self.cut();
+        self.stop();
         let copy = tempfile::tempdir().unwrap();
         copy_tree(&self.root.path().join("jetstream"), copy.path());
         self.restore();
@@ -104,14 +104,14 @@ impl Broker {
     /// JetStream had not yet synced its newest messages. The stream keeps its
     /// name and creation time.
     fn lose_newest(&mut self, copy: &tempfile::TempDir) {
-        self.cut();
+        self.stop();
         let store = self.root.path().join("jetstream");
         std::fs::remove_dir_all(&store).unwrap();
         copy_tree(copy.path(), &store);
         self.restore();
     }
 
-    fn cut(&mut self) {
+    fn stop(&mut self) {
         let mut child = self.child.take().expect("the broker was running");
         child.kill().unwrap();
         let status = child.wait().unwrap();
@@ -265,7 +265,7 @@ async fn the_stream_equals_the_commit_log_across_an_outage(db: devkit::pg::TestD
     let first_id = first.id;
     for (round, outage_ms) in [(0, 0u64), (1, 300), (2, 1_500), (3, 0)] {
         if outage_ms > 0 {
-            broker.cut();
+            broker.stop();
         }
         let mut events = vec![
             imported(&format!("z{round}a"), round * 10),
@@ -350,7 +350,7 @@ async fn the_stream_equals_the_commit_log_across_an_outage(db: devkit::pg::TestD
     );
     assert_eq!(changes[1].1, sinex_model::ArchiveReason::Archive);
 
-    // Event messages keep their exact original positions and IDs.
+    // Event messages keep their original positions and IDs.
     let all = read_filtered(&direct, &stream, vec![subjects.confirmed_all()]).await;
     let mut ids = BTreeSet::new();
     for message in &all {

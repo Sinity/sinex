@@ -256,7 +256,7 @@ fn a_restarted_scan_keeps_item_keys_and_reads_only_changes() {
     assert_eq!(
         seen.len(),
         1,
-        "only the changed file is scan evidence: {seen:?}"
+        "only the changed file is scanned again: {seen:?}"
     );
     assert!(seen.iter().any(|copy| copy.path.ends_with("two.png")));
     std::fs::remove_dir_all(&root).unwrap();
@@ -363,7 +363,7 @@ fn requests_take_author_and_time_from_the_manifest() {
 }
 
 #[devkit::test]
-fn request_citation_facts_preserve_payload_identity_and_refuse_supplied_invalid_evidence() {
+fn request_citations_keep_payload_identity_and_refuse_invalid_facts() {
     let blob = format!("blake3:{}", blake3::hash(b"synthetic preview"));
     let record = LibraryRecord::Rendition(Rendition {
         rendition: "r".into(),
@@ -409,7 +409,7 @@ fn request_citation_facts_preserve_payload_identity_and_refuse_supplied_invalid_
     };
     assert!(
         old[0].owned_blobs.is_empty(),
-        "old absent facts do not invent media ownership"
+        "old absent facts do not invent media citations"
     );
     let citation = sinex_model::OwnedBlob {
         blob: blob.clone(),
@@ -645,7 +645,7 @@ fn ambiguous_equal_content_moves_create_new_items() {
 }
 
 #[devkit::test]
-fn scans_with_equal_timestamps_are_independent_evidence() {
+fn scans_with_equal_timestamps_are_independent() {
     let root = tmp();
     std::fs::write(root.join("one.txt"), "one").unwrap();
     let scanner = scan(&root);
@@ -718,7 +718,7 @@ fn one_missing_path_and_several_new_equal_copies_report_ambiguity_across_parts()
     let first = scanner.poll(&Value::Null, &mut state).unwrap();
     let old = read(&first, &ScanParser).remove(0);
     let (_, mut cursor) = stored(&first);
-    // Remove identity evidence, as when a file is moved between file systems.
+    // Remove the inode, as when a file is moved between file systems.
     state.files.get_mut("old.png").unwrap().inode = None;
     std::fs::remove_file(dir.path().join("old.png")).unwrap();
     for name in ["a.png", "b.png"] {

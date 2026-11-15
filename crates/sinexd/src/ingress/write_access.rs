@@ -1,4 +1,4 @@
-//! Write authority comes from transport configuration, independently of read grants.
+//! Write access comes from transport configuration, independently of read grants.
 use super::*;
 use crate::{Error, Result};
 use serde::Deserialize;
@@ -87,7 +87,7 @@ pub(crate) fn validate(grants: &fetch::ProducerGrants) -> Result<()> {
             let mut definitions = std::collections::BTreeMap::new();
             if catalog.name.is_empty() || catalog.version == 0 || catalog.kinds.is_empty() {
                 return Err(Error::internal(format!(
-                    "invalid indexed projection catalog for {identity}"
+                    "invalid indexed catalog for {identity}"
                 )));
             }
             for kind in &catalog.kinds {
@@ -96,7 +96,7 @@ pub(crate) fn validate(grants: &fetch::ProducerGrants) -> Result<()> {
                     .is_some()
                 {
                     return Err(Error::internal(format!(
-                        "duplicate kind version in indexed projection catalog for {identity}"
+                        "duplicate kind version in indexed catalog for {identity}"
                     )));
                 }
             }
@@ -137,7 +137,7 @@ pub(crate) fn validate(grants: &fetch::ProducerGrants) -> Result<()> {
                 || declaration.kinds.is_empty()
             {
                 return Err(Error::internal(format!(
-                    "source declaration is outside configured authority for {identity}"
+                    "source declaration is outside the configured write access for {identity}"
                 )));
             }
             for kind in &declaration.kinds {
@@ -156,7 +156,7 @@ pub(crate) fn validate(grants: &fetch::ProducerGrants) -> Result<()> {
                 || !matches(&write.kind_prefixes, &kind.kind.name)
             {
                 return Err(Error::internal(format!(
-                    "canonical declaration is outside configured authority for {identity}"
+                    "canonical declaration is outside the configured write access for {identity}"
                 )));
             }
         }
@@ -208,8 +208,8 @@ pub(crate) fn validate(grants: &fetch::ProducerGrants) -> Result<()> {
 #[cfg(test)]
 mod tests;
 
-/// The same current native source authority serves admission and optional
-/// retained-material header observations. Neither path registers old sources.
+/// One check of the current registered source serves admission and optional
+/// header observations of stored materials. Neither path registers old sources.
 pub(crate) async fn built_in_declaration(
     conn: &mut PgConnection,
     grants: &fetch::ProducerGrants,
@@ -219,20 +219,18 @@ pub(crate) async fn built_in_declaration(
     let write = write(grants, producer).map_err(|error| Check::Configuration(error.to_string()))?;
     if !matches(&write.source_prefixes, &source.name) {
         return Err(Check::Configuration(
-            "native source is outside the configured credential capability".into(),
+            "registered source is outside the configured credential capability".into(),
         ));
     }
     let declaration = sinex_store::source_declarations::load(conn, source)
         .await
         .map_err(|error| Check::Unavailable(error.to_string()))?
         .ok_or_else(|| {
-            Check::Configuration(
-                "native source version is not installed in the owner catalog".into(),
-            )
+            Check::Configuration("registered source version is not in the installed catalog".into())
         })?;
     if declaration.family != write.family {
         return Err(Check::Configuration(
-            "native source belongs to another configured family".into(),
+            "registered source belongs to another configured family".into(),
         ));
     }
     Ok(declaration)

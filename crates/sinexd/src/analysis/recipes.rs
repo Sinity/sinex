@@ -1,4 +1,4 @@
-//! The shipped recipes, maintained over the logical days of stored questions:
+//! The shipped recipes, maintained over the days of stored questions:
 //!
 //! - `correlations`: the declared family over the tracked metrics, with
 //!   Benjamini-Hochberg q-values (Lynchpin's `lifestyle_correlations`);
@@ -90,7 +90,7 @@ pub(super) fn input(p: &Panel, eligibility: Eligibility) -> MethodInput {
     input
 }
 
-/// Run a recipe over the logical days `from..=to`.
+/// Run a recipe over the days `from..=to`.
 pub(crate) async fn run(
     conn: &mut PgConnection,
     ctx: &Context,
@@ -115,9 +115,7 @@ pub(crate) async fn run(
     let payload = super::access::find(conn, "recipe.answer", &question.request)
         .await?
         .ok_or_else(|| {
-            Error::not_built(
-                "analysis answer is not materialized; submit its canonical request first",
-            )
+            Error::not_built("analysis answer is not materialized; submit its request first")
         })?;
     Ok(RecipeRun {
         definition: json!({"recipe_version":payload["recipe_version"],"method_versions":payload["method_versions"],"parameters":payload["parameters"],"day_setting":payload["day_setting"],"coverage_hash":payload["coverage_hash"]}),

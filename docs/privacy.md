@@ -110,7 +110,7 @@ A class is a named outcome the operator defines: an action plus the grants that 
 
 ### SQL reader privileges
 
-The SQL reader role receives the public event views and explicit registry and counter relations. It has no table or column access to raw payloads, configured rules, source cursors, wrapping keys, hashes used as keys, continuation signing material, host checkpoints or the database secret. Database preparation removes inherited public access to `pg_catalog.set_config` and grants execution to the writer and configured owner. Startup and upgrade refuse a database whose SQL reader can execute that function. This prevents a wrapped `SELECT` from changing its grant or role context through direct, dependent or materialized expressions.
+The SQL reader role receives the public event views and explicit registry and counter relations. It has no table or column access to raw payloads, configured rules, source cursors, wrapping keys, hashes used as keys, continuation signing material, host checkpoints or the database secret. Database preparation removes inherited public access to `pg_catalog.set_config` and grants execution to the writer and the configured database owner. Startup and upgrade refuse a database whose SQL reader can execute that function. This prevents a wrapped `SELECT` from changing its grant or role context through direct, dependent or materialized expressions.
 
 ## Sealing
 

@@ -129,7 +129,7 @@ async fn registration_is_atomic_and_a_reconnect_gets_the_saved_hashes(
             .refusal()
             .unwrap()
             .1
-            .contains("outside the configured logical family")
+            .contains("outside the configured family")
     );
     assert_eq!(
         h.count(
@@ -138,21 +138,21 @@ async fn registration_is_atomic_and_a_reconnect_gets_the_saved_hashes(
         .await,
         0
     );
-    let mut foreign = d.clone();
-    foreign.kind.name = "polylogue.message".into();
+    let mut other_family = d.clone();
+    other_family.kind.name = "polylogue.message".into();
     assert!(
         h.send(
             "example",
             &Ingress::RegisterKinds {
-                frame: "foreign".into(),
-                declarations: vec![foreign]
+                frame: "other-family".into(),
+                declarations: vec![other_family]
             }
         )
         .await
         .refusal()
         .unwrap()
         .1
-        .contains("outside the configured logical family")
+        .contains("outside the configured family")
     );
     for name in ["example..reading", "example.reading.", "example."] {
         let mut invalid = d.clone();
@@ -175,7 +175,7 @@ async fn registration_is_atomic_and_a_reconnect_gets_the_saved_hashes(
                 .refusal()
                 .unwrap()
                 .1
-                .contains("outside the configured logical family")
+                .contains("outside the configured family")
         );
         assert_eq!(
             h.count(&format!(

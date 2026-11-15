@@ -1,7 +1,7 @@
 //! Privacy rules against a real database: rules apply once, at admission, to
 //! source and derived events alike; a derived event is never below its parents'
 //! class; values of a class a caller is not granted never leave through the
-//! read views; a source never emits below its floor.
+//! read views; a source never emits below its minimum class.
 use super::*;
 use crate::privacy::{self, Action, NewRule};
 use crate::read_models::tests::catch_up_search_text;
@@ -252,31 +252,31 @@ async fn guarded_values_leave_only_with_the_grant(db: devkit::pg::TestDatabase) 
 }
 
 #[devkit::test]
-async fn class_verification_finds_events_below_a_raised_floor(db: devkit::pg::TestDatabase) {
+async fn class_verification_finds_events_below_a_raised_minimum(db: devkit::pg::TestDatabase) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let e = imported("terminal.zsh-history", "ls", record());
     admit_one(&mut conn, &batch(RunId::new(), vec![e])).await;
     let before = privacy::verify_classes(&mut conn).await.unwrap();
-    assert_eq!(before.below_floor, 0);
+    assert_eq!(before.below_minimum, 0);
     privacy::set_source_class(&mut conn, "terminal.zsh-history", Class::Guarded, "test")
         .await
         .unwrap();
     let after = privacy::verify_classes(&mut conn).await.unwrap();
-    assert_eq!(after.below_floor, 1);
+    assert_eq!(after.below_minimum, 1);
     assert_eq!(
         after.by_source,
         vec![("terminal.zsh-history".to_string(), 1)]
     );
-    // New readings never emit below the floor.
+    // New readings never emit below the minimum class.
     let e = imported("terminal.zsh-history", "pwd", record());
     admit_one(&mut conn, &batch(RunId::new(), vec![e])).await;
     assert_eq!(
         privacy::verify_classes(&mut conn)
             .await
             .unwrap()
-            .below_floor,
+            .below_minimum,
         1
     );
 }

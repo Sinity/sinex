@@ -5,8 +5,8 @@
 //!
 //! 1. the material's encoded bytes are staged under the producer's local
 //!    frame directory (`sinex_transport::frame_bytes`) and transferred to
-//!    Sinex; the producer waits for the verified durable material receipt
-//!    before sending anything that cites it;
+//!    Sinex; the producer waits for Sinex's verified acknowledgment of the
+//!    material before sending anything that cites it;
 //! 2. the events go in frames that each fit one NATS message;
 //! 3. only when every frame of a batch is acknowledged does the binding's
 //!    cursor (and parser carry) advance, in a state file next to the spool.
@@ -19,7 +19,7 @@
 //!
 //! Encoded custody travels in [`Ingress::Chunk`] frames on every host. A
 //! frame too large for one message is encoded in the same local custody
-//! format, and an [`Ingress::LargeFrame`] names its logical JSON identity.
+//! format, and an [`Ingress::LargeFrame`] names the identity of its decoded JSON.
 use sinex_transport::frame_bytes;
 mod staging;
 use staging::Snapshots;
@@ -73,7 +73,7 @@ fn submit_error(error: sinex_transport::producer::SubmitError) -> Error {
     match error {
         sinex_transport::producer::SubmitError::NoAck(frame) => Error::NoAck(frame),
         sinex_transport::producer::SubmitError::AckConflict{frame,..}=>Error::Refused {
-            frame,reason:"owner receipt belongs to different offered bytes; existing custody requires owner intervention".into(),kind:FrameRefusal::Conflict,recorded:true,
+            frame,reason:"the recorded acknowledgment belongs to different offered bytes; the stored frame needs the operator to intervene".into(),kind:FrameRefusal::Conflict,recorded:true,
         },
         sinex_transport::producer::SubmitError::Refused {
             frame,
@@ -89,8 +89,8 @@ fn submit_error(error: sinex_transport::producer::SubmitError) -> Error {
     }
 }
 
-/// The producer's local encoded custody root. Its frame directories retain
-/// bytes until an authenticated owner receipt confirms the logical submission.
+/// The producer's local encoded custody root. Its frame directories keep
+/// bytes until an authenticated acknowledgment from Sinex confirms the frame.
 #[derive(Clone)]
 pub struct Store(PathBuf);
 impl Store {
@@ -133,14 +133,14 @@ impl Position {
         }
     }
 
-    /// Write durably: a temporary file, synced, then renamed over the old one.
+    /// Write a temporary file, sync it to disk, then rename it over the old one.
     pub fn save(&self, dir: &Path, binding: &str) -> Result<(), Error> {
-        write_durably(&Self::path(dir, binding), self)
+        write_synced(&Self::path(dir, binding), self)
     }
 }
 
 /// A batch being sent: its frames and the position after them. Written
-/// durably before the first frame goes out and removed once the position is
+/// and synced to disk before the first frame goes out and removed once the position is
 /// saved.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct UnacknowledgedFrames {
@@ -207,7 +207,7 @@ impl UnacknowledgedFrames {
 
     fn save(&self, dir: &Path, binding: &str) -> Result<(), Error> {
         let path = Self::path(dir, binding);
-        write_durably(&path, self)
+        write_synced(&path, self)
     }
 
     fn clear(dir: &Path, binding: &str) -> Result<(), Error> {
@@ -231,7 +231,7 @@ fn read_state<T: serde::de::DeserializeOwned>(
     serde_json::from_reader(std::io::BufReader::new(reader))
         .map_err(|error| Error::State(path.to_owned(), error.to_string()))
 }
-fn write_durably(path: &Path, value: &impl Serialize) -> Result<(), Error> {
+fn write_synced(path: &Path, value: &impl Serialize) -> Result<(), Error> {
     let err = |error: &dyn std::fmt::Display| Error::State(path.to_owned(), error.to_string());
     let directory = path
         .parent()
@@ -283,8 +283,8 @@ pub struct Producer {
 }
 
 impl Producer {
-    /// Hold this gate across the complete position, poll, produce and raw-spool
-    /// retirement operation. Acquisition runs independently of this gate.
+    /// Hold this lock across the whole position, poll, produce and spool-removal
+    /// operation. Acquisition runs independently of this lock.
     pub fn publication(&self) -> sinex_transport::backup::Publication {
         self.publication.clone()
     }
@@ -395,7 +395,7 @@ impl Producer {
                         .first()
                         .map_or(binding, Ingress::frame)
                         .to_owned(),
-                    reason: "saved terminal frame refusal requires owner intervention".into(),
+                    reason: "saved terminal frame refusal needs the operator to intervene".into(),
                     recorded: true,
                     kind,
                 });
@@ -413,8 +413,8 @@ impl Producer {
                         .recorded(&names)
                         .await?
                         .into_iter()
-                        .map(|receipt| {
-                            sinex_transport::producer::check_ack(&prepared, receipt)
+                        .map(|ack| {
+                            sinex_transport::producer::check_ack(&prepared, ack)
                                 .map_err(submit_error)
                         })
                         .collect::<Result<Vec<_>, _>>()?;
@@ -569,7 +569,7 @@ impl Producer {
                             &Position::load(state, binding)?.cursor,
                         );
                     }
-                    // This position owns the failure and keeps the original spool ranges.
+                    // This position records the failure and keeps the original spool ranges.
                     // Dependent events are not sent for an unregistered material.
                     batch.reporting_failure = failed_events.is_some();
                     batch.frames = failed_events.into_iter().collect();
@@ -705,7 +705,7 @@ impl Producer {
         Ok(frame)
     }
 
-    /// Transfer the encoded frame custody, then submit its logical envelope.
+    /// Transfer the encoded frame custody, then submit the frame message.
     async fn deliver(&mut self, frame: Ingress, shared: &Store) -> Result<Acknowledgment, Error> {
         let root = self.frame_root(shared).to_owned();
         if self.upload.is_some() {
@@ -1014,7 +1014,7 @@ fn failed_events(frames: &[Ingress], reason: &str) -> Result<Ingress, Error> {
         if let Some(declared) = declared {
             if source.as_ref().is_some_and(|previous| previous != declared) {
                 return Err(Error::Configuration(
-                    "one failed batch contains several native sources".into(),
+                    "one failed batch contains several sources".into(),
                 ));
             }
             source = Some(declared.clone());

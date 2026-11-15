@@ -1,4 +1,4 @@
-//! Unicode paths keep their spelling. Other paths carry their native bytes.
+//! Unicode paths keep their spelling. Other paths carry their raw bytes.
 use super::DriverError;
 use std::ffi::OsString;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
@@ -34,7 +34,7 @@ pub(super) fn display(path: &Path) -> String {
     text
 }
 
-pub(super) fn add_native(member: &mut serde_json::Value, path: &Path) {
+pub(super) fn add_path_bytes(member: &mut serde_json::Value, path: &Path) {
     use base64::Engine;
     if path.to_str().is_none() {
         member["native_path_bytes"] = base64::engine::general_purpose::STANDARD
@@ -43,7 +43,7 @@ pub(super) fn add_native(member: &mut serde_json::Value, path: &Path) {
     }
 }
 
-pub(super) fn native(member: &sinex_model::Member) -> Result<PathBuf, DriverError> {
+pub(super) fn member_path(member: &sinex_model::Member) -> Result<PathBuf, DriverError> {
     use base64::Engine;
     match member.details.get("native_path_bytes") {
         None => Ok(PathBuf::from(&member.path)),
@@ -52,7 +52,7 @@ pub(super) fn native(member: &sinex_model::Member) -> Result<PathBuf, DriverErro
                 .as_str()
                 .and_then(|text| base64::engine::general_purpose::STANDARD.decode(text).ok())
                 .ok_or_else(|| {
-                    DriverError::Cursor("directory native path bytes are invalid".into())
+                    DriverError::Cursor("directory raw path bytes are invalid".into())
                 })?;
             Ok(PathBuf::from(OsString::from_vec(bytes)))
         }

@@ -5,14 +5,14 @@ use sqlx::Connection;
 async fn stored(conn: &mut PgConnection, blobs: &Blobs, bytes: &[u8]) -> String {
     let name = blobs.put(bytes).unwrap();
     let mut tx = conn.begin().await.unwrap();
-    let receipt = blobs.commit_extents(&mut tx).await.unwrap();
+    let extent_commit = blobs.commit_extents(&mut tx).await.unwrap();
     tx.commit().await.unwrap();
-    blobs.acknowledge(receipt).unwrap();
+    blobs.acknowledge(extent_commit).unwrap();
     name
 }
 
 #[devkit::test]
-async fn two_durable_holds_protect_a_prefix_across_restart_until_last_release(
+async fn two_holds_protect_a_prefix_across_restart_until_last_release(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
@@ -137,7 +137,7 @@ async fn a_lost_exporter_cannot_be_replaced_by_reusing_its_hold(db: devkit::pg::
             .is_none()
     );
     // A later writer boundary makes a fresh snapshot under the old hold invalid,
-    // even though its durable row and protected extents remain present.
+    // even though its stored row and protected extents remain present.
     super::hold(&mut conn, OperationId::new(), "test")
         .await
         .unwrap();
@@ -149,7 +149,7 @@ async fn a_lost_exporter_cannot_be_replaced_by_reusing_its_hold(db: devkit::pg::
 }
 
 #[devkit::test]
-async fn release_is_an_attributed_committed_operation_and_an_exact_retry(
+async fn release_is_an_attributed_committed_operation_and_an_identical_retry(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();

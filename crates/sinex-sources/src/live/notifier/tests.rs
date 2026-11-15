@@ -2,7 +2,7 @@ use super::*;
 use std::os::unix::fs::PermissionsExt;
 
 #[devkit::test]
-async fn notifier_receives_the_binding_and_exact_refusal_as_one_argument() {
+async fn notifier_receives_the_binding_and_refusal_as_one_argument() {
     let dir = tempfile::tempdir().unwrap();
     let program = dir.path().join("busctl");
     std::fs::write(

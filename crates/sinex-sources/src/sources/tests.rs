@@ -3,7 +3,7 @@ use super::*;
 #[devkit::test]
 fn every_source_belongs_to_exactly_one_format() {
     for spec in specs() {
-        let owners: Vec<&str> = formats()
+        let readers: Vec<&str> = formats()
             .iter()
             .filter(|k| {
                 (k.specs)()
@@ -13,9 +13,9 @@ fn every_source_belongs_to_exactly_one_format() {
             .map(|k| k.name)
             .collect();
         assert_eq!(
-            owners.len(),
+            readers.len(),
             1,
-            "{} with {}: read by {owners:?}",
+            "{} with {}: read by {readers:?}",
             spec.name,
             spec.parser
         );

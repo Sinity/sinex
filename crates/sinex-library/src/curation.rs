@@ -80,7 +80,8 @@ pub fn uniqueness(kind: CurationKind) -> Option<Uniqueness> {
     }
 }
 
-/// The canonical text of a target inside a uniqueness slot.
+/// The text standing for a target inside a uniqueness slot: its JSON.
+
 pub fn target_text(target: &Target) -> String {
     serde_json::to_string(target).expect("targets serialize")
 }

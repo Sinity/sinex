@@ -77,8 +77,8 @@ pub(crate) async fn run(
     drive(writer, &op, Progress::default(), source).await
 }
 
-/// Automatic retirement continues its existing source operation after restart.
-pub(crate) async fn retire_source(
+/// Archiving a removed producer's outputs continues its existing source operation after restart.
+pub(crate) async fn archive_removed_source(
     read: &mut PgConnection,
     writer: &WriterHandle,
     source: String,

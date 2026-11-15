@@ -135,7 +135,7 @@ impl SpoolWriter {
         Ok(())
     }
 
-    /// Make everything appended so far durable.
+    /// Sync everything appended so far to disk.
     pub fn sync(&mut self) -> std::io::Result<()> {
         if self.unsynced > 0 {
             self.file.sync_data()?;

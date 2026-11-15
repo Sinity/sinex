@@ -80,7 +80,7 @@ async fn refuse_other_version(db: devkit::pg::TestDatabase, derive: bool) {
         error.as_ref().is_some_and(|e| e
             .to_string()
             .contains(&format!("schema version {}", sinex_schema::VERSION + 1))),
-        "ordinary startup must refuse another schema version: {error:?}"
+        "startup must refuse another schema version: {error:?}"
     );
     assert_eq!(state(&mut conn).await, before);
     assert!(sinex_schema::apply(&mut conn).await.is_err());
@@ -163,9 +163,7 @@ async fn derivation_claims_the_writer_for_its_entire_lifetime(db: devkit::pg::Te
 }
 
 #[devkit::test]
-async fn empty_database_needs_explicit_initialization_before_ordinary_startup(
-    db: devkit::pg::TestDatabase,
-) {
+async fn empty_database_needs_explicit_initialization_before_startup(db: devkit::pg::TestDatabase) {
     let configuration = sinex_derivations::Configuration::default();
     let url = db.url(None);
     let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&url)
@@ -191,10 +189,7 @@ async fn empty_database_needs_explicit_initialization_before_ordinary_startup(
             false
         }
     };
-    assert!(
-        refused,
-        "ordinary startup must not initialize an empty database"
-    );
+    assert!(refused, "startup must not initialize an empty database");
     assert!(
         crate::local_runner(
             &url,

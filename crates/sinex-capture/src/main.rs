@@ -85,7 +85,7 @@ async fn run(cli: Cli) -> Result<(), String> {
         producer: cli.producer.clone(),
         upload: cli.upload,
     };
-    use sinex_sources::discovery::{self, Configuration, DiscoveryContext, Owner};
+    use sinex_sources::discovery::{self, CapturedBy, Configuration, DiscoveryContext};
     let configuration = cli
         .sources
         .as_deref()
@@ -102,9 +102,9 @@ async fn run(cli: Cli) -> Result<(), String> {
         &store,
         &positions,
         || {
-            let mut plan = discovery::captures(&context, Owner::System)?;
+            let mut plan = discovery::captures(&context, CapturedBy::System)?;
             plan.bindings
-                .extend(discovery::captures(&context, Owner::Session)?.bindings);
+                .extend(discovery::captures(&context, CapturedBy::Session)?.bindings);
             Ok(plan)
         },
         Duration::from_secs(cli.every),

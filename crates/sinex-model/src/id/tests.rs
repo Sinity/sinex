@@ -1,7 +1,7 @@
 use super::*;
 
 #[devkit::test]
-fn ts_coided_is_the_minting_time() {
+fn ts_coided_is_the_creation_time() {
     let before = time::OffsetDateTime::now_utc();
     let id = EventId::new();
     let after = time::OffsetDateTime::now_utc();
@@ -21,16 +21,16 @@ fn ids_serialize_as_bare_uuids() {
 }
 
 #[devkit::test]
-fn a_token_lives_from_its_mint_time_to_its_holders_end() {
+fn token_lives_from_its_creation_to_its_holders_end() {
     let token = "01a1998e-447b-7001-8000-000000000001";
-    let minted = 0x01a1_998e_447b_i64;
-    assert_eq!(uuid7_millisecond(token), Some(minted));
+    let made_at = 0x01a1_998e_447b_i64;
+    assert_eq!(uuid7_millisecond(token), Some(made_at));
     assert_eq!(
         uuid7_millisecond("01a1998e-447b-4001-8000-000000000001"),
         None
     );
     assert_eq!(uuid7_millisecond("not a token"), None);
-    let start = i128::from(minted) * 1_000_000;
+    let start = i128::from(made_at) * 1_000_000;
     let lifetime = TokenLifetime {
         length: Some("duration_ns"),
         slack_ns: 2_000_000_000,
@@ -44,7 +44,7 @@ fn a_token_lives_from_its_mint_time_to_its_holders_end() {
             start + 3_600_000_000_000 + 2_000_000_000
         )
     );
-    // The command's end, with no length, reaches back to the mint time.
+    // The command's end, with no length, reaches back to when the token was made.
     let end = start + 7_000_000_000;
     assert_eq!(
         lifetime.bounds(token, end, &serde_json::json!({})),

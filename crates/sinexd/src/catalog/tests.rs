@@ -28,7 +28,9 @@ fn every_source_has_discovery_and_shared_formats_keep_their_descriptions() {
                 "{}",
                 source["name"]
             );
-            assert!(description["owner"] == "system" || description["owner"] == "session");
+            assert!(
+                description["captured_by"] == "system" || description["captured_by"] == "session"
+            );
         }
     }
     let clipboard = sources

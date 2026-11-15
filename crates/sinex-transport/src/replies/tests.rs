@@ -256,7 +256,7 @@ async fn a_wrong_flow_ack_does_not_acknowledge_another_stream_or_extend_its_dead
         .publish(
             first.reply.unwrap(),
             serde_json::to_vec(&FlowAck::Accepted {
-                stream: "foreign".into(),
+                stream: "other-stream".into(),
                 sequence: 0,
             })
             .unwrap()

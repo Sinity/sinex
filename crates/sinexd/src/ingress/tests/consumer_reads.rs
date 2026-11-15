@@ -87,8 +87,8 @@ async fn confirmed_consumers_filter_metadata_and_replay_a_restored_index(
         .await
         .unwrap();
     js.publish(
-        h.subjects.confirmed_event("open", "foreign.kind"),
-        serde_json::to_vec(&json!({"private":"foreign metadata"}))
+        h.subjects.confirmed_event("open", "other.kind"),
+        serde_json::to_vec(&json!({"private":"other metadata"}))
             .unwrap()
             .into(),
     )
@@ -177,7 +177,7 @@ async fn confirmed_consumers_filter_metadata_and_replay_a_restored_index(
     assert_eq!(
         consumer.info().await.unwrap().delivered.consumer_sequence,
         delivered,
-        "status does not reset the native durable"
+        "status does not reset the NATS durable consumer"
     );
     let reply = provision(&h, "replica", head, completion.clone()).await;
     assert!(
@@ -192,7 +192,7 @@ async fn confirmed_consumers_filter_metadata_and_replay_a_restored_index(
         jetstream::consumer::DeliverPolicy::ByStartSequence {
             start_sequence: completion.as_ref().unwrap().stream_sequence,
         },
-        "restart reoffers exactly the completion, without original history"
+        "restart offers again from the completion marker, without earlier history"
     );
     let mut batch = current
         .fetch()

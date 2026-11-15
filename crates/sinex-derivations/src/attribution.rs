@@ -1,6 +1,6 @@
-//! Exact project ownership from recorded acts and deployment-owned repository keys.
+//! Project ownership of time from recorded acts and the configured repository keys.
 //! Ambiguous owners conserve time as unallocated; titles never establish ownership.
-use crate::activity::evidence;
+use crate::activity::cite;
 use crate::derived_event::derived;
 use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed};
 use serde_json::{Value, json};
@@ -195,7 +195,7 @@ impl Keyed for ProjectSpans {
                         scope: json!(scopes).to_string(),
                         started_at: pair[0],
                         ended_at: pair[1],
-                        activity_spans: active.iter().map(|(event, _)| evidence(event)).collect(),
+                        activity_spans: active.iter().map(|(event, _)| cite(event)).collect(),
                         agency: agency.clone(),
                         shares: owner
                             .clone()

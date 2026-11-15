@@ -5,7 +5,7 @@ use sinex_source_core::{Limits, drivers};
 use sinex_sources::sources::zsh;
 
 #[devkit::test]
-async fn sealed_material_encrypts_every_chunk_in_the_actual_admission_pipeline(
+async fn sealed_material_encrypts_every_chunk_in_the_admission_pipeline(
     db: devkit::pg::TestDatabase,
 ) {
     let url = db.url(None);

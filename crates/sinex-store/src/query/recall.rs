@@ -1,5 +1,5 @@
 //! Recall selects its shell session through the same compiler and commit view
-//! as ordinary queries. Its bounds describe recorded extent, not a proven end.
+//! as other queries. Its bounds describe recorded extent, not a known end.
 use super::*;
 use sinex_model::query::{Alias, Op, SortBy, SortKey, Value};
 
@@ -308,7 +308,7 @@ async fn mark_links(
     Ok(Json::Object(links))
 }
 
-/// Questions, definitions and presentation products are not activity evidence.
+/// Questions, definitions and presentation products are not activity.
 pub(super) fn bookkeeping_types() -> &'static [&'static str] {
     &[
         <sinex_model::event_types::query::Saved as sinex_model::EventPayload>::EVENT_TYPE,
@@ -357,7 +357,7 @@ fn record_reference(row: &Json) -> Result<Json> {
 }
 
 impl Selection {
-    pub(super) fn retained(&self, source: &Source) -> Result<Json> {
+    pub(super) fn to_stored(&self, source: &Source) -> Result<Json> {
         Ok(match self {
             Self::NoKnownSession => serde_json::json!({"kind":"no_session"}),
             Self::NoKnownMark => serde_json::json!({"kind":"no_mark"}),

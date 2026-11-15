@@ -160,8 +160,8 @@ pub struct InterruptBudgetView {
     pub window_ms: i64,
 }
 
-/// The public context carries limits and actual budget use, never delivery
-/// identities, notification attempts, rule evidence or outlet commands.
+/// The public context carries limits and budget use, never delivery
+/// identities, notification attempts, rule match details or outlet commands.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum HostPolicyView {
@@ -206,7 +206,7 @@ pub async fn public_host_policy(
         .map_err(|_| Error::Invalid("host policy observation clock exceeds milliseconds".into()))?;
     if now < saved.checkpoint.evaluator.now() {
         return Ok(HostPolicyView::Pending {
-            reason: "owner_clock_precedes_checkpoint".into(),
+            reason: "daemon_clock_precedes_checkpoint".into(),
         });
     }
     let budget = &saved.checkpoint.host.budget;

@@ -1,5 +1,5 @@
 //! The media library end to end, against a real database and the real writer:
-//! intake, curation, the selection policy, ranking, opening, previews, imports,
+//! adding items, curation, the selection policy, ranking, opening, previews, imports,
 //! and item continuity across renames and edits.
 use crate::Result;
 use crate::library::{Library, dispatch};
@@ -62,7 +62,7 @@ pub(super) async fn world(db: devkit::pg::TestDatabase) -> World {
         .unwrap();
     let root = base.join("library");
     std::fs::create_dir_all(root.join("sub")).unwrap();
-    // Intake records resolved paths; TMPDIR may be a borrowed /proc/fd alias.
+    // Adding items records resolved paths; TMPDIR may be a borrowed /proc/fd alias.
     let root = std::fs::canonicalize(root).unwrap();
     World {
         _db: db,
@@ -428,7 +428,7 @@ async fn the_library_end_to_end(db: devkit::pg::TestDatabase) {
     // Continuity: a rename keeps the item and its curation; an edit in place
     // is a new revision; a copy elsewhere is a different item.
     // The sidecar has been imported; without a.png beside it, it would be
-    // an ordinary file of its own.
+    // a plain file of its own.
     std::fs::remove_file(w.root.join("a.png.json")).unwrap();
     let moved = w.root.join("sub/a-renamed.png");
     std::fs::rename(&a, &moved).unwrap();
@@ -615,7 +615,7 @@ async fn archiving_scans_recomputes_items_and_original_renditions(db: devkit::pg
     std::fs::write(&file, bytes).unwrap();
     w.ok(add).await;
     let (second, _) = copy(&mut w.conn, &file).await;
-    assert_ne!(first, second, "changed file facts supply new evidence");
+    assert_ne!(first, second, "changed file facts make a new observation");
     if ffmpeg() {
         w.ok(Request::LibraryPreview { item: item.clone() }).await;
     }

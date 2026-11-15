@@ -78,7 +78,7 @@ pub struct CommandFused {
     pub session: Option<String>,
     pub duration_ns: Option<i64>,
     pub exit_code: Option<i64>,
-    /// The execution token the shell integration minted for this run.
+    /// The execution token the shell integration made for this run.
     pub execution: Option<String>,
     pub members: Vec<Member>,
     pub basis: Basis,

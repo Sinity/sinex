@@ -63,15 +63,15 @@ struct FamilyText {
     keyed_by: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     spread_ms: Option<u64>,
-    /// Identifier namespaces whose values are UUIDv7 tokens minted when the
+    /// Identifier namespaces whose values are UUIDv7 tokens made when the
     /// occurrence started, carried in a top-level field of the same name by
     /// every member that has them. Their partners are read wherever they
     /// fall in time.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     tokens: Vec<String>,
     /// The family field, carried in a top-level field of the same name,
-    /// holding how long an occurrence lasted in nanoseconds: with the mint
-    /// time, it bounds where a token's partners can lie.
+    /// holding how long an occurrence lasted in nanoseconds: with the time
+    /// the token was made, it bounds where a token's partners can lie.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     token_length: Option<String>,
     agent_decisions: AgentDecisions,
@@ -234,7 +234,7 @@ pub struct Family {
     /// occurrence are expected to be. Consumers that read a period read this
     /// far beyond it; copies further apart can count once in each period.
     pub spread_ns: Option<i128>,
-    /// Identifier namespaces carrying start-minted UUIDv7 tokens, each the
+    /// Identifier namespaces carrying UUIDv7 tokens made at the start, each the
     /// name of the top-level field that carries it.
     pub tokens: Vec<&'static str>,
     /// The family field holding an occurrence's length, which bounds a
@@ -496,10 +496,10 @@ fn family(text: &FamilyText) -> Result<Family, String> {
         }
     }
     input_types.push(sinex_model::event_types::duplicate::Duplicate::EVENT_TYPE);
-    let canonical = serde_json::to_vec(text).map_err(|e| e.to_string())?;
+    let declaration_json = serde_json::to_vec(text).map_err(|e| e.to_string())?;
     let mut hash = blake3::Hasher::new();
     hash.update(&text.version.to_le_bytes());
-    hash.update(&canonical);
+    hash.update(&declaration_json);
     let version = 1
         + (u32::from_le_bytes(
             hash.finalize().as_bytes()[..4]

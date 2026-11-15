@@ -1,4 +1,5 @@
-//! Ordered, authenticated-inbox JSON reply framing. No frame represents a receipt on its own.
+//! Ordered JSON reply framing over an authenticated inbox. A reply is complete
+//! only at its `End` frame.
 use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]

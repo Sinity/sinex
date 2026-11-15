@@ -164,7 +164,7 @@ table!(RUNS, RunField, Run, [] {
     Failed = ("failed", FieldType::Integer, "records that failed"),
 });
 table!(SOURCES, SourceField, Source, [] {
-    Continuity = ("continuity", FieldType::Enum(&["run_lifetimes", "unknown"]), "continuity evidence"),
+    Continuity = ("continuity", FieldType::Enum(&["run_lifetimes", "unknown"]), "how run continuity is known"),
     Gaps = ("gaps", FieldType::Integer, "gaps between recorded live runs"),
     Drift = ("drift", FieldType::Json, "recorded payload schema changes"),
     RecordFailures = ("record_failures", FieldType::Integer, "records that failed to parse"),

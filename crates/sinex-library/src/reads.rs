@@ -1,5 +1,6 @@
 //! Reading items, copies, renditions and views from live events. These
-//! records are ordinary events, so "current" is the live reading of each
+//! records are events like any other, so "current" is the live reading of each
+
 //! record's key; nothing is stored beside them. Curation records follow the
 //! authored rules instead ([`crate::curation`]). The statements are the store's
 //! generic payload reads (`sinex_store::payloads`); this module names the

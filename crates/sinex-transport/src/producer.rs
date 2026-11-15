@@ -9,7 +9,7 @@ pub enum SubmitError {
     Transport(String),
     #[error(transparent)]
     Reply(#[from] crate::replies::ReplyError),
-    #[error("no durable receipt for frame {0}")]
+    #[error("no acknowledgment for frame {0}")]
     NoAck(String),
     #[error("Sinex refused encoded custody frame {frame}: {reason}")]
     Refused {
@@ -17,16 +17,16 @@ pub enum SubmitError {
         reason: String,
         kind: sinex_model::FrameRefusal,
     },
-    /// The authenticated owner recorded a different logical body under this
-    /// producer's exact frame name. This evidence is not an ACK for the offer.
+    /// Sinex recorded a different frame body under this producer's frame
+    /// name. The recorded acknowledgment is not an acknowledgment of the offer.
     #[error("Sinex recorded different bytes for frame {frame}")]
     AckConflict {
         frame: String,
         offered_hash: String,
-        receipt: Box<Acknowledgment>,
+        ack: Box<Acknowledgment>,
     },
 }
-/// Retrieve every matching owned receipt through native catalog pages.
+/// Retrieve every matching recorded acknowledgment, page by page.
 /// This eager convenience method owns the resulting DTOs; callers needing a lazy traversal may request RecordedPage directly.
 pub async fn recorded(
     client: &Client,
@@ -42,7 +42,7 @@ pub async fn recorded(
         ..Default::default()
     };
     let empty_bytes = serde_json::to_vec(&query)
-        .expect("receipt selectors serialize")
+        .expect("acknowledgment selectors serialize")
         .len();
     let mut used = empty_bytes;
     for (frame, number) in frames
@@ -66,7 +66,7 @@ pub async fn recorded(
         if used + length + comma > client.server_info().max_payload {
             if query.frames.is_empty() && query.numbers.is_empty() {
                 return Err(SubmitError::Transport(
-                    "a receipt selector exceeds the server request budget".into(),
+                    "an acknowledgment selector exceeds the server request budget".into(),
                 ));
             }
             groups.push(query);
@@ -83,7 +83,7 @@ pub async fn recorded(
         });
         if used + length + comma > client.server_info().max_payload {
             return Err(SubmitError::Transport(
-                "a receipt selector exceeds the server request budget".into(),
+                "an acknowledgment selector exceeds the server request budget".into(),
             ));
         }
         if let Some(frame) = frame {
@@ -97,7 +97,7 @@ pub async fn recorded(
     if !query.frames.is_empty() || !query.numbers.is_empty() {
         groups.push(query);
     }
-    let mut receipts = Vec::new();
+    let mut acks = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for mut query in groups {
         query.after = 0;
@@ -110,25 +110,25 @@ pub async fn recorded(
                 idle,
             )
             .await?;
-            receipts.extend(
+            acks.extend(
                 page.acknowledgments
                     .into_iter()
-                    .filter(|receipt| seen.insert(receipt.frame.clone())),
+                    .filter(|ack| seen.insert(ack.frame.clone())),
             );
             match page.next {
                 Some(next) if next > query.after => query.after = next,
                 Some(_) => {
                     return Err(SubmitError::Transport(
-                        "receipt page did not advance".into(),
+                        "acknowledgment page did not advance".into(),
                     ));
                 }
                 None => break,
             }
         }
     }
-    Ok(receipts)
+    Ok(acks)
 }
-/// The frozen logical JSON byte identity survives a LargeFrame envelope.
+/// The hash of the frame's JSON bytes; a LargeFrame carries it as its blob.
 pub fn content_hash(frame: &Ingress) -> Result<String, SubmitError> {
     if let Ingress::LargeFrame { blob, .. } = frame {
         return Ok(blob.clone());
@@ -137,53 +137,55 @@ pub fn content_hash(frame: &Ingress) -> Result<String, SubmitError> {
         serde_json::to_vec(frame).map_err(|error| SubmitError::Transport(error.to_string()))?;
     Ok(format!("blake3:{}", blake3::hash(&bytes).to_hex()))
 }
-/// Resolve an owned receipt fetched on this authenticated producer's RPC.
-/// A conflicting prior receipt is evidence only, never admission of the offer.
-pub fn check_ack(frame: &Ingress, receipt: Acknowledgment) -> Result<Acknowledgment, SubmitError> {
-    check_ack_for(frame, receipt, content_hash(frame)?, None)
+/// Check an acknowledgment fetched on this authenticated producer's request
+/// subject. A conflicting earlier acknowledgment is reported, never taken as
+/// admission of the offer.
+pub fn check_ack(frame: &Ingress, ack: Acknowledgment) -> Result<Acknowledgment, SubmitError> {
+    check_ack_for(frame, ack, content_hash(frame)?, None)
 }
 
-// Only the submitter has the exact transmitted envelope digest. Recovered
-// receipts without that evidence must retain the offered frame identity.
+// Only the submitter knows the digest of the envelope it sent. Recovered
+// acknowledgments without that digest must name the offered frame.
 fn check_ack_for(
     frame: &Ingress,
-    receipt: Acknowledgment,
+    ack: Acknowledgment,
     expected: String,
     transmitted_malformed: Option<&str>,
 ) -> Result<Acknowledgment, SubmitError> {
     let invalid_name = frame.frame().is_empty() || frame.frame().contains('\0');
     let correlated_malformed = invalid_name
-        && transmitted_malformed == Some(receipt.frame.as_str())
-        && receipt
+        && transmitted_malformed == Some(ack.frame.as_str())
+        && ack
             .refusal()
             .is_some_and(|(kind, _)| kind == sinex_model::FrameRefusal::Malformed)
-        && receipt.number > 0
-        && receipt.content_hash.as_deref() == Some(expected.as_str());
-    if receipt.frame != frame.frame() && !correlated_malformed {
+        && ack.number > 0
+        && ack.content_hash.as_deref() == Some(expected.as_str());
+    if ack.frame != frame.frame() && !correlated_malformed {
         return Err(SubmitError::Refused {
             frame: frame.frame().into(),
-            reason: "receipt_frame_identity_mismatch".into(),
+            reason: "ack_frame_identity_mismatch".into(),
             kind: sinex_model::FrameRefusal::Conflict,
         });
     }
-    if receipt.content_hash.as_deref() != Some(expected.as_str()) {
-        if receipt.number <= 0 {
+    if ack.content_hash.as_deref() != Some(expected.as_str()) {
+        if ack.number <= 0 {
             return Err(SubmitError::NoAck(frame.frame().into()));
         }
         return Err(SubmitError::AckConflict {
             frame: frame.frame().into(),
             offered_hash: expected,
-            receipt: Box::new(receipt),
+            ack: Box::new(ack),
         });
     }
-    Ok(receipt)
+    Ok(ack)
 }
 
 #[cfg(test)]
 mod tests;
 
 /// Submit an already prepared ingress frame. Large bodies use the existing LargeFrame byte transport.
-/// Broadcast hints never establish durability: only a complete integrity-verified owned receipt is returned.
+/// A broadcast hint never shows that a frame was saved: only a complete,
+/// integrity-checked acknowledgment recorded by Sinex is returned.
 pub async fn submit_frame(
     client: &Client,
     subjects: &Subjects,
@@ -198,7 +200,7 @@ pub async fn submit_frame(
     let bytes =
         serde_json::to_vec(frame).map_err(|error| SubmitError::Transport(error.to_string()))?;
     let malformed = format!("malformed/{}", blake3::hash(&bytes).to_hex());
-    let logical_hash = match frame {
+    let body_hash = match frame {
         Ingress::LargeFrame { blob, .. } => blob.clone(),
         _ => format!("blake3:{}", blake3::hash(&bytes).to_hex()),
     };
@@ -208,18 +210,18 @@ pub async fn submit_frame(
         .map_err(|error| SubmitError::Transport(error.to_string()))?
         .await
         .map_err(|error| SubmitError::Transport(error.to_string()))?;
-    let correlated = |receipt: &Acknowledgment| {
-        receipt.frame == id
-            || (receipt.frame == malformed
-                && receipt
+    let correlated = |ack: &Acknowledgment| {
+        ack.frame == id
+            || (ack.frame == malformed
+                && ack
                     .refusal()
                     .is_some_and(|(kind, _)| kind == sinex_model::FrameRefusal::Malformed))
     };
     if published.duplicate {
         // JetStream can acknowledge an already consumed frame without
         // delivering it again, so no new broadcast hint is required. Only
-        // the authenticated owner's exact receipt establishes admission.
-        if let Some(receipt) = recorded(
+        // the acknowledgment Sinex recorded for this frame shows admission.
+        if let Some(ack) = recorded(
             client,
             subjects,
             producer,
@@ -231,10 +233,10 @@ pub async fn submit_frame(
         .into_iter()
         .find(correlated)
         {
-            return check_ack_for(frame, receipt, logical_hash, Some(&malformed));
+            return check_ack_for(frame, ack, body_hash, Some(&malformed));
         }
         // A duplicate may still be queued or awaiting admission. With no
-        // owned receipt, retain the ordinary hint and final lookup path.
+        // recorded acknowledgment, wait for the hint and look up again.
     }
     let expected = blake3::hash(id.as_bytes()).to_hex().to_string();
     let bad = blake3::hash(malformed.as_bytes()).to_hex().to_string();
@@ -251,7 +253,7 @@ pub async fn submit_frame(
     .await
     .ok()
     .flatten();
-    let receipts = if let Some(hint) = hint {
+    let found = if let Some(hint) = hint {
         recorded(client, subjects, producer, &[], &[hint.number], idle).await?
     } else {
         recorded(
@@ -264,11 +266,11 @@ pub async fn submit_frame(
         )
         .await?
     };
-    let receipt = receipts
+    let ack = found
         .into_iter()
         .find(correlated)
         .ok_or_else(|| SubmitError::NoAck(id.into()))?;
-    check_ack_for(frame, receipt, logical_hash, Some(&malformed))
+    check_ack_for(frame, ack, body_hash, Some(&malformed))
 }
 
 /// Transfer encoded custody under the original authenticated frame namespace.
@@ -342,10 +344,10 @@ pub async fn transfer_frame(
                 total: descriptor.stored_len,
                 data: base64::engine::general_purpose::STANDARD.encode(&buffer[..n]),
             };
-            let receipt = submit_frame(client, subjects, producer, acks, &chunk, idle).await?;
-            if let sinex_protocol::FrameResult::Refused { kind, reason } = receipt.result {
+            let ack = submit_frame(client, subjects, producer, acks, &chunk, idle).await?;
+            if let sinex_protocol::FrameResult::Refused { kind, reason } = ack.result {
                 return Err(SubmitError::Refused {
-                    frame: receipt.frame,
+                    frame: ack.frame,
                     reason,
                     kind,
                 });

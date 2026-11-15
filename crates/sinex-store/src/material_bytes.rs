@@ -153,9 +153,9 @@ pub async fn lengths(
     Ok(rows.into_iter().map(|row| (row.id, row.length)).collect())
 }
 
-/// Public raw bytes need whole-material evidence. Without field-offset proof,
+/// Public raw bytes need the whole material to be cleared. Without field offsets to check,
 /// any transforming rule for a contributing source withholds the whole body.
-/// Capture and native parser replay read the bytes through their private path.
+/// Capture and built-in parser replay read the bytes through their private path.
 pub async fn authorize_raw(conn: &mut PgConnection, material: MaterialId) -> Result<()> {
     let row: Option<(Option<String>, serde_json::Value)> =
         sqlx::query_as("SELECT parser,manifest FROM raw.materials WHERE id=$1")

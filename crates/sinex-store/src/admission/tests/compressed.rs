@@ -5,7 +5,7 @@ use super::*;
 use crate::query::{Page, run};
 use sinex_model::query::{Context, bind};
 
-/// `keyed`'s event with an ID minted `days` ago, so it lands in an old chunk.
+/// `keyed`'s event with an ID made `days` ago, so it lands in an old chunk.
 fn old(key: u8, days: u64) -> Event {
     let mut e = keyed("s", key, 1, 1);
     let secs = 1_700_000_000 - days * 86_400;

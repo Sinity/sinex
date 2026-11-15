@@ -1,4 +1,4 @@
-//! One parser record retains every output through admission and citation reads.
+//! One parser record keeps every output through admission and citation reads.
 use serde_json::{Value, json};
 use sinex_model::{
     Batch, BatchKind, Class, MaterialId, ReadingOrder, RecordLocation, RecordOutcome, RunId,

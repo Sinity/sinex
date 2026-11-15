@@ -93,7 +93,7 @@ pub enum Bench {
         /// repeatable. Recorded with the run.
         #[arg(long = "postgres")]
         settings: Vec<String>,
-        /// Parent directory for retained run artifacts.
+        /// Parent directory for kept run artifacts.
         #[arg(long)]
         output: Option<PathBuf>,
         /// Check that an older sinexd refuses the resulting schema.

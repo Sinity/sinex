@@ -29,11 +29,11 @@ A machine or device that captures. It is already part of input identity and of e
 |---|---|
 | `name` | the deployment's name for it; a label from configuration, never in code |
 | `kind` | `workstation`, `server`, `phone`, `other`; it chooses defaults only (out-of-contact deadline, transfer classes), and no behaviour is keyed on a particular host |
-| `id` | minted at first enrollment (UUIDv7) and stored on the host; a rename keeps it |
+| `id` | assigned at first enrollment (UUIDv7) and stored on the host; a rename keeps it |
 | `producers` | the components that run there, each with its public key |
 | `out_of_contact_after` | default by kind: server 15 min, workstation 1 h, phone 48 h; overridable |
 
-- **Enrolled** when its key is in configuration; **in contact** or **out of contact** from its last frame; **retired** when removed from configuration: its credential stops working, its history stays, and its host-bound inputs show `outside_span` after the retirement.
+- **Enrolled** when its key is in configuration; **in contact** or **out of contact** from its last frame; **removed** when taken out of configuration: its credential stops working, its history stays, and its host-bound inputs show `outside_span` after the removal.
 - A reinstalled app that generated a new key is the same host only through an explicit configuration entry (`replaces = <old id>`), recorded as a host event. Nothing is guessed from device serials.
 - **Hosts are configuration** (`services.sinex.hosts`). `sinexd` records the configured set as a host event at start, so history shows when a host joined or left.
 
@@ -43,13 +43,13 @@ The producer contract is unchanged ([producers](producers.md)): one identity wit
 
 - **Identity is the pair (component, host).** The credential is bound to that pair in configuration; a frame's host is its credential's host. A host named inside a payload is stored as a claim and never used as the host.
 - **Keys, not shared secrets.** Each producer generates a NATS nkey (Ed25519) on its own host; configuration holds only the public key, and the private seed never leaves the host. Adding a host is one public string in the deployment's configuration. The Sinex host's own producers use keys too, so there is one mechanism.
-- **Transport** is a direct NATS client connection over the deployment's private network. There are no leaf nodes: a leaf's own durable queue would have acknowledgement semantics different from Sinex's commit, and the producer spool already removes data only after commit, so one spool per producer is the only offline store.
+- **Transport** is a direct NATS client connection over the deployment's private network. There are no leaf nodes: a leaf's own queue would have acknowledgment semantics different from Sinex's commit, and the producer spool already removes data only after commit, so one spool per producer is the only offline store.
 - **Connect on demand.** A producer on a metered or battery-powered host connects when it has something to send, drains, and disconnects after an idle period (default 60 s). Servers and workstations stay connected.
 - **Transfer class per source**, a sending rule and never a capture rule: `immediate` (send whenever connected), `unmetered` (wait for a non-metered network), `charging` (wait for power). Discrete records default to `immediate`; continuous media and sensor chunks default to `unmetered` on phones and `immediate` elsewhere. Within a class inputs drain round-robin; within an input, in order. Whether bulk data may use metered networks is a deployment setting (default `unmetered` only; open operator question).
 
 Two frame additions are the whole protocol change ([frames](producers.md#frames)):
 
-- `hello` carries `clock: {wall, monotonic}` sampled at send, and the reply carries the server's receive and send times, so each connection yields one offset sample with its round-trip bound (the NTP exchange of RFC 5905 §8). `progress` frames carry the same four timestamps, so a connected producer gives a sample per acknowledgement window.
+- `hello` carries `clock: {wall, monotonic}` sampled at send, and the reply carries the server's receive and send times, so each connection yields one offset sample with its round-trip bound (the NTP exchange of RFC 5905 §8). `progress` frames carry the same four timestamps, so a connected producer gives a sample per acknowledgment window.
 - `progress` carries a **capture report** per input: `captured_through` (everything up to it is in the spool), `held: {records, bytes, oldest}`, the spool's free space, and the input's capture state on the host (`capturing`, `unavailable(cause)`, `stopped(reason)`). Sinex learns what was captured while away before any byte of the backlog arrives.
 
 ## Placement
@@ -60,17 +60,17 @@ An input is **host-bound** (a file, a bus, a device, a local database; its ident
 - The cursor lives in Sinex, saved as the producer's committed progress. A newly placed producer asks for it at `hello`; a producer offering a host-free input not placed on its host is refused at `hello` with a typed reason.
 - A move may repeat the last poll window; source record keys suppress the repeats, and no record is skipped.
 - Placing account pollers whose providers expire their own records (mail history identifiers, recently-played windows, CI logs) on an always-on host wins the [expiry race](sources.md#completeness) whatever the workstation's uptime.
-- Placement is also how Polylogue decides which host re-parses a chain captured on a host that was retired: one concept serves both products.
+- Placement is also how Polylogue decides which host re-parses a chain captured on a host that was removed: one concept serves both products.
 
 ## Time across hosts
 
-The time rules stand ([time](events.md#time)): time is decided once, at framing; the writer never changes `ts_orig`; reading order compares readings only within one producer namespace, never across hosts and never by clock. This page adds clock evidence.
+The time rules stand ([time](events.md#time)): time is decided once, at framing; the writer never changes `ts_orig`; reading order compares readings only within one producer namespace, never across hosts and never by clock. This page adds how clock offsets are measured and labelled.
 
 - **Clock identity.** Every captured time names its clock: `wall@<host>`, or `monotonic@<host>/<boot>` for boot-relative clocks (Android's elapsed realtime, `CLOCK_BOOTTIME`, evdev kernel timestamps).
 - **Offset samples.** Each `hello` and `progress` round trip gives `(at, offset, rtt)` for the producer's host, kept as append-only self-observation. The host's offset estimate at an instant is the minimum-round-trip sample in the surrounding window (the NTP clock filter); its uncertainty is half that round trip plus the drift since.
-- **Labels, never rewrites.** A reading whose kind declares instant or second precision gets `clock offset ±x (measured)` in its time evidence when its host's estimated offset exceeds that precision. `ts_orig` keeps the host's wall time, which lines up with the host's own logs.
+- **Labels, never rewrites.** A reading whose kind declares instant or second precision gets `clock offset ±x (measured)` in its time quality when its host's estimated offset exceeds that precision. `ts_orig` keeps the host's wall time, which lines up with the host's own logs.
 - **Aligned time at read.** Cross-host views and queries (`group by host`, the operator lane, time joins across hosts) order on `ts_orig − offset` and print the correction. Single-host views use `ts_orig`.
-- **Steps and anchors.** Producers that can record `(monotonic, wall)` anchor pairs record one at least once per material part and at every observed wall-clock step. A record framed while the wall clock was implausible (before the host's first contact, or behind a later anchor on the same boot) has time quality `unknown`; replay with a later good anchor on the same boot re-frames it from its monotonic time with quality `captured`. Evidence is append-only, so this is ordinary replay, not repair.
+- **Steps and anchors.** Producers that can record `(monotonic, wall)` anchor pairs record one at least once per material part and at every observed wall-clock step. A record framed while the wall clock was implausible (before the host's first contact, or behind a later anchor on the same boot) has time quality `unknown`; replay with a later good anchor on the same boot re-frames it from its monotonic time with quality `captured`. Clock records are append-only, so this is replay, not repair.
 - **The commit-time check stays local.** The bound on a captured time ahead of commit applies to Sinex's own clock; a remote reading far in the future is kept and labelled `suspect: ahead of commit by …`.
 
 ## Contact, held data and coverage
@@ -101,9 +101,9 @@ Which host runs `sinexd` is a configuration value, so moving it is a deployment 
 
 ## A phone as a producer
 
-Every phone source is captured in its native form, one record per native record, with every field its API or file provides; privacy applies at output ([privacy](privacy.md)), so no field such as a phone number is dropped at capture.
+Every phone source is captured in the form the phone writes it, one record per source record, with every field its API or file provides; privacy applies at output ([privacy](privacy.md)), so no field such as a phone number is dropped at capture.
 
-| Source | Native form | Route | Needs root |
+| Source | Form on the phone | Route | Needs root |
 |---|---|---|---|
 | notifications | posted and removed notifications with all extras and the removal reason | the platform's notification listener | no |
 | notification history | the platform's own notification history files, for backfill after listener outages | file read | yes |
@@ -125,17 +125,17 @@ Every phone source is captured in its native form, one record per native record,
 AI apps on the phone are not phone capture: Polylogue's provider sources own them.
 
 - **Root use is narrow and visible.** The app reads root-only paths through one root-backed reader, copies bytes into its spool and writes nothing outside it. A root source declares `needs: root`; where root is denied the input shows `unavailable(permission_denied(root))`, never empty. Root never substitutes for a grant the platform enforces.
-- **The producer runs in the app**, linking the one producer client (`sinex-transport`) through a generated binding, so its traffic uses the app's network path and the app's existing foreground service and battery exemptions. The app keeps writing its native files; the spool takes ownership of a file the moment it is complete (a rename on the same filesystem), so one copy exists on the phone, held until Sinex commits it.
+- **The producer runs in the app**, linking the one producer client (`sinex-transport`) through a generated binding, so its traffic uses the app's network path and the app's existing foreground service and battery exemptions. The app keeps writing its own files; the spool takes over a file the moment it is complete (a rename on the same filesystem), so one copy exists on the phone, held until Sinex commits it.
 - **Battery and network:** connect on demand; bulk data by its transfer class; location cadence and sensor rate are deployment settings, reported with their measured battery cost and never presented as continuous observation.
-- **Sequence.** First, the deployment's phone relay becomes a stateless relay: it turns each upload into material and event frames under the phone's own producer identity, waits for Sinex's acknowledgement, then answers the phone, keeping no bytes; upload identity gives a deterministic frame identity, so a retried upload is the same frame. Second, the app links the client and the relay goes. The relay belongs to the deployment, not to Sinex.
+- **Sequence.** First, the deployment's phone relay becomes a stateless relay: it turns each upload into material and event frames under the phone's own producer identity, waits for Sinex's acknowledgment, then answers the phone, keeping no bytes; upload identity gives a deterministic frame identity, so a retried upload is the same frame. Second, the app links the client and the relay goes. The relay belongs to the deployment, not to Sinex.
 
 ## Polylogue on several hosts
 
 - Polylogue on each host is the producer `(polylogue, <host>)` under the one `polylogue.*` kind family, with its own key. Session IDs are provider IDs; the same session captured twice converges by stable keys.
 - Each host's Polylogue consumes the confirmed stream and holds a full index, so a query on one host sees the other's sessions. While Sinex is unreachable it reads its own index with lag shown, and capture spools.
 - Work groups by repository identity (git common directory and root commit), so a repository checked out at different paths on two hosts is one project.
-- Re-parse ownership is placement. An act on a session that runs on another host is an authored request that only the owning host's daemon executes.
-- There is no canonical publisher per family: with stable keys and per-host producers no host needs to publish summaries for the others.
+- Which host re-parses is decided by placement. An act on a session that runs on another host is an authored request that only that host's daemon executes.
+- There is no designated publisher per family: with stable keys and per-host producers no host needs to publish summaries for the others.
 
 ## Surfaces
 
@@ -145,7 +145,7 @@ sinexctl hosts show <host>           # producers, inputs, contact history, clock
 sinexctl sources --host <host>       # the Sources grid for one host; by default rows group by host
 sinexctl placement                   # host-free inputs and where each is placed
 sinex-capture key                    # on a new host: generate this producer's key and print the public half
-sinex-capture status                 # on the host: spool, held per input, last acknowledgement, runway
+sinex-capture status                 # on the host: spool, held per input, last acknowledgment, runway
 ```
 
 ```

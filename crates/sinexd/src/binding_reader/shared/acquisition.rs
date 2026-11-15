@@ -1,10 +1,11 @@
-//! Retain a converter's native input through the ordinary material writer.
+//! Store a converter's original input as material, through the same writer
+//! path as every other material.
 use super::*;
 use crate::{Error, Result};
 use sinex_model::{InputRef, MaterialId, ReadingOrder, RevisionChange};
 
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn retain(
+pub(super) async fn store_original(
     conn: &mut PgConnection,
     blobs: &Blobs,
     writer: &WriterHandle,
@@ -28,7 +29,7 @@ pub(super) async fn retain(
             Ok(())
         } else {
             Err(Error::conflict(
-                "native input changed after conversion; retry an unchanged revision",
+                "original input changed after conversion; retry an unchanged revision",
             ))
         }
     });
@@ -59,7 +60,7 @@ pub(super) async fn retain(
         }),
         cursor_without_material: cursor,
     };
-    crate::intake::Intake {
+    crate::submit::Submitter {
         host: Some(&binding.binding.settings.host),
         writer,
         source: binding.source.clone(),

@@ -13,7 +13,7 @@ pub(super) fn plan(input: &Path, settings: &Settings) -> Result<Vec<Binding>, St
         .option("journal_format")
         .is_some_and(|format| !matches!(format, "journal" | "timeclock" | "timedot"))
     {
-        return Err("unknown native journal format".into());
+        return Err("unknown journal format".into());
     }
     let mut out = Vec::new();
     let mut active = BTreeSet::new();
@@ -78,7 +78,7 @@ fn visit(
         let mut includes = BTreeMap::<String, Vec<IncludeTarget>>::new();
         let mut year = initial_year;
         let mut counts = BTreeMap::<String, u64>::new();
-        // Archives are read by the shared archive reader. Native journal include
+        // Archives are read by the shared archive reader. Journal include
         // paths refer to the local filesystem, never to an extracted temporary tree.
         if !archive && settings.option("journal_format").unwrap_or("journal") == "journal" {
             file.rewind().map_err(|e| e.to_string())?;

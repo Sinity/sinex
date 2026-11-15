@@ -14,9 +14,9 @@ async fn commit_pages_follow_commit_order_and_byte_bounds(db: devkit::pg::TestDa
     sinex_schema::kinds::register(&mut conn, "synthetic", &[declaration])
         .await
         .unwrap();
-    // Legacy random UUID suffixes have no relationship to commit order. The
-    // native UUID time dimension requires the version-7 envelope. All rows share
-    // a time chunk; timestamps retain the ordinary compression ordering.
+    // Random UUID suffixes have no relationship to commit order. TimescaleDB's
+    // UUID time dimension requires the version-7 envelope. All rows share
+    // a time chunk; timestamps keep the usual compression ordering.
     conn.execute("INSERT INTO core.events(id,event_type,source,run_id,material_id,record_offset,output_index,parents,ts_orig,ts_quality,ts_persisted,commit_seq,payload,reading_order,record_hash,class)
       SELECT ('01800000-0000-7000-8'||substr(md5(n::text),1,3)||'-'||substr(md5(n::text),5,12))::uuid,
         'synthetic.page','synthetic.page', '01800000-0000-4000-8000-000000000001'::uuid,
@@ -57,14 +57,18 @@ async fn commit_pages_follow_commit_order_and_byte_bounds(db: devkit::pg::TestDa
                 }
             );
         }
-        let exact: i64 = sqlx::query_scalar(
+        let payload_size: i64 = sqlx::query_scalar(
             "SELECT pg_column_size(payload)::bigint FROM core.events WHERE commit_seq=8193",
         )
         .fetch_one(&mut *tx)
         .await
         .unwrap();
         assert_eq!(
-            after(&mut tx, 8192, 16, exact).await.unwrap().events.len(),
+            after(&mut tx, 8192, 16, payload_size)
+                .await
+                .unwrap()
+                .events
+                .len(),
             1
         );
         let first = after(&mut tx, 8192, 16, 1).await.unwrap();

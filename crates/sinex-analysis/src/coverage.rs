@@ -20,7 +20,7 @@ pub struct Coverage {
     pub bounded_by: String,
 }
 
-/// Missing reads cannot supply observed coverage. Successful reads retain the
+/// Missing reads cannot supply observed coverage. Successful reads keep the
 /// declared completeness; access alone never supplies temporal bounds.
 pub fn from_observation(row: &SourceCoverage) -> Option<Coverage> {
     if row.state == CoverageState::Missing {

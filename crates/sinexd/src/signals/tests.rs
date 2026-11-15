@@ -387,7 +387,7 @@ fn a_cleared_delivery_is_closed_once_shown_and_never_shown_otherwise() {
     };
     // The desktop deliverer began the first notice; settling drops it.
     assert!(!state.notifications.begin(notice).is_empty());
-    settle(&mut state);
+    drop_begun_notices(&mut state);
     assert!(!state.outbox.contains_key(shown.id()));
     let cleared = |id: &str| ::signals::OutcomeRecord {
         delivery: id.into(),

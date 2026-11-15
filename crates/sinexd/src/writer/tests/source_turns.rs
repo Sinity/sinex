@@ -1,5 +1,5 @@
-//! The real native source path chooses the Live lane; explicit EOF reads
-//! retain Bulk. Queue receives establish ordering without timing sleeps.
+//! A built-in source's binding path chooses the Live lane; explicit EOF reads
+//! stay in Bulk. Queue receives establish ordering without timing sleeps.
 use super::*;
 use crate::binding_reader::{self, BindingReader, Rounds};
 use crate::material_access::{Access, Sink};
@@ -10,9 +10,7 @@ use sinex_sources::sources::journald;
 use sqlx::Connection;
 
 #[devkit::test]
-async fn native_live_stream_goes_before_derived_but_manual_stage_drains_in_bulk(
-    db: devkit::pg::TestDatabase,
-) {
+async fn live_binding_precedes_derived_manual_stage_is_bulk(db: devkit::pg::TestDatabase) {
     for mode in [ReadMode::Once, ReadMode::ToEnd] {
         let dir = tempfile::tempdir().unwrap();
         let spool = dir.path().join("spool");
@@ -30,10 +28,10 @@ async fn native_live_stream_goes_before_derived_but_manual_stage_drains_in_bulk(
         capture.sync().unwrap();
         let url = db.url(None);
         let read = sqlx::PgConnection::connect(&url).await.unwrap();
-        let mut owner = claim(sqlx::PgConnection::connect(&url).await.unwrap())
+        let mut writer_connection = claim(sqlx::PgConnection::connect(&url).await.unwrap())
             .await
             .unwrap();
-        crate::catalog::install_built_in_sources(&mut owner)
+        crate::catalog::install_built_in_sources(&mut writer_connection)
             .await
             .unwrap();
         let blobs = sinex_store::Blobs::open(&dir.path().join("store")).unwrap();
@@ -99,7 +97,7 @@ async fn native_live_stream_goes_before_derived_but_manual_stage_drains_in_bulk(
         };
         let writer = tokio::spawn(run(
             url,
-            owner,
+            writer_connection,
             queues,
             Arc::new(sinex_store::NoDerivations),
             Some(blobs.clone()),
@@ -112,7 +110,7 @@ async fn native_live_stream_goes_before_derived_but_manual_stage_drains_in_bulk(
             ReadMode::Once => {
                 assert!(
                     first < derived,
-                    "normal native Live must precede queued Derived"
+                    "a binding's Live job must precede queued Derived"
                 );
                 assert_eq!(materials, 1);
             }

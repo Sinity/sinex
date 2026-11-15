@@ -196,7 +196,8 @@ where
         None => Ok(()),
     }
 }
-/// Keep an owner operation observable while native capture seals a latched generation.
+/// Keep a daemon request observable while the producer finishes slow work,
+/// such as copying its state files for a backup.
 /// Each wait marker needs acknowledgment; a disconnected requester cancels the future.
 pub(crate) async fn respond_json_wait<T, F>(
     client: &Client,

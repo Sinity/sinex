@@ -37,7 +37,7 @@ enum Cli {
         /// running any (a cloud environment's warm build).
         #[arg(long, conflicts_with = "args")]
         no_run: bool,
-        /// Further `cargo nextest run` arguments: native package and target
+        /// Further `cargo nextest run` arguments: its own package and target
         /// selection, filters, names and runner options.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,

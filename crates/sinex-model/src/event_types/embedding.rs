@@ -31,8 +31,9 @@ impl EmbeddingSpace {
 }
 
 /// An outside producer supplies an existing vector, parented to the target
-/// reading. The input hash is the shared BLAKE3 text identity, independent of
-/// physical copies. Its exact receipt remains in the producer's ingress bytes.
+/// reading. The input hash is the shared BLAKE3 hash of the text, independent
+/// of where copies of it are stored. The frame as received stays in the
+/// producer's ingress bytes.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(version = 2, type = "embedding.supplied", search = none, key = ["target", "input_record", "space", "input_hash"], replace = newer, time = embedded_at, quality = intrinsic)]
 pub struct SuppliedEmbedding {
@@ -55,7 +56,7 @@ impl SuppliedEmbedding {
 }
 
 /// The complete original vector and its provenance. Read-model limits affect
-/// only the rebuildable projection, never admission of this stored result.
+/// only the rebuildable read model, never admission of this stored result.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(version = 2, type = "text.embedding", search = none, key = ["target", "input_record", "space", "input_hash"], replace = newer, time = embedded_at, quality = intrinsic)]
 pub struct TextEmbedding {

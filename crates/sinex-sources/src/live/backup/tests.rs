@@ -19,7 +19,7 @@ fn latched_media_seals_its_original_generation_while_new_capture_continues() {
     let (_watcher, receive, latched) = latch_media(&[binding]).unwrap();
     assert_eq!(latched.values().next().unwrap(), &["100"]);
     // A later acquisition starts before backup finishes. It is outside the
-    // latched generation and must not extend this cut's wait.
+    // latched generation and must not extend this backup's wait.
     std::fs::write(spool.path().join(".200.wav.partial"), b"new live capture").unwrap();
     media::publish_segment(
         spool.path(),
@@ -59,7 +59,7 @@ fn failed_or_cancelled_latched_media_remains_unavailable() {
 }
 
 #[devkit::test]
-fn native_cut_restores_encoded_position_carry_and_original_spool_bytes() {
+fn backup_copy_restores_position_carry_and_original_spool_bytes() {
     let root = tempfile::tempdir().unwrap();
     let positions = root.path().join("positions");
     let spool = root.path().join("spool");

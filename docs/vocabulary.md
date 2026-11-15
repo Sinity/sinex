@@ -41,7 +41,7 @@ state, signal rule, delivery, outcome, route, attention, inhibition, lane and se
 - **accounting identity**: records framed = admitted + repeats + revisions + removed + failures + headers, per material and per input.
 - **inventory**: what a stage holds, listed before parsing finishes, with per-product accounting ([staging](materials.md#inventory-and-progress)).
 - **stored, not interpreted**: material staged with no parser, waiting in the parser backlog; `parser try` parses it as a dry run.
-- **execution token**: the identifier the shipped shell integration mints per command execution, seen by every observer of that command.
+- **execution token**: the identifier the shipped shell integration makes per command execution, seen by every observer of that command.
 
 ## Hosts
 
@@ -52,7 +52,7 @@ state, signal rule, delivery, outcome, route, attention, inhibition, lane and se
 - **held**: data a remote producer captured but has not yet delivered; a coverage state, never a gap.
 - **capture report**: a producer's per-input `captured_through`, held data, free spool space and capture state, carried in `progress`.
 - **transfer class**: when a producer sends a source's data: immediate, unmetered or charging. A sending rule, never a capture rule.
-- **clock offset**: a host's measured difference from the Sinex host's clock, with its uncertainty; a label on time evidence, never a rewrite.
+- **clock offset**: a host's measured difference from the Sinex host's clock, with its uncertainty; a label on an event's time, never a rewrite.
 
 ## Materials and records
 
@@ -62,7 +62,7 @@ state, signal rule, delivery, outcome, route, attention, inhibition, lane and se
 - **manifest**: what a material's bytes are and how to read them.
 - **directory capture**: a directory stored as one PAX tar material.
 - **record**: one datapoint inside a material (a line, a row, a file, a message).
-- **record coordinates**: `(material, anchor)`, where a record starts; the **anchor** is its byte offset.
+- **record coordinates**: `(material, record offset)`, where a record starts; the **record offset** is its byte offset in the material.
 - **source record key**: the key by which a source recognises the same record seen again in another material ([identity](events.md#identity)).
 - **record hash**: the hash of a record's content, independent of privacy rules.
 - **record failure**: a record the parser could not read, stored with its bytes.
@@ -74,7 +74,7 @@ state, signal rule, delivery, outcome, route, attention, inhibition, lane and se
 - **kind**: the registered name and declaration of a payload type (`command.executed`), with its fields, field hints, keying and search participation.
 - **reading**: the event one read of a record produced; at most one reading of a record is **live**.
 - **clocks**: `ts_orig` (when it happened, or unknown), `ts_coided` (when Sinex read it, from the UUIDv7 ID), `ts_persisted` (when it was committed).
-- **stratum**: the recall class each kind declares: act, state, incident, ambient, measure or presentation ([strata](recall.md#strata)).
+- **recall class**: the class each kind declares for recall: act, state, incident, ambient, measure or presentation ([recall classes](recall.md#recall-classes)).
 - **reading order**: which of two readings of a record is newer; assigned or checked by Sinex, never taken from a producer's clock.
 - **derived event**: an event computed by a derivation, naming its parents.
 - **producer version**: the exact version of the parser or derivation that made an event.
@@ -102,7 +102,7 @@ state, signal rule, delivery, outcome, route, attention, inhibition, lane and se
 - **schema upgrade**: a numbered, data-preserving change to the stored schema, applied by `sinexd admin upgrade` while the daemon is stopped.
 - **hold**: a recorded backup boundary (commit position, schema version, protected segment prefixes) that keeps the extents it covers from being punched until it is released ([backup](operations.md#holds-and-the-boundary)).
 - **producer snapshot**: the copied state of one producer in a backup (checkpoint, pending frames, spool bytes), or the reason it could not be copied.
-- **pause publication**: what a producer does during a backup: it stops sending, acknowledging and retiring while capture continues, until the backup's copy is taken.
+- **pause publication**: what a producer does during a backup: it stops sending, acknowledging and removing acknowledged spool files while capture continues, until the backup's copy is taken.
 
 ## Producers and transport
 
@@ -110,9 +110,12 @@ state, signal rule, delivery, outcome, route, attention, inhibition, lane and se
 - **outside producer**: a program outside the daemon that sends frames over the NATS ingress (`sinex-session`, `sinex-capture`, Polylogue).
 - **ingress**: the NATS subjects outside producers send frames to ([producers](producers.md#the-ingress)).
 - **frame**: one message from an outside producer: kinds, material, events, progress, or a request.
+- **acknowledgment**: Sinex's numbered answer to a producer frame, recorded in the admission transaction that stored it; a producer removes spooled bytes only after it.
 - **producer client**: the one implementation of the producer side of the contract.
 - **refusal**: a frame Sinex will not admit; a content refusal becomes a record failure and never stalls capture.
 - **confirmed stream**: the NATS stream of committed changes in commit order, the delivery log for everything outside the daemon.
+- **stream instance**: one life of the confirmed stream, named with its creation time; a new instance starts after its **stream start position** in the commit log.
+- **completion marker**: a message on the confirmed stream saying that every change up to a commit position has been published.
 - **outside consumer**: a declared program that reads the confirmed stream under its own credential; an **outside handler** also sends outputs back.
 - **withheld**: a field left out of a stream message or output, fetched by event ID under the caller's grants.
 
@@ -135,14 +138,14 @@ state, signal rule, delivery, outcome, route, attention, inhibition, lane and se
 - **fused record**: the association record of one occurrence: its members by record citation, how each joined, its basis and ambiguity.
 - **duplicates**: the pairs a fusion pass had to choose about (`fusion.considered_pair` events), with their decision state.
 - **duplicate decision**: an authored `same` or `distinct` record on an unordered pair (`curation.duplicate`), shared by fusion and the library's duplicate review; `withdraw-decision` withdraws it.
-- **execution token**: the UUIDv7 the shell integration mints for one command execution and hands to every observer it reaches (its own report, kitty), beside the Atuin row ID started for it.
+- **execution token**: the UUIDv7 the shell integration makes for one command execution and hands to every observer it reaches (its own report, kitty), beside the Atuin row ID started for it.
 - **interval**: a state with a start and maybe an end, computed by a derivation.
 - **figure**: a measure over one period and grain, stored as an event (a figure cell) whose state has no default: observed, partial, lower bound, missing with a reason, not applicable, not estimable ([figure cells](evidence.md#figure-cells)).
 - **episode**: a stretch of work on one objective, with interruptions and its resume card ([higher layer](higher-layer.md)).
 - **panel**: figures for several metrics over a range of units, each cell drawn by its state.
 - **construct**: what a number is meant to stand for (sleep duration, spending); a **metric declaration** operationalizes exactly one, with its role, validity and opportunity ([personal evidence](evidence.md)).
 - **usual range**: a figure's prior-only robust baseline; a later day never changes an earlier day's range.
-- **affirmation**: a self-report that a logging period is complete, so a day with no entry is a recorded zero rather than unknown.
+- **completeness note**: a self-report that a logging period is complete, so a day with no entry is a recorded zero rather than unknown.
 - **study**: an authored question in computable form (design, family, population, method); **confirmatory** when registered before its outcome period, otherwise **exploratory**; its computed product is a **study result** (`study.result`).
 - **finding**: a typed statement in a study result, with role, support status, caveats and evidence.
 - **specification band**: a result's range across the declared reasonable alternatives of its parameters.

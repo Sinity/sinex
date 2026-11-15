@@ -1,4 +1,4 @@
-//! Query authoring and the small adapters that share the ordinary query engine.
+//! Query authoring and the small adapters that share the query engine.
 use super::*;
 use crate::{Error, Result};
 use sinex_model::Timestamp;
@@ -91,7 +91,7 @@ impl Api {
             .ok_or_else(|| Error::not_configured("query authoring requires sinexd run"))?;
         let acquired =
             sinex_sources::sources::query::request_material(record, caller.actor, &self.host, now);
-        let done = crate::intake::request(
+        let done = crate::submit::request(
             &mut conn,
             writer,
             &self.blobs,

@@ -632,7 +632,7 @@ async fn reconnect_reclaims_and_reloads_privacy(db: devkit::pg::TestDatabase) {
         .unwrap();
     assert_eq!(
         class, "guarded",
-        "reconnected writer loads the current source floor"
+        "reconnected writer loads the current minimum class of the source"
     );
     sinex_store::query::set_grants(&mut changes, "guarded")
         .await
@@ -658,7 +658,7 @@ async fn backup_release_dirties_held_punches_for_the_next_group_without_reopen(
     let root = tempfile::tempdir().unwrap();
     let blobs = Blobs::open(root.path()).unwrap();
     blobs.load(&mut conn).await.unwrap();
-    let bytes = b"bytes protected by the two actual writer holds";
+    let bytes = b"bytes protected by the two writer holds";
     let name = blobs.put(bytes).unwrap();
     sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES($1,$2,'present')")
         .bind(&name)
@@ -687,7 +687,7 @@ async fn backup_release_dirties_held_punches_for_the_next_group_without_reopen(
         .execute(&mut conn)
         .await
         .unwrap();
-    // Mirror the durable marker committed by a real tombstone.
+    // Mirror the marker a real tombstone commits.
     sinex_store::blobs::commit_pending_extents(&mut conn, &blobs)
         .await
         .unwrap();

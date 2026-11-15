@@ -130,7 +130,7 @@ fn read_message(message: &[u8]) -> Result<MailMessage, RecordError> {
         .filter(|id| !id.trim().is_empty());
     let date = one("Date")
         .and_then(|d| mailparse::dateparse(&d).ok())
-        // `dateparse` also returns zero for text holding no date. An actual
+        // `dateparse` also returns zero for text holding no date. A real
         // epoch date must be a readable RFC 2822 date, rather than guessed.
         .filter(|secs| {
             *secs != 0
@@ -307,13 +307,13 @@ impl Parser for MaildirParser {
                 use base64::Engine;
                 use std::os::unix::ffi::{OsStrExt, OsStringExt};
                 let path = match member.details.get("native_path_bytes") {
-                    Some(native) => {
-                        let bytes = native
+                    Some(path_bytes) => {
+                        let bytes = path_bytes
                             .as_str()
                             .and_then(|value| {
                                 base64::engine::general_purpose::STANDARD.decode(value).ok()
                             })
-                            .ok_or_else(|| RecordError::new("invalid native Maildir path bytes"))?;
+                            .ok_or_else(|| RecordError::new("invalid raw Maildir path bytes"))?;
                         PathBuf::from(std::ffi::OsString::from_vec(bytes))
                     }
                     None => PathBuf::from(&member.path),
@@ -384,7 +384,7 @@ pub const MBOX_FORMAT: sinex_source_core::binding::InputFormat =
         name: "mbox",
         accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
-            owner: sinex_source_core::discovery::Owner::System,
+            captured_by: sinex_source_core::discovery::CapturedBy::System,
             locations: &[sinex_source_core::discovery::Location {
                 root: "input",
                 path: "mbox",
@@ -420,7 +420,7 @@ pub const MAILDIR_FORMAT: sinex_source_core::binding::InputFormat =
         name: "maildir",
         accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
-            owner: sinex_source_core::discovery::Owner::System,
+            captured_by: sinex_source_core::discovery::CapturedBy::System,
             locations: &[sinex_source_core::discovery::Location {
                 root: "input",
                 path: "maildir",

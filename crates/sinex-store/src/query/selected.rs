@@ -1,4 +1,4 @@
-//! The rows and exact provenance of one recall page, for historical previews.
+//! The rows and full provenance of one recall page, for historical previews.
 use super::*;
 use serde_json::json;
 use sinex_model::event_types::analysis::QuerySelection;
@@ -85,10 +85,10 @@ pub(super) async fn capture(
         .collect();
     grants.sort();
     grants.dedup();
-    let mut retained = selection.retained(&query.source)?;
-    retained["_query"] = json!(format!("{query:?}"));
-    retained["_template"] = template.identity()?;
-    retained["_fingerprint"] = json!(
+    let mut stored_selection = selection.to_stored(&query.source)?;
+    stored_selection["_query"] = json!(format!("{query:?}"));
+    stored_selection["_template"] = template.identity()?;
+    stored_selection["_fingerprint"] = json!(
         blake3::hash(
             serde_json::to_vec(&json!([rows, account]))
                 .map_err(|error| Error::Invalid(error.to_string()))?
@@ -107,7 +107,7 @@ pub(super) async fn capture(
         zone: ctx.zone_name(),
         day_start: ctx.day_start.to_string(),
         grants,
-        selected: retained,
+        selected: stored_selection,
         declarations: serde_json::to_value(
             ctx.catalog
                 .as_ref()
@@ -120,7 +120,7 @@ pub(super) async fn capture(
     Ok((selection, ids.into_iter().map(EventId).collect(), class))
 }
 
-/// Historical previews use the same selected rows and exact provenance without
+/// Historical previews use the same selected rows and full provenance without
 /// admitting a new live output over inputs that may already be archived.
 pub async fn selected_page(
     conn: &mut PgConnection,

@@ -198,7 +198,7 @@ async fn replay_reads_every_record_again_with_new_ids_and_the_same_content(
     let ids_after = live_ids(&mut f.ctx.read_conn).await;
     assert!(
         ids_after.iter().all(|id| !ids_before.contains(id)),
-        "replay mints new IDs"
+        "replay assigns new IDs"
     );
     let archived: i64 = sqlx::query_scalar!(
         r#"SELECT count(*) AS "n!" FROM audit.archived WHERE reason = 'replay' AND operation_id = $1"#,
@@ -410,7 +410,7 @@ async fn aligned_rewrite_replay_uses_the_same_previous_carry_as_capture(
     let after:Vec<(String,Value,String,Vec<u8>)>=sqlx::query_as("SELECT e.source,e.payload,e.equivalence_key,e.record_hash FROM core.events e JOIN core.live_equivalence l ON l.event_id=e.id ORDER BY e.payload::text").fetch_all(&mut f.ctx.read_conn).await.unwrap();
     assert_eq!(
         after, before,
-        "a physical rewrite continues the same parser stream without duplicating or renumbering old occurrences"
+        "rewriting the file continues the same parser stream without duplicating or renumbering old occurrences"
     );
 }
 

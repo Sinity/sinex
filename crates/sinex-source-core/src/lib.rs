@@ -44,7 +44,7 @@ impl RecordError {
 
 /// How a framed record's bytes become the parser's input.
 pub trait RecordShape<'a>: Sized {
-    /// Owned shapes can decode from a bounded stream; borrowed shapes retain their parser input.
+    /// Owned shapes can decode from a bounded stream; borrowed shapes keep their parser input.
     const STREAMING: bool = false;
     fn decode_reader(_reader: &mut dyn std::io::Read) -> Result<Self, RecordError> {
         Err(RecordError::new("record shape requires borrowed bytes"))
@@ -143,7 +143,7 @@ pub trait Parser: Send + Sync + 'static {
     }
 
     /// State after a record could not be read. Parsers tracking continuity
-    /// invalidate that evidence; other parsers retain their carried context.
+    /// drop what they knew; other parsers keep their carried context.
     /// This state commits only with the record failure and its cursor.
     fn failed_record(&self, carry: &Self::Carry) -> Self::Carry {
         carry.clone()

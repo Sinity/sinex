@@ -9,7 +9,7 @@
 //! spool (`--after-cursor`), so the spool holds each entry once even across
 //! restarts. When the reader has already removed every segment holding an
 //! entry, the cursor comes from the spool's resume file, which capture
-//! rewrites after each sync with the last entry then made durable. An overlap
+//! rewrites after each sync with the last entry then synced to disk. An overlap
 //! that still happens (a cursor from a vacuumed journal) is harmless, because
 //! the cursor is the entry's equivalence key and a second reading is a
 //! repeat.
@@ -363,7 +363,7 @@ pub const EXPORT_FORMAT: sinex_source_core::binding::InputFormat =
         name: "journal-json",
         accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
-            owner: sinex_source_core::discovery::Owner::System,
+            captured_by: sinex_source_core::discovery::CapturedBy::System,
             locations: &[sinex_source_core::discovery::Location {
                 root: "input",
                 path: "journal-json",
@@ -418,7 +418,7 @@ pub fn driver(spool: PathBuf, host: String, directory: Option<&str>) -> LiveStre
     }
 }
 
-/// The spool's resume file: the cursor of the last entry made durable in the
+/// The spool's resume file: the cursor of the last entry synced to disk in the
 /// spool, rewritten after each sync.
 const RESUME_FILE: &str = "resume-cursor";
 
@@ -438,7 +438,7 @@ fn resume_cursor(spool: &Path) -> std::io::Result<Option<String>> {
     }
 }
 
-/// Record `cursor` as the last durable entry: a whole new file renamed over
+/// Record `cursor` as the last entry synced to disk: a whole new file renamed over
 /// the old, so a crash leaves one or the other.
 fn save_resume_cursor(spool: &Path, cursor: &str) -> std::io::Result<()> {
     let temporary = spool.join(format!("{RESUME_FILE}.tmp"));
@@ -628,7 +628,7 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
         name: "journald",
         accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
-            owner: sinex_source_core::discovery::Owner::System,
+            captured_by: sinex_source_core::discovery::CapturedBy::System,
             locations: &[sinex_source_core::discovery::Location {
                 root: "spool",
                 path: "journald",

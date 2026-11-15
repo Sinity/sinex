@@ -215,9 +215,9 @@ fn sessions_cross_logical_days_and_report_short_breaks_separately() {
 }
 
 #[devkit::test]
-fn elementary_spans_preserve_afk_claims_and_physical_contradictions_without_overlap() {
+fn spans_keep_afk_reports_and_physical_contradictions() {
     let mut events = vec![physical(0), physical(20), physical(40)];
-    let claim = captured(
+    let report = captured(
         &PresenceSpan {
             scope: None,
             host: None,
@@ -229,11 +229,11 @@ fn elementary_spans_preserve_afk_claims_and_physical_contradictions_without_over
         },
         10,
     );
-    let shared = scope(&claim.payload, &claim.event_type);
+    let shared = scope(&report.payload, &report.event_type);
     for input in &mut events {
         input.payload["extra"]["scope"] = json!(shared);
     }
-    events.push(claim);
+    events.push(report);
     let out = spans(&events, 0);
     assert_eq!(
         out.iter().map(|span| span.operator_present_s).sum::<f64>(),
@@ -330,28 +330,28 @@ fn lock_suspend_and_sleep_close_sessions_even_when_the_break_is_short() {
         if reason == "lock" {
             boundary.payload["attributes"]["seat"] = json!("seat0");
         }
-        let evidence = vec![
+        let readings = vec![
             physical(0),
             physical(20),
             physical(400),
             physical(420),
             boundary.clone(),
         ];
-        let mut inputs = session_events(&evidence, &[0]);
+        let mut inputs = session_events(&readings, &[0]);
         inputs.push(boundary);
         let out = sessions(&inputs, ActivityProfile::default());
         assert_eq!(out.len(), 2, "{reason}");
         assert_eq!(out[0].close_reason.as_deref(), Some(reason));
     }
     let sleep = sleep(100, 200);
-    let evidence = vec![
+    let readings = vec![
         physical(0),
         physical(20),
         physical(400),
         physical(420),
         sleep.clone(),
     ];
-    let mut inputs = session_events(&evidence, &[0]);
+    let mut inputs = session_events(&readings, &[0]);
     inputs.push(sleep);
     let out = sessions(&inputs, ActivityProfile::default());
     assert_eq!(out.len(), 2);
@@ -359,7 +359,7 @@ fn lock_suspend_and_sleep_close_sessions_even_when_the_break_is_short() {
 }
 
 #[devkit::test]
-fn exact_absence_conflicting_with_physical_support_is_mixed_and_not_counted() {
+fn recorded_absence_with_physical_input_is_mixed() {
     let sleep = sleep(10, 30);
     let events = vec![physical(0), physical(20), physical(40), sleep];
     let out = spans(&events, 0);
@@ -474,9 +474,9 @@ fn short_breaks_inside_a_window_are_members_without_inflating_operator_time() {
 
 #[devkit::test]
 fn profile_versions_fit_the_registry_and_change_with_the_break_threshold() {
-    let ordinary = ActivitySessions(ActivityProfile::default());
+    let default = ActivitySessions(ActivityProfile::default());
     let changed = ActivitySessions(ActivityProfile { break_seconds: 600 });
-    let first = Keyed::version(&ordinary);
+    let first = Keyed::version(&default);
     let second = Keyed::version(&changed);
     assert_ne!(first, second);
     assert!(i32::try_from(first).is_ok() && i32::try_from(second).is_ok());
@@ -508,7 +508,7 @@ fn absence_boundaries_are_parents_of_the_windows_and_spans_they_cut() {
 }
 
 /// Agency comes from a complete atomic producer snapshot; every act cites
-/// that snapshot rather than the retired per-message/session products.
+/// that snapshot rather than the removed per-message/session products.
 fn work_snapshot(session: &str, messages: Value, turns: Value) -> Event {
     let mut snapshot = external(
         "polylogue.work_snapshot",
@@ -714,7 +714,7 @@ fn recorder_lifetimes_keep_hosts_separate_when_session_ids_repeat() {
 }
 
 #[devkit::test]
-fn delegated_time_is_retained_when_it_overlaps_operator_presence() {
+fn delegated_time_overlapping_operator_presence_is_kept() {
     let snapshot = work_snapshot(
         "a",
         json!([]),
@@ -752,7 +752,7 @@ fn delegated_time_is_retained_when_it_overlaps_operator_presence() {
 }
 
 #[test]
-fn changing_civil_time_settings_retires_old_hour_keys() {
+fn changed_time_settings_drop_old_hour_keys() {
     use crate::AnyKeyed;
     use sinex_model::time_settings::TimeSettings;
     let mut env = Env::at(

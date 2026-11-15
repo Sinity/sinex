@@ -379,7 +379,7 @@ impl Ingress {
     }
 }
 
-/// Exact declarations a producer used while parsing a replacement.
+/// The declarations a producer used while parsing a replacement, by hash.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DeclarationHash {
     pub kind: sinex_model::KindRef,
@@ -508,7 +508,7 @@ pub struct Acknowledgment {
     /// The order Sinex recorded the frame in.
     pub number: i64,
     pub frame: String,
-    /// `blake3:<hex>` of the logical frame body Sinex recorded under this
+    /// `blake3:<hex>` of the frame body Sinex recorded under this
     /// name. A conflict refusal carries the recorded body's hash, not the
     /// offered one; frames recorded before Sinex kept the hash have none.
     pub content_hash: Option<String>,
@@ -595,7 +595,7 @@ pub enum FetchRefusalKind {
     Invalid,
     Unavailable,
 }
-/// Authoritative payload erasure. Only the confirmed feed completes its original slot.
+/// A payload erased by Sinex. Only the confirmed stream completes its original slot.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ErasedEvent {
     pub event: EventId,
@@ -651,7 +651,8 @@ pub enum FetchMaterialReply {
     },
     Refused(FetchRefusal),
 }
-/// A broadcast is only a wakeup hint. Progress requires the complete verified receipt.
+/// A broadcast is only a wakeup hint. Progress requires the complete, checked
+/// acknowledgment.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AckHint {
     pub number: i64,
@@ -695,11 +696,12 @@ pub enum ProducerWelcome {
 
 /// A request on `<root>.recorded.<producer>`: which of these frames Sinex has
 /// recorded. The reply is a framed [`RecordedPage`]. Continue after its
-/// frontier to retrieve every matching receipt; missing frames were not received.
+/// `next` number to retrieve every matching acknowledgment; missing frames
+/// were not received.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct RecordedQuery {
-    /// Exact-request collection, independent of the receipt page frontier.
+    /// Materials asked about one by one, independent of acknowledgment paging.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub continuations: Vec<RecordedContinuationRequest>,
     #[serde(default)]
@@ -726,7 +728,7 @@ pub struct MaterialsPage {
 /// registered and Sinex still holds, in the order Sinex recorded them,
 /// starting after the frame numbered `after`. A producer that keeps nothing of
 /// its own rebuilds what it sent from these pages. The framed [`MaterialsPage`]
-/// contains at most `limit` materials and the next frontier.
+/// contains at most `limit` materials and the number to continue after.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Materials {
     #[serde(default)]
@@ -768,7 +770,7 @@ pub enum Confirmed {
     PositionComplete {
         commit_seq: i64,
     },
-    /// Historical evidence cannot establish an exact position; consumers report a gap without advancing.
+    /// The recorded history does not give a position; consumers report a gap without advancing.
     Gap {
         reason: String,
     },
@@ -786,7 +788,7 @@ pub enum Confirmed {
         /// Historical tombstones may predate recorded commit boundaries.
         #[serde(default)]
         commit_seq: Option<i64>,
-        /// The removed reading's original position, when retained historical evidence establishes it.
+        /// The removed reading's original position, when the recorded history gives it.
         #[serde(default)]
         original_commit_seq: Option<i64>,
         event: EventId,
@@ -818,7 +820,7 @@ pub struct WithheldEvent {
 /// A committed event, as the confirmed stream, a snapshot or a fetch carries it.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ConfirmedEvent {
-    /// Historical readings retain unknown source authority explicitly.
+    /// Absent for older readings whose registered source is unknown.
     pub source_ref: Option<SourceRef>,
     pub source_fingerprint: Option<String>,
     pub producer_family: Option<String>,
@@ -883,7 +885,7 @@ mod tests;
 pub struct ConfirmedConsumer {
     pub after: i64,
     /// The completion marker saved with `after`, not the latest staged
-    /// message or the broker's acknowledgment floor.
+    /// message or the broker's acknowledged position.
     pub completion: Option<crate::DeliveredCompletion>,
     /// The snapshot applied at `after`, until a completion marker replaces it.
     #[serde(default)]
@@ -912,7 +914,7 @@ pub enum ConfirmedConsumerReply {
         consumer: String,
         scope: String,
     },
-    /// The requested position is past the durable commit history at `position`.
+    /// The requested position is past the committed history at `position`.
     Gap {
         position: i64,
         scope: String,

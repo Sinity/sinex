@@ -38,7 +38,7 @@ fn known_fields_are_typed_and_the_rest_kept() {
                 "_TRANSPORT": "journal",
                 "CODE_FILE": "src/core/job.c",
     }));
-    assert_eq!(out.len(), 1, "an ordinary entry is only an entry");
+    assert_eq!(out.len(), 1, "a plain entry is only an entry");
     let e = entry(&out);
     assert_eq!(e.cursor, "s=1;i=2");
     assert_eq!(e.logged_at.unwrap().unix_ns(), 1_700_000_000_123_456_000);

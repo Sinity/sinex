@@ -66,7 +66,7 @@ pub struct RegisteredEventType {
     /// NATS ingress: the payload is decoded into the Rust type first, so the
     /// type's time and removal rules apply exactly as for in-process sources.
     pub build: Build,
-    /// Validate and normalize the payload without minting event metadata or an order.
+    /// Validate and normalize the payload without assigning event metadata or an order.
     pub normalize: fn(&Value) -> Result<Value, crate::BuildError>,
 }
 

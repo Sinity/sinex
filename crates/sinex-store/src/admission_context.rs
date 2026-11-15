@@ -117,7 +117,7 @@ impl AdmissionTransaction<'_> {
     }
 
     pub async fn commit(mut self) -> Result<()> {
-        let receipt = if let Some(blobs) = &self.blobs {
+        let extent_commit = if let Some(blobs) = &self.blobs {
             let store = blobs.clone();
             tokio::task::spawn_blocking(move || store.sync_pending())
                 .await
@@ -136,8 +136,8 @@ impl AdmissionTransaction<'_> {
             .commit()
             .await?;
         self.committed = true;
-        if let (Some(blobs), Some(receipt)) = (&self.blobs, receipt) {
-            blobs.acknowledge(receipt)?;
+        if let (Some(blobs), Some(extent_commit)) = (&self.blobs, extent_commit) {
+            blobs.acknowledge(extent_commit)?;
         }
         Ok(())
     }

@@ -1,4 +1,4 @@
-//! Signal adapters preserve native identity independently of displayed fields.
+//! Signal adapters preserve record identity independently of displayed fields.
 use super::*;
 async fn standing_query(
     conn: &mut PgConnection,
@@ -11,7 +11,7 @@ async fn standing_query(
 }
 
 #[devkit::test]
-async fn standing_queries_keep_native_and_group_keys_through_projection_and_replay(
+async fn standing_queries_keep_record_and_group_keys_through_fields_and_replay(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
@@ -78,7 +78,7 @@ async fn standing_queries_keep_native_and_group_keys_through_projection_and_repl
         ]
     );
     tx.rollback().await.unwrap();
-    // A new interpretation of one native derived key changes the event ID,
+    // A new interpretation of one derived key changes the event ID,
     // while the standing occurrence remains the same cited key.
     let old = ids[0].0;
     let mut event = Event::build(
@@ -252,9 +252,7 @@ fn observation(identity: String, reference: String, at: i64) -> ::signals::Row {
     }
 }
 #[devkit::test]
-async fn privacy_key_rules_and_new_readings_do_not_refire_the_native_fact(
-    db: devkit::pg::TestDatabase,
-) {
+async fn privacy_key_rules_and_new_readings_do_not_refire_the_fact(db: devkit::pg::TestDatabase) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
@@ -276,10 +274,10 @@ async fn privacy_key_rules_and_new_readings_do_not_refire_the_native_fact(
     let active = ::signals::ActiveRule {
         version: ::signals::RuleVersion {
             product: "sinex".into(),
-            id: "authored:native-fixture".into(),
+            id: "authored:identity-fixture".into(),
             revision: 1,
         },
-        rule: serde_json::from_value(json!({"name":"native-fixture","query":question})).unwrap(),
+        rule: serde_json::from_value(json!({"name":"identity-fixture","query":question})).unwrap(),
         author: ::signals::Author::Agent("fixture".into()),
         via: "fixture".into(),
         live: false,
@@ -363,7 +361,7 @@ async fn privacy_key_rules_and_new_readings_do_not_refire_the_native_fact(
     crate::privacy::add_rule(
         &mut conn,
         &crate::privacy::NewRule {
-            name: "native key protection".into(),
+            name: "record key protection".into(),
             source: "derive.shell-fusion".into(),
             event_type: Some("command.fused".into()),
             field: Some("/record".into()),
@@ -378,7 +376,7 @@ async fn privacy_key_rules_and_new_readings_do_not_refire_the_native_fact(
     .unwrap();
     // Rules apply when a reading is admitted (the mechanism Sinex runs until
     // output-time rules are built; docs/privacy.md describes that design), so
-    // a rule written after both readings leaves the native fact's identity
+    // a rule written after both readings leaves the fact's identity
     // as it was.
     let protected = standing_query(&mut conn, question, &ctx(), seq)
         .await
@@ -398,7 +396,7 @@ async fn privacy_key_rules_and_new_readings_do_not_refire_the_native_fact(
 }
 
 #[devkit::test]
-async fn keyless_native_coordinates_survive_rereading_and_distinguish_outputs(
+async fn keyless_record_coordinates_survive_rereading_and_distinguish_outputs(
     db: devkit::pg::TestDatabase,
 ) {
     use sinex_model::event_types::operator::LogEntry;

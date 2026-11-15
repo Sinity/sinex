@@ -172,11 +172,13 @@ fn structural_detectors() {
 }
 
 #[devkit::test]
-fn floors_raise_and_other_sources_untouched() {
+fn minimum_classes_raise_and_other_sources_untouched() {
     let mut e = event("ls");
-    let mut floors = HashMap::new();
-    floors.insert("terminal.zsh-history".to_string(), Class::Guarded);
-    RuleSet::new(vec![], floors, [0; 32]).apply(&mut e).unwrap();
+    let mut minimum_classes = HashMap::new();
+    minimum_classes.insert("terminal.zsh-history".to_string(), Class::Guarded);
+    RuleSet::new(vec![], minimum_classes, [0; 32])
+        .apply(&mut e)
+        .unwrap();
     assert_eq!(e.class, Class::Guarded);
     let mut other = rule(None, Matcher::All, Class::Guarded, Action::Classify);
     other.source = "x".into();

@@ -1,6 +1,6 @@
 # Recall
 
-Answers to "what was happening": selections, the one `recall` verb, recipes and the packs compiled from them, strata, lanes, notes, and how an agent's session receives Sinex's context when it starts. What the products contain and how they are computed (presence, agency, episodes, the resume card) is in [higher layer](higher-layer.md); the query rules every answer follows (read context, budgets, citations) are in [query](query.md); coverage is in [sources](sources.md#completeness); the views that render recall are in [web](web.md).
+Answers to "what was happening": selections, the one `recall` verb, recipes and the packs compiled from them, recall classes, lanes, notes, and how an agent's session receives Sinex's context when it starts. What the products contain and how they are computed (presence, agency, episodes, the resume card) is in [higher layer](higher-layer.md); the query rules every answer follows (read context, budgets, citations) are in [query](query.md); coverage is in [sources](sources.md#completeness); the views that render recall are in [web](web.md).
 
 ```sh
 sinexctl recall                      # where was I: the top three resume candidates
@@ -11,13 +11,13 @@ sinexctl recall last --cwd /src/tide # the latest shell session there
 sinexctl note "check bench disk" --when here
 ```
 
-Decided target (2026-11-01). The current build answers `recall` with a time-ordered list of every event in the window, and keeps `context`, `brief` and `mark` as separate verbs with their own MCP tools. The decided design below replaces them: one verb, strata instead of a row list, recipes compiled into stored packs, and one `note` kind.
+Decided target (2026-11-01). The current build answers `recall` with a time-ordered list of every event in the window, and keeps `context`, `brief` and `mark` as separate verbs with their own MCP tools. The decided design below replaces them: one verb, recall classes instead of a row list, recipes compiled into stored packs, and one `note` kind.
 
 ## Purpose
 
 Recall turns stored readings into a record the operator and his agents can stand in: at any instant, day or piece of work they see what was happening, at the grain they want, with every statement traceable to bytes and every unknown shown as unknown. The tests are "what was I doing", "where was I", "what happened while I was away", answered in one or two steps and never invented.
 
-The record reaches the operator in ordinary work (an agent's session start, a hotkey, a notification, the browser's home page), not through a daily ritual. Three rules shape it:
+The record reaches the operator in the course of his work (an agent's session start, a hotkey, a notification, the browser's home page), not through a daily ritual. Three rules shape it:
 
 - **The hierarchy answers, not rows.** The first answer to any time question is the derived layers at the right zoom (episodes and sessions, then states and acts, then incidents); raw rows are one step down, never the first screen.
 - **One assembly, one coverage source.** Every surface compiles from the same recipes over the same read context, and takes its coverage from the [coverage read model](sources.md#completeness), so two answers about one day cannot disagree.
@@ -59,7 +59,7 @@ A **selection** is what every question here is about: a subject plus a read cont
 | `(QUERY)` | `moment` per returned span | no |
 | `compare A B` | `compare`: two selections lane by lane | no |
 
-- `--rows LANE` descends to the rows of one lane, paged with the ordinary cursor; the flat row list is an explicit choice, never the default.
+- `--rows LANE` descends to the rows of one lane, paged with the usual cursor; the flat row list is an explicit choice, never the default.
 - `--as-known-then` compiles at the commit position at the end of the selection's span and is labelled `historical_preview` ([historical previews](#historical-previews)).
 - `--budget N` is in tokens (`budget_tokens` over MCP), the presentation budget of the [answer contract](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/command-surface/README.md).
 - The current `context` and `brief` verbs become subjects of `recall` (`context --episode X` is `recall episode X`; `brief yesterday` is `recall yesterday`; `brief --session-start --cwd D` is `recall here --cwd D`), and `mark` becomes `note`. One verb per concept follows the rule against commands that are subsets of another ([one entry point](interfaces.md#principles)).
@@ -74,8 +74,8 @@ The shipped recipes are `resume`, `moment`, `day`, `period`, `here`, `project`, 
 
 - **Identity.** A pack's key is the recipe and its version, the canonical selection, settings, evidence identity and compiler version. Compiling the same evidence again returns the same pack.
 - **Lifecycle.** Packs are derived events and archive with their inputs. A pack for the current day is provisional until the day closes.
-- **Prepared packs**, compiled as evidence arrives so that a request is a read: the current day, every open or recently suspended episode's resume pack, a here pack per working directory seen in the last 7 days, and the moment pack for `now`. Each recipe declares the kinds and scopes its sections read; an admitted event of those kinds in the pack's span marks it dirty, and compilation is debounced (2 s for the current day and `now`, immediate on episode suspension). Compilation reads stored derived events and figures, never raw ambient events. Everything else compiles on request and is stored when it is cited or delivered; an ordinary interactive read is not stored.
-- **Every line** has a citation, a stratum and an expand handle (a narrower selection or a lane query), so a reader at a small budget descends without restating the question. An expansion reads at the original answer's read context.
+- **Prepared packs**, compiled as evidence arrives so that a request is a read: the current day, every open or recently suspended episode's resume pack, a here pack per working directory seen in the last 7 days, and the moment pack for `now`. Each recipe declares the kinds and scopes its sections read; an admitted event of those kinds in the pack's span marks it dirty, and compilation is debounced (2 s for the current day and `now`, immediate on episode suspension). Compilation reads stored derived events and figures, never raw ambient events. Everything else compiles on request and is stored when it is cited or delivered; an interactive read is not stored.
+- **Every line** has a citation, a recall class and an expand handle (a narrower selection or a lane query), so a reader at a small budget descends without restating the question. An expansion reads at the original answer's read context.
 - **Every section** has a status: `complete`, `partial(reason)`, `not_estimable(reason)`, `not_observed(sources)` or `empty`. A section whose evidence is missing never renders "nothing to report", and a not-estimable figure says why.
 - **The coverage header** is the coverage facet for the pack's span, restricted to the sources its sections read and the sources expected in that span. An export-only source appears only when the span is newer than its newest export ("Takeout covers to 31 Oct"), never as a daily "not observed".
 - **Budgets cut whole lines.** A presentation budget orders pending before past (open loops, running work, stalls, then the trail newest first), cuts whole lines with an omission count, and never changes the stored pack. An agent's `sinex_recall` with no arguments answers in at most 1,200 tokens by default.
@@ -86,13 +86,13 @@ The day pack's sections, each with its drill-down: data quality (coverage from t
 
 ### Historical previews
 
-`--as-known-then` (or an explicit `as of`) reads its historical position through the ordinary query compiler and returns a labelled `historical_preview`: an on-request, unmaterialized presentation, because historical inputs can already be archived and a new live product cannot cite archived parents. The response carries the exact read position, evaluation clock, time-setting version, current grants, source account and raw event citations. Current visibility rules and permanent removal still apply; a historical position grants no additional access. A day pack can show what Sinex knew at the end of that day beside what it knows now, with the replays that changed it.
+`--as-known-then` (or an explicit `as of`) reads its historical position through the usual query compiler and returns a labelled `historical_preview`: an on-request, unmaterialized presentation, because historical inputs can already be archived and a new live product cannot cite archived parents. The response carries the exact read position, evaluation clock, time-setting version, current grants, source account and raw event citations. Current visibility rules and permanent removal still apply; a historical position grants no additional access. A day pack can show what Sinex knew at the end of that day beside what it knows now, with the replays that changed it.
 
-## Strata
+## Recall classes
 
-Each registered kind declares one **stratum**, checked at registration (a kind without one is refused):
+Each registered kind declares one **recall class**, checked at registration (a kind without one is refused):
 
-| Stratum | Meaning | Examples | Where it shows |
+| Recall class | Meaning | Examples | Where it shows |
 |---|---|---|---|
 | `act` | someone did something at an instant: the operator, an agent, or a person writing to him | command, edit, prompt, commit, push, page visit, mail sent or received, chat message, copy, note | the trail; act lanes; counted per agency |
 | `state` | something held over an interval | focus, presence, agency span, playback, location, rest, unit running, episode, session | "what held"; interval lanes |
@@ -101,13 +101,13 @@ Each registered kind declares one **stratum**, checked at registration (a kind w
 | `measure` | a derived figure | `metric.figure`, `health.figure`, `rhythm.deviation` | figure sections and charts; never rows of a time span |
 | `presentation` | an answer, pack, delivery or saved query | `context.pack`, `study.result`, signal deliveries, saved queries | its own object views; never activity, counts or parents of a recall |
 
-A kind may declare a promotion rule: journal entries become `incident` at warning priority or above; a bus message becomes an `act` only through a typed derivation such as `notification.shown`. This one declaration replaces namespace heuristics and recall membership exceptions. Outside producers declare their kinds' strata in their kind registration.
+A kind may declare a promotion rule: journal entries become `incident` at warning priority or above; a bus message becomes an `act` only through a typed derivation such as `notification.shown`. This one declaration replaces namespace heuristics and recall membership exceptions. Outside producers declare their kinds' recall classes in their kind registration.
 
-Recall reads a span as strata: states holding at its start and inside it (from the span index), acts grouped by lane and agency, incidents, ambient counts per source, then the measure and presentation objects that cite the span, as links. No source can crowd out another, because no stratum is one time-ordered list, and nothing is cut: each lane carries its complete count and continues by its expand handle.
+Recall reads a span by recall class: states holding at its start and inside it (from the span index), acts grouped by lane and agency, incidents, ambient counts per source, then the measure and presentation objects that cite the span, as links. No source can crowd out another, because no recall class is one time-ordered list, and nothing is cut: each lane carries its complete count and continues by its expand handle.
 
 ## Lanes
 
-A **lane** is a timeline row defined by a query: a named query plus a render (`interval`, `point` or `count`, defaulted by the unit's stratum) and a grouping key (application for focus, project for episodes). The timeline element and its series row are common [`web-shell`](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/web-shell/README.md)'s. A lane is an ordinary saved query with one more field; saving one is `query save NAME QUERY --lane RENDER`.
+A **lane** is a timeline row defined by a query: a named query plus a render (`interval`, `point` or `count`, defaulted by the unit's recall class) and a grouping key (application for focus, project for episodes). The timeline element and its series row are common [`web-shell`](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/web-shell/README.md)'s. A lane is a saved query with one more field; saving one is `query save NAME QUERY --lane RENDER`.
 
 The shipped Day lanes, in order: rest; presence and agency (one strip, coloured by agency, hatched where unknown); work episodes; focus; commands (with exit status); pages; communication; media; places (when location capture exists); agents (delegated work by session, from Polylogue's kinds); incidents; notes. A lane whose sources were not observing draws the coverage hatch, never an empty band. In primary mode the AI lanes come from the Polylogue kinds already in Sinex, so drawing them reads no message text and calls no Polylogue.
 
@@ -126,7 +126,7 @@ A **note** is an authored statement anchored in time or on events. It is the one
 | `revises` | the note it revises; the earlier text stays readable |
 | author, `via` | computed by the daemon |
 
-- `note ["TEXT"] [--at TIME] [--about REF…] [--value INSTRUMENT=V] [--when QUERY|here] [--revises NOTE]`. It commits in under 1 s, so it sits on a hotkey; a client may supply native command and focus record keys.
+- `note ["TEXT"] [--at TIME] [--about REF…] [--value INSTRUMENT=V] [--when QUERY|here] [--revises NOTE]`. It commits in under 1 s, so it sits on a hotkey; a client may supply the record keys of the current command and focus.
 - Links from an `at`-anchored note to what it was about arrive later as derived `reference.about` events, by source record keys and containing time.
 - `recall note N` orders notes by noted time, newest first, with the ID as a stable tie-break.
 - A note is withdrawn by a withdrawal record, as every authored record is. A tripwire fires once per period its trigger holds, under the signals evaluator's rules. Notes are records about the substrate, never a second model of it, and they obey the [authored-record rules](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/authored/README.md).

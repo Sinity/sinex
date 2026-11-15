@@ -288,7 +288,7 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
         name: "beads",
         accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
-            owner: sinex_source_core::discovery::Owner::System,
+            captured_by: sinex_source_core::discovery::CapturedBy::System,
             locations: &[sinex_source_core::discovery::Location {
                 root: "input",
                 path: "beads",

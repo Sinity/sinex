@@ -24,14 +24,14 @@ impl Requests {
             let name = self.subjects.consumer_name(&scope);
             let js = jetstream::new(self.client.clone());
             let stream = js.get_stream(&stream_name).await?;
-            let origin = crate::publisher::history_origin(&stream)?;
+            let stream_start = crate::publisher::read_stream_start(&stream)?;
             let instance = crate::publisher::stream_instance(&stream);
             let mut conn = self.reads.acquire().await?;
-            origin.validate(&mut conn).await?;
+            stream_start.validate(&mut conn).await?;
             let head = sinex_store::query::current_seq(&mut conn).await?;
             drop(conn);
             let snapshot_required = || ConfirmedConsumerReply::SnapshotRequired {
-                origin: origin.position,
+                origin: stream_start.position,
                 position: head,
                 scope: scope.clone(),
                 stream_instance: instance.clone(),
@@ -49,7 +49,7 @@ impl Requests {
                 return Ok(ConfirmedConsumerReply::Gap {
                     position: head,
                     scope,
-                    reason: "requested position exceeds durable commit history".into(),
+                    reason: "requested position is past the commit history".into(),
                 });
             }
             // A completion marker of this stream instance shows the consumer
@@ -64,11 +64,11 @@ impl Requests {
                 )
                 .await
             } else if let Some(start) = &request.start {
-                if start.stream_instance != instance || request.after < origin.position {
+                if start.stream_instance != instance || request.after < stream_start.position {
                     return Ok(snapshot_required());
                 }
                 super::stream_messages::after_snapshot(&stream, &start.last).await
-            } else if request.after == 0 && !origin.requires_snapshot {
+            } else if request.after == 0 && !stream_start.requires_snapshot {
                 Ok(1)
             } else {
                 return Ok(snapshot_required());

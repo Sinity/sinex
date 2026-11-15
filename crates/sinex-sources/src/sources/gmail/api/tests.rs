@@ -307,7 +307,7 @@ fn successful_messages_are_stored_before_a_later_fetch_fails() {
 }
 
 #[test]
-fn repeated_labels_and_deletions_keep_the_exact_history_object() {
+fn repeated_labels_and_deletions_keep_the_history_object_whole() {
     let fake = Fake::new();
     let history = json!({"id":"h", "messages":[{"id":"gone"}],"messagesDeleted":[{"message":{"id":"gone"}},{"message":{"id":"gone"}}],"labelsAdded":[{"message":{"id":"m"},"labelIds":["a","a"]}], "labelsRemoved":[{"message":{"id":"m"},"labelIds":["b"]}]});
     fake.add(

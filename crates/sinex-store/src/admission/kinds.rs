@@ -1,4 +1,4 @@
-//! Resolve exact definitions once for the batch before privacy and staging.
+//! Resolve kind definitions once for the batch before privacy and staging.
 use crate::{Error, Result};
 use sinex_model::kinds::Normalization;
 use sinex_model::{
@@ -24,7 +24,7 @@ pub(super) async fn prepare(
             continue;
         }
         return Err(Error::Invalid(format!(
-            "unknown kind reference {reference:?}; an exact owner-installed declaration must be registered first"
+            "unknown kind reference {reference:?}; the installed declaration of this version must be registered first"
         )));
     }
     let mut rust_validators = BTreeMap::new();

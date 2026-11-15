@@ -22,7 +22,7 @@ pub enum Cell<T> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Missing {
-    /// Stored figures were cut under a different period boundary.
+    /// Stored figures were computed under a different period boundary.
     IncomparablePeriod,
     /// No source feeding the metric was running or exported for the unit.
     NoCoverage,

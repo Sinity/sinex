@@ -82,11 +82,11 @@ Several metrics per construct is normal and is how construct validity becomes vi
 A **figure** is one stored `metric.figure` (or `health.figure`) event per metric version, day setting, grain, unit and dimension values; hourly first, and daily figures read hourly figures only ([figures](higher-layer.md#figures)). Each cell has a **state** and no default: `observed(v)`, `partial(v, fraction)`, `lower_bound(v)` (recorded, coverage unknown), `missing(reason)` with a reason from the coverage vocabulary, `not_applicable`, `not_estimable(reason)`. It cites its read ranges. A rendering never shows a number that is not a cell or a slot bound to one.
 
 - **Usual range.** For a metric declaring `deviation = true`, the daily cell carries the prior-only robust baseline (median and MAD × 1.4826 over the prior 28 calendar days, at least 14 observed) as `usual_low`, `usual_high`, `usual_n`. `rhythm.deviation` remains the stored event for days outside it. A later day never changes an earlier day's range.
-- **Affirmed zeros.** A self-report metric's opportunity is the union of **affirmations**: an instrument item such as "that's everything for today", or a declared logging period. A day with an affirmation and no answer is `observed(0)`; a day without one is `missing(unknown)`. Zero is never inferred from silence.
+- **Recorded zeros.** A self-report metric's opportunity is the union of **completeness notes**: an instrument item such as "that's everything for today", or a declared logging period. A day with a completeness note and no answer is `observed(0)`; a day without one is `missing(unknown)`. Zero is never inferred from silence.
 
 ### Self-reports and intake
 
-Self-reports are [notes](recall.md#notes) with an instrument value: instrument and version, the exact response with its scale and unit, answer time, and the prompt and its latency when there was one. The instruments are data the operator edits; those personal evidence uses are `mood` (valence and energy, ordinal), `rested` (ordinal), `intake` (substance from the operator's vocabulary, amount, unit, time as exact, approximate or unknown, route), `intake.day` (an affirmation), `guess` and `adherence` (experiment items), `doing` (free text) and performance tasks imported from a phone app's native records.
+Self-reports are [notes](recall.md#notes) with an instrument value: instrument and version, the exact response with its scale and unit, answer time, and the prompt and its latency when there was one. The instruments are data the operator edits; those personal evidence uses are `mood` (valence and energy, ordinal), `rested` (ordinal), `intake` (substance from the operator's vocabulary, amount, unit, time as exact, approximate or unknown, route), `intake.day` (a completeness note), `guess` and `adherence` (experiment items), `doing` (free text) and performance tasks imported from a phone app's own records.
 
 - Ordinal scales are analysed with rank methods; a mean over an ordinal scale is refused unless the request asks for it, and then carries a caveat.
 - `intake.dose` normalizes each intake answer through a versioned substance table (configuration); an answer with unknown time keeps an unknown time.
@@ -134,7 +134,7 @@ An **experiment** is a study with `design = experiment` and a protocol. It is th
 | `washout` | units after each switch excluded from the primary analysis |
 | `length` | planned units and the stopping rule: fixed, or fixed with one declared interim look and an alpha split |
 | `primary`, `secondary` | one primary outcome with direction and smallest effect of interest; a family of secondary outcomes |
-| `exposure` | how the actual condition is recorded |
+| `exposure` | how the condition a unit received is recorded |
 | `blinding` | `open`; `coded` (identical containers labelled with codes, the key withheld); `self-shuffled` (the key is revealed at the end and recorded) |
 | `analysis` | the estimand by assignment (intention to treat) and the randomization test; per protocol as secondary |
 | `prompts` | the instrument prompts the experiment owns |
@@ -171,7 +171,7 @@ Lynchpin's purposes are judged one row at a time. The ledger of rows lives in th
 
 - **reachable**: the replacement answers through `sinex_query`, `sinex_recall` or `sinex_explain` and the CLI, and the web view where the row names one;
 - **original formats**: a test runs it from original-format materials, never from Lynchpin's outputs;
-- **known defect**: the row's named Lynchpin defect, replayed as a case, fails the native test;
+- **known defect**: the row's named Lynchpin defect, replayed as a case, fails the Sinex test;
 - **parity**: a stored parity study over at least 28 shared logical days, read at Lynchpin's day boundary by re-bucketing hourly cells, with every difference above the row's tolerance attributed to a named cause;
 - **consumer**: the Lynchpin action that served the row has a named replacement call, and the Lynchpin module and its step are deleted in the change that retires the row.
 

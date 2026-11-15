@@ -35,7 +35,7 @@ const fn spec(
         expect: Expectation::continuous_days(2),
         expires_after: None,
         purpose,
-        // The class of each lane is the operator's to choose; floors raise it
+        // The class of each lane is the operator's to choose; minimum classes raise it
         // without a code change.
         class: Class::Open,
         parser,
@@ -96,7 +96,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
             ..spec(
                 "desktop.idle-inhibitor",
                 "sinnix-lake:desktop.idle-inhibitor",
-                "presence and AFK evidence",
+                "presence and AFK state",
                 &["lake.observed", "capture.gap"],
             )
         },
@@ -379,7 +379,7 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
         name: "sinnix-lake",
         accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
-            owner: sinex_source_core::discovery::Owner::System,
+            captured_by: sinex_source_core::discovery::CapturedBy::System,
             locations: &[sinex_source_core::discovery::Location {
                 root: "declared",
                 path: "realm",

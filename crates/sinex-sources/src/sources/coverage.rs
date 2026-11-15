@@ -1,4 +1,4 @@
-//! Source reader outcomes retained as ordinary JSON-line materials.
+//! Source reader outcomes stored as JSON-line materials.
 use serde_json::{Map, Value, json};
 use sinex_model::event_types::coverage::{CoverageState, SourceCoverage};
 use sinex_model::{Class, InputRef, MaterialId, ObservationFacts, ReadingOrder, RevisionChange};
@@ -12,7 +12,7 @@ pub const OBSERVATION: SourceSpec = SourceSpec {
     origin: Origin::Request,
     expect: Expectation::OnDemand,
     expires_after: None,
-    purpose: "source read outcomes and coverage evidence",
+    purpose: "source read outcomes and coverage observations",
     class: Class::Open,
     parser: "source-observation",
     parser_version: 1,
@@ -44,7 +44,7 @@ impl Parser for ObservationParser {
             || (observation.state == CoverageState::Missing && observation.reason.is_none())
             || (observation.state == CoverageState::Observed && observation.failures != 0)
         {
-            return Err(RecordError::new("invalid source coverage evidence"));
+            return Err(RecordError::new("invalid source coverage observation"));
         }
         Ok((vec![observation], ()))
     }
@@ -105,7 +105,7 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
         name: "source-observation",
         accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
-            owner: sinex_source_core::discovery::Owner::System,
+            captured_by: sinex_source_core::discovery::CapturedBy::System,
             locations: &[],
             capabilities: &[],
             credentials: &[],

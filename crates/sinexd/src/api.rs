@@ -316,7 +316,7 @@ async fn follow(
         let Some(mut last) = position(api.clone()).await else {
             return;
         };
-        // A commit after the notice must stay beyond the initial cursor floor.
+        // A commit after the notice must stay beyond the initial cursor position.
         if tx
             .send(Ok(Event::default().event("notice").data(DATA_NOTICE)))
             .await

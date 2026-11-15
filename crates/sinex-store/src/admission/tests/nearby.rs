@@ -1,4 +1,4 @@
-//! Exact neighbour-window reuse preserves the affected-key union and freshness.
+//! Neighbour-window reuse preserves the affected-key union and freshness.
 use super::*;
 use crate::derivations::{InputRange, Kind, Window};
 use crate::privacy::{self, Action, NewRule};
@@ -95,7 +95,7 @@ fn ids(values: &[u8]) -> BTreeSet<String> {
 }
 
 #[devkit::test]
-async fn exact_neighbour_windows_preserve_scope_union_and_refresh_between_calls(
+async fn neighbour_windows_preserve_scope_union_and_refresh_between_calls(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
@@ -202,7 +202,7 @@ async fn exact_neighbour_windows_preserve_scope_union_and_refresh_between_calls(
         .collect();
     assert_eq!(
         remarked, second_expected,
-        "the same window descriptions read new membership at the new frontier"
+        "the same window descriptions read new membership at the new position"
     );
     assert_eq!(
         current["k1"], first,

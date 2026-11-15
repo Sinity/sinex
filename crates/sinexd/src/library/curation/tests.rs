@@ -320,7 +320,7 @@ async fn entries_pin_their_revision_and_removal_addresses_one_entry(db: devkit::
 }
 
 #[devkit::test]
-async fn punctuation_labels_are_written_and_shown_as_ordinary_tags(db: devkit::pg::TestDatabase) {
+async fn punctuation_labels_are_written_and_shown_as_plain_tags(db: devkit::pg::TestDatabase) {
     let mut w = world(db).await;
     let a = item(&mut w, "a.txt", "a").await;
     w.curate(json!([
@@ -619,7 +619,7 @@ async fn stored_currency_equals_the_shared_function_on_generated_histories(
         }
     }
 
-    // The hand-stated case through ordinary requests: R1 <- R2 <- R3.
+    // The hand-stated case through API requests: R1 <- R2 <- R3.
     let a = item(&mut w, "a.txt", "a").await;
     let set = |value: &str| json!([{"act": "set", "target": t(&a), "property": "medium", "value": value}]);
     let r1 = written(&w.curate(set("one")).await, 0);
@@ -647,10 +647,10 @@ async fn stored_currency_equals_the_shared_function_on_generated_histories(
     let _ = r1;
 }
 
-/// The projection the function gives over every live curation record,
+/// The shown view the function gives over every live curation record,
 /// computed from the whole live set held in memory, independent of the
 /// writer's refresh and of the loading the daemon does.
-async fn expected_projection(w: &mut World) -> Vec<sinex_store::library_shown::Row> {
+async fn expected_shown_view(w: &mut World) -> Vec<sinex_store::library_shown::Row> {
     let rows = sinex_store::payloads::live_all(
         &mut w.conn,
         "library.curation",
@@ -671,7 +671,7 @@ async fn expected_projection(w: &mut World) -> Vec<sinex_store::library_shown::R
         .into_iter()
         .filter(|r| current.contains(&authored::Revision::new(&r.root, &r.rev)))
         .collect();
-    let mut rows = sinex_library::projection::rows(&shown::values(&current));
+    let mut rows = sinex_library::shown_view::rows(&shown::values(&current));
     rows.sort_by(|a, b| (&a.target, &a.kind, &a.key).cmp(&(&b.target, &b.kind, &b.key)));
     rows
 }
@@ -711,9 +711,7 @@ async fn replay_curation(w: &mut World) {
 }
 
 #[devkit::test]
-async fn the_projection_equals_the_function_after_generated_writes_withdrawals_archives_and_replays(
-    db: devkit::pg::TestDatabase,
-) {
+async fn shown_view_matches_function_after_generated_history(db: devkit::pg::TestDatabase) {
     let mut w = world(db).await;
     let items = [
         item(&mut w, "a.txt", "a").await,
@@ -793,7 +791,7 @@ async fn the_projection_equals_the_function_after_generated_writes_withdrawals_a
             }
             let mut stored = sinex_store::library_shown::all(&mut w.conn).await.unwrap();
             stored.sort_by(|a, b| (&a.target, &a.kind, &a.key).cmp(&(&b.target, &b.kind, &b.key)));
-            assert_eq!(stored, expected_projection(&mut w).await, "case {case}");
+            assert_eq!(stored, expected_shown_view(&mut w).await, "case {case}");
         }
     }
     assert!(

@@ -228,7 +228,7 @@ async fn streaming_copy_encoding_and_database_errors_rollback_and_retry(
 }
 
 #[devkit::test]
-async fn canceled_streaming_copy_releases_transaction_and_writer_for_exact_retry(
+async fn canceled_streaming_copy_releases_transaction_and_writer_for_retry(
     db: devkit::pg::TestDatabase,
 ) {
     let url = db.url(None);

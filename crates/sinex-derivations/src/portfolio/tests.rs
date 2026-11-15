@@ -141,7 +141,7 @@ fn deviations(events: &[Event], target: &Event) -> Vec<RhythmDeviation> {
         .collect()
 }
 #[devkit::test]
-fn rhythm_is_prior_only_and_insufficient_evidence_is_not_zero_deviation() {
+fn rhythm_is_prior_only_and_sparse_history_is_not_zero() {
     let target = daily(20, 500, true);
     let mut rows: Vec<_> = (0..14).map(|day| daily(day, 300, true)).collect();
     rows.push(target.clone());
@@ -190,11 +190,11 @@ fn late_rhythm_input_dirties_its_future_baseline_days() {
     assert_eq!(keys.len(), 29);
 }
 #[devkit::test]
-fn mark_links_wait_for_native_keys_or_host_scoped_containing_sessions() {
+fn mark_links_wait_for_record_keys_or_host_sessions() {
     // Atuin's rows are the command family's database member.
     let mut command = record(
         "command.executed",
-        json!({"native_id":"native-command-7","command":"example","started_at":at(0),"duration_ns":10*SECOND,
+        json!({"native_id":"command-7","command":"example","started_at":at(0),"duration_ns":10*SECOND,
         "exit_code":0,"hostname":"box:u","cwd":"/example","session":"s"}),
         0,
     );
@@ -207,7 +207,7 @@ fn mark_links_wait_for_native_keys_or_host_scoped_containing_sessions() {
     let mark = record(
         "operator.mark",
         json!({"host":"box","at":at(5),"text":"Example","cwd":"/example","command":"example",
-        "app":null,"title":null,"by":"synthetic","written_at":at(5),"command_record":"command.executed:native-command-7"}),
+        "app":null,"title":null,"by":"synthetic","written_at":at(5),"command_record":"command.executed:command-7"}),
         0,
     );
     let env = Env::at(
@@ -247,7 +247,7 @@ fn mark_links_wait_for_native_keys_or_host_scoped_containing_sessions() {
             .compute(&key, &[no_key, command], &env)
             .outputs
             .is_empty(),
-        "command text is not a native key"
+        "command text is not a record key"
     );
 }
 

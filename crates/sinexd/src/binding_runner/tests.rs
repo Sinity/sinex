@@ -51,7 +51,7 @@ async fn save_binding_with_material(
 }
 
 #[devkit::test]
-async fn backup_keeps_configured_native_inputs_after_an_empty_poll(db: devkit::pg::TestDatabase) {
+async fn backup_keeps_configured_spools_after_empty_poll(db: devkit::pg::TestDatabase) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     let root = tempfile::tempdir().unwrap();
     for (spec, empty, malformed) in [
@@ -126,7 +126,7 @@ async fn backup_keeps_configured_native_inputs_after_an_empty_poll(db: devkit::p
                     result
                         .unwrap_err()
                         .to_string()
-                        .contains("no material evidence")
+                        .contains("no material that identifies")
                 );
             } else {
                 assert!(result.unwrap().contains(&binding));
@@ -146,13 +146,11 @@ async fn backup_keeps_configured_native_inputs_after_an_empty_poll(db: devkit::p
 }
 
 #[devkit::test]
-async fn backup_keeps_same_named_native_spool_separate_from_historical_lake_file(
-    db: devkit::pg::TestDatabase,
-) {
+async fn backup_keeps_spool_apart_from_same_named_lake_file(db: devkit::pg::TestDatabase) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     let root = tempfile::tempdir().unwrap();
-    let historical = root.path().join("retired.jsonl");
-    std::fs::write(&historical, b"original retired capture\n").unwrap();
+    let historical = root.path().join("historical.jsonl");
+    std::fs::write(&historical, b"original historical capture\n").unwrap();
     let specs = sources::specs();
     let lake = specs
         .iter()
@@ -161,42 +159,40 @@ async fn backup_keeps_same_named_native_spool_separate_from_historical_lake_file
     let live = &sources::clipboard::SPEC;
     let old = Binding::of(lake, &historical, Settings::new("synthetic-host"));
     save_binding_with_material(&mut conn, &old, lake.parser).await;
-    let spool = root.path().join("native-spool");
+    let spool = root.path().join("live-spool");
     std::fs::create_dir(&spool).unwrap();
-    let native = Binding::of(live, &spool, Settings::new("synthetic-host"));
-    let material = save_binding_with_material(&mut conn, &native, live.parser).await;
+    let spool_binding = Binding::of(live, &spool, Settings::new("synthetic-host"));
+    let material = save_binding_with_material(&mut conn, &spool_binding, live.parser).await;
     sqlx::query("UPDATE raw.positions SET cursor=$2 WHERE binding=$1")
-        .bind(&native.name)
+        .bind(&spool_binding.name)
         .bind(json!({"segment":0,"inner":{},"part_base":0,"last_material":material}))
         .execute(&mut conn)
         .await
         .unwrap();
     let selected = backup_bindings(
         &mut conn,
-        vec![native.clone(), old.clone()],
+        vec![spool_binding.clone(), old.clone()],
         "synthetic-host",
         root.path(),
     )
     .await
     .unwrap();
-    assert_eq!(selected, vec![native.clone()]);
+    assert_eq!(selected, vec![spool_binding.clone()]);
     assert_eq!(
         std::fs::read(&historical).unwrap(),
-        b"original retired capture\n"
+        b"original historical capture\n"
     );
-    // Retained native state remains an obligation even when no longer configured.
+    // A stored spool still has to be copied even when its binding is no longer configured.
     assert_eq!(
         backup_bindings(&mut conn, vec![], "synthetic-host", root.path())
             .await
             .unwrap(),
-        vec![native]
+        vec![spool_binding]
     );
 }
 
 #[devkit::test]
-async fn backup_refuses_unresolved_or_contradictory_retained_binding_identity(
-    db: devkit::pg::TestDatabase,
-) {
+async fn backup_refuses_unresolved_or_contradictory_binding(db: devkit::pg::TestDatabase) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     let root = tempfile::tempdir().unwrap();
     let binding = Binding::of(
@@ -234,7 +230,7 @@ async fn backup_refuses_unresolved_or_contradictory_retained_binding_identity(
             .await
             .unwrap_err()
             .to_string()
-            .contains("no material evidence")
+            .contains("no material that identifies")
     );
     assert!(
         backup_bindings(
@@ -246,7 +242,7 @@ async fn backup_refuses_unresolved_or_contradictory_retained_binding_identity(
         .await
         .unwrap_err()
         .to_string()
-        .contains("no material evidence")
+        .contains("no material that identifies")
     );
     sqlx::query("UPDATE raw.positions SET cursor=$2 WHERE binding=$1")
         .bind(&binding.name)
@@ -259,7 +255,7 @@ async fn backup_refuses_unresolved_or_contradictory_retained_binding_identity(
             .await
             .unwrap_err()
             .to_string()
-            .contains("no parser evidence")
+            .contains("no recorded parser")
     );
 }
 
@@ -357,7 +353,7 @@ fn replanning_adds_late_files_once_and_keeps_other_inputs_running() {
 }
 
 #[devkit::test]
-fn every_included_source_declares_its_native_version_before_input_arrives() {
+fn every_built_in_source_declares_its_version_before_input() {
     let declarations = crate::catalog::source_declarations();
     for spec in sources::specs() {
         let declaration = declarations
@@ -366,7 +362,7 @@ fn every_included_source_declares_its_native_version_before_input_arrives() {
                 declaration.source.name == spec.name
                     && declaration.source.version == spec.parser_version
             })
-            .expect("every native specification has its exact declaration version");
+            .expect("every built-in source has a declaration for its parser version");
         for event_type in spec.event_types {
             assert!(
                 declaration

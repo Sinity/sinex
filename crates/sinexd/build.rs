@@ -1,7 +1,7 @@
 use std::process::Command;
 
 // The build identity comes from SINEX_BUILD: Nix supplies the real revision
-// and the development shell supplies a fixed one, so ordinary edits and Git
+// and the development shell supplies a fixed one, so source edits and Git
 // operations never rebuild sinexd. Plain Cargo outside both reads Git once.
 fn main() {
     println!("cargo:rerun-if-env-changed=SINEX_BUILD");

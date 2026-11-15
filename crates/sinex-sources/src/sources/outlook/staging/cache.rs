@@ -1,4 +1,4 @@
-//! Only readers own conversions; weak entries share immutable folders without retaining scratch.
+//! Only readers keep conversions alive; weak entries share immutable folders without keeping scratch.
 use super::*;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock, Weak};

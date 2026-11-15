@@ -46,7 +46,7 @@ pub(super) fn parse(text: &str) -> NoteFrontMatter {
         }
     };
     // deserialize_any falls back to string/float for some oversized integers.
-    // Check the library's actual scalar styles, so quoted numeric strings and
+    // Check the scalar styles the library reports, so quoted numeric strings and
     // explicitly tagged strings remain strings. Run only after budget checks.
     static INTEGER: OnceLock<Regex> = OnceLock::new();
     let integer = INTEGER.get_or_init(|| {

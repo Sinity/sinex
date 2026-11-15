@@ -1,7 +1,7 @@
 # Sinex shell integration for zsh: one execution token per command.
 #
 # Source from an interactive zsh (the NixOS module does this). For each
-# command the shell runs, preexec mints a UUIDv7 execution token, hands it to
+# command the shell runs, preexec makes a UUIDv7 execution token, hands it to
 # kitty as the `sinex_execution` user variable, and precmd reports the
 # finished execution (token, command, cwd, start, duration, exit and the Atuin
 # row started for it) through `sinex-session report-command`, in the
@@ -17,7 +17,7 @@ typeset -gi _sinex_counter=0
 typeset -g _sinex_base64='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
 
 # A UUIDv7 in REPLY: the millisecond, then a per-shell counter, the shell's
-# process ID and random bits, so tokens minted on one host never repeat. It
+# process ID and random bits, so tokens made on one host never repeat. It
 # runs in the shell itself, so the counter advances.
 _sinex_uuid7() {
   local -i ms=$(( $1 / 1000000 ))

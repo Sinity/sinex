@@ -39,7 +39,7 @@ async fn coverage(conn: &mut PgConnection, sources: &[&str], _as_of: i64) -> Res
 pub(crate) struct Panel {
     pub citation: Option<String>,
     pub producer_versions: Option<Value>,
-    pub evidence: Vec<Value>,
+    pub coverage_observations: Vec<Value>,
     pub units: Vec<Unit>,
     pub cells: Vec<PanelCell>,
     pub coverage: Vec<Coverage>,
@@ -60,7 +60,7 @@ impl Panel {
     }
 }
 
-/// The cells of `metrics` over the logical days `from..=to`.
+/// The cells of `metrics` over the days `from..=to`.
 pub(crate) async fn panel(
     conn: &mut PgConnection,
     ctx: &Context,
@@ -84,9 +84,7 @@ pub(crate) async fn panel(
     let payload = super::access::find(conn, "analysis.panel", &question.request)
         .await?
         .ok_or_else(|| {
-            Error::not_built(
-                "analysis panel is not materialized; submit its canonical request first",
-            )
+            Error::not_built("analysis panel is not materialized; submit its request first")
         })?;
     from_payload(&payload)
 }
@@ -135,7 +133,7 @@ pub(super) fn from_payload(payload: &Value) -> Result<Panel> {
     Ok(Panel {
         citation: payload["_citation"].as_str().map(str::to_owned),
         producer_versions: payload.get("producer_versions").cloned(),
-        evidence: payload["coverage_evidence"]
+        coverage_observations: payload["coverage_evidence"]
             .as_array()
             .cloned()
             .unwrap_or_default(),
@@ -238,7 +236,7 @@ pub(crate) struct Gap {
 }
 
 /// Where each of `sources` (every source with events when `None`) could not
-/// have recorded between the logical days `from` and `to`, at the current
+/// have recorded between the days `from` and `to`, at the current
 /// commit position.
 pub(crate) async fn gaps(
     conn: &mut PgConnection,

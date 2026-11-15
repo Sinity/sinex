@@ -6,11 +6,11 @@ impl Compiler<'_> {
     /// The SQL of a field, and what kind of value it is.
     pub(super) fn field(&self, cols: &Cols, f: &FieldRef) -> Result<(SqlFragment, Kind)> {
         match (cols, f) {
-            (Cols::Base { .. }, FieldRef::Native(BuiltInField::Identity)) => {
+            (Cols::Base { .. }, FieldRef::BuiltIn(BuiltInField::Identity)) => {
                 let sql = self.positioned(cols, fields::tiebreak(Self::table_of(cols)));
                 Ok((sql, Kind::Typed(FieldType::Text)))
             }
-            (Cols::Base { .. }, FieldRef::Native(field)) => {
+            (Cols::Base { .. }, FieldRef::BuiltIn(field)) => {
                 let (start, end, _, known) = self.span_metadata(cols)?;
                 let value = match field {
                     BuiltInField::SpanStart => start,
@@ -23,7 +23,7 @@ impl Compiler<'_> {
                 sql.append(known).push(" THEN ").append(value).push(" END");
                 Ok((sql, Kind::Typed(field.field_type())))
             }
-            (Cols::Named { .. }, FieldRef::Native(field)) => Ok((
+            (Cols::Named { .. }, FieldRef::BuiltIn(field)) => Ok((
                 SqlFragment::text(Self::named(cols, field.name())),
                 Kind::Typed(field.field_type()),
             )),
@@ -54,7 +54,7 @@ impl Compiler<'_> {
                 Err(invalid(format!("`{name}` has no bound output column type")))
             }
             // Shared binding supplies column lineage; the product resolves its
-            // physical scalar type against the current declaration snapshot.
+            // SQL scalar type against the current declaration snapshot.
             (Cols::Named { .. }, FieldRef::TypedGroup(column)) => Ok((
                 SqlFragment::text(Self::named(cols, column.name())),
                 Kind::Typed(
@@ -451,8 +451,8 @@ impl Compiler<'_> {
         Self::typed_json(raw, ty)
     }
 
-    /// A schemaless comparison gets its scalar type from the current projected
-    /// JSON value. The query spelling remains exact until that row is known.
+    /// A schemaless comparison gets its scalar type from the current selected
+    /// JSON value. The query spelling stays unchanged until that row is known.
     fn compare_json_scalar(&self, lhs: SqlFragment, op: Op, raw: &str) -> Result<SqlFragment> {
         let string = self.compare(
             Self::typed_json(lhs.clone(), FieldType::Text),
@@ -658,7 +658,7 @@ impl Compiler<'_> {
             let escaped: Vec<String> = w.words.iter().map(|x| regex_escape(x)).collect();
             pattern.push_str(&escaped.join(" "));
             // Eligible kinds read their own trigram table; words-only kinds
-            // retain prefix answers through the protected full-text view.
+            // keep prefix answers through the protected full-text view.
             out.push("(")
                 .append(id)
                 .push(" IN (SELECT s.event_id FROM core.visible_search_trigram s WHERE s.text ~ ")
@@ -953,8 +953,8 @@ impl Compiler<'_> {
         Ok(self.field(cols, &FieldRef::Field(field))?.0)
     }
 
-    /// Private native time metadata survives projection independently of aliases.
-    /// Ordinary events choose an interval schema by kind; other rows are points.
+    /// Private time metadata survives the fields stage independently of aliases.
+    /// Events choose an interval schema by kind; other rows are points.
     pub(super) fn span_metadata(
         &self,
         cols: &Cols,

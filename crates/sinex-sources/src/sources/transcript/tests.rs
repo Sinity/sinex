@@ -116,7 +116,7 @@ impl sinex_source_core::MaterialSink for Sink {
     }
 }
 #[devkit::test]
-fn every_import_format_reads_retained_bytes_with_its_registered_parser() {
+fn every_import_format_reads_stored_bytes_with_its_registered_parser() {
     use sinex_source_core::MaterialSink;
     let formats = [
         (

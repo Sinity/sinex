@@ -11,7 +11,7 @@ pub use crate::drivers::export_archive::group::{
     ArchivePassStats, Input, ListedMember, ReadSeek, Route, members, read_input as read,
 };
 
-/// Native input retained before a converter's output is admitted.
+/// Original input stored before a converter's output is admitted.
 #[derive(Clone)]
 pub struct Acquisition {
     pub path: PathBuf,
@@ -29,7 +29,7 @@ pub trait SharedPass: Send + Sync {
         Ok(())
     }
 
-    /// The native input behind converted bytes; ordinary archives have none.
+    /// The original input behind converted bytes; archives read directly have none.
     fn acquisition(&self) -> Option<&Acquisition> {
         None
     }

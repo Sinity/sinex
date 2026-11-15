@@ -75,7 +75,7 @@ pub struct ClipboardCopied {
     pub received_at: Timestamp,
     /// `clipboard` or `primary`.
     pub selection: String,
-    /// The types the owner offered, in its order; `None` when the capture
+    /// The types the copying program offered, in its order; `None` when the capture
     /// did not record them.
     pub mime_types: Option<Vec<String>>,
     /// The type whose content was read.
@@ -95,7 +95,7 @@ pub struct ClipboardCopied {
     /// when it was not seen live.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub imported_from: Option<String>,
-    /// The owner marked it a secret (a password manager's hint); its content
+    /// The copying program marked it a secret (a password manager's hint); its content
     /// was not read.
     pub secret: bool,
     /// Fields the capture wrote that this type does not name, kept by name.
@@ -163,7 +163,7 @@ pub struct EditorReport {
 pub struct TerminalReport {
     pub received_at: Timestamp,
     pub terminal: String,
-    /// The execution token Sinex's shell integration minted for the command
+    /// The execution token Sinex's shell integration made for the command
     /// (`cmd_start`, `cmd_end`), when the shell ran the integration.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution: Option<String>,

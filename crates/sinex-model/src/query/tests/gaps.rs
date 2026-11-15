@@ -131,7 +131,7 @@ fn time_citations_require_absolute_time_and_marks_have_positive_numbers() {
             window: 300.0
         }
     ));
-    assert!(native_err("recall mark 0").message.contains("one"));
+    assert!(template_err("recall mark 0").message.contains("one"));
 }
 
 #[devkit::test]
@@ -239,7 +239,7 @@ fn recall_last_payload_conditions_use_the_session_schema() {
         }
     ));
     assert!(
-        native_err("recall last where payload.command = synthetic")
+        template_err("recall last where payload.command = synthetic")
             .message
             .contains("not declared")
     );
@@ -318,7 +318,7 @@ fn recall_fill_bounds_apply_only_to_when_and_intersect_row_time_bounds() {
     assert_eq!(fill.from, ts("2026-09-14T04:00:00Z"));
     assert_eq!(fill.to, ts("2026-09-15T04:00:00Z"));
     assert!(
-        native_err("recall yesterday | group by day(seen) | count | fill")
+        template_err("recall yesterday | group by day(seen) | count | fill")
             .message
             .contains("lower time bound")
     );

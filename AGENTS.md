@@ -3,7 +3,7 @@
 Sinex is a personal event substrate: it captures everything a person's
 digital life produces (shell and terminal history, window focus, D-Bus,
 input devices, browser history, mail, chat exports, media, audio, files, and
-the records of other programs such as Polylogue), keeps the exact source
+the records of other programs such as Polylogue), keeps the original source
 bytes forever, and reads them into events that can be queried, derived from
 and cited. Above the captured events sit stored derived events at every level
 (sessions, episodes, figures, answers, findings, context packs), each with
@@ -127,12 +127,11 @@ one machine; host tuning belongs in deployment configuration.
 ## How work is done here
 
 **Design first.** Before writing code, read the owning page in `docs/`, the
-pages it links to, the current code of the area, and the
-predecessor's implementation and tests for what you are building (the
-earlier Sinex is in this repository's Git history, and its old Beads are its
-plans). Write the whole change from the design: complete features, built on
-the architecture's abstractions, with the predecessor's behaviour and test
-cases ported.
+pages it links to, the current code of the area, and the earlier Sinex's
+implementation and tests for what you are building (it is in this
+repository's Git history, and its old Beads are its plans). Write the whole
+change from the design: complete features, built on the architecture's
+abstractions, with the earlier Sinex's behaviour and test cases ported.
 
 **Edit in bulk; type-check as you go.** Change whole modules, crates and call
 sites in one pass. Type-check after each layer you write
@@ -141,9 +140,9 @@ workspace); it reports every type error at once. Run the wider tests once the
 change is coherent.
 
 **Review your own work before verifying it.** Read the whole diff once
-against the task, the owning page, the architecture and the predecessor's
+against the task, the owning page, the architecture and the earlier Sinex's
 behaviour, and list everything wrong in that one pass: a requirement not met,
-a mechanism duplicated, a predecessor left in place, a caller not converted, a
+a mechanism duplicated, a replaced mechanism left in place, a caller not converted, a
 limit that refuses valid input, a test that cannot fail, a name that does not
 say what the thing is, a case the design covers and the code does not. Fix
 the whole list, then read only what the fixes changed. Then verify. The
@@ -230,7 +229,7 @@ Understand why a core mechanism exists before changing it.
 **Invariants instead of repair.** Code does not produce broken state, so
 there is nothing to repair. There are no repair, reconcile, verify-and-fix or
 drift-checking commands, no dead-letter stores and no scheduled checks. A
-crash leaves only states the ordinary open path treats as normal: an
+crash leaves only states the normal open path handles: an
 uncommitted segment tail, an unpunched tombstoned extent, a consumer behind
 its saved position, a source position behind its committed rows. When
 something is found broken, fix the code that produced it. "We want to
@@ -239,7 +238,7 @@ glass" solutions redundant because the only way these would be necessary is
 a striaght-up bug, which if it happens we could just fix" (2026-07-19,
 `cc:af12164b-a2fc-42cb-a548-22277c0875a2:60fc6414-24ab-4628-81dc-66aae9282d5d`).
 
-**One mechanism per concept; a replacement removes its predecessor.** When
+**One mechanism per concept; a replacement removes what it replaces.** When
 something is replaced, the old version, its callers, docs, tests and
 everything that only served it go in the same change. There are no
 compatibility shims, aliases or fallbacks; a breaking change fixes every
@@ -260,7 +259,7 @@ ones anyway?" (2026-10-27,
 When an area you are changing works but its design is wrong, redesign it as
 part of the task; an area you are not changing gets a Bead.
 
-**Use the predecessor's knowledge, not its mechanisms.** The earlier Sinex
+**Use the earlier Sinex's knowledge, not its mechanisms.** It
 built much of the operator's design (the lifecycle, field-level privacy,
 staging) under layers of control planes and repair. Port its parsers' format
 knowledge, test cases and designs; leave behind its replay control plane,
@@ -274,12 +273,12 @@ corrections on top of corrections to broken code" (2026-10-27,
 
 **Sources read external formats.** A source reads data as the outside service
 or program produces it, not a format someone invented along the way. Window
-managers and terminals are ordinary sources behind interfaces that make
+managers and terminals are sources like any other, behind interfaces that make
 adding others clean. Per-user facts (account names) are configuration;
 vendor facts (the zone a service writes its timestamps in) belong to the
 source's declaration.
 
-**Small codebase, plain names.** Bulk is the main enemy: the predecessor grew
+**Small codebase, plain names.** Bulk is the main enemy: the earlier Sinex grew
 past half a million lines through kludges on kludges. Prefer one deep
 abstraction to several shallow ones, clean interfaces, and no repeated logic.
 A name says what the thing is in ordinary words, everywhere: types,
@@ -302,7 +301,7 @@ permits, not by limits on what is stored or asked. "Such arbitrary limits are
 themselves straight-up bugs." (2026-09-27,
 `cc:62be45f2-6c40-49ce-a88e-bc566948628c:4cc20d7c-9e62-4b7a-9550-7dd97f9d48e9`).
 
-**Tests that are better than the predecessor's.** Every specified behaviour
+**Tests that are better than the earlier Sinex's.** Every specified behaviour
 has a test that fails when the production path breaks, checked
 against an independently known result through a stable interface, against
 real PostgreSQL and NATS. [What a test is worth](docs/testing.md#what-a-test-is-worth)

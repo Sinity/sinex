@@ -1,5 +1,5 @@
 //! Complete replacement batches, ready before the writer owns a transaction.
-//! Native parsing uses a private unlinked file in the blob preparation directory;
+//! Parsing in the daemon uses a private unlinked file in the blob preparation directory;
 //! one batch is encoded or decoded at a time. This is disposable preparation,
 //! not replay progress: only the admission commit records a completed sequence.
 use crate::{Error, Result};
@@ -11,7 +11,7 @@ use std::path::Path;
 
 pub(crate) enum Batches {
     Ready(std::vec::IntoIter<Batch>),
-    Native(Box<Prepared>),
+    Prepared(Box<Prepared>),
 }
 
 impl Batches {
@@ -22,7 +22,7 @@ impl Batches {
     pub(crate) fn next(&mut self) -> Option<Result<Batch>> {
         match self {
             Self::Ready(batches) => batches.next().map(Ok),
-            Self::Native(prepared) => prepared.next(),
+            Self::Prepared(prepared) => prepared.next(),
         }
     }
 }
@@ -62,17 +62,17 @@ impl Builder {
             host,
         } = batch.kind
         else {
-            return Err(Error::internal("native replay prepared a non-replay batch"));
+            return Err(Error::internal("daemon replay prepared a non-replay batch"));
         };
         let first = self.first.as_ref().expect("the replay scope is set");
         if batch.run != first.run
             || !matches!(first.kind, BatchKind::Replay { operation: first, .. } if first == operation)
         {
-            return Err(Error::internal("native replay changed its operation"));
+            return Err(Error::internal("daemon replay changed its operation"));
         }
         if !batch.archive.is_empty() {
             return Err(Error::internal(
-                "native replay archives only its first batch",
+                "daemon replay archives only its first batch",
             ));
         }
         serde_json::to_writer(
@@ -92,9 +92,9 @@ impl Builder {
         let first = self
             .first
             .take()
-            .ok_or_else(|| Error::internal("native replay prepared no archive scope"))?;
+            .ok_or_else(|| Error::internal("daemon replay prepared no archive scope"))?;
         let BatchKind::Replay { operation, .. } = first.kind else {
-            return Err(Error::internal("native replay prepared a non-replay scope"));
+            return Err(Error::internal("daemon replay prepared a non-replay scope"));
         };
         self.file.flush()?;
         let mut file = self.file.into_inner().map_err(|e| e.into_error())?;
@@ -103,7 +103,7 @@ impl Builder {
         // These readings have already been built by the parser. Wrapping them
         // in preparation must not impose a smaller payload nesting allowance.
         records.disable_recursion_limit();
-        Ok(Batches::Native(Box::new(Prepared {
+        Ok(Batches::Prepared(Box::new(Prepared {
             run: first.run,
             operation,
             first: Some(first),

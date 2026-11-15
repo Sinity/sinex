@@ -177,7 +177,7 @@ impl Keyed for ActivitySessions {
                     .push((event, window));
             }
         }
-        let barriers = super::signals::pieces(inputs);
+        let signal_pieces = super::signals::pieces(inputs);
         let mut outputs = Vec::new();
         let mut waiting = false;
         for (scope, mut windows) in by_scope {
@@ -185,9 +185,9 @@ impl Keyed for ActivitySessions {
             let mut groups: Vec<Vec<(&Event, ActivityWindow)>> = Vec::new();
             let mut end = i128::MIN;
             for (event, window) in windows {
-                let boundary = barriers.iter().any(|piece| {
+                let boundary = signal_pieces.iter().any(|piece| {
                     super::signals::absence_scope(piece, &scope)
-                        && super::signals::barrier(piece, end, window.started_at.unix_ns())
+                        && super::signals::absence_overlaps(piece, end, window.started_at.unix_ns())
                 });
                 let closed = boundary
                     || groups
@@ -216,7 +216,7 @@ impl Keyed for ActivitySessions {
                     .max()
                     .unwrap();
                 let last = &group.last().unwrap().1;
-                let boundary = barriers
+                let boundary = signal_pieces
                     .iter()
                     .filter(|piece| {
                         super::signals::absence_scope(piece, &scope)
@@ -360,7 +360,7 @@ impl Keyed for ActivitySessions {
                         .chain(delegated.iter().map(|(event, _)| *event))
                         .chain(boundary.map(|piece| piece.event))
                         .chain(
-                            barriers
+                            signal_pieces
                                 .iter()
                                 .filter(|piece| {
                                     super::signals::absence_scope(piece, &scope)

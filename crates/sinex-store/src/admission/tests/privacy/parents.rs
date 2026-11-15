@@ -20,7 +20,7 @@ async fn parents(conn: &mut crate::AdmissionContext, n: usize) -> Vec<EventId> {
     ids
 }
 #[devkit::test]
-async fn parent_authority_deduplicates_before_query_pages_and_preserves_parent_lists(
+async fn parent_rows_deduplicate_before_query_pages_and_preserve_parent_lists(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
@@ -57,9 +57,7 @@ async fn parent_authority_deduplicates_before_query_pages_and_preserves_parent_l
     assert_eq!(class, "guarded");
 }
 #[devkit::test]
-async fn late_parent_refusal_rolls_back_and_retry_keeps_all_authority(
-    db: devkit::pg::TestDatabase,
-) {
+async fn late_parent_refusal_rolls_back_and_retry_keeps_all_parents(db: devkit::pg::TestDatabase) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
@@ -115,7 +113,7 @@ async fn late_parent_refusal_rolls_back_and_retry_keeps_all_authority(
 }
 
 #[devkit::test]
-async fn compressed_parent_authority_reads_deduplicated_pages(db: devkit::pg::TestDatabase) {
+async fn compressed_parent_rows_read_deduplicated_pages(db: devkit::pg::TestDatabase) {
     use sqlx::Executor;
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
@@ -127,8 +125,11 @@ async fn compressed_parent_authority_reads_deduplicated_pages(db: devkit::pg::Te
     conn.execute("SELECT compress_chunk(c) FROM show_chunks('core.events') c")
         .await
         .unwrap();
-    async fn authority(conn: &mut PgConnection, ids: &[Uuid]) -> Vec<crate::admission::ParentRow> {
-        sqlx::query_as::<_, crate::admission::ParentRow>(include_str!("../../parent_authority.sql"))
+    async fn parent_rows(
+        conn: &mut PgConnection,
+        ids: &[Uuid],
+    ) -> Vec<crate::admission::ParentRow> {
+        sqlx::query_as::<_, crate::admission::ParentRow>(include_str!("../../parent_rows.sql"))
             .bind(ids)
             .persistent(false)
             .fetch_all(conn)
@@ -145,7 +146,7 @@ async fn compressed_parent_authority_reads_deduplicated_pages(db: devkit::pg::Te
     for page in &pages {
         assert!(page.len() <= PARENT_PAGE);
         received.extend(
-            authority(&mut conn, page)
+            parent_rows(&mut conn, page)
                 .await
                 .into_iter()
                 .map(|row| row.id),
@@ -167,7 +168,7 @@ async fn compressed_parent_authority_reads_deduplicated_pages(db: devkit::pg::Te
     let pages = parent_pages(std::slice::from_ref(&event)).collect::<Vec<_>>();
     assert_eq!(pages.len(), 1);
     assert_eq!(pages[0], selected);
-    let rows = authority(&mut conn, &pages[0]).await;
+    let rows = parent_rows(&mut conn, &pages[0]).await;
     assert_eq!(rows.len(), 16);
     assert!(rows.iter().all(|row| !row.live));
 }

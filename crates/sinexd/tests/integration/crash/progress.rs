@@ -1,4 +1,4 @@
-//! Independent custody proof for the two generated native histories.
+//! Independent custody check for the two generated shell histories.
 use super::*;
 use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -68,7 +68,7 @@ enum Fixture {
     },
 }
 
-/// Validate both stores independently before discarding any physical locator.
+/// Validate both stores independently before discarding any material locator.
 pub(super) async fn positions(target: &Target, inputs: &Inputs) -> Vec<(String, Value, Value)> {
     let mut conn = target.connect().await;
     let blobs = sinex_store::Blobs::open(&target.store).unwrap();
@@ -111,10 +111,10 @@ pub(super) async fn positions(target: &Target, inputs: &Inputs) -> Vec<(String, 
         let declaration = sinex_store::source_declarations::load(&mut conn, &reference)
             .await
             .unwrap()
-            .expect("native declaration");
+            .expect("built-in declaration");
         let fingerprint = declaration.fingerprint();
-        // Definitions are immutable for this proof snapshot; every event below
-        // still validates its exact kind, hash and native provenance.
+        // Definitions are immutable for this check snapshot; every event below
+        // still validates its kind, hash and source provenance.
         let mut allowed = BTreeMap::new();
         for kind in &declaration.kinds {
             let hash = kind.definition_hash();
@@ -124,24 +124,24 @@ pub(super) async fn positions(target: &Target, inputs: &Inputs) -> Vec<(String, 
         let saved_binding = sinex_store::bindings::load(&mut conn, &binding)
             .await
             .unwrap()
-            .expect("native binding authority");
+            .expect("saved binding");
         assert_eq!(saved_binding.source, source);
         assert_eq!(saved_binding.input, path.to_string_lossy().as_ref());
         assert_eq!(saved_binding.settings["host"], HOST);
         let (cursor, carry) = sinex_store::positions::load(&mut conn, &binding)
             .await
             .unwrap()
-            .expect("complete native position");
+            .expect("complete binding position");
         let rows = sqlx::query("SELECT m.id,m.input_id,m.part_index,m.previous_part_id,m.blob,m.length,m.manifest,m.parser,m.parser_version,i.locator,i.host,i.kind FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id WHERE i.binding=$1 ORDER BY m.part_index")
             .bind(&binding).fetch_all(&mut conn).await.unwrap();
-        assert!(!rows.is_empty(), "native cursor has no actual materials");
+        assert!(!rows.is_empty(), "binding cursor has no materials");
         let input = rows[0].get::<Uuid, _>("input_id");
         let mut parts = HashMap::new();
         for row in rows {
             assert_eq!(
                 row.get::<Uuid, _>("input_id"),
                 input,
-                "one native input incarnation"
+                "every material belongs to one input"
             );
             assert_eq!(
                 row.get::<String, _>("locator"),
@@ -173,7 +173,7 @@ pub(super) async fn positions(target: &Target, inputs: &Inputs) -> Vec<(String, 
             parts.insert(part.id, part);
         }
         // The schema associates observations with the immutable input, not
-        // individual material rows. For these fixed fixtures EVERY retained
+        // individual material rows. For these fixed fixtures EVERY stored
         // observation must attest the same device/inode, with no unavailable look.
         let metadata = std::fs::metadata(path).unwrap();
         let observations = sqlx::query_as::<_, (Option<String>, Option<String>, Option<String>)>(
@@ -185,7 +185,7 @@ pub(super) async fn positions(target: &Target, inputs: &Inputs) -> Vec<(String, 
         .unwrap();
         assert!(
             !observations.is_empty(),
-            "native input has no captured generation observation"
+            "input has no captured generation observation"
         );
         for (device, inode, unavailable) in observations {
             assert_eq!(
@@ -228,7 +228,7 @@ pub(super) async fn positions(target: &Target, inputs: &Inputs) -> Vec<(String, 
             assert_eq!(
                 allowed.get(&kind),
                 Some(&event.get::<String, _>("definition_hash")),
-                "exact native kind schema"
+                "built-in kind definition hash"
             );
             let hash: Vec<u8> = event.get("record_hash");
             facts.push(Fact {
@@ -255,10 +255,10 @@ pub(super) async fn positions(target: &Target, inputs: &Inputs) -> Vec<(String, 
             failures,
             memory,
         };
-        let logical = validate(&snapshot, &fixture).unwrap_or_else(|reason| {
-            panic!("native progress custody failed for {source}: {reason}")
+        let summary = validate(&snapshot, &fixture).unwrap_or_else(|reason| {
+            panic!("built-in progress custody failed for {source}: {reason}")
         });
-        out.push((binding, logical, snapshot.carry));
+        out.push((binding, summary, snapshot.carry));
     }
     out.sort_by(|a, b| a.0.cmp(&b.0));
     out
@@ -284,7 +284,7 @@ fn chain(snapshot: &Snapshot, zsh: bool) -> Check<Vec<(&Part, usize)>> {
         let part = snapshot
             .parts
             .get(&current)
-            .ok_or("cursor or predecessor material is missing")?;
+            .ok_or("cursor or previous material is missing")?;
         require(
             part.input == snapshot.input,
             "material belongs to another input",
@@ -300,11 +300,11 @@ fn chain(snapshot: &Snapshot, zsh: bool) -> Check<Vec<(&Part, usize)>> {
     require(
         number(&snapshot.cursor, "part_index")?
             == u64::from(ordered.last().ok_or("empty material chain")?.index),
-        "cursor part index differs from actual material",
+        "cursor part index differs from last material",
     )?;
     let mut out = Vec::new();
     for (i, part) in ordered.iter().enumerate() {
-        require(part.index == i as u32, "noncontiguous actual part indices")?;
+        require(part.index == i as u32, "noncontiguous part indices")?;
         require(
             part.manifest["path"] == snapshot.scope["locator"]
                 && part.manifest["host"] == snapshot.scope["host"],
@@ -312,33 +312,36 @@ fn chain(snapshot: &Snapshot, zsh: bool) -> Check<Vec<(&Part, usize)>> {
         )?;
         require(
             part.manifest.get("members").is_none_or(|v| v == &json!([])),
-            "unproved container member ranges",
+            "unchecked container member ranges",
         )?;
         require(
             part.manifest.get("records").is_none_or(Value::is_null),
-            "unproved selective record ranges",
+            "unchecked selective record ranges",
         )?;
-        let cut = if let Some(next) = ordered.get(i + 1) {
+        let consumed = if let Some(next) = ordered.get(i + 1) {
             number(&next.manifest, "previous_through")?
         } else {
             number(&snapshot.cursor, "through")?
         };
-        let cut = usize::try_from(cut).map_err(|_| "cut exceeds address space")?;
-        require(cut <= part.bytes.len(), "through exceeds actual material")?;
+        let consumed = usize::try_from(consumed).map_err(|_| "through exceeds address space")?;
+        require(consumed <= part.bytes.len(), "through exceeds the material")?;
         require(
-            cut == 0 || frames(&part.bytes, zsh).iter().any(|(_, end)| *end == cut),
-            "through is inside a native record",
+            consumed == 0
+                || frames(&part.bytes, zsh)
+                    .iter()
+                    .any(|(_, end)| *end == consumed),
+            "through is inside a record",
         )?;
-        out.push((*part, cut));
+        out.push((*part, consumed));
     }
     Ok(out)
 }
-struct Authorities<'a> {
+struct RecordOutcomes<'a> {
     located: HashMap<(Uuid, u64, [u8; 32]), Vec<&'a Value>>,
     repeated: HashMap<[u8; 32], Vec<&'a Value>>,
     failures: &'a BTreeSet<(Uuid, u64)>,
 }
-impl<'a> Authorities<'a> {
+impl<'a> RecordOutcomes<'a> {
     fn new(snapshot: &'a Snapshot) -> Self {
         let mut located: HashMap<_, Vec<_>> = HashMap::new();
         let mut repeated: HashMap<_, Vec<_>> = HashMap::new();
@@ -356,7 +359,7 @@ impl<'a> Authorities<'a> {
         }
     }
     fn record(&self, part: &Part, start: usize, raw: &[u8], expected: &Value) -> Check<bool> {
-        // Native record hashes include the framed newline. SQLite reader
+        // File record hashes include the framed newline. SQLite reader
         // memory instead hashes the row's JSON line before adding newline.
         let hash = *blake3::hash(raw).as_bytes();
         let matches = |payload: &&Value| {
@@ -370,8 +373,8 @@ impl<'a> Authorities<'a> {
             .located
             .get(&(part.id, start as u64, hash))
             .is_some_and(|values| values.iter().any(matches));
-        // Snapshot loading bounds every candidate to the same actual immutable
-        // input and owner source/schema; a hash alone is never the authority.
+        // Snapshot loading bounds every candidate to the same immutable
+        // input and its source/schema; a hash alone never explains a record.
         let repeated = self
             .repeated
             .get(&hash)
@@ -379,7 +382,7 @@ impl<'a> Authorities<'a> {
         let failed = self.failures.contains(&(part.id, start as u64));
         require(
             located || repeated || failed,
-            "consumed complete record has no event, failure or exact repeat authority",
+            "consumed complete record has no event, failure or exact repeat",
         )?;
         Ok(failed && !located && !repeated)
     }
@@ -419,21 +422,21 @@ fn validate(snapshot: &Snapshot, fixture: &Fixture) -> Check<Value> {
             .cursor
             .as_object()
             .is_some_and(|fields| fields.keys().all(|key| allowed.contains(&key.as_str()))),
-        "unproved native cursor field",
+        "unexpected cursor field",
     )?;
     require(
         snapshot.scope["source"]
             == json!({"name":if is_zsh {"terminal.zsh-history"} else {"terminal.atuin-history"},"version":if is_zsh {3} else {1}}),
-        "wrong exact native source",
+        "wrong source",
     )?;
-    require(snapshot.scope["host"] == HOST, "wrong native host scope")?;
+    require(snapshot.scope["host"] == HOST, "wrong host scope")?;
     let parts = chain(snapshot, is_zsh)?;
-    let authority = Authorities::new(snapshot);
+    let outcomes = RecordOutcomes::new(snapshot);
     let mut admitted = BTreeSet::new();
-    for (part, cut) in &parts {
+    for (part, consumed) in &parts {
         for (start, _) in frames(&part.bytes, is_zsh)
             .into_iter()
-            .filter(|(_, end)| end <= cut)
+            .filter(|(_, end)| end <= consumed)
         {
             admitted.insert((part.id, start as u64));
         }
@@ -460,20 +463,20 @@ fn validate(snapshot: &Snapshot, fixture: &Fixture) -> Check<Value> {
                 snapshot.cursor["last_full_pass_ns"]
                     .as_i64()
                     .is_some_and(|at| at > 0),
-                "missing actual full-pass acquisition clock",
+                "missing full-pass acquisition clock",
             )?;
             require(
                 snapshot.cursor["last_order"]
                     .as_i64()
                     .is_some_and(|order| snapshot.facts.iter().all(|fact| fact.order <= order)),
-                "cursor reading-order frontier regressed",
+                "cursor reading order regressed",
             )?;
             let mut hashes = BTreeMap::<i64, [u8; 32]>::new();
             let mut saved_hashes = None;
             let mut since_memory = 0u64;
             let mut failed = 0;
             let memory_part = snapshot.cursor["memory_part"].as_u64();
-            for (part, cut) in &parts {
+            for (part, consumed) in &parts {
                 require(
                     part.manifest["database_generation"] == *generation,
                     "material database generation differs",
@@ -485,7 +488,7 @@ fn validate(snapshot: &Snapshot, fixture: &Fixture) -> Check<Value> {
                 )?;
                 for (start, end) in frames(&part.bytes, false)
                     .into_iter()
-                    .filter(|(_, end)| end <= cut)
+                    .filter(|(_, end)| end <= consumed)
                 {
                     let raw = &part.bytes[start..end];
                     let row: Value =
@@ -493,14 +496,14 @@ fn validate(snapshot: &Snapshot, fixture: &Fixture) -> Check<Value> {
                     let rowid = row["_rowid"].as_i64().ok_or("missing captured rowid")?;
                     require(
                         rowid > 0 && rowid <= *rows as i64,
-                        "captured row outside known native frontier",
+                        "captured row outside the generated rows",
                     )?;
                     let i = rowid - 1;
                     require(
                         row == json!({"_rowid":rowid,"id":format!("a{i:06}"),"timestamp":1_600_000_000_000_000_000i64+i*1_000_000_000,"duration":1000,"exit":0,"command":format!("atuin {i}"),"cwd":"/","session":"s","hostname":"h","deleted_at":null}),
-                        "captured row differs from independent generated native contents",
+                        "captured row differs from independently generated contents",
                     )?;
-                    failed+=u64::from(authority.record(part,start,raw,&json!({"native_id":format!("a{i:06}"),"command":format!("atuin {i}"),"duration_ns":1000,"exit_code":0}))?);
+                    failed+=u64::from(outcomes.record(part,start,raw,&json!({"native_id":format!("a{i:06}"),"command":format!("atuin {i}"),"duration_ns":1000,"exit_code":0}))?);
                     hashes.insert(rowid, *blake3::hash(&raw[..raw.len() - 1]).as_bytes());
                     since_memory += 1;
                 }
@@ -511,18 +514,18 @@ fn validate(snapshot: &Snapshot, fixture: &Fixture) -> Check<Value> {
             }
             require(
                 hashes.keys().copied().eq(1..=*rows as i64),
-                "native frontier has missing rows despite its maximum",
+                "captured rows are missing below the maximum rowid",
             )?;
             require(
                 number(&snapshot.cursor, "max_rowid")? == *rows as u64,
-                "cursor row frontier differs",
+                "cursor maximum rowid differs",
             )?;
             require(
                 snapshot.cursor.get("open").is_none_or(|v| v == &json!([])),
-                "settled fixture contains open native rows",
+                "finished fixture contains open rows",
             )?;
             let (saved_id, saved) =
-                saved_hashes.ok_or("reader memory cursor does not name an actual part")?;
+                saved_hashes.ok_or("reader memory cursor does not name a captured part")?;
             let (memory_id, bytes) = snapshot.memory.as_ref().ok_or("reader memory is missing")?;
             require(
                 *memory_id == saved_id,
@@ -532,22 +535,22 @@ fn validate(snapshot: &Snapshot, fixture: &Fixture) -> Check<Value> {
                 bytes.len() % 40 == 0,
                 "reader memory has an incomplete entry",
             )?;
-            let mut actual = BTreeMap::new();
+            let mut loaded = BTreeMap::new();
             for entry in bytes.chunks_exact(40) {
                 let rowid = i64::from_le_bytes(entry[..8].try_into().unwrap());
                 let hash: [u8; 32] = entry[8..].try_into().unwrap();
                 require(
-                    actual.insert(rowid, hash).is_none(),
+                    loaded.insert(rowid, hash).is_none(),
                     "duplicate reader memory row",
                 )?;
             }
             require(
-                actual == saved,
+                loaded == saved,
                 "reader memory does not reproduce captured admitted row hashes",
             )?;
             require(
                 number(&snapshot.cursor, "changed_since_memory")? == since_memory,
-                "reader memory frontier differs",
+                "reader memory change count differs",
             )?;
             require(
                 failed == 0,
@@ -581,7 +584,7 @@ fn validate(snapshot: &Snapshot, fixture: &Fixture) -> Check<Value> {
             let mut counts = BTreeMap::<(i64, [u8; 32]), u32>::new();
             let mut grains = 0usize;
             let mut failed = 0;
-            for (part, cut) in &parts {
+            for (part, consumed) in &parts {
                 require(
                     number(&part.manifest, "file_offset")? == captured.len() as u64,
                     "noncontiguous captured file ranges",
@@ -592,7 +595,7 @@ fn validate(snapshot: &Snapshot, fixture: &Fixture) -> Check<Value> {
                 )?;
                 for (start, end) in frames(&part.bytes, true)
                     .into_iter()
-                    .filter(|(_, end)| end <= cut)
+                    .filter(|(_, end)| end <= consumed)
                 {
                     let i = grains;
                     let second = 1_600_000_000 + i as i64;
@@ -602,7 +605,7 @@ fn validate(snapshot: &Snapshot, fixture: &Fixture) -> Check<Value> {
                         format!("cmd {i}")
                     };
                     let raw = &part.bytes[start..end];
-                    failed += u64::from(authority.record(
+                    failed += u64::from(outcomes.record(
                         part,
                         start,
                         raw,
@@ -613,31 +616,31 @@ fn validate(snapshot: &Snapshot, fixture: &Fixture) -> Check<Value> {
                     *counts.entry((second, key)).or_default() += 1;
                     grains += 1;
                 }
-                captured.extend_from_slice(&part.bytes[..*cut]);
+                captured.extend_from_slice(&part.bytes[..*consumed]);
             }
             require(
                 captured == *bytes,
-                "captured contiguous prefixes differ from known complete native bytes",
+                "captured contiguous prefixes differ from known complete file bytes",
             )?;
             require(grains == *records, "complete record grain count differs")?;
             require(
                 number(&snapshot.cursor, "offset")? == bytes.len() as u64
                     && number(&snapshot.cursor, "size")? == bytes.len() as u64,
-                "cursor native file frontier differs",
+                "cursor file offset differs",
             )?;
             require(
                 number(&snapshot.cursor, "inode")? == *inode,
-                "wrong native file generation",
+                "wrong file inode",
             )?;
             require(
                 snapshot.cursor["mtime_ns"] == json!(mtime)
                     && snapshot.cursor["ctime_ns"] == json!(ctime),
-                "native file observation differs",
+                "file observation differs",
             )?;
             let window = blake3::hash(&captured).to_hex().to_string();
             require(
                 snapshot.cursor["window"] == window,
-                "cursor prefix digest differs from actual captured ranges",
+                "cursor prefix digest differs from captured ranges",
             )?;
             let expected = json!({"latest":1_600_000_000i64+*records as i64-1,"counts":counts.into_iter().map(|((at,hash),n)|(at,hash,n)).collect::<Vec<_>>()});
             require(

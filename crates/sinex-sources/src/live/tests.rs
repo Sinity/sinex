@@ -101,7 +101,7 @@ struct ExpectedInterruption {
 enum ReplyControl {
     Hold {
         inbox: String,
-        cut: ExpectedInterruption,
+        interruption: ExpectedInterruption,
         ready: tokio::sync::oneshot::Sender<()>,
     },
     Resume {
@@ -135,7 +135,7 @@ async fn fake_ingress_controlled(
     timeout: Arc<tokio::sync::Notify>,
     connections: Option<Arc<std::sync::atomic::AtomicUsize>>,
     mut controls: Option<tokio::sync::mpsc::Receiver<ReplyControl>>,
-    mut event_receipts: Option<AckCheck>,
+    mut ack_check: Option<AckCheck>,
 ) -> (ReceivedFrames, ReceivedOrder, tokio::task::JoinHandle<()>) {
     let client = async_nats::connect(url).await.unwrap();
     let mut declarations = client
@@ -176,10 +176,10 @@ async fn fake_ingress_controlled(
         let mut replies = tokio::task::JoinSet::new();
         let mut queued = std::collections::VecDeque::<ReplyWork>::new();
         let mut held_inbox: Option<String> = None;
-        let mut cut: Option<ExpectedInterruption> = None;
+        let mut interruption: Option<ExpectedInterruption> = None;
         let mut hold_ready: Option<tokio::sync::oneshot::Sender<()>> = None;
         loop {
-            // The cut drains unrelated reply attempts while receipt intake stays live.
+            // The held reply lets unrelated replies drain while acknowledgments keep arriving.
             while replies.len() < REPLIES_AT_ONCE {
                 let Some(index) = queued
                     .iter()
@@ -189,7 +189,7 @@ async fn fake_ingress_controlled(
                 };
                 let work = queued.remove(index).unwrap();
                 let expected = if held_inbox.as_ref() == Some(&work.inbox) {
-                    Some(cut.take().expect("one controlled reply"))
+                    Some(interruption.take().expect("one controlled reply"))
                 } else {
                     None
                 };
@@ -205,20 +205,18 @@ async fn fake_ingress_controlled(
                     .await;
                     let finished_at = Instant::now();
                     if let Some(expected) = expected {
-                        // Only an observed final frame and an actual broker stop
-                        // can authorize this exact attempt's expected idle result.
-                        let evidence = expected
+                        // Only an observed final frame and a broker stop can explain
+                        // this attempt's expected idle result.
+                        let stop = expected
                             .stopped
                             .await
                             .expect("the controlled reply must cross an observed broker stop");
-                        assert_eq!(evidence.waiting.inbox, work.inbox);
+                        assert_eq!(stop.waiting.inbox, work.inbox);
+                        assert!(stop.waiting.sequence > 0 && !stop.waiting.stream.is_empty());
                         assert!(
-                            evidence.waiting.sequence > 0 && !evidence.waiting.stream.is_empty()
-                        );
-                        assert!(
-                            evidence.waiting.observed_at <= evidence.stopped_at
-                                && evidence.stopped_at <= finished_at,
-                            "the exact reply must still be outstanding when this broker stops"
+                            stop.waiting.observed_at <= stop.stopped_at
+                                && stop.stopped_at <= finished_at,
+                            "the reply must still be outstanding when this broker stops"
                         );
                         assert!(
                             matches!(&result, Err(sinex_transport::replies::ReplyError::Idle)),
@@ -226,7 +224,7 @@ async fn fake_ingress_controlled(
                         );
                         expected
                             .observed
-                            .send(evidence)
+                            .send(stop)
                             .ok()
                             .expect("interruption observer is alive");
                         (false, Ok(()))
@@ -238,12 +236,12 @@ async fn fake_ingress_controlled(
             if replies.is_empty()
                 && let Some(ready) = hold_ready.take()
             {
-                ready.send(()).expect("reply cut controller is alive");
+                ready.send(()).expect("reply hold controller is alive");
             }
             tokio::select! {
                 Some(result) = replies.join_next() => {
-                    let (recorded, result) = result.expect("fake owner reply task panicked");
-                    result.expect("unexpected fake owner reply failure");
+                    let (recorded, result) = result.expect("fake daemon reply task panicked");
+                    result.expect("unexpected fake daemon reply failure");
                     if recorded { timeout.notify_one(); }
                 }
                 Some(message) = declarations.next() => {
@@ -263,25 +261,25 @@ async fn fake_ingress_controlled(
                 }
                 Some(message) = queries.next() => {
                     let query: sinex_protocol::RecordedQuery = serde_json::from_slice(&message.payload).unwrap();
-                    let acknowledgments=recorded.values().filter(|receipt|(query.frames.contains(&receipt.frame)||query.numbers.contains(&receipt.number))&&receipt.number>query.after).cloned().collect();
+                    let acknowledgments=recorded.values().filter(|ack|(query.frames.contains(&ack.frame)||query.numbers.contains(&ack.number))&&ack.number>query.after).cloned().collect();
                     queued.push_back(ReplyWork { inbox: message.reply.unwrap().to_string(), body: ReplyBody::Recorded(sinex_protocol::RecordedPage { acknowledgments, next: None, ..Default::default() }) });
                 }
                 command = async { controls.as_mut().expect("enabled control branch").recv().await }, if controls.is_some() => {
-                    match command.expect("reply control lifetime covers the fake owner") {
-                        ReplyControl::Hold { inbox, cut: expected, ready } => {
+                    match command.expect("reply control lifetime covers the fake daemon") {
+                        ReplyControl::Hold { inbox, interruption: expected, ready } => {
                             assert!(held_inbox.is_none());
                             held_inbox = Some(inbox);
-                            cut = Some(expected);
+                            interruption = Some(expected);
                             hold_ready = Some(ready);
                         }
                         ReplyControl::Resume { ready } => {
-                            assert!(held_inbox.take().is_some() && cut.is_none());
+                            assert!(held_inbox.take().is_some() && interruption.is_none());
                             client.flush().await.unwrap();
                             ready.send(()).expect("restart controller is alive");
                         }
                     }
                 }
-                changed = async { event_receipts.as_mut().expect("enabled event gate").open.changed().await }, if event_receipts.is_some() => {
+                changed = async { ack_check.as_mut().expect("enabled acknowledgment check").open.changed().await }, if ack_check.is_some() => {
                     if changed.is_err() { break; }
                 }
                 changed = available.changed() => {
@@ -296,10 +294,11 @@ async fn fake_ingress_controlled(
                 let mut held = Vec::new();
                 for pair in pending.drain(..) {
                     if matches!(&pair.0, Ingress::Events { .. })
-                        && let Some(gate) = &event_receipts
-                        && !*gate.open.borrow()
+                        && let Some(check) = &ack_check
+                        && !*check.open.borrow()
                     {
-                        gate.waiting
+                        check
+                            .waiting
                             .store(true, std::sync::atomic::Ordering::Release);
                         held.push(pair);
                     } else {
@@ -405,21 +404,21 @@ async fn wait_for(running: &mut Running, mut ready: impl FnMut() -> bool) {
 }
 
 async fn daemon_alive<T>(
-    owner: &mut tokio::task::JoinHandle<()>,
+    daemon: &mut tokio::task::JoinHandle<()>,
     future: impl std::future::Future<Output = T>,
 ) -> T {
     tokio::select! {
         result = future => result,
-        result = owner => panic!("fake ingress owner stopped unexpectedly: {result:?}"),
+        result = daemon => panic!("fake daemon stopped unexpectedly: {result:?}"),
     }
 }
 
 async fn wait_for_daemon(
     running: &mut Running,
-    owner: &mut tokio::task::JoinHandle<()>,
+    daemon: &mut tokio::task::JoinHandle<()>,
     ready: impl FnMut() -> bool,
 ) {
-    daemon_alive(owner, wait_for(running, ready)).await;
+    daemon_alive(daemon, wait_for(running, ready)).await;
 }
 
 /// Receive a real framed page, acknowledging every data unit but its final marker.
@@ -939,11 +938,11 @@ async fn capture_recovers_when_nats_returns(initially_unavailable: bool) {
         .await
     }));
     let segment = spool.join("000000000000.ndjson");
-    let mut saved_receipts = Vec::new();
+    let mut saved_acks = Vec::new();
     let mut interrupted = None;
     let mut held_recipient = None;
-    if let Some((frames, _, owner)) = &mut responder {
-        wait_for_daemon(&mut running, owner, || {
+    if let Some((frames, _, daemon)) = &mut responder {
+        wait_for_daemon(&mut running, daemon, || {
             frames
                 .lock()
                 .unwrap()
@@ -953,8 +952,8 @@ async fn capture_recovers_when_nats_returns(initially_unavailable: bool) {
         .await;
         let names = frames.lock().unwrap().keys().cloned().collect::<Vec<_>>();
         let reader = async_nats::connect(nats.url()).await.unwrap();
-        saved_receipts = daemon_alive(
-            owner,
+        saved_acks = daemon_alive(
+            daemon,
             sinex_transport::producer::recorded(
                 &reader,
                 &subjects,
@@ -967,50 +966,50 @@ async fn capture_recovers_when_nats_returns(initially_unavailable: bool) {
         .await
         .unwrap();
         assert_eq!(
-            saved_receipts.len(),
+            saved_acks.len(),
             names.len(),
-            "the owner recorded every pre-stop frame before the cut"
+            "the daemon recorded every pre-stop frame before the stop"
         );
         let inbox = format!("_INBOX.synthetic.{}", uuid::Uuid::now_v7().simple());
-        let (stopped, stop_evidence) = tokio::sync::oneshot::channel();
+        let (stopped, stop_report) = tokio::sync::oneshot::channel();
         let (observed, interruption) = tokio::sync::oneshot::channel();
         let (ready, quiescent) = tokio::sync::oneshot::channel();
         reply_controls
             .send(ReplyControl::Hold {
                 inbox: inbox.clone(),
-                cut: ExpectedInterruption {
-                    stopped: stop_evidence,
+                interruption: ExpectedInterruption {
+                    stopped: stop_report,
                     observed,
                 },
                 ready,
             })
             .await
             .unwrap();
-        daemon_alive(owner, quiescent).await.unwrap();
+        daemon_alive(daemon, quiescent).await.unwrap();
         let (waiting, recipient) = daemon_alive(
-            owner,
+            daemon,
             hold_final_ack(&reader, &subjects, inbox.clone(), names),
         )
         .await;
-        let evidence = nats.stop_with_reply_pending(waiting);
+        let stop = nats.stop_with_reply_pending(waiting);
         stopped
-            .send(evidence)
+            .send(stop)
             .ok()
-            .expect("the exact interrupted attempt is still owned");
+            .expect("the interrupted attempt is still waiting");
         interrupted = Some((inbox, interruption));
         held_recipient = Some((reader, recipient));
     }
     wait_for(&mut running, || segment.exists()).await;
     let before = std::fs::metadata(&segment).unwrap().len();
     let offline_growth = || std::fs::metadata(&segment).unwrap().len() > before + 500;
-    if let Some((_, _, owner)) = &mut responder {
-        wait_for_daemon(&mut running, owner, offline_growth).await;
+    if let Some((_, _, daemon)) = &mut responder {
+        wait_for_daemon(&mut running, daemon, offline_growth).await;
     } else {
         wait_for(&mut running, offline_growth).await;
     }
     std::fs::write(spool.join("finished"), b"").unwrap();
-    if let Some((_, _, owner)) = &mut responder {
-        wait_for_daemon(&mut running, owner, || spool.join("paused").exists()).await;
+    if let Some((_, _, daemon)) = &mut responder {
+        wait_for_daemon(&mut running, daemon, || spool.join("paused").exists()).await;
     } else {
         wait_for(&mut running, || spool.join("paused").exists()).await;
     }
@@ -1033,8 +1032,8 @@ async fn capture_recovers_when_nats_returns(initially_unavailable: bool) {
                     .is_some_and(|records| records > 0)
             })
     };
-    if let Some((_, _, owner)) = &mut responder {
-        wait_for_daemon(&mut running, owner, backlogged).await;
+    if let Some((_, _, daemon)) = &mut responder {
+        wait_for_daemon(&mut running, daemon, backlogged).await;
     } else {
         wait_for(&mut running, backlogged).await;
     }
@@ -1062,9 +1061,9 @@ async fn capture_recovers_when_nats_returns(initially_unavailable: bool) {
             .unwrap();
         daemon_alive(&mut ingress, resumed).await.unwrap();
         let fresh = async_nats::connect(nats.url()).await.unwrap();
-        let names = saved_receipts
+        let names = saved_acks
             .iter()
-            .map(|receipt| receipt.frame.clone())
+            .map(|ack| ack.frame.clone())
             .collect::<Vec<_>>();
         let mut recovered = daemon_alive(
             &mut ingress,
@@ -1080,14 +1079,14 @@ async fn capture_recovers_when_nats_returns(initially_unavailable: bool) {
         .await
         .unwrap();
         recovered.sort_by(|a, b| a.frame.cmp(&b.frame));
-        saved_receipts.sort_by(|a, b| a.frame.cmp(&b.frame));
+        saved_acks.sort_by(|a, b| a.frame.cmp(&b.frame));
         assert_eq!(
             serde_json::to_value(recovered).unwrap(),
-            serde_json::to_value(saved_receipts).unwrap(),
-            "a fresh post-restart request reaches the same owner receipts"
+            serde_json::to_value(saved_acks).unwrap(),
+            "a fresh post-restart request reaches the same acknowledgments"
         );
-        let evidence = daemon_alive(&mut ingress, observed).await.unwrap();
-        assert_eq!(evidence.waiting.inbox, inbox);
+        let stop = daemon_alive(&mut ingress, observed).await.unwrap();
+        assert_eq!(stop.waiting.inbox, inbox);
     }
     wait_for_daemon(&mut running, &mut ingress, || {
         std::fs::read(&report)
@@ -1118,7 +1117,7 @@ async fn capture_recovers_when_nats_returns(initially_unavailable: bool) {
     assert!(!events.is_empty());
     assert!(
         !ingress.is_finished(),
-        "the owner survived its interrupted reply"
+        "the daemon survived its interrupted reply"
     );
     drop(frames);
     ingress.abort();
@@ -1312,8 +1311,8 @@ async fn a_configuration_refusal_reconnects_and_recovers_the_saved_batch() {
     let captured = std::fs::read_to_string(&segment).unwrap().lines().count();
     let captured_bytes = std::fs::metadata(&segment).unwrap().len();
     assert!(captured > 0);
-    // A zero health sample can predate capture. First require the durable
-    // reading cursor to cover the exact end of the paused source segment.
+    // A zero health sample can predate capture. First require the saved
+    // reading cursor to cover the end of the paused source segment.
     wait_for_daemon(&mut running, &mut ingress, || {
         let cursor = Position::load(&positions, &binding.name).unwrap().cursor;
         cursor["segment"].as_u64() == Some(0)

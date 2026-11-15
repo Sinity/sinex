@@ -1,4 +1,4 @@
-//! A read outcome is evidence even when no source record changed. Each binding
+//! A read outcome is worth recording even when no source record changed. Each binding
 //! on each host has one current coverage reading; a newer one is admitted only
 //! when the binding's state or its reason changes, so a binding read every few
 //! seconds writes when it starts failing or recovers, not on every read.
@@ -132,12 +132,10 @@ impl Coverage {
                     self.current.insert(key, state);
                 }
                 Err(error) => {
-                    eprintln!("sinexd: source coverage evidence for {source}: {error}");
+                    eprintln!("sinexd: source coverage reading for {source}: {error}");
                     results.push((
                         source,
-                        Err(Error::internal(format!(
-                            "source coverage evidence: {error}"
-                        ))),
+                        Err(Error::internal(format!("source coverage reading: {error}"))),
                     ));
                 }
             }
@@ -173,7 +171,7 @@ async fn record(
         },
     )
     .await?;
-    let floor = sinex_store::privacy::load(
+    let minimum_class = sinex_store::privacy::load(
         conn,
         [
             observation.observed_source.as_str(),
@@ -182,7 +180,7 @@ async fn record(
         .into_iter(),
     )
     .await?
-    .floors
+    .minimum_classes
     .values()
     .copied()
     .max()
@@ -207,7 +205,7 @@ async fn record(
         .and_then(|settings| settings.class)
         .unwrap_or_default();
     let class = Class::Open
-        .max(floor)
+        .max(minimum_class)
         .max(declared)
         .max(settings)
         .max(observation.observed_class.unwrap_or_default());
@@ -232,7 +230,7 @@ async fn record(
             run
         }
     };
-    let result = crate::intake::Intake {
+    let result = crate::submit::Submitter {
         host: Some(&observation.host),
         writer,
         source: Arc::new(coverage::observation_source()),

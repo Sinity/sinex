@@ -12,7 +12,7 @@
 //! archive. Nothing is guessed from a file name. Candidates are always format
 //! names, the names `--parser` takes.
 use serde::{Deserialize, Serialize};
-use sinex_model::stage::{Container, Disposition, FileReading, InventoryMember};
+use sinex_model::stage::{Container, FileReading, InventoryMember, Outcome};
 use sinex_source_core::binding::{Binding, InputFormat, Reading, Settings};
 use sinex_source_core::shared_pass::{ListedMember, members};
 use std::collections::BTreeSet;
@@ -62,10 +62,10 @@ impl StagedFile {
     /// The binding of `source` failed with `reason`: its members are failed.
     pub fn mark_failed(&mut self, source: &str, reason: &str) {
         for member in &mut self.members {
-            if let Disposition::Read { sources } = &member.disposition
+            if let Outcome::Read { sources } = &member.outcome
                 && sources.iter().any(|s| s == source)
             {
-                member.disposition = Disposition::Failed {
+                member.outcome = Outcome::Failed {
                     sources: sources.clone(),
                     reason: reason.to_owned(),
                 };
@@ -177,10 +177,10 @@ fn named(
                 InventoryMember {
                     name: member.name,
                     size: member.size,
-                    disposition: if sources.is_empty() {
-                        Disposition::StoredNotInterpreted { candidates: vec![] }
+                    outcome: if sources.is_empty() {
+                        Outcome::StoredNotInterpreted { candidates: vec![] }
                     } else {
-                        Disposition::Read { sources }
+                        Outcome::Read { sources }
                     },
                 }
             })
@@ -245,7 +245,7 @@ fn detect(
             .map(|m| InventoryMember {
                 name: m.name,
                 size: m.size,
-                disposition: Disposition::StoredNotInterpreted {
+                outcome: Outcome::StoredNotInterpreted {
                     candidates: if archive { vec![] } else { candidates.clone() },
                 },
             })
@@ -324,11 +324,11 @@ fn by_member(
         .map(|(member, sources)| InventoryMember {
             name: member.name.clone(),
             size: member.size,
-            disposition: match sources.as_slice() {
-                [source] if readers.contains(source) => Disposition::Read {
+            outcome: match sources.as_slice() {
+                [source] if readers.contains(source) => Outcome::Read {
                     sources: sources.clone(),
                 },
-                _ => Disposition::StoredNotInterpreted {
+                _ => Outcome::StoredNotInterpreted {
                     candidates: if sources.len() > 1 {
                         formats_of(sources)
                     } else {

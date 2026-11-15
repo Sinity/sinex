@@ -1,4 +1,4 @@
-//! Payload reads for stored products use the same visibility as ordinary queries.
+//! Payload reads for stored products use the same visibility as queries.
 use super::*;
 use sinex_model::EventId;
 

@@ -597,7 +597,7 @@ fn generated_write_histories_are_classified_and_nothing_is_missed() {
     }
 }
 
-/// A middle edit beyond the ordinary part size still changes the prefix.
+/// A middle edit beyond the default part size still changes the prefix.
 #[devkit::test]
 fn large_prefixes_are_hashed_whole_without_changing_the_digest_at_a_part_boundary() {
     let mut file = tempfile::tempfile().unwrap();

@@ -18,7 +18,7 @@ The flake provides the packages (`sinexd`, `sinexctl`, `sinex-schema`, `sinex-se
 
 The database superuser runs `sinexd admin prepare-database` for initial setup
 and privileged upgrades. In this database, it removes public execution of
-PostgreSQL's `set_config` function and retains execution for the database owner
+PostgreSQL's `set_config` function and keeps execution for the database owner
 and writer. Public SQL runs as the reader and cannot change its grants or role.
 Schema application and daemon startup refuse an unhardened boundary. The NixOS
 `sinex-db-setup` unit reruns when the package changes, before dependent daemon
@@ -40,20 +40,20 @@ The session user service creates its declared state directory under its own home
 
 A session binding's identity includes the input path spelling. Moving state preserves `session.stateDir` and the producer's installed arguments, using a bind mount at that same path. First stop capture and verify its children have exited; preserve the state, positions, pending frames and a private inventory. Run `sinex-session run` with the installed producer, exclusions and credentials plus `--drain`, which reads existing spools without starting capture and waits for frame acknowledgments. An undrained included spool holds the move.
 
-After a successful drain, copy the stopped state with ownership, modes and bytes preserved, compare hashes and positions, and mount the copy at the original path before restarting. Drain again through that path, verify unchanged binding names and positions, then restart capture and verify new admitted events and writes at the destination. Keep the original copy until the activation owner accepts the result; cleanup is a separate action. Changing the `--state` spelling creates new bindings even when the bytes were copied.
+After a successful drain, copy the stopped state with ownership, modes and bytes preserved, compare hashes and positions, and mount the copy at the original path before restarting. Drain again through that path, verify unchanged binding names and positions, then restart capture and verify new admitted events and writes at the destination. Keep the original copy until whoever runs the activation accepts the result; cleanup is a separate action. Changing the `--state` spelling creates new bindings even when the bytes were copied.
 
 ### Upgrading
 
-Before switching a producer whose saved state is plaintext, drain its pending frames through that installed build's producer client. Keep its original state frozen and select a fresh producer state directory for the current encoded checkpoints. Retain and stage any unread source bytes through their named input format; NDJSON capture segments remain ordinary supported source input.
+Before switching a producer whose saved state is plaintext, drain its pending frames through that installed build's producer client. Keep its original state frozen and select a fresh producer state directory for the current encoded checkpoints. Keep and stage any unread source bytes through their named input format; NDJSON capture segments remain supported source input.
 
 Daemon shutdown supervises startup and serving through the same writer boundary.
 Tasks first drain cooperatively. After the grace period, remaining tasks are
-cancelled and joined so their connections close. Writer sessions enable native
+cancelled and joined so their connections close. Writer sessions enable PostgreSQL's
 closed-client checks; these cancel work after a disconnected client without
 limiting a connected query. Shutdown then reacquires the writer claim and flushes
 pending admitted extents before returning success. Failure to establish that
-boundary is a shutdown error. Uncommitted admission and receipts roll back;
-producers retain their saved frames and positions for exact retry.
+boundary is a shutdown error. Uncommitted admission and acknowledgments roll back;
+producers keep their saved frames and positions to retry the same frames.
 
 Activating a new version does not change the schema. When a version brings a schema upgrade, `sinexd` refuses to start and names the command ([admission.md](admission.md#schema-evolution)). With `sinexd` stopped, run `systemctl start sinex-schema-upgrade` (`sinexd admin upgrade` as the Sinex user), which returns when the one upgrade transaction commits or rolls back, then start `sinexd`. Producers keep spooling while the daemon is stopped, so an upgrade pauses admission, not capture.
 
@@ -65,7 +65,7 @@ The module keeps PostgreSQL's stock memory and checkpoint defaults and sets `log
 
 Each binary loads one typed configuration ([how it is read](architecture.md#configuration-and-clocks)). The NixOS and Home Manager modules write that file and set those variables; a deployment without Nix sets them directly. Current flags are described by `sinexd run --help` and Nix options by the [module declarations](../nix/module.nix).
 
-The NixOS module writes daemon settings to `/etc/sinex/sources.json`, including `services.sinex.stagingRoots`, which limits agent staging. Session and capture-node producers receive `/etc/sinex/session-sources.json` and `/etc/sinex/capture-sources.json`: source settings, exclusions and discovery inputs, with their own spool and watch paths. Staging authority stays with the daemon.
+The NixOS module writes daemon settings to `/etc/sinex/sources.json`, including `services.sinex.stagingRoots`, which limits agent staging. Session and capture-node producers receive `/etc/sinex/session-sources.json` and `/etc/sinex/capture-sources.json`: source settings, exclusions and discovery inputs, with their own spool and watch paths. Staging decisions stay with the daemon.
 
 **What deployment configuration holds:** the logical day, the API's listen address and authentication, desktop notifications and the optional away command ([signals](interfaces.md#the-host-deliverer)), the database and NATS endpoints, the content store location, this host's name, and per-user facts such as account names on each service. Settings any author may change at run time (quiet hours, the interrupt budget, briefing switches) are the changeable catalog of [architecture.md](architecture.md#configuration-and-clocks), not deployment configuration.
 
@@ -82,7 +82,7 @@ Reaching Sinex from a phone or another machine (a tailnet address, a reverse pro
 
 Clients find the daemon through `SINEX_ENDPOINT` (the socket or HTTP address) and `SINEX_TOKEN_FILE`, which the modules set for login shells. Integrations in other languages (Kitty, Neovim) read the one variable the deployment sets for them. Which callers hold which powers is [interfaces.md](interfaces.md).
 
-A producer credential authenticates a transport identity; writes additionally require an explicit [write family](producers.md#explicit-write-families). Decided target (2026-11-01): credentials become per-host nkeys bound to (component, host), and the `attestedHost` and canonical-publisher options go ([hosts and placement](#hosts-and-placement)). Configure `services.sinex.nats.producers.<name>.writeFamily`, `attestedHost`, `writeSourcePrefixes`, `writeKindPrefixes` and `writeClasses` for the intended capture. The session service’s generated password entry preserves those configured capabilities and grants no write authority by itself. A missing grant leaves capture spooling locally with a reported refusal. A file-watch-only producer uses the installed native family `sinex`, source `machine.file-watch`, kind `file.changed`, class `guarded` and its actual host. Discovery also selects other session sources whose bus or runtime inputs are available. Cover those sources explicitly in the grant, or configure reasoned `services.sinex.exclude.<source>.reason` entries for a deliberately narrower capture plan. Read and canonical-publisher grants remain separate.
+A producer credential authenticates a transport identity; writes additionally require an explicit [write family](producers.md#explicit-write-families). Decided target (2026-11-01): credentials become per-host nkeys bound to (component, host), and the `attestedHost` and canonical-publisher options go ([hosts and placement](#hosts-and-placement)). Configure `services.sinex.nats.producers.<name>.writeFamily`, `attestedHost`, `writeSourcePrefixes`, `writeKindPrefixes` and `writeClasses` for the intended capture. The session service’s generated password entry preserves those configured capabilities and grants no write access by itself. A missing grant leaves capture spooling locally with a reported refusal. A file-watch-only producer uses the installed built-in family `sinex`, source `machine.file-watch`, kind `file.changed`, class `guarded` and its own host. Discovery also selects other session sources whose bus or runtime inputs are available. Cover those sources explicitly in the grant, or configure reasoned `services.sinex.exclude.<source>.reason` entries for a deliberately narrower capture plan. Read and canonical-publisher grants remain separate.
 
 ## Hosts and placement
 
@@ -126,9 +126,9 @@ One configurable day boundary per deployment, used by every day- and hour-grain 
 | `services.sinex.dayStart` | when a logical day starts, as `HH:MM` | `04:00` |
 
 - **Validated at start.** A zone that does not resolve to a named zone stops the daemon before connecting to the database, with a clear error; there is no fallback to UTC.
-- **NixOS host zone.** An explicit `services.sinex.zone` takes precedence over `time.timeZone`. When only the host zone is configured, the module passes that name to the daemon. When both are null, startup must resolve the actual system zone to an IANA name. NixOS's UTC display default without a configured named zone does not supply that evidence; configure `time.timeZone` or `services.sinex.zone` for such a deployment.
+- **NixOS host zone.** An explicit `services.sinex.zone` takes precedence over `time.timeZone`. When only the host zone is configured, the module passes that name to the daemon. When both are null, startup must resolve the system zone to an IANA name. NixOS's UTC display default without a configured named zone does not supply that name; configure `time.timeZone` or `services.sinex.zone` for such a deployment.
 - **One home.** Sinex's configuration holds the setting. Polylogue running on Sinex reads the day from Sinex at connect and on each change notice and has no value of its own; standalone Polylogue keeps its own ([Polylogue operations](https://github.com/Sinity/polylogue/blob/master/docs/operations.md)).
-- **Changing it** is a version change of every day-grain derivation, which re-derives them by the ordinary mechanism ([derivations.md](derivations.md)); every day- and hour-grain value records the boundary and zone it was cut with.
+- **Changing it** is a version change of every day-grain derivation, which re-derives them by the usual version mechanism ([derivations.md](derivations.md)); every day- and hour-grain value records the boundary and zone it was cut with.
 - A wake-to-wake view is a separate derived kind shown beside the logical day, never a second definition of it ([higher-layer.md](higher-layer.md)). A coarse source time stays in the calendar the source meant ([events.md](events.md#time)).
 
 ## Backup and restore
@@ -145,23 +145,24 @@ The stores are the backup unit, and the deployment chooses the backup tool; Sine
 
 Worktrees, caches and scratch are outside backups. NATS state is not backed up: committed changes are republished from PostgreSQL with the same commit positions, and unacknowledged frames are resent from the producer spools, which are in the backup ([producers.md](producers.md)).
 
-Preparing a backup pauses publication and spool retirement, then takes the hold and the database snapshot. A source holds publication only from queueing an admission batch through its durable acknowledgment, and while loading its committed cursor and retiring passed spool files. Acquisition and parsing continue without this guard, so a backup can start between batches during a long source read. The writer never waits for this gate inside a job; it must remain able to take the backup snapshot while publication is paused.
+Preparing a backup pauses publication and spool file removal, then takes the hold and the database snapshot. A source holds publication only from queueing an admission batch until its acknowledgment is saved, and while loading its committed cursor and deleting spool files it has passed. Acquisition and parsing continue without this pause, so a backup can start between batches during a long source read. The writer never waits for this pause inside a job; it must remain able to take the backup snapshot while publication is paused.
 
-Preparation copies the daemon's retained source spools and the state of every configured producer with write access. Each producer snapshot keeps its checkpoint, its pending frames and the bytes needed to resume from that checkpoint. Capture continues while publication is paused; media generations in progress finish before their files are copied. The manifest names the required producers and each copied file; `producers_complete` is true only when every required producer was copied. Preparation requires a known list of producers. The hold protects segment prefixes; producer state is described by the manifest.
+Preparation copies the daemon's stored source spools and the state of every configured producer with write access. Each producer snapshot keeps its checkpoint, its pending frames and the bytes needed to resume from that checkpoint. Capture continues while publication is paused; media generations in progress finish before their files are copied. The manifest names the required producers and each copied file; `producers_complete` is true only when every required producer was copied. Preparation requires a known list of producers. The hold protects segment prefixes; producer state is described by the manifest.
 
 Input discovery finishes before producers are paused. A saved binding that
-is no longer configured is a retained spool only when its input lies under the
-daemon's spool root, where the daemon's own capture writes and retires; a
-directory staged with a native spool parser is an import whose bytes are
-already materials, and backup neither writes into it nor copies it. Retained
-native bindings are selected by the parser at their committed material anchor;
+is no longer configured is a kept spool only when its input lies under the
+daemon's spool root, where the daemon's own capture writes and deletes spool
+files; a directory staged with the daemon's spool parser is an import whose
+bytes are already materials, and backup neither writes into it nor copies it.
+Kept bindings of the daemon's own capture are selected by the parser of their
+last committed material;
 a source name shared with an imported file format does not turn that file into
 a spool.
-Configured native inputs that have not stored material yet keep their declared
+Configured inputs of the daemon's own capture that have not stored material yet keep their declared
 format when their position is absent, null or the driver's typed empty cursor.
-Missing or contradictory format evidence stops preparation. A missing producer
+A missing or contradictory format stops preparation. A missing producer
 list or a failed pause is refused before taking the core snapshot. Failed
-producer capture records `producer-snapshots.json` alongside the retained
+producer capture records `producer-snapshots.json` alongside the kept
 `boundary.json` and stops before either database dump or segment copying.
 Only a complete producer set can produce a published backup manifest. A
 preparation that fails after taking its hold releases that hold; the error
@@ -189,23 +190,23 @@ These operations require the operator token. The daemon computes the operation's
 
 Live extent descriptors are checked against the copied encoded bytes, including sealed encodings, before a root `manifest.json` is published and synced. The main dump still contains private database state, so both parts need protected staging and encrypted archives. No plaintext material keys are exported.
 
-Before publication, a lost exporter, short segment, corrupt extent, failed dump or cancellation leaves an incomplete directory and an open hold. The early `boundary.json` names the hold without claiming completion. A fresh SQL snapshot cannot be attached to an older hold, and an incomplete directory cannot silently become a different run. The operator can inspect the retained attempt, start a fresh one, and explicitly release abandoned holds. A prepared local artifact is not an acknowledgment from Borg or from a producer.
+Before publication, a lost exporter, short segment, corrupt extent, failed dump or cancellation leaves an incomplete directory and an open hold. The early `boundary.json` names the hold without claiming completion. A fresh SQL snapshot cannot be attached to an older hold, and an incomplete directory cannot silently become a different run. The operator can inspect the kept attempt, start a fresh one, and explicitly release abandoned holds. A prepared local artifact is not an acknowledgment from Borg or from a producer.
 
-Tombstoning and orphan cleanup do not punch any extent covered by an open hold. Multiple holds compose: release of the last covering hold dirties the deferred work, which the writer attempts at its next ordinary group without reopening the segment. Ordinary recovery checks the same durable holds before replaying a punch.
+Tombstoning and orphan cleanup do not punch any extent covered by an open hold. Multiple holds compose: release of the last covering hold dirties the deferred work, which the writer attempts at its next commit group without reopening the segment. Recovery checks the same saved holds before replaying a punch.
 
 ### The deployed archive pair
 
-The NixOS `sinex-backup` service owns preparation and the two Borg calls. `backup.artifactDir` is private to the daemon; the old independently scheduled dump flow is removed. A host supplies separate `backup.repo` and `backup.keysRepo` repositories together and the protected pass command. The service's `backup.startAt` accepts a calendar or a list; `[]` lets an existing host coordinator be the sole scheduler. The sibling Borg jobs have no independent timers. Initialize the two encrypted repositories through the deployment's Borg owner before enabling the schedule; the native jobs do not initialize repositories. Each job compares their actual repository IDs before creation, so aliases cannot put key bytes in the main repository even as a failed archive.
+The NixOS `sinex-backup` service owns preparation and the two Borg calls. `backup.artifactDir` is private to the daemon; the old independently scheduled dump flow is removed. A host supplies separate `backup.repo` and `backup.keysRepo` repositories together and the protected pass command. The service's `backup.startAt` accepts a calendar or a list; `[]` lets an existing host coordinator be the sole scheduler. The sibling Borg jobs have no independent timers. Initialize the two encrypted repositories through the deployment's Borg configuration before enabling the schedule; the backup jobs do not initialize repositories. Each job compares their repository IDs before creation, so aliases cannot put key bytes in the main repository even as a failed archive.
 
 Both archives are named `sinex-core-HOLD` in their respective repositories and carry the identical manifest. The service reads each archive's identity back after it is created, checks both names against the hold, and records the pair in `complete.json`. Only then does it release the hold and remove that run's staging copies. `latest-complete.json` points to that record; it is not a choice of unrelated latest archives. Before both archives complete, a warning, a failed job or an interruption keeps the artifact and hold for inspection. A later release or cleanup failure keeps the completed artifact and its archive records; the recorded hold state says whether release committed. Borg's warning failure and `.failed` archive behavior remain intact.
 
-The privileged Borg process enters the selected part through directory descriptors that reject symlinks in every parent and pin its working directory. Its ordinary Linux walk does not follow file or directory symlinks. Root-owned control files and archive records stay separate from daemon-owned artifacts; metadata writes and staging cleanup through artifact paths run as the daemon user. The keys part is never a main-archive input.
+The privileged Borg process enters the selected part through directory descriptors that reject symlinks in every parent and pin its working directory. Its Linux directory walk does not follow file or directory symlinks. Root-owned control files and archive records stay separate from daemon-owned artifacts; metadata writes and staging cleanup through artifact paths run as the daemon user. The keys part is never a main-archive input.
 
 Backup expiry belongs to the deployment's backup tool and never deletes Sinex data. Any copy that leaves the machine is encrypted.
 
 ### Restore
 
-Restore is an ordinary rebuild from a backup plus the retained materials, not a repair path. Select the main and key archives by their shared hold and actual archive identities, compare their manifests and restore both dumps and the segment prefixes. The restored core answers exactly as it did at the boundary. Its snapshot includes the then-open hold; that hold remains visible until the restore owner verifies the copy and explicitly releases it. It never expires on restart. Producer state is restored separately; a backup whose producers were not all copied says so in its manifest.
+Restore is a rebuild from a backup plus the stored materials, not a repair path. Select the main and key archives by their shared hold and archive identities, compare their manifests and restore both dumps and the segment prefixes. The restored core answers exactly as it did at the boundary. Its snapshot includes the then-open hold; that hold remains visible until whoever runs the restore verifies the copy and explicitly releases it. It never expires on restart. Producer state is restored separately; a backup whose producers were not all copied says so in its manifest.
 
 - the same event IDs, payloads, lifecycle states and positions at the boundary;
 - search starts empty with no position, and the search reader rebuilds it from the restored events; status shows its progress, and follows wait for it;

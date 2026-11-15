@@ -88,7 +88,7 @@ pub trait EventPayload: Serialize + DeserializeOwned + Send + Sync + 'static {
         Self::KEY
     }
 
-    /// When the thing happened, by the source's evidence.
+    /// When the thing happened, as the source records it.
     fn ts_orig(&self) -> TsOrig;
 
     /// Whether this reading says the record was removed at the source.

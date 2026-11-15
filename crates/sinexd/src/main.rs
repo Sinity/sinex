@@ -19,7 +19,6 @@ mod dirty_keys;
 mod document_text;
 mod error;
 mod ingress;
-mod intake;
 mod library;
 mod lifecycle;
 mod material_access;
@@ -32,6 +31,7 @@ mod screen_text;
 mod signals;
 mod stage;
 mod stored;
+mod submit;
 mod telemetry;
 mod writer;
 
@@ -90,7 +90,7 @@ enum Command {
         /// The zone clock times and days are read in; default the system's.
         #[arg(long)]
         zone: Option<String>,
-        /// When a logical day starts.
+        /// When a day starts.
         #[arg(long, default_value = "04:00")]
         day_start: String,
         /// The sources to read continuously (the NixOS module writes
@@ -301,7 +301,7 @@ fn effective_time_settings(
             query_language::time::DaySetting::new(zone, start).map_err(Error::bad_value)?
         }
         // The host's named zone, the same default Polylogue uses, so both
-        // products on one host share one logical day.
+        // products on one host share one day boundary.
         None => query_language::time::DaySetting::system(start)
             .map_err(|_| Error::not_configured("system time zone has no IANA name; pass --zone"))?,
     };

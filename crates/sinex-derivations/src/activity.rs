@@ -58,7 +58,7 @@ pub(crate) fn timestamp(ns: i128) -> Timestamp {
     Timestamp::from_unix_ns(ns).expect("an instant within a recorded interval")
 }
 
-pub(crate) fn evidence(event: &Event) -> CitedReading {
+pub(crate) fn cite(event: &Event) -> CitedReading {
     CitedReading {
         event: event.id,
         record: stable(event),
@@ -168,7 +168,7 @@ fn hours(input: &KeyView<'_>, env: &Env) -> Vec<Value> {
         return vec![];
     };
     // The adjacent partitions see connections across their edges, including
-    // late evidence that changes a continuation flag.
+    // late input that changes a continuation flag.
     let mut hour = env
         .time_settings
         .hour_start(timestamp(from - GAP_NS))

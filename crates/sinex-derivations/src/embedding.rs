@@ -17,7 +17,7 @@ impl PerEvent for Embeddings {
         supplied.validate()?;
         if !matches!(&input.event.origin,Origin::Derived{parents} if parents.contains(&supplied.target))
         {
-            return Err("supplied embedding must cite its target as an exact parent".into());
+            return Err("supplied embedding must cite its target as a direct parent".into());
         }
         Ok(vec![derived(
             &TextEmbedding {

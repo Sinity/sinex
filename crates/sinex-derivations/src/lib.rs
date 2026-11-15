@@ -222,8 +222,8 @@ impl Kind {
 /// One neighbour request: of `kinds`, the `count` nearest events to the
 /// window edge; with `per` set, the `count` nearest for each value of that
 /// payload field seen in the window. With `lifetime` set, each value is a
-/// start-minted token and its read stops at the token's lifetime, as the
-/// window records holding it bound it.
+/// token made at the occurrence's start and its read stops at the token's
+/// lifetime, as the window records holding it bound it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Neighbour {
     pub kinds: Vec<Kind>,
@@ -232,8 +232,8 @@ pub struct Neighbour {
     pub lifetime: Option<sinex_model::TokenLifetime>,
 }
 
-/// Whether a key can still receive inputs. Joins take closed, settled inputs
-/// only; open keys are visible as provisional snapshots.
+/// Whether a key can still receive inputs. Joins take closed inputs only;
+/// open keys are visible as provisional snapshots.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KeyState {
     Open,
@@ -264,7 +264,7 @@ impl Env {
 pub struct Computed {
     pub error: Option<sinex_model::BuildError>,
     pub outputs: Vec<Event>,
-    /// Some output still waits for evidence that may arrive later and outside
+    /// Some output still waits for input that may arrive later and outside
     /// the key's window (an interval still open, a session still growing).
     /// The driver recomputes such keys whenever the derivation runs again.
     pub waiting: bool,
@@ -289,7 +289,8 @@ pub trait Keyed: Send + Sync {
 
     fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery>;
 
-    /// Exact live readings required by a receipt, including readings with unknown time.
+    /// The live readings this key needs, named by event ID, including readings with unknown time.
+
     fn exact_inputs(&self, _: &Value, _: &Env) -> Option<Vec<EventId>> {
         None
     }

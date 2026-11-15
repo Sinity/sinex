@@ -1,11 +1,11 @@
-//! Standing queries use the ordinary binder/compiler and retain its complete order.
+//! Standing queries use the query binder and compiler and keep its complete order.
 use super::*;
 use serde::{Deserialize, Serialize};
 use sinex_model::{Class, EventId};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SignalRow {
-    /// Compiler identity for groups and metadata, native coordinates for events.
+    /// Compiler identity for groups and metadata, record coordinates or key for events.
     pub identity: String,
     pub reference: Option<String>,
     pub event: Option<EventId>,
@@ -82,8 +82,8 @@ pub async fn standing_query(
             None => selection.filter(),
         });
     }
-    // A delivery and its retained evaluation are observations of this mechanism,
-    // never new source evidence for another rule.
+    // A delivery and its stored evaluation are observations of this mechanism,
+    // never new source data for another rule.
     if bound.source.table().is_events() {
         let exclude = Expr::Not(Box::new(Expr::Compare {
             lhs: Operand::Field(FieldRef::Field(
@@ -189,7 +189,7 @@ pub async fn standing_query(
     for mut value in values {
         let identity = value["identity"]
             .as_str()
-            .ok_or_else(|| Error::Invalid("signal query lost its native row identity".into()))?
+            .ok_or_else(|| Error::Invalid("signal query lost its row identity".into()))?
             .to_owned();
         let mut row = SignalRow {
             identity,
@@ -218,7 +218,7 @@ pub async fn standing_query(
                     .map_err(|error| Error::Invalid(error.to_string()))?,
             );
             row.event = Some(EventId(id));
-            let native = if let Some(key) = details["key"].as_str() {
+            let natural_key = if let Some(key) = details["key"].as_str() {
                 serde_json::json!(["key", details["source"], details["kind"], key])
             } else if details["material"].is_string() {
                 serde_json::json!([
@@ -235,7 +235,7 @@ pub async fn standing_query(
                 "native:{}",
                 blake3::keyed_hash(
                     &identity_key,
-                    &serde_json::to_vec(&native)
+                    &serde_json::to_vec(&natural_key)
                         .map_err(|error| Error::Invalid(error.to_string()))?
                 )
             );
@@ -263,7 +263,7 @@ pub async fn standing_query(
         rows,
         class,
         complete,
-        reason: (!complete).then(|| "sealed_query_requires_available_plaintext_evidence".into()),
+        reason: (!complete).then(|| "sealed_query_requires_available_plaintext".into()),
         live,
         read_as: seq,
         parents,

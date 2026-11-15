@@ -1,4 +1,4 @@
-//! PAX members keep native names, file metadata and sparse data ranges.
+//! PAX members keep raw file names, file metadata and sparse data ranges.
 use super::{DriverError, metadata_mtime, same_file};
 use sinex_model::manifest::{ExtendedAttribute, FileExtent, FileNode};
 use std::collections::BTreeMap;
@@ -104,7 +104,7 @@ pub(super) fn capture(
                 .iter()
                 .flat_map(|extent| [extent.offset.to_string(), extent.length.to_string()])
                 .collect::<Vec<_>>();
-            // The trailing zero range retains a hole reaching the logical EOF.
+            // The trailing zero range keeps a hole reaching the logical EOF.
             map.extend([size.to_string(), "0".into()]);
             fields.insert(b"GNU.sparse.map".to_vec(), map.join(",").into_bytes());
             fields.insert(b"GNU.sparse.size".to_vec(), size.to_string().into_bytes());
@@ -215,7 +215,7 @@ pub(super) fn rewind(output: &mut Archive, at: usize) -> Result<(), DriverError>
     Ok(())
 }
 
-/// A current observation for a predecessor cache with no known change time.
+/// A current observation for an older-format cache with no known change time.
 /// Neither the file nor its observed baseline is accepted if it changed while read.
 pub(super) fn observe_hash(
     path: &Path,

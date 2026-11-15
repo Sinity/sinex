@@ -37,7 +37,7 @@ fn event(kind: &str, n: u32) -> Event {
     )
     .unwrap()
 }
-async fn admit(owner: &mut AdmissionContext, event: Event) -> (EventId, i64) {
+async fn admit(writer: &mut AdmissionContext, event: Event) -> (EventId, i64) {
     let id = event.id;
     let batch = Batch {
         run: RunId::new(),
@@ -50,7 +50,7 @@ async fn admit(owner: &mut AdmissionContext, event: Event) -> (EventId, i64) {
         }],
         archive: vec![],
     };
-    let mut tx = owner.begin().await.unwrap();
+    let mut tx = writer.begin().await.unwrap();
     let out = tx.admit(&batch, &NoDerivations).await.unwrap();
     tx.commit().await.unwrap();
     (id, out.commit_seq.unwrap().0)
@@ -58,8 +58,8 @@ async fn admit(owner: &mut AdmissionContext, event: Event) -> (EventId, i64) {
 fn fingerprint(state: &InputState) -> (i64, i64, i64) {
     (state.commit, state.changes, state.tombstoned)
 }
-async fn move_event(owner: &mut AdmissionContext, act: sinex_model::lifecycle::Act, id: EventId) {
-    let result = crate::lifecycle::move_events(owner, act, vec![id], &NoDerivations).await;
+async fn move_event(writer: &mut AdmissionContext, act: sinex_model::lifecycle::Act, id: EventId) {
+    let result = crate::lifecycle::move_events(writer, act, vec![id], &NoDerivations).await;
     assert!(
         matches!(result, crate::lifecycle::Ended::Ok { .. }),
         "{result:?}"
@@ -68,17 +68,17 @@ async fn move_event(owner: &mut AdmissionContext, act: sinex_model::lifecycle::A
 #[devkit::test]
 async fn input_state_scopes_new_commits_lifecycle_and_tombstones(db: devkit::pg::TestDatabase) {
     use sinex_model::lifecycle::Act;
-    let mut owner = AdmissionContext::connect(&db.url(None)).await.unwrap();
+    let mut writer = AdmissionContext::connect(&db.url(None)).await.unwrap();
     let inputs = kinds();
-    let empty = input_state(&mut owner, &inputs).await.unwrap();
+    let empty = input_state(&mut writer, &inputs).await.unwrap();
     assert_eq!(fingerprint(&empty), (0, 0, 0));
-    let (related, seq) = admit(&mut owner, event("command.imported", 1)).await;
-    assert!(!empty.is_current(&mut owner, &inputs).await.unwrap());
-    let state = input_state(&mut owner, &inputs).await.unwrap();
+    let (related, seq) = admit(&mut writer, event("command.imported", 1)).await;
+    assert!(!empty.is_current(&mut writer, &inputs).await.unwrap());
+    let state = input_state(&mut writer, &inputs).await.unwrap();
     assert_eq!(fingerprint(&state), (seq, 0, 0));
-    let (other, other_seq) = admit(&mut owner, event("command.executed", 2)).await;
+    let (other, other_seq) = admit(&mut writer, event("command.executed", 2)).await;
     assert!(
-        state.is_current(&mut owner, &inputs).await.unwrap(),
+        state.is_current(&mut writer, &inputs).await.unwrap(),
         "unrelated captures do not invalidate"
     );
     let mixed = vec![
@@ -87,48 +87,51 @@ async fn input_state_scopes_new_commits_lifecycle_and_tombstones(db: devkit::pg:
         "synthetic.absent".into(),
         "command.imported".into(),
     ];
-    let mix = input_state(&mut owner, &mixed).await.unwrap();
+    let mix = input_state(&mut writer, &mixed).await.unwrap();
     assert_eq!(fingerprint(&mix), (other_seq, 0, 0));
     let absent = vec!["synthetic.absent".into()];
-    let none = input_state(&mut owner, &absent).await.unwrap();
+    let none = input_state(&mut writer, &absent).await.unwrap();
     assert_eq!((none.commit, none.changes), (0, 0));
-    move_event(&mut owner, Act::Archive, other).await;
-    assert!(state.is_current(&mut owner, &inputs).await.unwrap());
-    assert!(!mix.is_current(&mut owner, &mixed).await.unwrap());
-    assert!(none.is_current(&mut owner, &absent).await.unwrap());
-    move_event(&mut owner, Act::Restore, other).await;
-    assert!(state.is_current(&mut owner, &inputs).await.unwrap());
-    move_event(&mut owner, Act::Archive, related).await;
-    assert!(!state.is_current(&mut owner, &inputs).await.unwrap());
-    let archived = input_state(&mut owner, &inputs).await.unwrap();
+    move_event(&mut writer, Act::Archive, other).await;
+    assert!(state.is_current(&mut writer, &inputs).await.unwrap());
+    assert!(!mix.is_current(&mut writer, &mixed).await.unwrap());
+    assert!(none.is_current(&mut writer, &absent).await.unwrap());
+    move_event(&mut writer, Act::Restore, other).await;
+    assert!(state.is_current(&mut writer, &inputs).await.unwrap());
+    move_event(&mut writer, Act::Archive, related).await;
+    assert!(!state.is_current(&mut writer, &inputs).await.unwrap());
+    let archived = input_state(&mut writer, &inputs).await.unwrap();
     assert!(archived.changes > 0, "archiving an input is a change");
     assert_eq!(archived.tombstoned, 0);
     assert_eq!(
         archived.commit, seq,
         "archived input remains part of the fingerprint"
     );
-    move_event(&mut owner, Act::Restore, related).await;
-    assert!(!archived.is_current(&mut owner, &inputs).await.unwrap());
+    move_event(&mut writer, Act::Restore, related).await;
+    assert!(!archived.is_current(&mut writer, &inputs).await.unwrap());
     let mut late = event("command.imported", 3);
     late.id = EventId(uuid::Uuid::parse_str("01700000-0000-7000-8000-000000000001").unwrap());
-    let restored = input_state(&mut owner, &inputs).await.unwrap();
-    let (late, _) = admit(&mut owner, late).await;
+    let restored = input_state(&mut writer, &inputs).await.unwrap();
+    let (late, _) = admit(&mut writer, late).await;
     assert!(
-        !restored.is_current(&mut owner, &inputs).await.unwrap(),
+        !restored.is_current(&mut writer, &inputs).await.unwrap(),
         "old UUID/time still has a new commit position"
     );
-    move_event(&mut owner, Act::Archive, late).await;
-    let before_tombstone = input_state(&mut owner, &inputs).await.unwrap();
-    let absent_before = input_state(&mut owner, &absent).await.unwrap();
-    move_event(&mut owner, Act::Tombstone, late).await;
+    move_event(&mut writer, Act::Archive, late).await;
+    let before_tombstone = input_state(&mut writer, &inputs).await.unwrap();
+    let absent_before = input_state(&mut writer, &absent).await.unwrap();
+    move_event(&mut writer, Act::Tombstone, late).await;
     assert!(
         !before_tombstone
-            .is_current(&mut owner, &inputs)
+            .is_current(&mut writer, &inputs)
             .await
             .unwrap()
     );
     assert!(
-        !absent_before.is_current(&mut owner, &absent).await.unwrap(),
+        !absent_before
+            .is_current(&mut writer, &absent)
+            .await
+            .unwrap(),
         "preserve the existing global tombstone semantics"
     );
 }
@@ -136,13 +139,13 @@ async fn input_state_scopes_new_commits_lifecycle_and_tombstones(db: devkit::pg:
 #[devkit::test]
 async fn one_statement_boundary_cannot_hide_a_commit_during_capture(db: devkit::pg::TestDatabase) {
     let url = db.url(None);
-    let mut owner = AdmissionContext::connect(&url).await.unwrap();
-    admit(&mut owner, event("command.imported", 1)).await;
-    let mut gate = PgConnection::connect(&url).await.unwrap();
+    let mut writer = AdmissionContext::connect(&url).await.unwrap();
+    admit(&mut writer, event("command.imported", 1)).await;
+    let mut lock_holder = PgConnection::connect(&url).await.unwrap();
     let key = 810257_i64;
     sqlx::query("SELECT pg_advisory_lock($1)")
         .bind(key)
-        .execute(&mut gate)
+        .execute(&mut lock_holder)
         .await
         .unwrap();
     let mut capture = PgConnection::connect(&url).await.unwrap();
@@ -150,10 +153,10 @@ async fn one_statement_boundary_cannot_hide_a_commit_during_capture(db: devkit::
         .fetch_one(&mut capture)
         .await
         .unwrap();
-    // The exact production statement runs inside a gate in the SAME outer
-    // statement snapshot. The gate permits a commit before it returns.
+    // The production statement runs behind a lock point in the SAME outer
+    // statement snapshot. The lock point lets a commit in before it returns.
     let sql = format!(
-        "WITH gate AS MATERIALIZED (SELECT pg_advisory_xact_lock({key})) SELECT state.* FROM gate CROSS JOIN LATERAL ({INITIAL}) state"
+        "WITH lock_point AS MATERIALIZED (SELECT pg_advisory_xact_lock({key})) SELECT state.* FROM lock_point CROSS JOIN LATERAL ({INITIAL}) state"
     );
     let captured = tokio::spawn(async move {
         sqlx::query_as::<_, InputState>(&sql)
@@ -165,45 +168,43 @@ async fn one_statement_boundary_cannot_hide_a_commit_during_capture(db: devkit::
     });
     tokio::time::timeout(std::time::Duration::from_secs(5),async {
         loop {
-            let waiting:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_locks WHERE pid=$1 AND locktype='advisory' AND NOT granted)").bind(pid).fetch_one(&mut gate).await.unwrap();
+            let waiting:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_locks WHERE pid=$1 AND locktype='advisory' AND NOT granted)").bind(pid).fetch_one(&mut lock_holder).await.unwrap();
             if waiting {break;}tokio::task::yield_now().await;
         }
     }).await.unwrap();
-    let (_, new_seq) = admit(&mut owner, event("command.imported", 2)).await;
+    let (_, new_seq) = admit(&mut writer, event("command.imported", 2)).await;
     sqlx::query("SELECT pg_advisory_unlock($1)")
         .bind(key)
-        .execute(&mut gate)
+        .execute(&mut lock_holder)
         .await
         .unwrap();
     let state = captured.await.unwrap();
     assert!(state.commit < new_seq);
     assert!(state.through_commit < new_seq);
-    assert!(!state.is_current(&mut owner, &kinds()).await.unwrap());
+    assert!(!state.is_current(&mut writer, &kinds()).await.unwrap());
     // The flawed two-statement capture loses precisely this relevant commit.
     let mut split = state.clone();
     split.through_commit =
         sqlx::query_scalar("SELECT value FROM core.counters WHERE name='commit_seq'")
-            .fetch_one(&mut *owner)
+            .fetch_one(&mut *writer)
             .await
             .unwrap();
     assert!(
-        split.is_current(&mut owner, &kinds()).await.unwrap(),
-        "positive control: a later boundary hides the intervening input"
+        split.is_current(&mut writer, &kinds()).await.unwrap(),
+        "the case the check must catch: a later boundary hides the intervening input"
     );
 }
 
 #[devkit::test]
-async fn comparison_snapshot_survives_retry_and_keeps_exact_build_contract(
-    db: devkit::pg::TestDatabase,
-) {
+async fn comparison_snapshot_survives_retry_and_keeps_build_contract(db: devkit::pg::TestDatabase) {
     let url = db.url(None);
-    let mut owner = AdmissionContext::connect(&url).await.unwrap();
-    admit(&mut owner, event("command.imported", 1)).await;
-    let state = input_state(&mut owner, &kinds()).await.unwrap();
+    let mut writer = AdmissionContext::connect(&url).await.unwrap();
+    admit(&mut writer, event("command.imported", 1)).await;
+    let state = input_state(&mut writer, &kinds()).await.unwrap();
     let saved = serde_json::to_vec(&state).unwrap();
     let build = "synthetic-build";
     let settings = "synthetic-day";
-    let comparison=crate::derivations::store_comparison(&mut owner,&crate::derivations::StoredComparison {id:0,derivation:"synthetic".into(),version:3,range:None,made_at:Timestamp::now(),keys:1,unchanged:0,added:1,changed:0,removed:0,
+    let comparison=crate::derivations::store_comparison(&mut writer,&crate::derivations::StoredComparison {id:0,derivation:"synthetic".into(),version:3,range:None,made_at:Timestamp::now(),keys:1,unchanged:0,added:1,changed:0,removed:0,
         context:json!({"build":build,"inputs":state,"input_types":kinds(),"output_types":["document.text"],"kind":"per_event","history":sinex_model::DerivationHistory::Recompute,"settings":settings}),examples:json!([])}).await.unwrap();
     let mut selection = Selection {
         comparison,
@@ -217,7 +218,7 @@ async fn comparison_snapshot_survives_retry_and_keeps_exact_build_contract(
         outputs: vec!["document.text".into()],
         kind: "per_event".into(),
     };
-    let mut tx = owner.begin().await.unwrap();
+    let mut tx = writer.begin().await.unwrap();
     validate(&mut tx, "synthetic", &selection).await.unwrap();
     tx.rollback().await.unwrap();
     let restored: InputState = serde_json::from_slice(&saved).unwrap();
@@ -235,7 +236,7 @@ async fn comparison_snapshot_survives_retry_and_keeps_exact_build_contract(
             .contains("version and build")
     );
     selection.build = build.into();
-    admit(&mut owner, event("command.imported", 2)).await;
+    admit(&mut writer, event("command.imported", 2)).await;
     assert!(
         validate(&mut reopened, "synthetic", &selection)
             .await

@@ -282,7 +282,7 @@ pub async fn producer_materials(
         .collect())
 }
 
-/// The live readings in the exact producer replay scope, sorted by ID.
+/// The live readings in the producer's replay scope, sorted by ID.
 pub async fn producer_live_hash(
     conn: &mut PgConnection,
     producer: &str,

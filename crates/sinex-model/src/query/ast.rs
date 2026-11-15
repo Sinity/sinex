@@ -535,7 +535,7 @@ impl Operand {
     pub fn kind(&self) -> query_language::catalog::FieldKind {
         use query_language::catalog::FieldKind as K;
         match self {
-            Self::Field(FieldRef::Native(field)) => super::syntax::field_kind(field.field_type()),
+            Self::Field(FieldRef::BuiltIn(field)) => super::syntax::field_kind(field.field_type()),
             Self::Field(FieldRef::Field(field)) => super::syntax::field_kind(field.ty),
             Self::Field(FieldRef::TypedPayload { ty, .. }) => super::syntax::field_kind(*ty),
             Self::Field(FieldRef::TypedGroup(column)) => column.info().field.kind.clone(),
@@ -584,7 +584,7 @@ impl Operand {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum FieldRef {
-    Native(BuiltInField),
+    BuiltIn(BuiltInField),
     Field(&'static Field),
     /// `payload.a.b`: a path into the payload.
     Payload(Vec<String>),
@@ -651,7 +651,7 @@ impl BoundColumn {
     pub fn field_type(&self) -> Option<super::FieldType> {
         self.physical
     }
-    /// Calendar label lineage retained through projection and grouping.
+    /// Calendar label lineage kept through projection and grouping.
     pub fn time_function(&self) -> Option<TimeFn> {
         use query_language::scope::{FieldInfo, Origin, TypeRule};
         fn function(info: &FieldInfo) -> Option<TimeFn> {
@@ -704,7 +704,7 @@ impl BoundColumn {
 impl FieldRef {
     pub fn name(&self) -> String {
         match self {
-            FieldRef::Native(field) => field.name().into(),
+            FieldRef::BuiltIn(field) => field.name().into(),
             FieldRef::Field(f) => f.name.to_string(),
             FieldRef::Payload(path) | FieldRef::TypedPayload { path, .. } => {
                 format!("payload.{}", path.join("."))
@@ -808,7 +808,7 @@ pub struct Join {
     pub inner: Box<Query>,
     /// Every visible column of the bound inner relation, with physical lineage.
     pub columns: Vec<Operand>,
-    /// Matched fields actually read by the containing native relation.
+    /// Matched fields read by the containing relation.
     pub required: Vec<String>,
 }
 

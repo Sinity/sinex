@@ -8,7 +8,7 @@ use sqlx::PgConnection;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Row {
     pub item: String,
-    /// The target's canonical text.
+    /// The target's citation text.
     pub target: String,
     /// `tag` or `property`.
     pub kind: String,

@@ -1473,7 +1473,7 @@ async fn tombstone_clears_copies(db: devkit::pg::TestDatabase) {
 }
 
 #[devkit::test]
-async fn as_of_reads_exact(db: devkit::pg::TestDatabase) {
+async fn as_of_reads_match_the_live_set_at_each_position(db: devkit::pg::TestDatabase) {
     let mut conn = context(&db).await;
     let m = material(&mut conn, &blob(9)).await;
     let a = reading("history", 1, 1, MaterialId::new(), 0);
@@ -1607,7 +1607,7 @@ async fn deleting_a_direct_blob_preserves_its_bytes_as_a_held_chunk_then_reclaim
     crate::blobs::commit_pending_extents(&mut conn, &blobs)
         .await
         .unwrap();
-    // First mark the direct owner. Later admission of the chunked owner
+    // First mark the directly stored blob. Later admission of the chunked blob
     // must clear the marker without appending those bytes again.
     let mut tx = conn.begin().await.unwrap();
     bytes::mark_removing(&mut tx, &direct).await.unwrap();
@@ -1649,8 +1649,8 @@ async fn deleting_a_direct_blob_preserves_its_bytes_as_a_held_chunk_then_reclaim
         .await
         .unwrap();
     assert!(!marked);
-    // Repeating the lifecycle transition with an existing shared owner also
-    // preserves its physical read authority.
+    // Repeating the lifecycle transition with an existing blob sharing the
+    // extent also keeps that extent readable.
     sqlx::query("UPDATE core.blobs SET status='present' WHERE hash=$1")
         .bind(&direct)
         .execute(&mut *conn)
@@ -1686,7 +1686,10 @@ async fn deleting_a_direct_blob_preserves_its_bytes_as_a_held_chunk_then_reclaim
         .fetch_one(&mut *conn)
         .await
         .unwrap();
-    assert_eq!(remaining, 0, "the final owner removal reclaims every chunk");
+    assert_eq!(
+        remaining, 0,
+        "removing the last blob citing them reclaims every chunk"
+    );
 }
 
 mod source;

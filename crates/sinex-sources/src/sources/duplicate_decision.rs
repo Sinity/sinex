@@ -87,8 +87,8 @@ pub fn request_source() -> DeclaredSource<RequestParser> {
     }
 }
 
-/// Keep a decision's request bytes with server-owned authorship, channel and
-/// time. `author`, `via` and `at` in `decision` are replaced by the
+/// Keep a decision's request bytes with the author, channel and time Sinex
+/// records. `author`, `via` and `at` in `decision` are replaced by the
 /// manifest's.
 pub fn request_material(
     decision: &Duplicate,
@@ -146,7 +146,7 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
         name: "duplicate",
         accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
-            owner: sinex_source_core::discovery::Owner::System,
+            captured_by: sinex_source_core::discovery::CapturedBy::System,
             locations: &[],
             capabilities: &[],
             credentials: &[],

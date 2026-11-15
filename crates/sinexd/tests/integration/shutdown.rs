@@ -134,7 +134,7 @@ async fn sigterm_finishes_empty_source_daemon_and_releases_writer_for_restart() 
             .fetch_one(&mut conn)
             .await
             .unwrap();
-        assert!(!locked, "the actual daemon owns the writer lock");
+        assert!(!locked, "the daemon owns the writer lock");
         let started = Instant::now();
         assert!(signal(pid, "TERM"));
         let status = loop {
@@ -180,7 +180,7 @@ async fn sigterm_finishes_empty_source_daemon_and_releases_writer_for_restart() 
             .filter_map(|line| line.strip_prefix("sinexd: shutdown "))
             .map(|line| serde_json::from_str(line).unwrap())
             .collect();
-        assert_eq!(summaries.len(), 1, "one actual shutdown result: {log}");
+        assert_eq!(summaries.len(), 1, "one shutdown result: {log}");
         let summary = &summaries[0];
         let requested = summary["requested"].as_u64().unwrap();
         assert!(
@@ -200,7 +200,7 @@ async fn sigterm_finishes_empty_source_daemon_and_releases_writer_for_restart() 
         );
         assert!(
             tasks.iter().any(|task| task["name"] == "writer"),
-            "writer completion is an actual joined result: {summary}"
+            "writer completion is a joined result: {summary}"
         );
     }
 }

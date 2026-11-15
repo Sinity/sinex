@@ -1,5 +1,5 @@
 //! Bytes stored as content-defined chunks: the chunk names of each such blob,
-//! in order. Each chunk's extent is an ordinary `core.blob_extents` row, and a
+//! in order. Each chunk's extent is a `core.blob_extents` row, and a
 //! chunk several blobs share is stored once.
 pub(crate) const TABLE: &str = "CREATE TABLE core.blob_chunks (
   blob text NOT NULL CHECK (blob ~ '^blake3:[0-9a-f]{64}$'),
@@ -8,7 +8,7 @@ pub(crate) const TABLE: &str = "CREATE TABLE core.blob_chunks (
   PRIMARY KEY (blob, ordinal)
 )";
 pub(crate) const BY_CHUNK: &str = "CREATE INDEX blob_chunks_chunk ON core.blob_chunks (chunk)";
-/// The read authority of a blob: its one extent, or its chunks' extents in
+/// Where a blob's bytes are read from: its one extent, or its chunks' extents in
 /// order. NULL while any of them is not held.
 pub(crate) const DESCRIPTORS: &str = "CREATE FUNCTION core.blob_descriptors(name text)
 RETURNS bytea[] LANGUAGE sql STABLE AS $$

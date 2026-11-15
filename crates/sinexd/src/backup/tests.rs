@@ -137,7 +137,7 @@ async fn paired_dumps_and_segment_copy_keep_the_hold_state_while_the_writer_adva
     let mut snapshot = writer.backup_snapshot("operator").await.unwrap();
     let hold = snapshot.hold.id;
     assert_eq!(snapshot.database.name, db.name);
-    // This ordinary writer job proves that the snapshot did not retain the
+    // This writer job shows that the snapshot did not keep the
     // admission lock for the duration of copying and dumping.
     blobs
         .put(b"post-boundary append must not be copied")
@@ -220,7 +220,7 @@ async fn paired_dumps_and_segment_copy_keep_the_hold_state_while_the_writer_adva
         restored,
         vec![("original-key".into(), b"original-wrapped-key".to_vec())]
     );
-    // Inspect the actual dumped core operation stream through pg_restore.
+    // Inspect the dumped core operation stream through pg_restore.
     let result = tokio::process::Command::new("pg_restore")
         .args(["--data-only", "--table=operations", "--file=-"])
         .arg(artifact.join("main/sinex.dump"))
@@ -327,9 +327,7 @@ fn live_batch(text: &str) -> sinex_model::Batch {
 }
 
 #[devkit::test]
-async fn exporter_loss_between_actual_dump_imports_refuses_the_second_dump(
-    db: devkit::pg::TestDatabase,
-) {
+async fn exporter_loss_between_dumps_refuses_second_dump(db: devkit::pg::TestDatabase) {
     let url = db.url(None);
     let mut conn = PgConnection::connect(&url).await.unwrap();
     key(&mut conn, "before-loss", b"wrapped").await;
@@ -373,13 +371,11 @@ async fn exporter_loss_between_actual_dump_imports_refuses_the_second_dump(
     );
 }
 
-/// Restore the older SQL checkpoint and the copied source spool after ordinary
+/// Restore the older SQL checkpoint and the copied source spool after
 /// publication advanced and deleted the original segment. Resume must admit
-/// the retained pending record rather than skip it using the newer checkpoint.
+/// the stored pending record rather than skip it using the newer checkpoint.
 #[devkit::test]
-async fn backup_during_source_acquisition_restores_pending_spools_after_later_retirement(
-    db: devkit::pg::TestDatabase,
-) {
+async fn backup_mid_acquisition_restores_pending_spool(db: devkit::pg::TestDatabase) {
     use crate::{
         binding_reader::{self, BindingReader, Rounds},
         material_access::{Access, Sink},
@@ -436,9 +432,9 @@ async fn backup_during_source_acquisition_restores_pending_spools_after_later_re
     .unwrap();
     assert_eq!(original_ids.len(), 1);
     append(&mut capture, "pending-cursor", "pending-before-hold");
-    // Keep a real binding round in acquisition while backup takes its cut.
-    // Only the wrapper's first poll is stopped; the ordinary spool driver,
-    // admission, cursor and retirement paths remain in use.
+    // Keep a real binding round in acquisition while backup fixes its position.
+    // Only the wrapper's first poll is stopped; the real spool driver,
+    // admission, cursor and spool file removal paths stay in use.
     struct PausedPoll {
         inner: Box<dyn sinex_source_core::Reader>,
         entered: Option<tokio::sync::oneshot::Sender<()>>,
@@ -513,7 +509,7 @@ async fn backup_during_source_acquisition_restores_pending_spools_after_later_re
             assert_eq!(local.unavailable, None);
             assert!(
                 !local.files.is_empty(),
-                "native source bytes must be acquired"
+                "built-in source bytes must be acquired"
             );
             assert_private_roots(&artifact);
             (snapshot, local)
@@ -566,7 +562,7 @@ async fn backup_during_source_acquisition_restores_pending_spools_after_later_re
     }
     assert!(
         !spool.join("000000000000.ndjson").exists(),
-        "ordinary source retirement must actually remove the older generation"
+        "spool file removal must delete the older generation"
     );
     let current: i64 =
         sqlx::query_scalar("SELECT count(*) FROM core.events WHERE source='machine.journald'")
@@ -579,7 +575,7 @@ async fn backup_during_source_acquisition_restores_pending_spools_after_later_re
     drop(next);
     drop(sink);
     context.close().await.unwrap();
-    // Restore into an empty database, as in the native restore procedure.
+    // Restore into an empty database, as the restore procedure does.
     // pg_restore --clean cannot drop constraints on existing hypertables.
     // The slot remains owned by this fixture throughout replacement.
     let mut admin_url = reqwest::Url::parse(&url).unwrap();
@@ -596,11 +592,11 @@ async fn backup_during_source_acquisition_restores_pending_spools_after_later_re
         .unwrap();
     admin.close().await.unwrap();
     let mut restored = PgConnection::connect(&url).await.unwrap();
-    let owner: String = sqlx::query_scalar("SELECT current_user")
+    let role: String = sqlx::query_scalar("SELECT current_user")
         .fetch_one(&mut restored)
         .await
         .unwrap();
-    sinex_schema::prepare(&mut restored, &owner).await.unwrap();
+    sinex_schema::prepare(&mut restored, &role).await.unwrap();
     sqlx::query("SELECT timescaledb_pre_restore()")
         .execute(&mut restored)
         .await
@@ -866,7 +862,7 @@ async fn restore_without_search_tables_rebuilds_search(db: devkit::pg::TestDatab
             .unwrap();
         assert_eq!(outcome.admitted, 1);
     }
-    // Index before the cut, so the dump has search rows and a position to
+    // Index before the fixed position, so the dump has search rows and a position to
     // leave out.
     index_search(&mut conn).await;
     assert_eq!(search_rows(&mut conn).await.len(), 2);
@@ -901,7 +897,7 @@ async fn restore_without_search_tables_rebuilds_search(db: devkit::pg::TestDatab
     .unwrap();
     drop(writer);
     task.await.unwrap();
-    // The hold commits its own operation event inside the cut. Index
+    // The hold commits its own operation event inside the snapshot. Index
     // everything, then expect the rows of exactly the events the dump holds.
     index_search(&mut conn).await;
     let indexed: Vec<(uuid::Uuid, String)> = search_rows(&mut conn)
@@ -946,11 +942,11 @@ async fn restore_without_search_tables_rebuilds_search(db: devkit::pg::TestDatab
         .unwrap();
     admin.close().await.unwrap();
     let mut restored = PgConnection::connect(&url).await.unwrap();
-    let owner: String = sqlx::query_scalar("SELECT current_user")
+    let role: String = sqlx::query_scalar("SELECT current_user")
         .fetch_one(&mut restored)
         .await
         .unwrap();
-    sinex_schema::prepare(&mut restored, &owner).await.unwrap();
+    sinex_schema::prepare(&mut restored, &role).await.unwrap();
     sqlx::query("SELECT timescaledb_pre_restore()")
         .execute(&mut restored)
         .await

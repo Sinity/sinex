@@ -1,5 +1,5 @@
 //! Export declarations and record framing. `group` traverses a stored archive
-//! and stores exact decoded record parts, separately from its captured
+//! and stores the decoded record parts, separately from its captured
 //! original. Callers use that traversal for one binding or compatible bindings.
 #[cfg(feature = "archives")]
 pub mod group;

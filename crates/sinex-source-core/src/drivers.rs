@@ -339,7 +339,7 @@ pub fn prepare<'s>(
 }
 
 impl Prepared<'_> {
-    /// Bind reader authority supplied by its owner, independently of the input claim.
+    /// Set the progress host the daemon vouches for, kept apart from the host the input names.
     pub fn with_host(mut self, host: Option<String>) -> Self {
         self.host = host;
         self

@@ -43,7 +43,7 @@ fn input(
 }
 
 #[devkit::test]
-async fn classification_exact_probes_preserve_rank_removal_and_location_semantics(
+async fn classification_probes_preserve_rank_removal_and_location_semantics(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();

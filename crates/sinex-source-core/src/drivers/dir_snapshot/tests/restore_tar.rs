@@ -26,7 +26,7 @@ impl crate::Parser for FileHashParser {
 }
 
 #[devkit::test]
-fn gnu_tar_restores_native_names_sparse_data_attributes_and_access_acl() {
+fn gnu_tar_restores_raw_names_sparse_data_attributes_and_access_acl() {
     let root = tempfile::tempdir().unwrap();
     let destination = tempfile::tempdir().unwrap();
     let name = std::ffi::OsString::from_vec(b"long\npercent%\xff.md".to_vec());
@@ -179,7 +179,7 @@ fn gnu_tar_restores_native_names_sparse_data_attributes_and_access_acl() {
     )
     .unwrap();
     assert_eq!(&attribute[..count], acl);
-    // The same recorded member expands through the ordinary drain during replay.
+    // The same recorded member expands through the normal drain during replay.
     let source = crate::DeclaredSource {
         spec: crate::test_parser::source().spec,
         parser: FileHashParser,
@@ -233,7 +233,7 @@ fn gnu_tar_restores_native_names_sparse_data_attributes_and_access_acl() {
 }
 
 #[devkit::test]
-fn empty_files_and_long_native_names_have_distinct_restorable_tar_members() {
+fn empty_files_and_long_raw_names_have_distinct_restorable_tar_members() {
     let root = tempfile::tempdir().unwrap();
     let name = format!("{}💡.md", "x".repeat(160));
     for path in ["a.md", "b.md", &name, "percent%FF.md"] {

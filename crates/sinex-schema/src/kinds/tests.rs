@@ -2,7 +2,7 @@ use super::*;
 use sinex_model::{Class, EventId, MaterialId, RunId};
 use sqlx::{Connection, Executor};
 
-/// Exact current declarations separated from unversioned historical version one.
+/// Current declarations (name and version) separated from unversioned historical version one.
 const CURRENT_KINDS: &[(&str, u64)] = &[
     ("activity.window", 2),
     ("activity.session", 2),

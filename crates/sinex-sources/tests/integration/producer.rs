@@ -180,7 +180,7 @@ async fn draining_after_moving_session_storage_keeps_names_and_positions() {
         spool: state.join("spool"),
         ..Default::default()
     };
-    let bindings = discovery::spools(&context, discovery::Owner::Session).unwrap();
+    let bindings = discovery::spools(&context, discovery::CapturedBy::Session).unwrap();
     let name = bindings
         .iter()
         .find(|(_, binding)| binding.source == "desktop.hyprland")
@@ -315,10 +315,7 @@ async fn draining_after_moving_session_storage_keeps_names_and_positions() {
     .unwrap()
     .read_to_end(&mut decoded)
     .unwrap();
-    assert_eq!(
-        decoded, captured,
-        "receiver retained the actual captured spool bytes"
-    );
+    assert_eq!(decoded, captured, "receiver kept the captured spool bytes");
     let second_record = captured.iter().position(|byte| *byte == b'\n').unwrap() + 1;
     let events: Vec<_> = offered
         .iter()
@@ -355,7 +352,7 @@ async fn draining_after_moving_session_storage_keeps_names_and_positions() {
     let destination = root.path().join("relocated-state");
     std::fs::rename(&state, &destination).unwrap();
     symlink(&destination, &state).unwrap();
-    let bindings = discovery::spools(&context, discovery::Owner::Session).unwrap();
+    let bindings = discovery::spools(&context, discovery::CapturedBy::Session).unwrap();
     assert!(bindings.iter().any(|(_, binding)| binding.name == name));
     let second_started = Timestamp::now().unix_ns();
     live::drain(&mut producer, &store, &positions, bindings)
@@ -381,7 +378,7 @@ async fn draining_after_moving_session_storage_keeps_names_and_positions() {
             "only a prior look within the existing racy-file window permits refresh"
         );
     }
-    // An unchanged look can retain the first interval's valid acquisition
+    // An unchanged look can keep the first interval's valid acquisition
     // basis; a refreshed look was independently proved above. Compare every
     // other cursor and Position field exactly, including generated IDs.
     let mut actual = serde_json::to_value(after).unwrap();
@@ -432,7 +429,7 @@ async fn drain_retries_pending_frames_then_requires_the_missing_spool() {
         &mut producer,
         &store,
         &positions,
-        discovery::spools(&context, discovery::Owner::Session).unwrap(),
+        discovery::spools(&context, discovery::CapturedBy::Session).unwrap(),
     )
     .await
     .unwrap_err();
@@ -458,7 +455,7 @@ async fn drain_retries_pending_frames_then_requires_the_missing_spool() {
         &mut producer,
         &store,
         &positions,
-        discovery::spools(&context, discovery::Owner::Session).unwrap(),
+        discovery::spools(&context, discovery::CapturedBy::Session).unwrap(),
     )
     .await
     .unwrap_err();
@@ -499,7 +496,7 @@ async fn drain_retries_pending_frames_then_requires_the_missing_spool() {
         &mut producer,
         &store,
         &positions,
-        discovery::spools(&context, discovery::Owner::Session).unwrap(),
+        discovery::spools(&context, discovery::CapturedBy::Session).unwrap(),
     )
     .await
     .unwrap();

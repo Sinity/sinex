@@ -117,7 +117,7 @@ impl Api {
                     Ok(json!({
                         "text": analysis::table(&p, &metrics, by.as_deref()),
                         "as_of": p.as_of, "day_setting": settings.label,
-                        "coverage": p.coverage, "coverage_evidence": p.evidence, "cells": p.cells, "producer_versions": p.producer_versions, "citation": p.citation,
+                        "coverage": p.coverage, "coverage_evidence": p.coverage_observations, "cells": p.cells, "producer_versions": p.producer_versions, "citation": p.citation,
                     }))
                 }
                 Request::Gaps { from, to, source } => {

@@ -42,7 +42,7 @@ fn copy(path: &str, content: &str, size: u64, record_offset: u64) -> Event {
     .unwrap()
 }
 
-/// The predecessor's generic projection, with a small synthetic text instead
+/// The previous version's generic text output, with a small synthetic text instead
 /// of constructing an oversized public fixture.
 struct PreviousDocumentText;
 impl PerEvent for PreviousDocumentText {
@@ -65,7 +65,7 @@ impl PerEvent for PreviousDocumentText {
             format: "text".into(),
             part: 0,
             title: None,
-            text: "previous generic projection".into(),
+            text: "previous generic text".into(),
             reader: "sinexd".into(),
             modified_at: copy.modified_at,
         };
@@ -86,18 +86,16 @@ impl PerEvent for PreviousDocumentText {
 }
 
 #[devkit::test]
-async fn structured_document_inputs_skip_blob_reads_and_version_replay_withdraws_projections(
-    db: devkit::pg::TestDatabase,
-) {
+async fn structured_inputs_skip_blob_reads_and_replay_replaces_text(db: devkit::pg::TestDatabase) {
     let directory = tempfile::tempdir().unwrap();
     let blobs = Blobs::open(directory.path()).unwrap();
     let w = World::with_store(db, vec![], Some(blobs.clone())).await;
     let original = b"{\"text\":\"original structured content\"}\n";
     let structured_blob = blobs.put(original).unwrap();
-    let plain = b"complete ordinary document";
+    let plain = b"complete plain document";
     let plain_blob = blobs.put(plain).unwrap();
     // The reader's store holds the supported document only. A structured
-    // content fetch would fail, while the authoritative store keeps its bytes.
+    // content fetch would fail, while the main store keeps its bytes.
     let reader_directory = tempfile::tempdir().unwrap();
     let reader_blobs = Blobs::open(reader_directory.path()).unwrap();
     assert_eq!(reader_blobs.put(plain).unwrap(), plain_blob);

@@ -2,8 +2,8 @@
 //! Maildir).
 //!
 //! Each poll walks the tree comparing file facts with what was already read.
-//! New and changed files stream into one unnamed PAX tar material, retaining
-//! native file names, ownership, times, permissions, extended attributes, ACLs
+//! New and changed files stream into one unnamed PAX tar material, keeping raw
+//! file name bytes, ownership, times, permissions, extended attributes, ACLs
 //! and sparse ranges. The manifest indexes the stored member data offsets.
 //! One member is one record; sparse records expand before parsing and replay.
 //!
@@ -295,7 +295,7 @@ impl DirSnapshot {
                         next_retries.insert(relative.clone());
                         continue;
                     }
-                    // A changed file follows ordinary TAR capture. That path
+                    // A changed file is captured into the TAR as usual. That path
                     // also records an entry failure if the current read fails.
                     Ok(Some(_)) | Err(_) => {}
                 }
@@ -357,7 +357,7 @@ impl DirSnapshot {
                 "mtime_ns": captured.node.mtime_ns,
                 "node": captured.node,
             }));
-            paths::add_native(members.last_mut().expect("member added"), relative);
+            paths::add_path_bytes(members.last_mut().expect("member added"), relative);
             length = tar::position(&mut bundle)?;
             records.push((offset, end));
             if self.removed_at_source {
@@ -402,7 +402,7 @@ impl DirSnapshot {
                     "length": marker.len(),
                     "removed_at_ns": now.unix_ns().to_string(),
                 }));
-                paths::add_native(members.last_mut().expect("member added"), &relative);
+                paths::add_path_bytes(members.last_mut().expect("member added"), &relative);
                 records.push((offset, offset + marker.len()));
             }
         }
@@ -433,7 +433,7 @@ impl DirSnapshot {
                     Some(material) => {
                         let through = previous.through.ok_or_else(|| {
                             DriverError::Cursor(
-                                "directory checkpoint has no admitted-prefix evidence".into(),
+                                "directory checkpoint has no admitted prefix".into(),
                             )
                         })?;
                         scanned.memory_part = Some(previous.part_index);
@@ -477,7 +477,7 @@ impl DirSnapshot {
             "records": records,
             "read_at_ns": i64::try_from(now.unix_ns()).unwrap_or(i64::MAX),
         });
-        paths::add_native(&mut manifest, &self.root);
+        paths::add_path_bytes(&mut manifest, &self.root);
         let manifest = sinex_model::Manifest::from_json(manifest);
         let part_index = if previous.material.is_some() {
             previous.part_index + 1
@@ -594,7 +594,7 @@ fn entry_failure(
         "length": marker.len(),
         "read_error": reason,
     }));
-    paths::add_native(members.last_mut().expect("member added"), path);
+    paths::add_path_bytes(members.last_mut().expect("member added"), path);
     records.push((offset, offset + marker.len()));
     Ok(())
 }

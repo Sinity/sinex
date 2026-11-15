@@ -53,7 +53,7 @@ pub async fn apply_search_text(conn: &mut PgConnection, events: &[Committed]) ->
         if !text.is_empty() {
             ids.push(e.id);
             texts.push(text);
-            // Bundled high-volume kinds retain their declared opt-out even
+            // Bundled high-volume kinds keep their declared opt-out even
             // for historical readings whose declaration predates that policy.
             trigram.push(
                 e.search == sinex_model::kinds::Search::WordsAndTrigram

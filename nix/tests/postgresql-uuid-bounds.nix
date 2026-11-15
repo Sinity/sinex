@@ -1,4 +1,5 @@
-# The plain table is the independent result oracle for native UUID pruning.
+# The plain table is the independent result oracle for TimescaleDB's UUID chunk pruning.
+
 { pkgs, postgres }:
 pkgs.runCommand "postgresql-uuid-bounds" { nativeBuildInputs = [ postgres ]; } ''
   export PGDATA="$TMPDIR/data" PGHOST="$TMPDIR/socket" PGPORT=5432

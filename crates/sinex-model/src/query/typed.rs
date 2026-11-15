@@ -386,9 +386,7 @@ fn field(
             }
         }
         FieldRef::Group(_) => {
-            return Err(QueryError::new(
-                "output column has no authoritative bound scope",
-            ));
+            return Err(QueryError::new("output column has no bound scope"));
         }
         _ => {}
     }
@@ -481,15 +479,13 @@ fn physical_type(
 
 fn output_type(field: &FieldRef) -> Result<FieldType, QueryError> {
     match field {
-        FieldRef::Native(field) => Ok(field.field_type()),
+        FieldRef::BuiltIn(field) => Ok(field.field_type()),
         FieldRef::Field(field) => Ok(field.ty),
         FieldRef::TypedPayload { ty, .. } => Ok(*ty),
         FieldRef::TypedGroup(column) => column
             .field_type()
             .ok_or_else(|| QueryError::new("bound column has no physical type")),
-        _ => Err(QueryError::new(
-            "field needs its authoritative type binding",
-        )),
+        _ => Err(QueryError::new("field needs its type binding")),
     }
 }
 
@@ -950,7 +946,7 @@ fn expr(e: &mut Expr, kinds: &Option<BTreeSet<String>>, ctx: &Context) -> Result
                     operand(value, kinds, ctx)?;
                 }
                 if let Operand::Field(
-                    FieldRef::Native(_)
+                    FieldRef::BuiltIn(_)
                     | FieldRef::TypedPayload { .. }
                     | FieldRef::TypedGroup(_)
                     | FieldRef::Field(_),

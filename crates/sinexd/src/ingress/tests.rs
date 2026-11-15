@@ -52,7 +52,7 @@ fn test_source(producer: &str) -> sinex_model::SourceRef {
 fn test_write(
     producer: &str,
     kinds: Vec<sinex_model::KindDeclaration>,
-) -> crate::ingress::authority::WriteGrant {
+) -> crate::ingress::write_access::WriteGrant {
     let mut prefixes = kinds
         .iter()
         .map(|kind| kind.kind.name.split('.').next().unwrap().to_owned())
@@ -60,7 +60,7 @@ fn test_write(
     prefixes.extend([producer.to_owned(), "not".into()]);
     prefixes.sort();
     prefixes.dedup();
-    crate::ingress::authority::WriteGrant {
+    crate::ingress::write_access::WriteGrant {
         family: producer.into(),
         host: Some("test-host".into()),
         source_prefixes: vec![producer.into()],
@@ -385,7 +385,7 @@ impl Harness {
         let hint = loop {
             let message = tokio::time::timeout(Duration::from_secs(20), acks.next())
                 .await
-                .expect("receipt hint")
+                .expect("ack hint")
                 .unwrap();
             let hint: sinex_protocol::AckHint = serde_json::from_slice(&message.payload).unwrap();
             if hint.frame_hash == expected_hash {
@@ -407,7 +407,7 @@ impl Harness {
         page.acknowledgments
             .into_iter()
             .find(|ack| ack.number == hint.number)
-            .expect("complete owned receipt")
+            .expect("complete recorded ack")
     }
 
     async fn recorded(&self, producer: &str, frames: &[&str]) -> Vec<Acknowledgment> {
@@ -579,7 +579,7 @@ async fn materials_then_events_are_admitted_and_acknowledged_once(db: devkit::pg
 /// message; the session answers Sinex's own query language; and the
 /// materials request lists the file, as Polylogue reads it to rebuild.
 #[devkit::test]
-async fn an_ai_session_from_polylogue_is_ordinary_events(db: devkit::pg::TestDatabase) {
+async fn polylogue_session_reads_like_other_events(db: devkit::pg::TestDatabase) {
     let declarations: Vec<_> = [
         ("session", "session", "started", false),
         ("message", "message", "at", true),
@@ -864,7 +864,7 @@ async fn producers_are_limited_to_their_own_subjects() {
     );
     assert!(!config.contains("dpw") && !config.contains("kpw"));
     let api_subjects = [
-        "$JS.API.CONSUMER.CREATE.SX_CONFIRMED.foreign",
+        "$JS.API.CONSUMER.CREATE.SX_CONFIRMED.other",
         "$JS.API.CONSUMER.DELETE.SX_CONFIRMED.sinex-kitty-scope",
         "$JS.API.CONSUMER.MSG.NEXT.SX_CONFIRMED.sinex-phone",
         "$JS.API.CONSUMER.MSG.NEXT.SX_CONFIRMED.sinex-kitty-old-scope",
@@ -977,9 +977,9 @@ async fn producers_are_limited_to_their_own_subjects() {
         tokio::time::timeout(Duration::from_millis(300), api.next())
             .await
             .is_err(),
-        "foreign/admin/raw-message API requests must not reach the daemon"
+        "other-consumer, admin and raw-message API requests must not reach the daemon"
     );
-    let mut foreign_flow = daemon
+    let mut phone_flow = daemon
         .subscribe("_INBOX.phone.synthetic.flow")
         .await
         .unwrap();
@@ -998,12 +998,12 @@ async fn producers_are_limited_to_their_own_subjects() {
         .unwrap();
     kitty.flush().await.unwrap();
     assert!(
-        tokio::time::timeout(Duration::from_millis(300), foreign_flow.next())
+        tokio::time::timeout(Duration::from_millis(300), phone_flow.next())
             .await
             .is_err(),
-        "a foreign credential cannot acknowledge another principal's flow"
+        "one credential cannot acknowledge another principal's flow"
     );
-    let mut foreign_inbox = kitty.subscribe("_INBOX.phone.>").await.unwrap();
+    let mut phone_inbox = kitty.subscribe("_INBOX.phone.>").await.unwrap();
     kitty.flush().await.unwrap();
     daemon
         .publish("_INBOX.phone.synthetic", "private response".into())
@@ -1011,23 +1011,23 @@ async fn producers_are_limited_to_their_own_subjects() {
         .unwrap();
     daemon.flush().await.unwrap();
     assert!(
-        tokio::time::timeout(Duration::from_millis(300), foreign_inbox.next())
+        tokio::time::timeout(Duration::from_millis(300), phone_inbox.next())
             .await
             .map_or(true, |message| message.is_none()),
         "producer must not eavesdrop another identity's RPC reply inbox"
     );
-    let mut foreign_inline = kitty.subscribe("sx.confirmed.>").await.unwrap();
+    let mut raw_confirmed = kitty.subscribe("sx.confirmed.>").await.unwrap();
     kitty.flush().await.unwrap();
     daemon
         .publish(
-            "sx.confirmed.event.open.foreign.kind",
+            "sx.confirmed.event.open.other.kind",
             "private inline payload".into(),
         )
         .await
         .unwrap();
     daemon.flush().await.unwrap();
     assert!(
-        tokio::time::timeout(Duration::from_millis(300), foreign_inline.next())
+        tokio::time::timeout(Duration::from_millis(300), raw_confirmed.next())
             .await
             .map_or(true, |message| message.is_none()),
         "producer cannot bypass its scoped consumer with a raw stream subscription"
@@ -1053,7 +1053,7 @@ async fn ingress_events_reach_the_confirmed_stream(db: devkit::pg::TestDatabase)
     let h = Harness::start(db).await;
     let (material, frame) = h.material_frame("m1", b"ls\n");
     h.send("kitty", &frame).await;
-    let receipt = h
+    let ack = h
         .send(
             "kitty",
             &Ingress::Events {
@@ -1080,8 +1080,8 @@ async fn ingress_events_reach_the_confirmed_stream(db: devkit::pg::TestDatabase)
     let Confirmed::Event(event) = serde_json::from_slice(&message.payload).unwrap() else {
         panic!("an open event travels complete")
     };
-    assert_eq!(event.commit_seq, receipt.commit_seq().unwrap());
-    assert_eq!(event.id, receipt.admitted()[0]);
+    assert_eq!(event.commit_seq, ack.commit_seq().unwrap());
+    assert_eq!(event.id, ack.admitted()[0]);
     assert_eq!(event.event_type, "command.imported");
     assert_eq!(event.location.unwrap().material, material);
     let _ = &h.nats;
@@ -1363,7 +1363,7 @@ async fn frames_flow_while_a_request_waits(db: devkit::pg::TestDatabase) {
     tokio::pin!(sending);
     let hint = tokio::select! {
         hint = tokio::time::timeout(Duration::from_secs(10), hints.next()) => hint.unwrap().unwrap(),
-        receipt = &mut sending => panic!("full receipt resolved while its read connection was held: {receipt:?}"),
+        ack = &mut sending => panic!("full ack resolved while its read connection was held: {ack:?}"),
     };
     let hint: sinex_protocol::AckHint = serde_json::from_slice(&hint.payload).unwrap();
     assert_eq!(hint.frame_hash, blake3::hash(b"m1").to_hex().to_string());
@@ -1698,7 +1698,7 @@ async fn content_failures_use_the_named_material_and_missing_locations_are_malfo
             assert_eq!(
                 h.send("session", &retry).await,
                 ack,
-                "durable malformed-content retry"
+                "a malformed-content retry gets the recorded ack"
             );
         }
         assert_eq!(

@@ -10,7 +10,7 @@ use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, So
 use sinex_source_core::{Parser, RecordContext, RecordError};
 use std::path::Path;
 
-/// Imports read all native fields supplied by the file and run no models.
+/// Imports read all fields supplied by the file and run no models.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Options {}

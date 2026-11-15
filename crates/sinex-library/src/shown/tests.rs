@@ -151,7 +151,7 @@ fn a_tag_applies_while_its_deciding_level_applies_it() {
 }
 
 #[devkit::test]
-fn labels_of_punctuation_are_ordinary_tags() {
+fn punctuation_labels_apply_as_tags() {
     for label in ["-", "!x", "-cat", "?"] {
         let shown = tags(&[&tag("1", label, false, "operator", ValueOrigin::Authored)]);
         assert_eq!(shown[0].tag, label);

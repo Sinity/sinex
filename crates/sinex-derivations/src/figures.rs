@@ -21,7 +21,7 @@
 //!
 //! An interval counts the seconds it overlaps each hour. A focus with no end
 //! yet counts up to now, but never past the end of the logical day it started
-//! in: missing evidence is not continued activity. A play with no end is of
+//! in: a missing end is not continued activity. A play with no end is of
 //! unknown length and counts no seconds.
 use crate::derived_event::derived;
 use crate::fusion::Family as FusionFamily;

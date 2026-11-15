@@ -39,7 +39,7 @@ let
         // { passwordFile = cfg.session.passwordFile; };
     };
 
-  # Capture producers receive discovery inputs, not daemon staging authority.
+  # Capture producers receive discovery inputs, not access to the daemon's staging.
   sourceConfiguration = { spool, watch }: {
     inherit (cfg) sources exclude;
     discovery = cfg.discovery // { inherit spool watch; };
@@ -99,7 +99,7 @@ in
       type = types.path;
       default = "${cfg.stateDir}/store";
       description = ''
-        The content store: the exact bytes events are read from. Producers on
+        The content store: the original bytes events are read from. Producers on
         this host write their frame bytes under it through the store's group; frame
         files or directories with other ownership or modes are refused.
       '';
@@ -227,16 +227,16 @@ in
           };
           options.writeFamily = mkOption {
             type = types.nullOr types.str; default = null;
-            description = "Logical family this authenticated credential may write; null grants no write authority.";
+            description = "Family this authenticated credential writes as; null grants no write access.";
           };
-          options.attestedHost = mkOption { type = types.nullOr types.str; default = null; description = "Host attested by this credential; input labels remain separate declared claims."; };
-          options.writeSourcePrefixes = mkOption { type = types.listOf types.str; default = []; description = "Registered native source namespaces this credential may use."; };
-          options.sourceDeclarations = mkOption { type = types.listOf types.attrs; default = []; description = "Immutable owner-installed versioned native source artifacts with full emitted kind declarations."; };
-          options.canonicalKinds = mkOption { type = types.listOf types.attrs; default = []; description = "Exact owner-installed canonical kind declarations allowed without a native SourceRef."; };
+          options.attestedHost = mkOption { type = types.nullOr types.str; default = null; description = "Host this credential vouches for; the host each input declares is recorded separately."; };
+          options.writeSourcePrefixes = mkOption { type = types.listOf types.str; default = []; description = "Registered source name prefixes this credential may use."; };
+          options.sourceDeclarations = mkOption { type = types.listOf types.attrs; default = []; description = "Versioned source declarations the operator installs for this credential, each with the full declarations of the kinds it emits; immutable once registered."; };
+          options.canonicalKinds = mkOption { type = types.listOf types.attrs; default = []; description = "Kind declarations the operator installs that this credential may write without naming a source."; };
           options.writeKindPrefixes = mkOption { type = types.listOf types.str; default = []; description = "Kind prefixes this credential may write for its configured family."; };
           options.writeClasses = mkOption { type = types.listOf (types.enum [ "open" "guarded" "sealed" ]); default = []; description = "Classes this credential may offer for admission."; };
-          options.forwardSignals = mkOption { type = types.bool; default = false; description = "Allow this canonical family publisher to forward its evaluator reports to this host's signal deliverer."; };
-          options.canonicalKindPrefixes = mkOption { type = types.listOf types.str; default = []; description = "Canonical summary prefixes assigned exclusively to this credential within its family; at most one credential per family may have this role."; };
+          options.forwardSignals = mkOption { type = types.bool; default = false; description = "Allow this credential, its family's summary publisher, to forward its evaluator reports to this host's signal deliverer."; };
+          options.canonicalKindPrefixes = mkOption { type = types.listOf types.str; default = []; description = "Summary kind prefixes only this credential publishes within its family; at most one credential per family may have any."; };
           options.readKindPrefixes = mkOption {
             type = types.listOf types.str; default = [];
             description = "Kind families this authenticated producer may fetch (for example polylogue). Registration grants no read access.";
@@ -247,11 +247,12 @@ in
           };
           options.publicContext = mkOption {
             type = types.bool; default = false;
-            description = "Allow this authenticated producer to request owner public policy and read-coverage context.";
+            description = "Allow this authenticated producer to request Sinex's public policy and read-coverage context.";
           };
           options.indexedCatalog = mkOption {
             type = types.nullOr types.attrs; default = null;
-            description = "Versioned owner-installed indexed projection catalog with exact kind definitions; read grants still restrict its scope.";
+            description = "Versioned snapshot catalog installed for this producer's snapshot reads, with full kind definitions; read grants
+ still restrict its scope.";
           };
         });
         default = { };
@@ -297,7 +298,7 @@ in
     project_attribution.projects = mkOption {
       type = types.listOf (types.attrsOf types.anything);
       default = [ ];
-      description = "Exact project repository/common-dir/root-commit keys and effective-dated path roots.";
+      description = "Project repository/common-dir/root-commit keys and effective-dated path roots.";
     };
 
     tags = mkOption {
@@ -335,7 +336,7 @@ in
       home = mkOption { type = types.nullOr types.path; default = if cfg.session.user == "" then null else config.users.users.${cfg.session.user}.home; };
       dataHome = mkOption { type = types.nullOr types.path; default = if cfg.discovery.home == null then null else "${cfg.discovery.home}/.local/share"; };
       configHome = mkOption { type = types.nullOr types.path; default = if cfg.discovery.home == null then null else "${cfg.discovery.home}/.config"; };
-      inputRoots = mkOption { type = types.attrsOf (types.listOf types.str); default = { }; description = "Canonical input roots: realm, projects, notes, raw-log, steering, library, documents and downloads."; };
+      inputRoots = mkOption { type = types.attrsOf (types.listOf types.str); default = { }; description = "Named input roots: realm, projects, notes, raw-log, steering, library, documents and downloads."; };
       inputs = mkOption { type = types.attrsOf (types.listOf types.str); default = { }; description = "Provider-owned inputs by catalog format, transcript and OCR import roots, and named capture roots."; };
       environment = mkOption { type = types.attrsOf types.str; default = { }; description = "Resolved application paths, including ZSH_HISTFILE and BASH_HISTFILE."; };
     };
@@ -381,7 +382,8 @@ in
       artifactDir = mkOption {
         type = types.path;
         default = "${cfg.stateDir}/backups";
-        description = "Private immutable core artifacts and their paired archive receipts; successful bulky staging is released after both Borg archives are verified.";
+        description = "Private immutable core artifacts and the Borg info of the two archives holding each; a successful run's bulky staging is released after both Borg archives are verified.";
+
       };
       startAt = mkOption { type = types.either types.str (types.listOf types.str); default = "daily"; };
       repo = mkOption {

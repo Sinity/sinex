@@ -17,7 +17,7 @@
 //! derived batch first drops the outputs whose inputs stopped being live
 //! after the derivation read them (a replay or archive in between).
 //!
-//! The caller commits; events and progress are then durable together.
+//! The caller commits; events and progress are then saved together.
 use crate::{Result, privacy};
 use serde_json::Value;
 use sinex_model::{ArchiveRequest, Batch, BatchKind, Event, EventId, Origin, ReadingOrder};
@@ -212,13 +212,13 @@ pub(crate) async fn admit(
     sqlx::query("SELECT value FROM core.counters WHERE name='commit_seq' FOR UPDATE")
         .execute(&mut *conn)
         .await?;
-    // The existing receipt sequence is reserved only after exact retry lookup.
-    // Its deferred FK lets immutable event rows cite the final receipt on first insert.
+    // The frame number is reserved only after the identical-retry lookup.
+    // Its deferred FK lets immutable event rows cite the final frame row on first insert.
     let frame_number = match &batch.kind {
         BatchKind::Ingress(frame) if frame.ack_number.is_some() => {
             if !frame.frame.is_empty() {
                 return Err(crate::Error::Invalid(
-                    "a named frame cannot choose a reserved receipt".into(),
+                    "a named frame cannot choose a reserved frame number".into(),
                 ));
             }
             frame.ack_number
@@ -260,7 +260,7 @@ pub(crate) async fn admit(
             .is_some_and(|p| !p.data_keys.is_empty() || !p.carry.is_null())
     {
         return Err(crate::Error::Invalid(
-            "producer protocol does not authorize archive-owned source state".into(),
+            "producers cannot send export-archive source state (data keys or carry)".into(),
         ));
     }
     let started = std::time::Instant::now();
@@ -286,7 +286,7 @@ pub(crate) async fn admit(
     outcome.timings.insert("replay_archive", started.elapsed());
     let mut events: Vec<Event> = batch.events().cloned().collect();
     let mut declarations = kinds::prepare(conn, batch, &mut events).await?;
-    register::native_inputs(conn, batch, &events).await?;
+    register::built_in_inputs(conn, batch, &events).await?;
     let started = std::time::Instant::now();
     apply_privacy(conn, cache, batch, &mut events).await?;
     orders::assign(conn, batch, &mut events).await?;
@@ -359,7 +359,7 @@ pub(crate) async fn admit(
             conn,
             frame,
             &outcome,
-            frame_number.expect("named frame reserved its receipt"),
+            frame_number.expect("named frame reserved its frame number"),
         )
         .await?;
     }
@@ -367,8 +367,8 @@ pub(crate) async fn admit(
     Ok(outcome)
 }
 
-// A transfer page bounds native compressed-array planning, not the number
-// of authoritative parents. Keep the existing 256-ID admission page size.
+// A transfer page bounds PostgreSQL's compressed-array planning, not the number
+// of parents checked. Keep the existing 256-ID admission page size.
 const PARENT_PAGE: usize = 256;
 
 #[derive(sqlx::FromRow)]
@@ -414,7 +414,7 @@ async fn apply_privacy(
     // replacement changes across these pages in this same transaction.
     let mut classes = std::collections::HashMap::new();
     for parents in parent_pages(events) {
-        for row in sqlx::query_as::<_, ParentRow>(include_str!("admission/parent_authority.sql"))
+        for row in sqlx::query_as::<_, ParentRow>(include_str!("admission/parent_rows.sql"))
             .bind(&parents)
             .persistent(false)
             .fetch_all(&mut *conn)

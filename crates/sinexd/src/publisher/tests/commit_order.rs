@@ -52,7 +52,7 @@ pub(super) async fn internal(conn: &mut PgConnection) -> Vec<Tuple> {
 }
 
 #[devkit::test]
-async fn canonical_internal_and_confirmed_order_survive_lost_stream(db: devkit::pg::TestDatabase) {
+async fn commit_log_and_confirmed_order_survive_lost_stream(db: devkit::pg::TestDatabase) {
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
@@ -110,13 +110,13 @@ async fn canonical_internal_and_confirmed_order_survive_lost_stream(db: devkit::
     .unwrap()
     .await
     .unwrap();
-    let origin =
-        history_origin(&js.get_stream(subjects.confirmed_stream()).await.unwrap()).unwrap();
+    let stream_start =
+        read_stream_start(&js.get_stream(subjects.confirmed_stream()).await.unwrap()).unwrap();
     assert_eq!(
-        origin.position,
+        stream_start.position,
         commit_log::latest(&mut conn).await.unwrap()
     );
-    assert!(origin.requires_snapshot);
+    assert!(stream_start.requires_snapshot);
     assert_eq!(
         publish_pending(&mut conn, &js, &subjects)
             .await
@@ -140,9 +140,9 @@ async fn canonical_internal_and_confirmed_order_survive_lost_stream(db: devkit::
             .iter()
             .filter_map(tuple)
             .collect::<Vec<_>>(),
-        vec![(origin.position + 1, later_id, "event")]
+        vec![(stream_start.position + 1, later_id, "event")]
     );
-    // An old incarnation's sequence must never delete the unrelated new stream slot.
+    // An old stream instance's sequence must never delete the unrelated new stream slot.
     sqlx::query("INSERT INTO core.event_tombstones(event_id,source,event_type,operation_id,commit_seq,original_commit_seq,class) VALUES($1,'atuin','command.executed',$2,5,1,'open')")
         .bind(first_id.0).bind(uuid::Uuid::now_v7()).execute(&mut conn).await.unwrap();
     assert_eq!(
@@ -162,9 +162,7 @@ async fn canonical_internal_and_confirmed_order_survive_lost_stream(db: devkit::
 }
 
 #[devkit::test]
-async fn partial_position_and_barrier_rollback_resume_without_skipping(
-    db: devkit::pg::TestDatabase,
-) {
+async fn partial_position_and_marker_rollback_resume(db: devkit::pg::TestDatabase) {
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
@@ -192,11 +190,11 @@ async fn partial_position_and_barrier_rollback_resume_without_skipping(
         .await
         .unwrap();
     let stream = confirmed_stream(&mut conn, &js, &subjects).await.unwrap();
-    let origin = history_origin(&stream).unwrap();
-    let page = commit_log::stream_changes_after_origin(
+    let stream_start = read_stream_start(&stream).unwrap();
+    let page = commit_log::stream_changes_after_start(
         &mut conn,
         commit_log::ChangeCursor::after(before),
-        &origin,
+        &stream_start,
         1,
         1024,
     )
@@ -235,7 +233,7 @@ async fn partial_position_and_barrier_rollback_resume_without_skipping(
             .collect::<Vec<_>>(),
         expected
     );
-    // Model a crash after the broker barrier acknowledged and before PG committed.
+    // Model a crash after the broker acknowledged the completion marker and before PG committed.
     commit_log::set_consumer_position(&mut conn, &consumer, before, 0)
         .await
         .unwrap();
@@ -278,7 +276,7 @@ async fn empty_database_is_ready_at_zero_and_nonempty_old_contract_is_refused(
     })
     .await
     .unwrap();
-    js.publish(subjects.confirmed_control(), "legacy".into())
+    js.publish(subjects.confirmed_control(), "older contract".into())
         .await
         .unwrap()
         .await
@@ -323,7 +321,7 @@ async fn giant_event_metadata_travels_by_id_and_completes(db: devkit::pg::TestDa
     let parent = executed("metadata-parent", "pwd", 1, Class::Open);
     let parent_id = parent.id;
     admit(&mut conn, batch(vec![parent])).await;
-    // This valid stored parent list exceeds the broker's actual message budget.
+    // This valid stored parent list exceeds the broker's message size limit.
     let count = js.client().server_info().max_payload / 36 + 1;
     let parents = vec![parent_id; count];
     let mut event = executed("giant-metadata", "ls", 2, Class::Open);
@@ -402,7 +400,7 @@ async fn withheld_events_expose_no_source_key_and_route_by_stored_class(
     sinex_store::privacy::add_rule(
         &mut conn,
         &sinex_store::privacy::NewRule {
-            name: "configured native key".into(),
+            name: "configured native ID".into(),
             source: "atuin".into(),
             event_type: Some("command.executed".into()),
             field: Some("/native_id".into()),
@@ -415,7 +413,7 @@ async fn withheld_events_expose_no_source_key_and_route_by_stored_class(
     )
     .await
     .unwrap();
-    let event = executed("route-secret", "ordinary command", 1, Class::Open);
+    let event = executed("route-secret", "shell command", 1, Class::Open);
     let original_key = event.equivalence_key.clone().unwrap().0;
     let id = event.id;
     admit(&mut conn, batch(vec![event])).await;

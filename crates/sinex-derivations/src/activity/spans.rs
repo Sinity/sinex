@@ -76,15 +76,15 @@ impl Keyed for ActivitySpans {
                 }
                 let has = |signal| active.iter().any(|piece| piece.signal == signal);
                 let operator = has(Signal::Operator);
-                let exact_absence = has(Signal::Absent);
+                let recorded_absence = has(Signal::Absent);
                 let physical_coverage = has(Signal::Coverage);
                 let no_input = has(Signal::NoInput) && !operator;
-                let absent_claim = active
-                    .iter()
-                    .any(|piece| piece.signal == Signal::Claim && piece.payload["status"] == "afk");
+                let afk_report = active.iter().any(|piece| {
+                    piece.signal == Signal::PresenceReport && piece.payload["status"] == "afk"
+                });
                 let absent =
-                    exact_absence || no_input || (!physical_coverage && !operator && absent_claim);
-                let agency = if operator && exact_absence {
+                    recorded_absence || no_input || (!physical_coverage && !operator && afk_report);
+                let agency = if operator && recorded_absence {
                     Agency::Mixed
                 } else if operator {
                     Agency::Operator
@@ -100,12 +100,12 @@ impl Keyed for ActivitySpans {
                     .filter(|piece| {
                         !matches!(
                             piece.signal,
-                            Signal::Focus | Signal::Claim | Signal::Coverage
+                            Signal::Focus | Signal::PresenceReport | Signal::Coverage
                         )
                     })
-                    .map(|piece| evidence(piece.event))
+                    .map(|piece| cite(piece.event))
                     .collect();
-                agency_evidence.sort_by_key(|evidence| evidence.record.clone());
+                agency_evidence.sort_by_key(|cited| cited.record.clone());
                 agency_evidence.dedup_by(|first, next| first.record == next.record);
                 // Both sides of a boundary are dependencies, including an
                 // absence which ended here and input points with no duration.
@@ -143,10 +143,10 @@ impl Keyed for ActivitySpans {
                     values.dedup();
                     values
                 };
-                let mut claims = strings("status", Signal::Claim);
-                claims.extend(strings("state", Signal::Claim));
-                claims.sort();
-                claims.dedup();
+                let mut reports = strings("status", Signal::PresenceReport);
+                reports.extend(strings("state", Signal::PresenceReport));
+                reports.sort();
+                reports.dedup();
                 let span = ActivitySpan {
                     span_id: json!([
                         scope,
@@ -169,7 +169,7 @@ impl Keyed for ActivitySpans {
                     agency,
                     delegated: has(Signal::Delegated),
                     agency_evidence,
-                    presence: if operator && exact_absence {
+                    presence: if operator && recorded_absence {
                         "mixed"
                     } else if operator {
                         "present"
@@ -179,7 +179,7 @@ impl Keyed for ActivitySpans {
                         "unknown"
                     }
                     .into(),
-                    presence_method: if exact_absence {
+                    presence_method: if recorded_absence {
                         "exact"
                     } else if operator
                         && active.iter().any(|piece| {
@@ -195,13 +195,13 @@ impl Keyed for ActivitySpans {
                         "bracketed_quiet"
                     } else if operator || no_input {
                         "physical"
-                    } else if !claims.is_empty() {
+                    } else if !reports.is_empty() {
                         "claim_reconciled"
                     } else {
                         "unknown"
                     }
                     .into(),
-                    presence_claims: claims,
+                    presence_claims: reports,
                     focus: strings("record", Signal::Focus),
                     apps: strings("app", Signal::Focus),
                     titles: strings("title", Signal::Focus),

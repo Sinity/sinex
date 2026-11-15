@@ -70,7 +70,7 @@ async fn seed(conn: &mut PgConnection, offers: &Offers) -> Bases {
 }
 
 #[devkit::test]
-async fn missing_order_seed_takes_maxima_from_history_and_retained_counters(
+async fn missing_order_seed_takes_maxima_from_history_and_stored_counters(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
@@ -119,7 +119,7 @@ async fn missing_order_seed_takes_maxima_from_history_and_retained_counters(
         many.push(n, false, None);
         many.push(n, true, None);
     }
-    // A retained durable counter still wins even when no history survives.
+    // A stored counter still wins even when no history survives.
     many.push(256, false, Some(i64::MAX - 8));
     sqlx::query("INSERT INTO core.producer_orders(source,event_type,key_hash,reading_order) VALUES($1,$2,$3,$4)")
         .bind(SOURCE).bind(KIND).bind(many.hashes.last().unwrap()).bind(i64::MAX-8)

@@ -1,6 +1,6 @@
-//! Delayed mark links use native record identities or exact session containment.
+//! Delayed mark links use source record identities or exact session containment.
 //! A command record a fused command joins is linked through the fused one.
-use crate::activity::evidence;
+use crate::activity::cite;
 use crate::derived_event::derived;
 use crate::fusion::commands;
 use crate::observed::FOCUS;
@@ -159,8 +159,8 @@ impl Keyed for MarkLinks {
                         mark_record: stable(mark),
                         target_record: stable(target),
                         at,
-                        mark: evidence(mark),
-                        target: evidence(target),
+                        mark: cite(mark),
+                        target: cite(target),
                         method: method.into(),
                     },
                     Self::NAME,

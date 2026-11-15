@@ -4,7 +4,7 @@ An event is a **reading**: one interpretation of a **record** in a material, or 
 
 ## Records and readings
 
-- **A record** is a datapoint in a material: a line, a row, a file, a message. It is located by its **record coordinates** `(material, anchor)`, the anchor being the byte offset where it starts, plus event type and **output index** when one record yields several events of one type.
+- **A record** is a datapoint in a material: a line, a row, a file, a message. It is located by its **record coordinates** `(material, record offset)`, the record offset being the byte offset where it starts, plus event type and **output index** when one record yields several events of one type.
 - **A reading** is the event that one read of a record produced. Reading the same record again (replay, a new parser version) makes a new reading with a new ID.
 - **At most one reading of each record is live.** A new live reading of a record archives the previous one; the others are kept as archived readings ([the lifecycle](lifecycle.md)). (ruling 2026-10-27, cc-queued:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f@2026-10-27T23:04Z).
 - **History is implicit.** A record's history is its live and archived readings, grouped by record. There is no supersession pointer and no replacement table. (ruling 2026-05-24, codex:019e309f-7614-7381-a8ac-f9080f304ee6@2026-05-24T17:18Z).
@@ -15,9 +15,9 @@ Output indices are zero-based unsigned 64-bit integers on public interfaces. Sto
 
 | Field | Meaning |
 |---|---|
-| `id` | UUIDv7, random, minted when the reading is made; new on every read |
+| `id` | UUIDv7, random, assigned when the reading is made; new on every read |
 | `source`, `event_type` | two fields, never one joined string split back |
-| origin | exactly one of: a material origin (`material`, `anchor`, output index), or a non-empty list of parents |
+| origin | exactly one of: a material origin (`material`, `record_offset`, output index), or a non-empty list of parents |
 | `ts_orig`, its quality and precision | when it happened, or unknown ([time](#time)) |
 | `ts_coided` | computed from `id`: when Sinex made this reading |
 | `ts_persisted` | when the row was written |
@@ -70,7 +70,7 @@ A parser fix re-reads old bytes into a new reading without making them a newer s
 - **Unknown stays unknown.** A missing source time or a declared missing-value sentinel gives `unknown`; a present but unparseable time makes the record a record failure.
 - **Precision is part of the time:** `instant`, `second`, `minute`, `day`, `month`, `year`, or `bounded` with an end. A coarse time stands for its whole period, starting in the zone the source meant. Precision comes from the declaration or per record, never inferred from a midnight.
 - **The source's own representation is kept** in the payload beside the resolved `ts_orig`, offset or zone included.
-- **Time evidence per byte range** for live streams: `(material, byte range, captured at, precision, clock, quality)`, append-only, read by framing on capture and on replay, so replay resolves the same times.
+- **Time records per byte range** for live streams: `(material, byte range, captured at, precision, clock, quality)`, append-only, read by framing on capture and on replay, so replay resolves the same times.
 - **Plausibility is a label, never a rejection.** A stated time in the future or before the source existed is kept and labelled suspect with its reason. The one hard bound: a `captured` time from Sinex's own clock more than the declared skew (5 minutes) ahead of `ts_coided` is a bug, refused by a CHECK.
 - **Ranges are half-open.** Ties among equal times break by record coordinates and output index, then by a per-record tie counter, never by commit order or event ID.
 - **One time vocabulary in both products:** quality and precision on every time; published `polylogue.*` events carry both.
@@ -78,7 +78,7 @@ A parser fix re-reads old bytes into a new reading without making them a newer s
 
 How queries use these clocks is in [query](query.md); the clocks themselves and the logical day are in [architecture](architecture.md#configuration-and-clocks).
 
-Time from other hosts carries clock evidence (clock identity, measured offset and monotonic anchors), labelled and never rewritten ([time across hosts](hosts.md#time-across-hosts)).
+Time from other hosts carries its clock details (clock identity, measured offset and monotonic anchors), labelled and never rewritten ([time across hosts](hosts.md#time-across-hosts)).
 
 ## Identity
 
@@ -146,7 +146,7 @@ It is computed over source bytes, before and independent of any privacy rule, so
 
 ### Removed at source
 
-When the source reports a deletion (a soft delete, a row gone from a full pass, a mail deleted on the server), admission records a newer reading in state `removed`, ordered like any revision, so an older export cannot bring the record back. It is never ignored, never turned into an addition, and never a lifecycle act. Ordinary views and counts leave out records whose live reading is removed, and show `removed at source` on request. A later reading where the record reappears is a newer `present` reading. A line missing after a shell rewrote its history file is expiry, not removal.
+When the source reports a deletion (a soft delete, a row gone from a full pass, a mail deleted on the server), admission records a newer reading in state `removed`, ordered like any revision, so an older export cannot bring the record back. It is never ignored, never turned into an addition, and never a lifecycle act. Views and counts leave out records whose live reading is removed, and show `removed at source` on request. A later reading where the record reappears is a newer `present` reading. A line missing after a shell rewrote its history file is expiry, not removal.
 
 ### Alignment of rewritten histories
 

@@ -1,23 +1,23 @@
-//! Validate each resume pack's physical position before cross-history comparison.
+//! Validate each resume pack's read position before cross-history comparison.
 use super::*;
 use sinex_derivations::work::ContextPacks;
 use sinex_model::EventId;
 use sinex_model::query::Context;
 use sinex_store::query::{self, Page};
 
-/// Reconstruct the complete declared owner selection AS OF the retained P.
-/// The compiler applies the historical admission/archive lifecycle. ExactInputs supplies actual
+/// Reconstruct the complete declared input selection AS OF the stored read position.
+/// The compiler applies the historical admission/archive lifecycle. ListedInputs supplies
 /// stored Events, never fabricated metadata or a raw-payload fallback.
 pub(super) async fn validate(w: &World) {
     let mut conn = PgConnection::connect(&w.url).await.unwrap();
     let read = ReadMark::now(&mut conn).await.unwrap();
     // Internal ContextPacks reads stored events, rather than a public caller's
-    // narrower grants. This synthetic owner scope sees all fixture classes for
+    // narrower grants. This synthetic full-access scope sees all fixture classes for
     // the independent compiler reconstruction.
     query::set_grants(&mut conn, "guarded,sealed")
         .await
         .unwrap();
-    let retained: Vec<(Value, Vec<uuid::Uuid>, String, i64)> = sqlx::query_as(
+    let packs: Vec<(Value, Vec<uuid::Uuid>, String, i64)> = sqlx::query_as(
         "SELECT e.payload,e.parents,e.class,e.commit_seq FROM core.events e
          WHERE e.source='context.packs' AND e.event_type='context.pack'
            AND EXISTS(SELECT 1 FROM core.live_equivalence l WHERE l.event_id=e.id)",
@@ -25,38 +25,33 @@ pub(super) async fn validate(w: &World) {
     .fetch_all(&mut conn)
     .await
     .unwrap();
-    for (payload, parents, class, admitted_at) in retained {
+    for (payload, parents, class, admitted_at) in packs {
         let env = Env::at(
             at(86_400 * 5),
             TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"),
         );
         assert_eq!(payload["evaluated_at"], json!(env.now));
         assert_eq!(payload["day_setting"], json!(env.time_settings.label()));
-        let position = payload["read_as"]
-            .as_i64()
-            .expect("retained physical read position");
+        let position = payload["read_as"].as_i64().expect("stored read position");
         assert!(
             position >= 0 && position < admitted_at,
             "the reconstructed read must precede this pack reading's admission"
         );
         let key = json!({"episode":payload["episode"]});
-        let owner = Keyed::inputs(&ContextPacks, &key, &env).unwrap();
-        // Translate only this owner's captured, unbounded known-time shape.
+        let declared = Keyed::inputs(&ContextPacks, &key, &env).unwrap();
+        // Translate only the declared inputs' captured, unbounded known-time shape.
         // An expanded declaration must extend the oracle, never lose scope.
-        assert!(owner.range.is_none() && owner.window.is_none());
-        assert!(!owner.unknown_times && owner.before.is_empty() && owner.after.is_empty());
-        assert!(owner.intervals.is_empty() && !owner.kinds.is_empty());
-        let branches: Vec<_> = owner
+        assert!(declared.range.is_none() && declared.window.is_none());
+        assert!(!declared.unknown_times && declared.before.is_empty() && declared.after.is_empty());
+        assert!(declared.intervals.is_empty() && !declared.kinds.is_empty());
+        let branches: Vec<_> = declared
             .kinds
             .iter()
             .map(|kind| {
                 let mut terms = vec![format!("event_type = {}", json!(kind.event_type))];
                 for (field, value) in &kind.equal {
                     assert!(field.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
-                    assert!(
-                        value.is_string(),
-                        "this declared owner's selectors are text"
-                    );
+                    assert!(value.is_string(), "the declared selectors are text");
                     terms.push(format!("payload.{field} = {value}"));
                 }
                 format!("({})", terms.join(" AND "))
@@ -92,26 +87,22 @@ pub(super) async fn validate(w: &World) {
             }
         }
         let expected_ids: std::collections::BTreeSet<_> = historical.keys().copied().collect();
-        let retained_ids: std::collections::BTreeSet<_> =
+        let cited_ids: std::collections::BTreeSet<_> =
             parents.iter().copied().map(EventId).collect();
+        assert_eq!(parents.len(), cited_ids.len(), "no duplicate parents");
         assert_eq!(
-            parents.len(),
-            retained_ids.len(),
-            "no duplicate parent evidence"
-        );
-        assert_eq!(
-            expected_ids, retained_ids,
-            "pack {} must cite exactly the complete owner selection at {position}",
+            expected_ids, cited_ids,
+            "pack {} must cite exactly the complete declared selection at {position}",
             payload["pack"]
         );
-        let mut exact = derivations::ExactInputs::new(
+        let mut reader = derivations::ListedInputs::new(
             expected_ids.iter().copied().collect(),
             64,
             sinex_store::PAGE_BYTES,
         )
         .unwrap();
         let mut inputs = vec![];
-        while let Some(page) = exact.next(&mut conn).await.unwrap() {
+        while let Some(page) = reader.next(&mut conn).await.unwrap() {
             inputs.extend(page.into_iter().map(|row| row.event));
         }
         assert_eq!(
@@ -121,13 +112,13 @@ pub(super) async fn validate(w: &World) {
         );
         for event in &inputs {
             assert!(
-                owner.admits(event),
-                "exact Event still satisfies the declared owner scope"
+                declared.admits(event),
+                "stored Event still satisfies the declared input scope"
             );
             assert_eq!(
                 Some(&event.payload),
                 historical.get(&event.id),
-                "historical compiler and actual transformed Event payload agree"
+                "historical compiler and transformed Event payload agree"
             );
         }
         let computed = Keyed::compute(&ContextPacks, &key, &inputs, &env);
@@ -149,7 +140,7 @@ pub(super) async fn validate(w: &World) {
         );
         assert_eq!(serde_json::to_value(rebuilt.class).unwrap(), json!(class));
         // Reproduce only the declared stored metadata after independently
-        // proving the whole historical input set and deterministic product.
+        // checking the whole historical input set and deterministic product.
         rebuilt.payload["read_as"] = json!(position);
         rebuilt.payload["producer_versions"] = derivations::producer_versions(
             &mut conn,
@@ -159,7 +150,7 @@ pub(super) async fn validate(w: &World) {
         .unwrap();
         assert_eq!(
             rebuilt.payload, payload,
-            "the exact owner basis reproduces every pack field"
+            "the declared basis reproduces every pack field"
         );
     }
     assert_eq!(

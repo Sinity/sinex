@@ -77,7 +77,7 @@ impl MaterialOnDemand {
             opened: std::sync::OnceLock::new(),
         })
     }
-    pub(crate) fn floor(&self) -> sinex_model::Class {
+    pub(crate) fn minimum_class(&self) -> sinex_model::Class {
         if self.sealed {
             sinex_model::Class::Sealed
         } else {

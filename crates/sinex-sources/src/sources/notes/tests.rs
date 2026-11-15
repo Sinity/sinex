@@ -158,9 +158,9 @@ fn supplied_scalar_types_and_title_fallbacks_do_not_invent_note_ids() {
         panic!("parsed")
     };
     assert_eq!(value["tags"], serde_json::json!([42, "42", null, false]));
-    let n = note("---\nid: 123\n---\n", "actual_file.markdown");
+    let n = note("---\nid: 123\n---\n", "plain_file.markdown");
     assert_eq!(n.note_id, None);
-    assert_eq!(n.title.as_deref(), Some("actual file"));
+    assert_eq!(n.title.as_deref(), Some("plain file"));
     assert_eq!(
         note("---\nid: ''\ntitle: ''\n---\n", "last-name.md")
             .note_id
@@ -174,7 +174,7 @@ fn supplied_scalar_types_and_title_fallbacks_do_not_invent_note_ids() {
         Some("some note")
     );
     assert_eq!(
-        note("---not a fence\n#tag\n", "actual_file.markdown").front_matter,
+        note("---not a fence\n#tag\n", "plain_file.markdown").front_matter,
         Some(NoteFrontMatter::Absent)
     );
 }
@@ -326,7 +326,7 @@ fn equally_named_vaults_do_not_join_notes() {
     assert_eq!(unknown.key_kind(), sinex_model::KeyKind::Location);
 }
 #[devkit::test]
-fn native_note_paths_stay_distinct_after_reader_memory_and_removal() {
+fn raw_byte_note_paths_stay_distinct_after_memory_and_removal() {
     use std::os::unix::ffi::OsStringExt;
     let directory = tempfile::tempdir().unwrap();
     let raw_name = std::ffi::OsString::from_vec(b"a\xff.md".to_vec());
@@ -405,7 +405,7 @@ fn native_note_paths_stay_distinct_after_reader_memory_and_removal() {
 }
 
 #[devkit::test]
-fn native_vault_roots_stay_distinct_from_equal_display_names() {
+fn raw_byte_vault_roots_stay_distinct_from_equal_display_names() {
     use sinex_model::EventPayload;
     use std::os::unix::ffi::OsStringExt;
     let directory = tempfile::tempdir().unwrap();

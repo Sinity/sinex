@@ -232,7 +232,7 @@ async fn real_daemon_checkpoints_precede_effects_and_unknown_actions_survive_res
         answer["total"], 4,
         "only two rules times two source occurrences: {answer}"
     );
-    // Rules and outcomes are ordinary request records with real run
+    // Rules and outcomes are request records with real run
     // provenance: two rules, and per value delivery an unknown and a
     // delivered attempt, per action an unknown, and one delivered.
     let owned:i64=sqlx::query_scalar("SELECT count(*) FROM core.events e JOIN raw.materials m ON m.id=e.material_id JOIN core.runs r ON r.id=e.run_id JOIN core.manifests manifest ON manifest.id=r.manifest_id WHERE e.event_type IN ('signal.rule','signal.outcome') AND manifest.build <> ''").fetch_one(&mut conn).await.unwrap();

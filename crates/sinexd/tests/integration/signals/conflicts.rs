@@ -50,7 +50,7 @@ async fn a_firing_whose_reading_was_replayed_is_withdrawn_then_cites_the_new_rea
     .await;
     // Hold only the original reading's pending firing until the public replay
     // has archived it. The evaluator persists millisecond deadlines; the next
-    // checkpoint then releases that exact firing, while a rearmed firing keeps
+    // checkpoint then releases that firing, while a rearmed firing keeps
     // the rule's genuine five-second delay. i64::MAX is the evaluator's
     // no-wakeup boundary; the replay's commit wakes the next step.
     for statement in [

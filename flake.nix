@@ -1,5 +1,6 @@
 {
-  description = "Sinex: a durable record of one person's digital life";
+  description = "Sinex: a record of one person's digital life"
+;
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
   inputs.crane.url = "github:ipetkov/crane/eb35abda9f232cc6610b1d1e3200d15c49b7ac54";
   inputs.rust-overlay = {

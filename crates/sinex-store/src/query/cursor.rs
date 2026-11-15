@@ -138,7 +138,7 @@ pub async fn context_for_page(
     )?
     .ctx)
 }
-pub(super) fn question_from_evidence(
+pub(super) fn question_identity(
     identity: Json,
     programmatic: Option<String>,
     definitions: Option<&Json>,

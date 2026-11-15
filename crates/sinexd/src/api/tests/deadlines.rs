@@ -1,4 +1,4 @@
-//! Lock waits exercise the actual request lifetime and database cancellation.
+//! Lock waits exercise the request lifetime and database cancellation.
 use super::*;
 use sqlx::Connection;
 use std::time::Duration;
@@ -14,7 +14,7 @@ async fn locked(w: &World, mode: &str) -> sqlx::PgConnection {
 }
 async fn active_readers(conn: &mut sqlx::PgConnection) -> i64 {
     // PostgreSQL caches current-query information within a transaction.
-    // The lock owner must discard that snapshot before observing a new phase.
+    // The lock holder must discard that snapshot before observing a new phase.
     sqlx::query("SELECT pg_stat_clear_snapshot()")
         .execute(&mut *conn)
         .await
@@ -103,9 +103,7 @@ async fn deadline_none_waits_and_does_not_inherit_an_earlier_budget(db: devkit::
 }
 
 #[devkit::test]
-async fn an_admitted_mutation_returns_its_actual_ack_after_the_read_deadline(
-    db: devkit::pg::TestDatabase,
-) {
+async fn admitted_mutation_returns_ack_after_read_deadline(db: devkit::pg::TestDatabase) {
     let w = world(db).await;
     // Preflight SELECTs can run. Admission's INSERT waits until we release it.
     let mut lock = locked(&w, "SHARE").await;
@@ -197,7 +195,7 @@ async fn large_finite_budget_keeps_pool_reuse_and_does_not_become_a_postgres_cap
     )
     .await;
     assert_eq!(first["outcome"], "ok", "{first}");
-    // SQL cursors detach their connection by design. Ordinary query pages use
+    // SQL cursors detach their connection by design. Query pages use
     // the pool, so inspect its connection before and after a successful read.
     let pool_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
         .fetch_one(&mut *w.reads.acquire().await.unwrap())
@@ -215,7 +213,7 @@ async fn large_finite_budget_keeps_pool_reuse_and_does_not_become_a_postgres_cap
         .fetch_one(&mut *conn)
         .await
         .unwrap();
-    assert_eq!(after, pool_pid, "healthy query pages retain pool reuse");
+    assert_eq!(after, pool_pid, "healthy query pages keep pool reuse");
     let deadline: String =
         sqlx::query_scalar("SELECT current_setting('sinex.request_deadline',true)")
             .fetch_one(&mut *conn)
@@ -294,10 +292,7 @@ async fn a_first_sql_page_timeout_does_not_publish_an_unread_cursor(db: devkit::
     assert_eq!(reply["failure"]["kind"], "timeout", "{reply}");
     let held: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND application_name='sinex.api' AND state IN ('idle in transaction','idle in transaction (aborted)')")
         .fetch_one(&mut lock).await.unwrap();
-    assert_eq!(
-        held, 0,
-        "a failed first page retained an unreachable cursor"
-    );
+    assert_eq!(held, 0, "a failed first page kept an unreachable cursor");
     assert_eq!(active_readers(&mut lock).await, 0);
     sqlx::query("ROLLBACK").execute(&mut lock).await.unwrap();
 }

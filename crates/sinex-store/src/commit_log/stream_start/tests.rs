@@ -1,6 +1,6 @@
 use super::*;
 #[devkit::test]
-async fn closed_predecessor_gaps_do_not_poison_post_origin_deltas(db: devkit::pg::TestDatabase) {
+async fn older_format_gaps_do_not_block_changes_after_start(db: devkit::pg::TestDatabase) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     sqlx::raw_sql("ALTER TABLE core.event_tombstones DROP CONSTRAINT tombstone_history_complete;
         INSERT INTO core.event_tombstones(event_id,source,event_type,operation_id)
@@ -21,11 +21,11 @@ async fn closed_predecessor_gaps_do_not_poison_post_origin_deltas(db: devkit::pg
             .gap
             .is_some()
     );
-    let origin = HistoryOrigin::establish(&mut conn).await.unwrap();
-    assert_eq!(origin.position, 7);
-    assert!(origin.requires_snapshot);
+    let start = StreamStart::establish(&mut conn).await.unwrap();
+    assert_eq!(start.position, 7);
+    assert!(start.requires_snapshot);
     sqlx::raw_sql("UPDATE core.counters SET value=8 WHERE name='commit_seq'; INSERT INTO core.commit_log(commit_seq) VALUES(8)").execute(&mut conn).await.unwrap();
-    let page = stream_changes_after_origin(&mut conn, ChangeCursor::after(7), &origin, 10, 4096)
+    let page = stream_changes_after_start(&mut conn, ChangeCursor::after(7), &start, 10, 4096)
         .await
         .unwrap();
     assert!(page.gap.is_none());
@@ -39,16 +39,16 @@ async fn closed_predecessor_gaps_do_not_poison_post_origin_deltas(db: devkit::pg
             .unwrap();
     assert_eq!(before, after);
     assert!(
-        stream_changes_after_origin(&mut conn, ChangeCursor::after(6), &origin, 10, 4096)
+        stream_changes_after_start(&mut conn, ChangeCursor::after(6), &start, 10, 4096)
             .await
             .is_err()
     );
-    let mut wrong = origin.clone();
+    let mut wrong = start.clone();
     wrong.store = "other store".into();
     assert!(wrong.validate(&mut conn).await.is_err());
     sqlx::query("UPDATE core.counters SET value=6 WHERE name='commit_seq'")
         .execute(&mut conn)
         .await
         .unwrap();
-    assert!(origin.validate(&mut conn).await.is_err());
+    assert!(start.validate(&mut conn).await.is_err());
 }

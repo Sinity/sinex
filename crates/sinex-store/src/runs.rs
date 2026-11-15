@@ -1,5 +1,5 @@
 //! Runs and manifests: every event names the run that produced it, and every
-//! run names what it is (name, kind, declared version, exact build).
+//! run names what it is (name, kind, declared version, build).
 use crate::Result;
 use sinex_model::RunId;
 use sqlx::PgConnection;

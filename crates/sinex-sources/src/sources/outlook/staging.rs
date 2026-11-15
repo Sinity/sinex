@@ -87,13 +87,13 @@ fn folder(binding: &Binding) -> Result<PathBuf, String> {
         .ok_or_else(|| format!("{}: missing converted folder", binding.name))?;
     let (input_hash, encoded) = encoded
         .split_once(':')
-        .ok_or("missing native input identity")?;
+        .ok_or("missing original input identity")?;
     if input_hash
         != blake3::hash(binding.input.as_os_str().as_bytes())
             .to_hex()
             .as_str()
     {
-        return Err("converted folder belongs to another native input".into());
+        return Err("converted folder belongs to another original input".into());
     }
     if encoded.len() % 2 != 0 || !encoded.is_ascii() {
         return Err("invalid converted folder identity".into());

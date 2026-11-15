@@ -101,8 +101,7 @@ pub async fn resolve(conn: &mut PgConnection, reference: &Reference) -> Result<U
                     "no live {event_type} of {source} with key {key}"
                 ))),
                 _ => Err(Error::Invalid(
-                    "several live readings share the visible key; use an exact event citation"
-                        .into(),
+                    "several live readings share the visible key; cite the event by ID".into(),
                 )),
             }
         }
@@ -167,7 +166,7 @@ pub(crate) async fn walk(
         .map(|(id, depth)| json!({"id":id,"depth":depth}))
         .collect();
     // The visible view owns payload masking. Edges and tombstone skeletons
-    // retain identity after a tombstone, without reconstructing cleared content.
+    // keep identity after a tombstone, without reconstructing cleared content.
     // Compressed event estimates can otherwise turn a small selected set into
     // whole-history joins. Keep each event and its details keyed by that set.
     let rows = sqlx::query_scalar!(
@@ -209,7 +208,7 @@ pub(crate) async fn walk(
     Ok(rows)
 }
 
-/// Breadth-first frontiers make the first visit the shortest distance. Keeping
+/// Breadth-first rounds make the first visit the shortest distance. Keeping
 /// only visited IDs avoids both cycles and an exponential list of branch paths.
 async fn lineage(
     conn: &mut PgConnection,
@@ -217,17 +216,17 @@ async fn lineage(
     direction: Walk,
 ) -> Result<BTreeMap<Uuid, u64>> {
     let mut visited = BTreeMap::from([(root, 0_u64)]);
-    let mut frontier = vec![root];
+    let mut next_nodes = vec![root];
     let mut depth = 0_u64;
-    while !frontier.is_empty() {
+    while !next_nodes.is_empty() {
         let adjacent = match direction {
             Walk::Descendants => sqlx::query_scalar!(
                 r#"SELECT DISTINCT c.child AS "child!" FROM unnest($1::uuid[]) f(id) CROSS JOIN LATERAL core.event_children_of(f.id) c ORDER BY 1"#,
-                &frontier,
+                &next_nodes,
             ).fetch_all(&mut *conn).await?,
             Walk::Trace | Walk::Parents => sqlx::query_scalar!(
                 r#"SELECT DISTINCT c.parent AS "parent!" FROM unnest($1::uuid[]) f(id) CROSS JOIN LATERAL core.event_parents_of(f.id) c ORDER BY 1"#,
-                &frontier,
+                &next_nodes,
             ).fetch_all(&mut *conn).await?,
         };
         depth = depth
@@ -236,11 +235,11 @@ async fn lineage(
         if matches!(direction, Walk::Parents) {
             return Ok(adjacent.into_iter().map(|id| (id, depth)).collect());
         }
-        frontier.clear();
+        next_nodes.clear();
         for id in adjacent {
             if let Entry::Vacant(entry) = visited.entry(id) {
                 entry.insert(depth);
-                frontier.push(id);
+                next_nodes.push(id);
             }
         }
     }

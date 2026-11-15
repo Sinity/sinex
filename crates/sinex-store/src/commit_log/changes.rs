@@ -12,7 +12,7 @@ pub struct ChangeCursor {
     event: Uuid,
 }
 impl ChangeCursor {
-    /// Start strictly after a fully committed scalar consumer watermark.
+    /// Start strictly after a fully committed scalar consumer position.
     pub fn after(position: i64) -> Self {
         Self {
             position,
@@ -133,7 +133,7 @@ impl EventRows for EventHeader {
                 )
             })
             .collect();
-        // The batch lookup may reorder or deduplicate keys; callers retain
+        // The batch lookup may reorder or deduplicate keys; callers keep
         // their requested order and multiplicity, with missing rows omitted.
         Ok(ids
             .iter()
@@ -184,20 +184,20 @@ impl EventRows for StreamEvent {
     }
 }
 
-/// Read the confirmed stream's work after its origin, in the same order and
+/// Read the confirmed stream's work after its start position, in the same order and
 /// with the same history checks as the full feed. Pages are bounded by stored
 /// payload bytes.
-pub async fn stream_changes_after_origin(
+pub async fn stream_changes_after_start(
     conn: &mut PgConnection,
     after: ChangeCursor,
-    origin: &HistoryOrigin,
+    start: &StreamStart,
     limit: i64,
     bytes: i64,
 ) -> Result<ChangePage<StreamEvent>> {
-    changes_page_from(conn, after, limit, bytes, Some(origin)).await
+    changes_page_from(conn, after, limit, bytes, Some(start)).await
 }
 
-/// Read bounded transfer work at one database snapshot. No public watermark
+/// Read bounded transfer work at one database snapshot. No public position
 /// advances through a partial position, including a position larger than a page.
 pub async fn changes_page(
     conn: &mut PgConnection,
@@ -213,7 +213,7 @@ async fn changes_page_from<E: EventRows>(
     after: ChangeCursor,
     limit: i64,
     bytes: i64,
-    origin: Option<&HistoryOrigin>,
+    start: Option<&StreamStart>,
 ) -> Result<ChangePage<E>> {
     if limit <= 0 || bytes <= 0 {
         return Err(Error::Invalid(
@@ -224,15 +224,15 @@ async fn changes_page_from<E: EventRows>(
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *tx)
         .await?;
-    if let Some(origin) = origin {
-        origin.validate(&mut tx).await?;
-        if after.position < origin.position {
+    if let Some(start) = start {
+        start.validate(&mut tx).await?;
+        if after.position < start.position {
             return Err(Error::Invalid(
-                "change cursor precedes confirmed stream origin".into(),
+                "change cursor precedes the confirmed stream's start position".into(),
             ));
         }
     }
-    let page = read_page::<E>(&mut tx, after, limit, bytes, origin.is_none()).await?;
+    let page = read_page::<E>(&mut tx, after, limit, bytes, start.is_none()).await?;
     tx.commit().await?;
     Ok(page)
 }
@@ -246,9 +246,9 @@ async fn read_page<E: EventRows>(
     if require_history && let Some(row)=sqlx::query!("SELECT event_id,operation_id FROM core.event_tombstones WHERE commit_seq IS NULL OR original_commit_seq IS NULL OR class IS NULL ORDER BY event_id LIMIT 1")
         .fetch_optional(&mut *conn).await?{
         return Ok(ChangePage{gap:Some(HistoryGap{event:row.event_id,operation:Some(row.operation_id),
-            reason:format!("commit_history_position_unknown: tombstoned event {} lacks exact admission/lifecycle position or class metadata",row.event_id)}),..Default::default()})
+            reason:format!("commit_history_position_unknown: tombstoned event {} lacks admission/lifecycle position or class metadata",row.event_id)}),..Default::default()})
     }
-    // Authority is checked above even when the consumer has reached the head.
+    // History completeness is checked above even when the consumer has reached the head.
     let head = sqlx::query_scalar!("SELECT value FROM core.counters WHERE name='commit_seq'")
         .fetch_one(&mut *conn)
         .await?;
@@ -303,7 +303,7 @@ async fn read_page<E: EventRows>(
                     event: row.event_id,
                     operation: row.operation_id,
                     reason: format!(
-                        "commit_history_metadata_unknown: archive change {} has no exact kind/class",
+                        "commit_history_metadata_unknown: archive change {} has no kind/class",
                         row.change_seq
                     ),
                 }),

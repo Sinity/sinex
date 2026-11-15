@@ -509,7 +509,7 @@ fn world() -> Vec<Event> {
 mod basis;
 
 /// The live derived events: type and payload, with IDs left out, counted.
-/// Physical read positions are mapped only after validating each complete basis.
+/// Read positions are mapped only after validating each complete basis.
 async fn derived_set(w: &World) -> BTreeMap<String, i64> {
     basis::validate(w).await;
     let mut conn = PgConnection::connect(&w.url).await.unwrap();
@@ -529,8 +529,8 @@ async fn derived_set(w: &World) -> BTreeMap<String, i64> {
     rows.into_iter().collect()
 }
 
-/// Keep the equality oracle intact while naming exact payload differences.
-/// Physical snapshot positions are validated separately; every remaining
+/// Keep the equality oracle intact while naming payload differences.
+/// Snapshot read positions are validated separately; every remaining
 /// payload path and producer provenance is compared here.
 fn pack_differences(expected: &BTreeMap<String, i64>, got: &BTreeMap<String, i64>) -> Vec<Value> {
     fn packs(rows: &BTreeMap<String, i64>) -> BTreeMap<String, (Value, i64)> {

@@ -265,7 +265,7 @@ async fn search_failure_rolls_back_text_and_restart_covers_same_position(
     .await
     .unwrap();
     tx.commit().await.unwrap();
-    // Exercise an empty rebuildable index, not admission's eager projection.
+    // Exercise an empty rebuildable index, not the rows admission writes as it commits.
     sqlx::query("DELETE FROM core.search_text")
         .execute(&mut conn)
         .await

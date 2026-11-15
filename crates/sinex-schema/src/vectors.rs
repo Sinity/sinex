@@ -1,5 +1,5 @@
-//! Rebuildable pgvector projection. Original dense values remain in immutable
-//! text.embedding payloads; nullable projected values express backend limits.
+//! Rebuildable pgvector read model. Original dense values remain in immutable
+//! text.embedding payloads; nullable `projected` values express backend limits.
 pub(crate) const SPACES: &str = "CREATE TABLE core.embedding_spaces (
   space text PRIMARY KEY,
   provider text NOT NULL,

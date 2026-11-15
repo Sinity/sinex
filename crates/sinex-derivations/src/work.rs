@@ -1,6 +1,6 @@
 //! Work is keyed by recorded tasks, pull requests or repository branches. Session lifetimes do not
 //! create operator time; every act, episode and resume pack is a stored event.
-use crate::activity::{SECOND, evidence, union_seconds};
+use crate::activity::{SECOND, cite, union_seconds};
 use crate::derived_event::derived;
 use crate::observed::{REST, is_sleep, sleep_kinds};
 use crate::{AffectedRange, Computed, Env, InputQuery, InputRange, KeyState, KeyView, Keyed, Kind};
@@ -10,7 +10,8 @@ use sinex_model::record::stable;
 use sinex_model::{Event, Timestamp};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Structured fields are authoritative. Prose and command strings never supply objectives.
+/// Only structured fields supply objectives; prose and command strings never do.
+
 fn objective(metadata: &Value) -> Option<Objective> {
     let repository = metadata["repo"]
         .as_str()
@@ -306,7 +307,7 @@ impl Keyed for WorkEpisodes {
                         suspension: suspension.clone(),
                         resumed_at: act.at,
                         lag_s: None,
-                        act: evidence(event),
+                        act: cite(event),
                     },
                     Self::NAME,
                     boundary.iter().copied(),
@@ -350,7 +351,7 @@ impl Keyed for WorkEpisodes {
                     Some(union_seconds(durations))
                 },
                 untimed_agent_acts: unknown,
-                trail: group.iter().map(|(event, _)| evidence(event)).collect(),
+                trail: group.iter().map(|(event, _)| cite(event)).collect(),
                 suspensions,
                 resumptions,
                 absorbed_excursions,
@@ -422,9 +423,9 @@ impl Keyed for ContextPacks {
                     stated_goal: acts
                         .iter()
                         .find(|(_, act)| act.agency == Agency::Operator)
-                        .map(|(event, _)| evidence(event)),
-                    trail: acts.iter().map(|(event, _)| evidence(event)).collect(),
-                    last_edit: last_edit.map(|(event, _)| evidence(event)),
+                        .map(|(event, _)| cite(event)),
+                    trail: acts.iter().map(|(event, _)| cite(event)).collect(),
+                    last_edit: last_edit.map(|(event, _)| cite(event)),
                     last_edit_path: last_edit.and_then(|(_, act)| act.path.clone()),
                     open_failures: acts
                         .iter()
@@ -444,7 +445,7 @@ impl Keyed for ContextPacks {
                                         })
                                 })
                         })
-                        .map(|(event, _)| evidence(event))
+                        .map(|(event, _)| cite(event))
                         .collect(),
                     coverage: vec![
                         "objectives require recorded task, pull-request or repository-branch links"

@@ -78,14 +78,15 @@ pub enum BatchKind {
 
 #[derive(Clone, Debug)]
 pub struct IngressFrame {
-    /// Digest of the frozen logical frame bytes.
+    /// Digest of the frame's JSON bytes as the producer sent them.
     pub content_hash: Option<String>,
     /// Reserved by the atomic replay writer, not by a producer.
     pub ack_number: Option<i64>,
     pub built_in_source: Option<SourceRef>,
     pub source_fingerprint: Option<String>,
     pub host: Option<String>,
-    /// Transport-configured ownership captured with this frame; historical ownership stays unknown.
+    /// The family and kind prefixes the transport grant gave this frame;
+    /// unknown for frames recorded before they were kept.
     pub family: Option<String>,
     pub write_kind_prefixes: Vec<String>,
     /// Offered events whose source did not supply a reading order.
@@ -159,7 +160,7 @@ pub enum RecordOutcome {
 /// Progress of one source binding, committed with the batch's events.
 #[derive(Clone, Debug)]
 pub struct SourceProgress {
-    /// Actual native declaration selected by the trusted reader binding.
+    /// The built-in source declaration the reading binding selected.
     pub source: Option<SourceRef>,
     /// Host attested by that binding, separately from the input's declared host.
     pub host: Option<String>,
@@ -289,7 +290,7 @@ pub enum ArchiveRequest {
     },
     /// The source no longer holds the records at these locations (a rewritten
     /// file without record IDs dropped them). Each live reading there gets a
-    /// newer reading in state removed, through the ordinary identity rules.
+    /// newer reading in state removed, through the usual identity rules.
     RemovedAtSource { locations: Vec<RecordLocation> },
 }
 

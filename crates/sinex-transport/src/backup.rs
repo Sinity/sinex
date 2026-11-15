@@ -17,7 +17,8 @@ use tokio::sync::{OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock};
 const IDLE: Duration = Duration::from_secs(60);
 const READ_BYTES: u64 = 64 * 1024;
 
-/// Every send, checkpoint advance and retirement holds this gate. Acquisition does not.
+/// Every send, checkpoint advance and spool file removal holds this lock.
+/// Capture does not.
 #[derive(Clone, Default)]
 pub struct Publication(Arc<RwLock<()>>);
 impl Publication {
@@ -29,7 +30,8 @@ impl Publication {
     }
 }
 
-/// Native producer-owned files, closed and synced before returning from capture.
+/// Copies of the producer's own state files, closed and synced to disk before
+/// capture returns.
 pub struct Captured {
     pub directory: tempfile::TempDir,
     pub files: Vec<File>,
@@ -294,7 +296,7 @@ fn copy_prefix(
 }
 
 /// Copy each open file's bounded prefix; appending acquisition may continue.
-/// The owner prevents replacement, deletion and checkpoint advance until this returns.
+/// The caller prevents replacement, deletion and checkpoint advance until this returns.
 /// Run on a blocking worker so cancellation and protocol flow keep progressing.
 pub fn capture_tree(
     source: &Path,

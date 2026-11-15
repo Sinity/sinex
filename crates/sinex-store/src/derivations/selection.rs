@@ -8,7 +8,7 @@ pub struct InputState {
     pub commit: i64,
     pub changes: i64,
     pub tombstoned: i64,
-    /// Native positions through which this statement saw committed rows.
+    /// Commit positions through which this statement saw committed rows.
     /// They bound later reads; unrelated newer rows do not invalidate it.
     pub through_commit: i64,
     pub through_changes: i64,

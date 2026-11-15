@@ -180,7 +180,7 @@ impl Seen {
 }
 
 #[devkit::test]
-fn one_forward_decode_and_record_write_serve_distinct_logical_sources() {
+fn one_forward_decode_and_record_write_serve_distinct_sources() {
     for gzip in [false, true] {
         let raw = tar(
             &[
@@ -237,7 +237,7 @@ fn one_forward_decode_and_record_write_serve_distinct_logical_sources() {
             uncompressed = raw.clone();
         }
         // tar may stop before trailing zero padding. The useful work property
-        // is that adding a logical route does not add a decoding pass.
+        // is that adding a route does not add a decoding pass.
         assert!(work.decoded_bytes <= uncompressed.len() as u64);
         assert!(work.decoded_bytes >= 300_000 + points(400).len() as u64);
         let one = Sink::default();

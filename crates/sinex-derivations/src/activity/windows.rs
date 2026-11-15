@@ -1,4 +1,4 @@
-use super::signals::{Piece, Signal, absence_scope, barrier, pieces};
+use super::signals::{Piece, Signal, absence_overlaps, absence_scope, pieces};
 use super::*;
 use sinex_model::event_types::ActivityWindow;
 
@@ -45,7 +45,7 @@ impl Keyed for ActivityWindows {
             .iter()
             .filter(|piece| matches!(piece.signal, Signal::Operator | Signal::Physical))
         {
-            // Exact absence boundaries divide supporting input. Conflicts stay
+            // Absence boundaries divide supporting input. Conflicts stay
             // visible in elementary spans rather than extending an envelope.
             let mut remaining = vec![(piece.start, piece.end)];
             for absent in absent
@@ -86,10 +86,10 @@ impl Keyed for ActivityWindows {
             let mut groups: Vec<Vec<Piece<'_>>> = Vec::new();
             let mut latest = i128::MIN;
             for piece in active {
-                let cut = absent
+                let absent_between = absent
                     .iter()
-                    .any(|p| absence_scope(p, scope) && barrier(p, latest, piece.start));
-                if groups.is_empty() || piece.start - latest >= GAP_NS || cut {
+                    .any(|p| absence_scope(p, scope) && absence_overlaps(p, latest, piece.start));
+                if groups.is_empty() || piece.start - latest >= GAP_NS || absent_between {
                     latest = piece.end;
                     groups.push(vec![piece]);
                 } else {
@@ -105,14 +105,15 @@ impl Keyed for ActivityWindows {
                 }
                 let clipped_start = start.max(from);
                 let clipped_end = end.min(until);
-                let next_cut = absent
+                let next_absence = absent
                     .iter()
                     .filter(|p| {
                         absence_scope(p, scope) && p.signal == Signal::Absent && p.start >= end
                     })
                     .min_by_key(|p| p.start);
-                let reason = if let Some(cut) = next_cut.filter(|p| p.start - end < GAP_NS) {
-                    cut.reason
+                let reason = if let Some(absence) = next_absence.filter(|p| p.start - end < GAP_NS)
+                {
+                    absence.reason
                 } else if env.now.unix_ns() - end >= GAP_NS {
                     Some("gap")
                 } else {
@@ -150,8 +151,8 @@ impl Keyed for ActivityWindows {
                         .filter(|piece| absence_scope(piece, scope))
                         .map(|piece| piece.event),
                 );
-                if let Some(cut) = next_cut.filter(|p| p.start - end < GAP_NS) {
-                    parents.push(cut.event);
+                if let Some(absence) = next_absence.filter(|p| p.start - end < GAP_NS) {
+                    parents.push(absence.event);
                 }
                 let window = ActivityWindow {
                     window_id: json!([

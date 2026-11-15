@@ -49,7 +49,7 @@ async fn fixture(conn: &mut PgConnection, a: EventId, b: EventId) -> (String, Ve
     .execute(&mut *conn)
     .await
     .unwrap();
-    // Ordinary record events have NULL parents and cannot become outputs.
+    // Record events have NULL parents and cannot become outputs.
     conn.execute("INSERT INTO core.events(id,event_type,source,run_id,material_id,record_offset,ts_quality,commit_seq,payload,reading_order,record_hash,class)
       VALUES(uuidv7(),'synthetic.comparison_output','synthetic.comparison',uuidv7(),uuidv7(),0,'unknown',30001,'{}',1,decode(repeat('03',32),'hex'),'open'); ANALYZE core.events").await.unwrap();
     let chunk: String =

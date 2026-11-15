@@ -289,7 +289,7 @@ fn session_configuration(
             .ok_or("catalog discovery is missing")?;
         let captures: Vec<_> = discovery
             .iter()
-            .filter(|d| d["capture"] == true && d["description"]["owner"] == "session")
+            .filter(|d| d["capture"] == true && d["description"]["captured_by"] == "session")
             .collect();
         if captures.is_empty() {
             continue;

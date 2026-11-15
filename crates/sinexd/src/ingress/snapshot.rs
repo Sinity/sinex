@@ -30,7 +30,7 @@ fn scope(grant: &fetch::Grants, producer: &str, subjects: &Subjects) -> Result<S
     let mut kinds = catalog
         .kinds
         .iter()
-        .filter(|kind| authority::matches(&grant.kind_prefixes, &kind.kind.name))
+        .filter(|kind| write_access::matches(&grant.kind_prefixes, &kind.kind.name))
         .map(|kind| (kind.kind.clone(), kind.definition_hash()))
         .collect::<Vec<_>>();
     kinds.sort();

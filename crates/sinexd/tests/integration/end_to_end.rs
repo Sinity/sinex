@@ -312,7 +312,7 @@ async fn an_event_has_exactly_one_origin() {
     assert_eq!(both_or_neither, 0);
 }
 
-/// Replay keeps occurrences and stated times, mints new IDs, and each replay
+/// Replay keeps occurrences and stated times, assigns new IDs, and each replay
 /// leaves one live reading per occurrence with the earlier ones archived; the
 /// side tables agree with the events.
 #[devkit::test]
@@ -338,7 +338,7 @@ async fn replay_keeps_occurrences_and_one_live_reading() {
     );
     for (k, b) in &before {
         let a = &after[k];
-        assert_ne!(a.id, b.id, "{k}: replay mints a new ID");
+        assert_ne!(a.id, b.id, "{k}: replay assigns a new ID");
         assert_eq!(
             (&a.payload, &a.ts_orig, &a.hash),
             (&b.payload, &b.ts_orig, &b.hash),
@@ -412,10 +412,10 @@ async fn delivering_everything_twice_changes_nothing() {
     consistent(&mut c).await;
 }
 
-/// Rereading and copying an input retain distinct materials and logical inputs.
-/// Their identical source records share the exact live readings and keys.
+/// Rereading and copying an input keep distinct materials and inputs.
+/// Their identical source records share the same live readings and keys.
 #[devkit::test]
-async fn rereading_and_copying_inputs_retain_materials_and_share_native_readings() {
+async fn reread_and_copied_inputs_share_live_readings() {
     let dir = Dir::new();
     let t = Target::new(&dir);
     let text = small_zsh();
@@ -433,7 +433,7 @@ async fn rereading_and_copying_inputs_retain_materials_and_share_native_readings
     assert_eq!(
         live(&mut c).await,
         before,
-        "the same input and bytes keep exact reading IDs and keys"
+        "the same input and bytes keep the same reading IDs and keys"
     );
     let materials = scalar(
         &mut c,
@@ -457,7 +457,7 @@ async fn rereading_and_copying_inputs_retain_materials_and_share_native_readings
     let after = live(&mut c).await;
     assert_eq!(
         after, before,
-        "copied source records keep the exact live reading IDs and native keys"
+        "copied source records keep the same live reading IDs and source keys"
     );
     for (key, reading) in &before {
         assert_eq!(
@@ -469,15 +469,11 @@ async fn rereading_and_copying_inputs_retain_materials_and_share_native_readings
     let copies: Vec<(uuid::Uuid, String)> = sqlx::query_as(
         "SELECT DISTINCT m.input_id,m.blob FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id WHERE i.binding LIKE 'terminal.zsh-history:%' ORDER BY m.input_id"
     ).fetch_all(&mut c).await.unwrap();
-    assert_eq!(
-        copies.len(),
-        2,
-        "each zsh path has its own retained logical input"
-    );
+    assert_eq!(copies.len(), 2, "each zsh path has its own input");
     assert_ne!(copies[0].0, copies[1].0);
     assert_eq!(
         copies[0].1, copies[1].1,
-        "equal raw bytes share the physical hash without merging inputs"
+        "equal raw bytes share the blob hash without merging inputs"
     );
     let blobs = sinex_store::Blobs::open(&t.store).unwrap();
     blobs.load(&mut c).await.unwrap();
@@ -485,7 +481,7 @@ async fn rereading_and_copying_inputs_retain_materials_and_share_native_readings
     consistent(&mut c).await;
 }
 
-/// Clocks are honest: `ts_coided` is the ID's minting time, the stated time is
+/// Clocks are honest: `ts_coided` is the ID's creation time, the stated time is
 /// kept as stated (1970 and 2200 included), never the run time, and never
 /// refused for its value.
 #[devkit::test]
@@ -504,7 +500,7 @@ async fn stated_times_are_kept_whatever_their_value() {
     let mut c = t.connect().await;
     let rows = sqlx::query(
         "SELECT payload->>'command' AS c, extract(epoch from ts_orig)::bigint AS t, ts_quality AS q,
-                ts_coided = uuid_extract_timestamp(id) AS minted, ts_coided >= $1::timestamptz AS fresh
+                ts_coided = uuid_extract_timestamp(id) AS created, ts_coided >= $1::timestamptz AS fresh
          FROM core.events WHERE event_type = 'command.imported' ORDER BY ts_orig",
     )
     .bind(&started)
@@ -518,7 +514,7 @@ async fn stated_times_are_kept_whatever_their_value() {
                 r.get("c"),
                 r.get("t"),
                 r.get("q"),
-                r.get("minted"),
+                r.get("created"),
                 r.get("fresh"),
             )
         })
@@ -592,7 +588,7 @@ async fn a_long_history_is_a_few_materials() {
 /// Rows that change after capture: a command that ends long after thousands of
 /// later rows is read with its final values, the earlier reading archived; a
 /// soft-deleted row's newest reading is "removed at source", stays out of the
-/// live counts' ordinary state but is never an exclusion; a replay keeps the
+/// live counts but is never an exclusion; a replay keeps the
 /// final readings.
 #[devkit::test]
 async fn rows_that_change_are_read_to_their_final_values() {
@@ -707,7 +703,7 @@ async fn repeated_commands_are_kept() {
     );
 }
 
-/// Archive is not hiding: a replay of the native input reads an archived
+/// Archive is not hiding: a replay of the original input reads an archived
 /// record again and admits a new live reading. Restoring the archived reading
 /// is refused while that one is live, and succeeds once it is archived.
 /// Rereading and copying inputs keep their own root sequences, and the last
@@ -763,7 +759,7 @@ async fn archive_is_not_hiding_across_replay_reread_and_independent_copies() {
     assert_eq!(
         live_a3(&mut c, &path).await,
         reread,
-        "rereading the same native input repeats the live reading"
+        "rereading the same original input repeats the live reading"
     );
     let copy = dir.0.join("b/history.db");
     std::fs::create_dir_all(copy.parent().unwrap()).unwrap();
@@ -775,14 +771,14 @@ async fn archive_is_not_hiding_across_replay_reread_and_independent_copies() {
         0,
         "the new material repeats source records that already have live readings"
     );
-    let retained: Vec<(uuid::Uuid, String)> = sqlx::query_as(
+    let stored_inputs: Vec<(uuid::Uuid, String)> = sqlx::query_as(
         "SELECT DISTINCT m.input_id,m.blob FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id WHERE i.binding=ANY($1) ORDER BY m.input_id"
     ).bind(vec![atuin_binding(&path), atuin_binding(&copy)]).fetch_all(&mut c).await.unwrap();
-    assert_eq!(retained.len(), 2);
-    assert_ne!(retained[0].0, retained[1].0);
+    assert_eq!(stored_inputs.len(), 2);
+    assert_ne!(stored_inputs[0].0, stored_inputs[1].0);
     assert_eq!(
-        retained[0].1, retained[1].1,
-        "independent inputs retain byte-identical row materials"
+        stored_inputs[0].1, stored_inputs[1].1,
+        "independent inputs keep byte-identical row materials"
     );
     let roots: Vec<uuid::Uuid> = sqlx::query_scalar(
         "SELECT m.id FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id WHERE i.binding=$1 AND m.previous_part_id IS NULL ORDER BY m.id"
@@ -790,7 +786,7 @@ async fn archive_is_not_hiding_across_replay_reread_and_independent_copies() {
     assert_eq!(
         roots.len(),
         2,
-        "the forced reread retains a second independent root sequence for the same native input"
+        "the forced reread keeps a second independent root sequence for the same original input"
     );
     t.lifecycle_done("archive", &[&reread.to_string()]);
     let restored = t.lifecycle_done("restore", &[&id.to_string()]);
@@ -814,12 +810,12 @@ async fn archive_is_not_hiding_across_replay_reread_and_independent_copies() {
     assert_eq!(
         journals.len(),
         2,
-        "both explicit replay operations are retained"
+        "both explicit replay operations are stored"
     );
     assert_eq!(
         journals.iter().map(|(_, count)| *count).collect::<Vec<_>>(),
         vec![1, 2],
-        "replay journals one root initially and both retained roots after rereading"
+        "replay journals one root initially and both stored roots after rereading"
     );
     let replayed_roots: Vec<uuid::Uuid> = sqlx::query_scalar(
         "SELECT first_part FROM core.replayed_sequences WHERE operation_id=$1 ORDER BY first_part",
@@ -830,7 +826,7 @@ async fn archive_is_not_hiding_across_replay_reread_and_independent_copies() {
     .unwrap();
     assert_eq!(
         replayed_roots, roots,
-        "the last replay journal covers the exact original-input roots, never the independent copy"
+        "the last replay journal covers the original input's roots, never the independent copy"
     );
     assert_eq!(
         support::marker_count(&mut c).await - before_replay,
@@ -1412,7 +1408,7 @@ async fn every_revision_reads_back_after_later_ones() {
     }
 }
 
-/// Samples share ordinary event admission, commit positions and replay.
+/// Samples share event admission, commit positions and replay.
 /// Activity derivations select their own inputs and never count telemetry.
 #[devkit::test]
 async fn telemetry_samples_use_admission_replay_and_the_event_queries() {
@@ -1482,9 +1478,9 @@ async fn telemetry_samples_use_admission_replay_and_the_event_queries() {
 
     let answer = t.query("telemetry where payload.component = publisher");
     assert_eq!(answer["total"], 1, "{answer}");
-    let ordinary =
+    let by_kind =
         t.query("events where event_type = sinex.telemetry AND payload.component = publisher");
-    assert_eq!(ordinary["total"], 1, "{ordinary}");
+    assert_eq!(by_kind["total"], 1, "{by_kind}");
     let mut command = t.sinexd(&["admin", "status"]);
     let status: serde_json::Value = serde_json::from_str(&finish(&mut command)).unwrap();
     let latest = status["telemetry"].as_array().unwrap();
@@ -1959,19 +1955,19 @@ async fn freedom_exports_read_completed_and_rewritten_days() {
 }
 
 #[devkit::test]
-async fn outlook_conversion_uses_owned_scratch_and_stores_each_exports_exact_bytes() {
+async fn outlook_conversion_uses_own_scratch_and_stores_exact_bytes() {
     use std::os::unix::fs::PermissionsExt;
     let dir = Dir::new();
     let target = Target::new(&dir);
     let first_mbox = b"From sender@example.test Tue Sep 15 10:00:00 2026\nMessage-ID: <first@example.test>\nFrom: sender@example.test\nDate: Tue, 15 Sep 2026 10:00:00 +0000\nSubject: first synthetic export\n\nfirst original bytes\n\n";
     let second_mbox = b"From sender@example.test Tue Sep 15 10:00:00 2026\nMessage-ID: <second@example.test>\nFrom: sender@example.test\nDate: Tue, 15 Sep 2026 10:00:00 +0000\nSubject: second synthetic export\n\nsecond original bytes\n\n";
     let first = [
-        b"synthetic native PST first\n".as_slice(),
+        b"synthetic original PST first\n".as_slice(),
         first_mbox.as_slice(),
     ]
     .concat();
     let second = [
-        b"synthetic native PST second\n".as_slice(),
+        b"synthetic original PST second\n".as_slice(),
         second_mbox.as_slice(),
     ]
     .concat();
@@ -2029,10 +2025,10 @@ sed '1d' "$3" > "$2/Inbox/mbox"
         assert_eq!(acquisition["acquisition"]["tool"], "readpst");
         assert_eq!(acquisition["acquisition"]["version"], "synthetic-readpst 1");
     }
-    let linked: i64 = sqlx::query_scalar("SELECT count(*) FROM raw.materials m JOIN raw.materials native ON native.id=(m.manifest->>'acquisition_material')::uuid WHERE native.manifest ? 'acquisition'").fetch_one(&mut conn).await.unwrap();
+    let linked: i64 = sqlx::query_scalar("SELECT count(*) FROM raw.materials m JOIN raw.materials original ON original.id=(m.manifest->>'acquisition_material')::uuid WHERE original.manifest ? 'acquisition'").fetch_one(&mut conn).await.unwrap();
     assert!(
         linked >= 4,
-        "converted originals and record parts cite their retained native acquisition"
+        "converted originals and record parts cite their stored original acquisition"
     );
     for expected in [
         first.as_slice(),
@@ -2062,7 +2058,7 @@ sed '1d' "$3" > "$2/Inbox/mbox"
     assert_eq!(
         target.query(facts_query)["rows"],
         facts["rows"],
-        "replay reads stored native/converted evidence after originals and staging are gone"
+        "replay reads stored original and converted bytes after originals and staging are gone"
     );
 }
 
@@ -2133,7 +2129,7 @@ async fn sequence_gaps_are_public_events_and_restart_preserves_the_stream_head()
         let record: serde_json::Value = serde_json::from_slice(line).unwrap();
         assert_eq!(
             record["seq"], expected,
-            "gap citation names the actual later source record"
+            "gap citation names the later source record"
         );
     }
 }

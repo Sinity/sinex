@@ -1,6 +1,6 @@
 //! Import roots are walked once per format; each matching file has its own position.
 use sinex_source_core::discovery::{
-    DiscoveredInput, DiscoveryContext, DiscoverySpec, Location, Owner,
+    CapturedBy, DiscoveredInput, DiscoveryContext, DiscoverySpec, Location,
 };
 use sinex_source_core::registry::SourceSpec;
 use sinex_source_core::{Binding, InputFormat, Settings};
@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 pub(crate) const fn spec(transcripts: bool) -> DiscoverySpec {
     DiscoverySpec {
-        owner: Owner::System,
+        captured_by: CapturedBy::System,
         locations: if transcripts {
             &[Location {
                 root: "input",

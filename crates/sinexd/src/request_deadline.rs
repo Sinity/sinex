@@ -1,4 +1,4 @@
-//! The accepted request's read budget, ending when a mutation takes ownership.
+//! The accepted request's read budget, ending when a mutation takes over.
 use crate::{Error, Result};
 use command_surface::{Failure, FailureKind};
 use sqlx::{Connection, PgConnection, PgPool};
@@ -52,7 +52,7 @@ pub(crate) fn timeout() -> Error {
 }
 
 /// Queue reservation is still read work. Once the writer takes the job, the
-/// caller waits for its actual result even if the read budget then expires.
+/// caller waits for its result even if the read budget then expires.
 pub(crate) fn admit() -> Result<()> {
     if let Some(budget) = current() {
         budget.check()?;
@@ -73,7 +73,7 @@ pub(crate) async fn handoff_read(conn: &mut PgConnection) -> Result<()> {
 }
 
 /// Some authenticated mutations first persist a request run or operation on
-/// their held connection. End the read phase before that first durable write.
+/// their held connection. End the read phase before that first write.
 pub(crate) async fn finish_read(conn: &mut PgConnection) -> Result<()> {
     if let Some(budget) = current() {
         budget.check()?;

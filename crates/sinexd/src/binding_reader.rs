@@ -23,10 +23,10 @@ pub(crate) struct BindingReader {
     pub source: Arc<dyn Source>,
     reading: Reading,
     remembered: bool,
-    history_floor: Class,
+    history_minimum_class: Class,
     /// An append-only file's facts when a poll last read it to its end: while
     /// they hold, nothing was appended and the poll is skipped.
-    settled: Option<sinex_model::ObservationFacts>,
+    facts_at_end: Option<sinex_model::ObservationFacts>,
     /// For a binding a stage reads: the stage and what the binding's
     /// committed batches have accounted for so far.
     pub committed: Option<stage::Committed>,
@@ -59,15 +59,15 @@ impl BindingReader {
             },
             binding,
             remembered: false,
-            history_floor: Class::Open,
-            settled: None,
+            history_minimum_class: Class::Open,
+            facts_at_end: None,
             committed: None,
             batch_events: None,
         })
     }
 }
 
-/// Drain explicitly requested bindings, with a native run per source/version/host.
+/// Drain explicitly requested bindings, with one run per source/version/host.
 pub(crate) async fn once(
     conn: &mut PgConnection,
     blobs: &Blobs,
@@ -184,7 +184,7 @@ pub(crate) async fn read(
     report: &mut (dyn FnMut(&str, &Result<Totals>) + Send),
 ) -> Vec<(String, Result<Totals>)> {
     let Rounds {
-        runs: native_runs,
+        runs: source_runs,
         coverage,
     } = rounds;
     let mut results = Results {
@@ -201,7 +201,7 @@ pub(crate) async fn read(
             spec.parser_version,
             binding.binding.settings.host.clone(),
         );
-        let run = if let Some(run) = native_runs.get(&key) {
+        let run = if let Some(run) = source_runs.get(&key) {
             Ok(*run)
         } else {
             let version = spec.parser_version.to_string();
@@ -237,7 +237,7 @@ pub(crate) async fn read(
             }
         };
         if let Ok(run) = run {
-            native_runs.insert(key, run);
+            source_runs.insert(key, run);
         }
         binding_runs.push(run.map_err(Error::failure));
     }
@@ -277,21 +277,22 @@ pub(crate) async fn read(
                     .await?
                     .map(|(cursor, _)| cursor)
                     .unwrap_or(Value::Null);
-                let floor = sinex_store::privacy::load(conn, std::iter::once(b.source.spec().name))
-                    .await?
-                    .floors
-                    .get(b.source.spec().name)
-                    .copied()
-                    .unwrap_or_default();
-                let class = b.source.spec().class.max(floor);
+                let minimum_class =
+                    sinex_store::privacy::load(conn, std::iter::once(b.source.spec().name))
+                        .await?
+                        .minimum_classes
+                        .get(b.source.spec().name)
+                        .copied()
+                        .unwrap_or_default();
+                let class = b.source.spec().class.max(minimum_class);
                 let resume = pass.resume(&cursor, &facts, class)?;
                 Ok::<_, Error>((resume, facts, class))
             }
             .await;
             match choice {
                 Ok((SharedReadStart::Read(stored), facts, class)) => {
-                    // Host and effective class are the acquisition/privacy context. Physical
-                    // file facts permit aliases without conflating configured input identities.
+                    // Host and effective class are the acquisition/privacy context. File
+                    // identity facts permit aliases without conflating configured input identities.
                     let compatible = passes.iter_mut().find(|g| {
                         g.class == class
                             && class != Class::Sealed
@@ -326,7 +327,7 @@ pub(crate) async fn read(
                 == sinex_source_core::Origin::Input(sinex_source_core::Shape::AppendFile))
             .then(|| drivers::file_facts(&b.binding.input).ok())
             .flatten();
-            if let (Some(now), Some(then)) = (&facts, &b.settled)
+            if let (Some(now), Some(then)) = (&facts, &b.facts_at_end)
                 && same_file(now, then)
             {
                 results.add(&b.binding, Some(run), Ok(Totals::default()));
@@ -341,7 +342,7 @@ pub(crate) async fn read(
                 &b.binding.settings.host,
                 sink,
                 access,
-                b.history_floor,
+                b.history_minimum_class,
                 reader,
                 stop.clone(),
                 b.committed.clone(),
@@ -353,7 +354,7 @@ pub(crate) async fn read(
             let result = match result {
                 Ok((totals, ended)) => {
                     exhausted = ended;
-                    // A backup keeps its saved cursor and retained spools
+                    // A backup keeps its saved cursor and stored spools
                     // together until the local copy is complete.
                     let publication = writer.source_publication();
                     let _publication = publication.enter().await;
@@ -368,7 +369,7 @@ pub(crate) async fn read(
                 }
                 Err(e) => Err(e),
             };
-            b.settled = if result.is_ok() && exhausted {
+            b.facts_at_end = if result.is_ok() && exhausted {
                 facts
             } else {
                 None
@@ -429,7 +430,7 @@ async fn restore(
     let Reading::Polled(reader) = &mut b.reading else {
         return Ok(());
     };
-    let floor = restore_reader(
+    let minimum_class = restore_reader(
         conn,
         blobs,
         reader.as_mut(),
@@ -438,7 +439,7 @@ async fn restore(
         stop,
     )
     .await?;
-    b.history_floor = b.history_floor.max(floor);
+    b.history_minimum_class = b.history_minimum_class.max(minimum_class);
     Ok(())
 }
 
@@ -450,7 +451,7 @@ const PARTS_PER_QUERY: i32 = 256;
 /// saved memory was written at; then the saved memory. Pages end at that part
 /// before loading older manifests. A reader needing older original locations
 /// continues from the part before it. Returns
-/// the privacy floor of the restored history.
+/// the minimum privacy class of the restored history.
 pub(crate) async fn restore_reader(
     conn: &mut PgConnection,
     blobs: &Blobs,
@@ -469,7 +470,7 @@ pub(crate) async fn restore_reader(
     let saved = positions::reader_memory(conn, binding).await?;
     let mut admitted = drivers::cursor_material(&cursor).and_then(|(_, through)| through);
     let mut reached_saved = false;
-    let mut floor = Class::default();
+    let mut minimum_class = Class::default();
     let mut newest_revision = None;
     let mut next = Some(last);
     'parts: while let Some(newest) = next {
@@ -512,7 +513,7 @@ pub(crate) async fn restore_reader(
                 unlock,
             )
             .await?;
-            floor = floor.max(bytes.floor());
+            minimum_class = minimum_class.max(bytes.minimum_class());
             let more = reader.restore(
                 &cursor,
                 sinex_source_core::StoredMaterial {
@@ -530,11 +531,11 @@ pub(crate) async fn restore_reader(
     if reached_saved {
         // The saved memory may stand for parts whose bytes were never opened.
         if sinex_store::positions::has_sealed_material(conn, binding).await? {
-            floor = Class::Sealed;
+            minimum_class = Class::Sealed;
         }
     }
     reader.restored()?;
-    Ok(floor)
+    Ok(minimum_class)
 }
 
 #[cfg(test)]

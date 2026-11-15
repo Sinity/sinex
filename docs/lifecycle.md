@@ -4,7 +4,7 @@ Nothing in Sinex is deleted by default. Readings and materials are **live**, **a
 
 ## States
 
-| State | Payload | Seen by ordinary queries | Leaves to |
+| State | Payload | Seen by default queries | Leaves to |
 |---|---|---|---|
 | live | full | yes | archived |
 | archived (the trash) | full; any number of archived readings per record | through archive and as-of reads | live (restore), tombstoned |
@@ -14,11 +14,11 @@ Tombstoning is to the archive what archiving is to the live set: a second stage,
 
 **There is no automatic retention.** Nothing moves between states by age or by a schedule; material is kept until the operator or an agent archives it.
 
-In primary mode, Polylogue's materials and the `polylogue.*` readings made from them are ordinary Sinex materials and readings and follow this lifecycle; Polylogue on its own has [no deletion](https://github.com/Sinity/polylogue/blob/master/docs/architecture.md#deletion).
+In primary mode, Polylogue's materials and the `polylogue.*` readings made from them are Sinex materials and readings like any other and follow this lifecycle; Polylogue on its own has [no deletion](https://github.com/Sinity/polylogue/blob/master/docs/architecture.md#deletion).
 
 ## Archive
 
-Archive (live → archived) is ordinary deletion, and there is no other way to delete. Archiving is reversible, like an operating system's trash. (ruling 2025-08-11, cc:505f40e8-3618-4857-81d3-e201f417a2ff:9833b29b-2a3a-4d64-9ee3-d04f6eb0748e). (ruling 2026-02-03, cc:7ef0e4c5-d017-412d-b3d8-42ad7d0c2819:89712340-bbdf-4b1b-9220-ce7b4fafbf20).
+Archive (live → archived) is how anything is deleted, and there is no other way to delete. Archiving is reversible, like an operating system's trash. (ruling 2025-08-11, cc:505f40e8-3618-4857-81d3-e201f417a2ff:9833b29b-2a3a-4d64-9ee3-d04f6eb0748e). (ruling 2026-02-03, cc:7ef0e4c5-d017-412d-b3d8-42ad7d0c2819:89712340-bbdf-4b1b-9220-ce7b4fafbf20).
 
 - **Scope**: a reference, a query (`--source terminal --before 2026-09-01`, any `events where …`), a material, or a run.
 - **It moves the scope's live readings and their whole live chains** ([whole chains](#whole-chains-move-together)).
@@ -58,7 +58,7 @@ Replay reads stored bytes again. It is a rescan of materials, not a procedure ov
 
 ### Transactions and resuming
 
-- Parsing and producer transport finish before replay takes the writer. Native replay prepares an immutable sequence in private, unlinked scratch storage, one batch at a time; an ingress replay passes its already prepared batches directly. A failed or cancelled preparation changes no readings. Admission checks the selected materials' current lifecycle before replacement, so preparation cannot undo a concurrent archive or tombstone. Sealed readings remain sealed in preparation, and the unlock is checked again before admission commits.
+- Parsing and producer transport finish before replay takes the writer. A replay inside the daemon prepares an immutable sequence in private, unlinked scratch storage, one batch at a time; an ingress replay passes its already prepared batches directly. A failed or cancelled preparation changes no readings. Admission checks the selected materials' current lifecycle before replacement, so preparation cannot undo a concurrent archive or tombstone. Sealed readings remain sealed in preparation, and the unlock is checked again before admission commits.
 - Each transaction moves complete records with their chains, saves the parser carry and the operation's progress, and is bounded in duration, so live admission is served between transactions. A part is the normal unit, split only at record boundaries whose carry is saved.
 - After every commit each record has exactly one live reading.
 - A stopped replay **resumes** from its saved progress without redoing finished work. An indivisible record larger than the duration budget is processed whole, and its size and hold time are reported.
@@ -72,7 +72,7 @@ Replay reads stored bytes again. It is a rescan of materials, not a procedure ov
 - **Undo an archive or a restore**: the inverse move, with the [restore refusals](#restore).
 - **Undo an import**: archive the material, which archives everything read from it.
 
-Undo, archive, restore and replay are ordinary, everyday features; tombstoning is the rare one.
+Undo, archive, restore and replay are everyday features; tombstoning is the rare one.
 
 ## Whole chains move together
 
@@ -85,7 +85,7 @@ Undo, archive, restore and replay are ordinary, everyday features; tombstoning i
 
 ### Cost
 
-- A `core.event_children(parent, child)` table, written at admission and never compressed, serves the walk. Archive selects each complete live chain once and uses that selection for dirty keys, archive history and live membership removal. Membership checks and payload reads are driven by selected IDs; derived source counts use their live source metadata. The registered keyed derivations determine which selected kinds require payload reads. Ownership keys are dirtied for every selected member, including kinds without a current consumer. Payload lookups for consumed kinds still inspect native compressed batch metadata.
+- A `core.event_children(parent, child)` table, written at admission and never compressed, serves the walk. Archive selects each complete live chain once and uses that selection for dirty keys, archive history and live membership removal. Membership checks and payload reads are driven by selected IDs; derived source counts use their live source metadata. The registered keyed derivations determine which selected kinds require payload reads. Ownership keys are dirtied for every selected member, including kinds without a current consumer. Payload lookups for consumed kinds still inspect TimescaleDB's compressed batch metadata.
 - A keyed aggregate's parents are its recorded read ranges ([hierarchy](events.md#hierarchy)), and `event_children` holds one row per range, so a day figure over millions of inputs costs one row per range, not one per input. The walk from an event finds the aggregates whose ranges contain it.
 - State is recorded at the granularity the operation names: a material's status, then per-event rows only below it. A transition costs in proportion to the materials and derived events it touches, never to all events.
 - Large transitions run in bounded-duration transactions (batches), each moving complete chains, with live admission served between them. Archiving one source's year of compressed data is the case the writer-hold target is measured on ([targets](architecture.md#throughput-targets)).
@@ -96,7 +96,7 @@ An archive, restore or tombstone that spans many batches is one operation. Its s
 
 - Each batch takes the next roots of the scope in event ID order after the saved position, among readings committed by the operation's start, with their whole chains. Each batch commits at exactly one new commit position, so a scope that fits one batch, such as a single event, advances the commit log by one. Its size follows how long the previous batch held the writer. An undo runs as two phases in one operation: the archive of what the target made live, then the restore of what it archived.
 
-- Source scopes stream their immutable reading IDs once on the read connection, at the operation's fixed start position and after its saved lower bound. This selection includes initially archived readings: a concurrent restore before a reading's batch must still be observed. Immutable source and boundary claims stay bound to that same operation; the writer checks each prepared batch's current state, moves its complete chains, and commits the position. It never waits for the source stream while holding a transaction. Restarting automatic retirement continues the same unfinished operation and its saved lower bound.
+- Source scopes stream their immutable reading IDs once on the read connection, at the operation's fixed start position and after its saved lower bound. This selection includes initially archived readings: a concurrent restore before a reading's batch must still be observed. The selected sources and boundaries stay bound to that same operation; the writer checks each prepared batch's current state, moves its complete chains, and commits the position. It never waits for the source stream while holding a transaction. Restarting an automatic removal continues the same unfinished operation and its saved lower bound.
 - Batch sizing measures only time processing on the writer, excluding source selection and time queued behind other jobs.
 
 - Refusal checks run on every batch, at that batch's commit. A refusal before the first batch commits changes nothing. A refusal after it ends the operation `stopped_early`, never reported as ok: the answer names what moved and what refused. Once the cause is cleared, the operation resumes like a replay from its saved position, or it is undone by its inverse.
@@ -115,7 +115,7 @@ A material is `live`, `archived` or `tombstoned`, and its status cascades to eve
 
 Tombstone (archived → tombstoned) is irreversible and allowed only on archived chains. A live member refuses the whole request.
 
-- **It drops payloads and keeps a skeleton forever**: event ID, source, type, `ts_orig` with its quality, tombstone time, reason, operation, and the record's place (material, anchor, output index; for a derived event, its key hash, never the key's fields). The skeleton keeps the provenance structure.
+- **It drops payloads and keeps a skeleton forever**: event ID, source, type, `ts_orig` with its quality, tombstone time, reason, operation, and the record's place (material, record offset, output index; for a derived event, its key hash, never the key's fields). The skeleton keeps the provenance structure.
 - **A tombstone destroys one interpretation; it does not stop new ones.** Replay of a live material and a re-stage of identical bytes produce new readings with new IDs, admitted normally. Nothing in admission consults tombstones to refuse a record. (ruling 2026-10-27, cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:1b44f4a1-22ca-4107-9711-5b0311caa1fa).
 - **Tombstoned lineage stays dead in the provenance sense**: nothing new takes a tombstoned event as a parent, and a tombstoned chain is never restored. (ruling 2026-03-07, codex:019cbc74-e62a-7d93-987c-4848ca636a75@2026-03-07T05:50Z).
 - **To be rid of the data itself**, the operator tombstones the material ([material status](#material-status)). When the material is kept because it holds unrelated records, the tombstoned record stays recoverable by replay, and the answer and the material's status say so.
@@ -135,7 +135,7 @@ Tombstoning is the only irreversible deletion Sinex has.
 
 Cascade members carry the reason and operation of the move that took them.
 
-Every admitted reading is kept when it is archived; near-identical archived readings are not coalesced. Provisional values of an open window are not admitted readings and leave no history ([derivations](derivations.md)). Withdrawing a derived claim is an ordinary authored event ([library](library.md)), not a lifecycle state.
+Every admitted reading is kept when it is archived; near-identical archived readings are not coalesced. Provisional values of an open window are not admitted readings and leave no history ([derivations](derivations.md)). Withdrawing a derived claim is an authored event ([library](library.md)), not a lifecycle state.
 
 ## Storage of the states
 
@@ -144,7 +144,7 @@ Archiving moves no data, so archiving years of data costs what its state rows co
 - One `core.events` table holds live and archived readings; archived rows stay where they are.
 - The live tables name the live reading of each record ([liveness](admission.md#liveness)).
 - `audit.archived` holds current state (commit position, reason, operation); `audit.archive_changes` holds every change into and out of the archive at its commit position, a restore with reason `restore`.
-- Tombstones are their own table, `core.event_tombstones`, with record identity: the skeleton fields above, the key as a hash, and the tombstone's and the original commit positions. Older tombstones may retain unknown positions or class. A PostgreSQL check leaves that predecessor set intact and enforces complete metadata on every later insert or update, so no later erasure can silently join the historical gap.
+- Tombstones are their own table, `core.event_tombstones`, with record identity: the skeleton fields above, the key as a hash, and the tombstone's and the original commit positions. Older tombstones may keep unknown positions or class. A PostgreSQL check leaves that older set intact and enforces complete metadata on every later insert or update, so no later erasure can silently join the historical gap.
 - Material status is a column of the material with the operation that last set it; `raw.material_changes` holds every status change at its commit position.
 - An operation is a row of `core.operations`: kind, actor, scope, counts, start and end commit positions, result, refusals, and its saved progress (phase, last root moved, batches committed). The first batch writes it; a refusal before that records nothing.
 - Keys an operation dirties are held (`derivation.dirty.held_by`) until it ends; the writer releases every hold when it starts, since no operation runs then.

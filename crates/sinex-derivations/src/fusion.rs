@@ -82,9 +82,9 @@ pub enum Matching {
 }
 
 const HOUR_NS: i128 = 3_600_000_000_000;
-/// Sources fill a record in after it starts (Atuin's exit code); a key is
-/// settled this long after its margin has passed.
-const SETTLE_NS: i128 = 900_000_000_000;
+/// Sources fill a record in after it starts (Atuin's exit code); a key
+/// closes this long after its margin has passed.
+const LATE_FILL_NS: i128 = 900_000_000_000;
 
 impl Family {
     /// How far outside its hour a key reads, and how far from an observation
@@ -1142,7 +1142,7 @@ impl AnyKeyed for Fusion {
         // A token's partners, however far from this hour: each member
         // carries a token once, so the nearest record holding it on either
         // side is the partner. Every partner lies within the token's
-        // lifetime, from its mint time to the command's end, so each read
+        // lifetime, from the time it was made to the command's end, so each read
         // stops there and a token without a partner costs one bounded range.
         let lifetime = sinex_model::TokenLifetime {
             length: family.token_length,
@@ -1163,10 +1163,10 @@ impl AnyKeyed for Fusion {
 
     fn nearby_inputs(&self, input: &KeyView<'_>, _env: &Env) -> Option<InputQuery> {
         // A record holding a token dirties the hours of the record that
-        // started the occurrence: the token's mint time is that start.
+        // started the occurrence: the time the token was made is that start.
         let family = self.0;
         let mut kinds = Vec::new();
-        let mut minted = None;
+        let mut made_ms = None;
         for token in &family.tokens {
             let Some(value) = input.payload.get(*token).and_then(Value::as_str) else {
                 continue;
@@ -1174,14 +1174,14 @@ impl AnyKeyed for Fusion {
             let Some(ms) = sinex_model::uuid7_millisecond(value).map(i128::from) else {
                 continue;
             };
-            minted = Some(ms);
+            made_ms = Some(ms);
             for kind in family.token_kinds(token) {
                 let mut kind = kind;
                 kind.equal.push(((*token).to_owned(), json!(value)));
                 kinds.push(kind);
             }
         }
-        let ms = minted?;
+        let ms = made_ms?;
         Some(InputQuery::of(
             kinds,
             Timestamp::from_unix_ns(ms * 1_000_000).ok()?,
@@ -1276,8 +1276,8 @@ impl AnyKeyed for Fusion {
         let Some(hour) = hour_of(key) else {
             return KeyState::Closed;
         };
-        let settled = (hour + 1) * HOUR_NS + self.0.reach() + SETTLE_NS;
-        if env.now.unix_ns() >= settled {
+        let closes_at = (hour + 1) * HOUR_NS + self.0.reach() + LATE_FILL_NS;
+        if env.now.unix_ns() >= closes_at {
             KeyState::Closed
         } else {
             KeyState::Open

@@ -1,5 +1,5 @@
 -- A scalar head bounds every branch in this statement's snapshot. Compressed
--- batches use native commit-position min/max before selected payload hydration.
+-- batches use TimescaleDB's commit-position min/max before selected payload hydration.
 WITH head AS MATERIALIZED (
   SELECT value FROM core.counters WHERE name='commit_seq'
 ), event_keys AS MATERIALIZED (

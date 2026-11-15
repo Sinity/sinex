@@ -64,7 +64,7 @@ fn compile_pack(pack: super::access::StoredPack, budget: usize) -> Result<(Prese
             .ok_or_else(|| Error::internal("stored context pack has no selected read context"))?,
         day_setting: pack.payload["day_setting"]
             .as_str()
-            .ok_or_else(|| Error::internal("stored context pack has no logical-day setting"))?
+            .ok_or_else(|| Error::internal("stored context pack has no day setting"))?
             .into(),
     };
     Ok((
@@ -76,34 +76,34 @@ fn compile_pack(pack: super::access::StoredPack, budget: usize) -> Result<(Prese
 fn resume_sections(payload: &serde_json::Value) -> Result<Vec<Section>> {
     use sinex_model::event_types::{activity::CitedReading, work::ContextPack};
     let pack: ContextPack = serde_json::from_value(payload.clone())?;
-    let reference = |evidence: &CitedReading, description: String| Finding {
+    let reference = |reading: &CitedReading, description: String| Finding {
         template: Template::Observation {
-            event_type: evidence.event_type.clone(),
-            source: evidence.source.clone(),
+            event_type: reading.event_type.clone(),
+            source: reading.source.clone(),
             when: None,
             description,
         },
         caveats: Vec::new(),
-        evidence: vec![format!("sinex:ev/{}", evidence.event)],
+        evidence: vec![format!("sinex:ev/{}", reading.event)],
     };
     let goal = pack
         .stated_goal
         .as_ref()
-        .map(|evidence| reference(evidence, "Stated goal reference".into()))
+        .map(|reading| reference(reading, "Stated goal reference".into()))
         .into_iter()
         .collect();
     let trail = pack
         .trail
         .iter()
         .enumerate()
-        .map(|(index, evidence)| reference(evidence, format!("Recorded work act {}", index + 1)))
+        .map(|(index, reading)| reference(reading, format!("Recorded work act {}", index + 1)))
         .collect();
     let mut machine: Vec<_> = pack
         .last_edit
         .as_ref()
-        .map(|evidence| {
+        .map(|reading| {
             reference(
-                evidence,
+                reading,
                 pack.last_edit_path.as_ref().map_or_else(
                     || "Last edit reference; path not recorded".into(),
                     |path| format!("Last recorded edit: {path}"),
@@ -115,7 +115,7 @@ fn resume_sections(payload: &serde_json::Value) -> Result<Vec<Section>> {
     machine.extend(
         pack.open_failures
             .iter()
-            .map(|evidence| reference(evidence, "Unresolved recorded check failure".into())),
+            .map(|reading| reference(reading, "Unresolved recorded check failure".into())),
     );
     let quality = pack
         .coverage
@@ -298,16 +298,16 @@ pub(super) fn sections(
 fn source_read_findings(panel: &super::panel::Panel, settings: &Settings) -> Result<Vec<Finding>> {
     use sinex_model::event_types::coverage::{CoverageState, SourceCoverage};
     let mut observations = Vec::new();
-    for evidence in &panel.evidence {
-        let row: SourceCoverage = serde_json::from_value(evidence["observation"].clone())?;
+    for observation in &panel.coverage_observations {
+        let row: SourceCoverage = serde_json::from_value(observation["observation"].clone())?;
         let state = match row.state {
             CoverageState::Missing => "missing",
             CoverageState::Partial => "partial",
             CoverageState::Observed | CoverageState::RecordedUnknownCoverage => continue,
         };
-        let citation = evidence["citation"]
+        let citation = observation["citation"]
             .as_str()
-            .ok_or_else(|| Error::internal("coverage evidence has no citation"))?
+            .ok_or_else(|| Error::internal("coverage observation has no citation"))?
             .to_owned();
         observations.push((state, row, citation));
     }
@@ -403,8 +403,8 @@ pub(crate) async fn why_not(
             ));
         }
     }
-    for evidence in &p.evidence {
-        let row = &evidence["observation"];
+    for observation in &p.coverage_observations {
+        let row = &observation["observation"];
         out.push_str(&format!(
             "  {}: {}{} ({})\n",
             row["observed_source"].as_str().unwrap_or_default(),
@@ -413,7 +413,7 @@ pub(crate) async fn why_not(
                 .as_str()
                 .map(|reason| format!(": {reason}"))
                 .unwrap_or_default(),
-            evidence["citation"].as_str().unwrap_or_default()
+            observation["citation"].as_str().unwrap_or_default()
         ));
     }
     if let Some(citation) = &p.citation {

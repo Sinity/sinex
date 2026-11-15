@@ -1,7 +1,7 @@
 """Disposable SQL probe, invoked by the consumer benchmark before cluster stop.
 
 Call run(psql, output_directory, source_root). psql accepts SQL and returns its
-unaligned output or None on failure. This collects actual wall times without
+unaligned output or None on failure. This collects measured wall times without
 EXPLAIN ANALYZE on writes. It only touches core.published and synthetic
 core.event_tombstones in the caller's disposable benchmark database.
 """
@@ -14,7 +14,7 @@ import time
 def run(psql, output_directory, source_root):
     root = pathlib.Path(source_root)
     source = (root / "crates/sinex-store/src/commit_log.rs").read_text()
-    # Run the exact checked statements from this source revision.
+    # Run the statements as written in this source revision.
     statements = {}
     for function in ("record_published", "tombstoned_on_stream", "forget_published"):
         body = source[source.index("pub async fn " + function):]

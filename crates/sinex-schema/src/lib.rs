@@ -302,7 +302,7 @@ fn grants() -> Vec<String> {
         out.push(format!(
             "GRANT USAGE ON ALL SEQUENCES IN SCHEMA {schema} TO sinex_writer"
         ));
-        // New internal tables stay private until their output projection is declared.
+        // New internal tables stay private until their reader view is declared.
         out.push(format!(
             "REVOKE ALL ON ALL TABLES IN SCHEMA {schema} FROM sinex_reader, PUBLIC"
         ));

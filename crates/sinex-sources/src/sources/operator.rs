@@ -218,7 +218,7 @@ pub const RAW_LOG_FORMAT: sinex_source_core::binding::InputFormat =
         name: "raw-log",
         accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
-            owner: sinex_source_core::discovery::Owner::System,
+            captured_by: sinex_source_core::discovery::CapturedBy::System,
             locations: &[sinex_source_core::discovery::Location {
                 root: "declared",
                 path: "raw-log",
@@ -260,7 +260,7 @@ pub const STEERING_FORMAT: sinex_source_core::binding::InputFormat =
         name: "steering",
         accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
-            owner: sinex_source_core::discovery::Owner::System,
+            captured_by: sinex_source_core::discovery::CapturedBy::System,
             locations: &[sinex_source_core::discovery::Location {
                 root: "declared",
                 path: "steering",

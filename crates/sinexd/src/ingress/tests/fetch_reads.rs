@@ -173,7 +173,7 @@ async fn oversized_event_and_material_metadata_use_the_shared_framed_reply(
         std::collections::BTreeMap::from([("kitty".into(), grant()), ("replica".into(), grant())]),
     )
     .await;
-    let (material, mut frame) = h.material_frame("large-metadata", b"retained source\n");
+    let (material, mut frame) = h.material_frame("large-metadata", b"stored source\n");
     let description = "x ".repeat(h.client.server_info().max_payload);
     if let Ingress::Material { material, .. } = &mut frame {
         material.manifest = sinex_model::Manifest::from_json(json!({"description":description}));
@@ -236,7 +236,7 @@ async fn oversized_event_and_material_metadata_use_the_shared_framed_reply(
     .unwrap();
     let (fetched, bytes) = fetched_material(result);
     assert_eq!(fetched.manifest.detail("description"), &json!(description));
-    assert_eq!(bytes, b"retained source\n");
+    assert_eq!(bytes, b"stored source\n");
 }
 #[devkit::test]
 async fn accessible_empty_material_acknowledges_a_real_extent(db: devkit::pg::TestDatabase) {
@@ -251,9 +251,7 @@ async fn accessible_empty_material_acknowledges_a_real_extent(db: devkit::pg::Te
 }
 
 #[devkit::test]
-async fn an_event_received_before_a_tombstone_fetches_exact_erasure_evidence_under_current_grants(
-    db: devkit::pg::TestDatabase,
-) {
+async fn tombstoned_event_fetch_returns_erasure_under_grants(db: devkit::pg::TestDatabase) {
     let grant = |classes| crate::ingress::fetch::Grants {
         indexed_catalog: None,
         public_context: false,
@@ -269,14 +267,14 @@ async fn an_event_received_before_a_tombstone_fetches_exact_erasure_evidence_und
         ]),
     )
     .await;
-    let command = "retained command";
-    let (material, frame) = h.material_frame("erasure-race", b"retained command\n");
+    let command = "stored command";
+    let (material, frame) = h.material_frame("erasure-race", b"stored command\n");
     assert_eq!(h.send("kitty", &frame).await.refusal(), None);
     let mut event = imported(material, 0, command);
     event.payload["paths"] = json!(["--secret=synthetic-path", "--token=synthetic-value"]);
     let expected = event.payload.clone();
     event.class = sinex_model::Class::Guarded;
-    let receipt = h
+    let ack = h
         .send(
             "kitty",
             &Ingress::Events {
@@ -287,9 +285,9 @@ async fn an_event_received_before_a_tombstone_fetches_exact_erasure_evidence_und
             },
         )
         .await;
-    assert_eq!(receipt.refusal(), None);
+    assert_eq!(ack.refusal(), None);
     let request = FetchEvent {
-        event: receipt.admitted()[0],
+        event: ack.admitted()[0],
     };
     let before: FetchEventReply = sinex_transport::replies::request_json(
         &h.client,
@@ -303,7 +301,7 @@ async fn an_event_received_before_a_tombstone_fetches_exact_erasure_evidence_und
     let received = fetched_event(before);
     assert_eq!(received.payload, expected);
     assert!(received.payload_identity.verifies(&received.payload));
-    assert_eq!(Some(received.commit_seq), receipt.commit_seq());
+    assert_eq!(Some(received.commit_seq), ack.commit_seq());
     h.tombstone_materials(&[material]).await;
     let after: FetchEventReply = sinex_transport::replies::request_json(
         &h.client,
@@ -329,7 +327,8 @@ async fn an_event_received_before_a_tombstone_fetches_exact_erasure_evidence_und
     .unwrap();
     assert_eq!(event_refusal(denied).kind, FetchRefusalKind::Denied);
     let mut conn = PgConnection::connect(&h.url).await.unwrap();
-    // Reconstruct predecessor metadata to exercise reads of retained unknown history.
+    // Recreate older-format tombstone rows without positions, to read stored
+    // history whose positions are unknown.
     sqlx::query("ALTER TABLE core.event_tombstones DROP CONSTRAINT tombstone_history_complete")
         .execute(&mut conn)
         .await
@@ -391,21 +390,21 @@ async fn raw_material_fetch_follows_the_class_admission_stored(db: devkit::pg::T
         std::collections::BTreeMap::from([("replica".into(), grant)]),
     )
     .await;
-    let (material, frame) = h.material_frame("policy-material", b"synthetic exact raw bytes\n");
+    let (material, frame) = h.material_frame("policy-material", b"synthetic raw bytes\n");
     assert_eq!(h.send("kitty", &frame).await.refusal(), None);
-    let receipt = h
+    let ack = h
         .send(
             "kitty",
             &Ingress::Events {
                 source: Some(test_source("kitty")),
                 frame: "policy-event".into(),
-                events: vec![imported(material, 0, "synthetic exact raw bytes")],
+                events: vec![imported(material, 0, "synthetic raw bytes")],
                 failures: vec![],
             },
         )
         .await;
-    assert_eq!(receipt.refusal(), None);
-    let event = receipt.admitted()[0];
+    assert_eq!(ack.refusal(), None);
+    let event = ack.admitted()[0];
     let fetch = |material| {
         let h = &h;
         async move {
@@ -420,7 +419,7 @@ async fn raw_material_fetch_follows_the_class_admission_stored(db: devkit::pg::T
         }
     };
     let (_, original) = fetched_material(fetch(material).await.unwrap());
-    assert_eq!(original, b"synthetic exact raw bytes\n");
+    assert_eq!(original, b"synthetic raw bytes\n");
     let mut conn = PgConnection::connect(&h.url).await.unwrap();
     let source = sqlx::query_scalar!("SELECT source FROM core.events WHERE id=$1", event.0)
         .fetch_one(&mut conn)
@@ -462,7 +461,7 @@ async fn raw_material_fetch_follows_the_class_admission_stored(db: devkit::pg::T
     let (hidden, frame) =
         h.material_frame("hidden-material-again", b"synthetic hidden raw bytes\n");
     assert_eq!(h.send("kitty", &frame).await.refusal(), None);
-    let receipt = h
+    let ack = h
         .send(
             "kitty",
             &Ingress::Events {
@@ -473,8 +472,8 @@ async fn raw_material_fetch_follows_the_class_admission_stored(db: devkit::pg::T
             },
         )
         .await;
-    assert_eq!(receipt.refusal(), None);
-    let hidden_event = receipt.admitted()[0];
+    assert_eq!(ack.refusal(), None);
+    let hidden_event = ack.admitted()[0];
     let (class, payload): (String, serde_json::Value) =
         sqlx::query_as("SELECT class,payload FROM core.events WHERE id=$1")
             .bind(hidden_event.0)
@@ -579,7 +578,7 @@ async fn fetch_material_returns_bytes_and_ranges_and_pages_by_bytes(db: devkit::
         .unwrap();
         let FetchMaterialReply::Material {
             material: metadata,
-            offset: actual,
+            offset: returned,
             bytes,
             next_offset,
         } = reply
@@ -588,7 +587,7 @@ async fn fetch_material_returns_bytes_and_ranges_and_pages_by_bytes(db: devkit::
         };
         assert_eq!(metadata.id, material);
         assert_eq!(metadata.length, original.len() as u64);
-        assert_eq!(actual, offset);
+        assert_eq!(returned, offset);
         assert_eq!(bytes, expected);
         assert_eq!(next_offset, next);
         collected.extend(bytes);

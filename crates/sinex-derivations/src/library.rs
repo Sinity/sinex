@@ -71,7 +71,7 @@ impl Keyed for LibraryItems {
                 .push(event);
         }
         let mut outputs = Vec::new();
-        for (copy, evidence) in revisions.values() {
+        for (copy, parents) in revisions.values() {
             let original = Rendition {
                 rendition: format!("{}:{}", first.item, copy.content),
                 item: first.item.clone(),
@@ -88,7 +88,7 @@ impl Keyed for LibraryItems {
                 by: Self::NAME.into(),
                 at: copy.scanned_at,
             };
-            outputs.push(derived(&original, Self::NAME, evidence.iter().copied()));
+            outputs.push(derived(&original, Self::NAME, parents.iter().copied()));
         }
         let mut paths = BTreeMap::new();
         for (_, copy) in &copies {

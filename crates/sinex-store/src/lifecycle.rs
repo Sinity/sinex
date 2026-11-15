@@ -158,7 +158,7 @@ pub async fn begin(
     })
 }
 
-/// The latest unfinished operation over the same actor, act and exact scope.
+/// The latest unfinished operation over the same actor, act and scope.
 pub async fn unfinished(
     conn: &mut PgConnection,
     act: Act,
@@ -637,7 +637,7 @@ async fn plan(
     roots: &[Uuid],
     leaving: &HashSet<Uuid>,
 ) -> Result<Plan> {
-    // Recursive cardinality estimates grow independently of the actual chain.
+    // Recursive cardinality estimates grow independently of the chain's real size.
     // Keep lookups parameterized by each discovered ID. Live membership
     // already carries the type, so archiving need not read event history.
     match phase {
@@ -905,7 +905,7 @@ async fn apply(
                 })
                 .collect();
             mark_inputs_dirty(conn, &inputs, seq, keys).await?;
-            let owners = sqlx::query!(
+            let output_keys = sqlx::query!(
                 "SELECT DISTINCT derivation, key FROM derivation.outputs WHERE event_id = ANY($1)",
                 &planned.derived_again
             )
@@ -913,7 +913,10 @@ async fn apply(
             .await?;
             mark_dirty(
                 conn,
-                owners.into_iter().map(|r| (r.derivation, r.key)).collect(),
+                output_keys
+                    .into_iter()
+                    .map(|r| (r.derivation, r.key))
+                    .collect(),
                 seq,
             )
             .await?;

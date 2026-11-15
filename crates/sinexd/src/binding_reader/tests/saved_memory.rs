@@ -76,19 +76,19 @@ async fn history(conn: &mut PgConnection, blob: &str) -> Vec<MaterialId> {
             .bind(ids.last().map(|id| id.0)).execute(&mut *conn).await.unwrap();
         ids.push(id);
     }
-    sqlx::query("INSERT INTO raw.positions(binding,cursor,carry,committed_seq) VALUES('memory-cut',$1,'{}',1)")
+    sqlx::query("INSERT INTO raw.positions(binding,cursor,carry,committed_seq) VALUES('saved-memory',$1,'{}',1)")
         .bind(json!({"material":ids[269],"through":5})).execute(conn).await.unwrap();
     ids
 }
 
 async fn remember(conn: &mut PgConnection, id: Option<MaterialId>) {
-    sqlx::query("DELETE FROM raw.reader_memory WHERE binding='memory-cut'")
+    sqlx::query("DELETE FROM raw.reader_memory WHERE binding='saved-memory'")
         .execute(&mut *conn)
         .await
         .unwrap();
     if let Some(id) = id {
         sqlx::query(
-            "INSERT INTO raw.reader_memory(binding,material_id,memory) VALUES('memory-cut',$1,$2)",
+            "INSERT INTO raw.reader_memory(binding,material_id,memory) VALUES('saved-memory',$1,$2)",
         )
         .bind(id.0)
         .bind(b"saved".as_slice())
@@ -128,7 +128,7 @@ async fn saved_memory_does_not_fetch_or_decode_older_directory_manifests(
     remember(&mut conn, Some(ids[269])).await;
     let (_stop, stop) = watch::channel(false);
     let mut reader = Restoring::new(ids[269], false);
-    restore_reader(&mut conn, &blobs, &mut reader, "memory-cut", None, &stop)
+    restore_reader(&mut conn, &blobs, &mut reader, "saved-memory", None, &stop)
         .await
         .unwrap();
     assert_eq!(reader.memory, Some((ids[269], Some(5))));
@@ -137,7 +137,7 @@ async fn saved_memory_does_not_fetch_or_decode_older_directory_manifests(
     // Needed malformed history still refuses rather than hiding corruption.
     let mut reader = Restoring::new(ids[269], true);
     assert!(
-        restore_reader(&mut conn, &blobs, &mut reader, "memory-cut", None, &stop)
+        restore_reader(&mut conn, &blobs, &mut reader, "saved-memory", None, &stop)
             .await
             .is_err()
     );
@@ -169,7 +169,7 @@ async fn saved_memory_keeps_older_locations_and_admitted_bounds_across_pages(
     for (memory_part, older) in [(Some(ids[3]), true), (None, true), (Some(ids[3]), false)] {
         remember(&mut conn, memory_part).await;
         let mut reader = Restoring::new(ids[269], older);
-        restore_reader(&mut conn, &blobs, &mut reader, "memory-cut", None, &stop)
+        restore_reader(&mut conn, &blobs, &mut reader, "saved-memory", None, &stop)
             .await
             .unwrap();
         if older {
@@ -186,31 +186,31 @@ async fn saved_memory_keeps_older_locations_and_admitted_bounds_across_pages(
         .bind(unrelated.0).bind(ids[0].0).execute(&mut conn).await.unwrap();
     remember(&mut conn, Some(unrelated)).await;
     let mut reader = Restoring::new(ids[269], false);
-    restore_reader(&mut conn, &blobs, &mut reader, "memory-cut", None, &stop)
+    restore_reader(&mut conn, &blobs, &mut reader, "saved-memory", None, &stop)
         .await
         .unwrap();
     assert_eq!(reader.seen, expected);
     assert!(reader.memory.is_none());
-    // The cutoff never supplies missing admission evidence or clamps a cursor.
+    // The saved memory never supplies a missing admitted bound or clamps a cursor.
     for cursor in [
         json!({"material":ids[269]}),
         json!({"material":ids[269],"through":21}),
     ] {
-        sqlx::query("UPDATE raw.positions SET cursor=$1 WHERE binding='memory-cut'")
+        sqlx::query("UPDATE raw.positions SET cursor=$1 WHERE binding='saved-memory'")
             .bind(cursor)
             .execute(&mut conn)
             .await
             .unwrap();
         let mut reader = Restoring::new(ids[269], true);
         assert!(
-            restore_reader(&mut conn, &blobs, &mut reader, "memory-cut", None, &stop)
+            restore_reader(&mut conn, &blobs, &mut reader, "saved-memory", None, &stop)
                 .await
                 .is_err()
         );
     }
     let mut reader = Restoring::new(MaterialId::new(), true);
     assert!(
-        restore_reader(&mut conn, &blobs, &mut reader, "memory-cut", None, &stop)
+        restore_reader(&mut conn, &blobs, &mut reader, "saved-memory", None, &stop)
             .await
             .is_err()
     );

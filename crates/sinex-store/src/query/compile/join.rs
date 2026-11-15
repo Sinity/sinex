@@ -1,5 +1,5 @@
-//! Pair relations and order predicates over the actual output of an inner query.
-//! Joins retain every matching pair; a single positive order predicate also
+//! Pair relations and order predicates over the output of an inner query.
+//! Joins keep every matching pair; a single positive order predicate also
 //! exposes one deterministic nearest matching row without changing the outer grain.
 use super::*;
 use sinex_model::query::JoinOn;
@@ -49,12 +49,12 @@ impl Compiler<'_> {
                 .filter(|name| !display.contains(*name))
                 .cloned(),
         );
-        let mut projected = vec![];
+        let mut fields = vec![];
         for name in names {
             if let Some(column) = join.columns.iter().find(|column| column.column() == name) {
-                projected.push(column.clone());
+                fields.push(column.clone());
             } else if name == "snippet" {
-                projected.push(Operand::Named {
+                fields.push(Operand::Named {
                     operand: Box::new(Operand::Field(FieldRef::TypedGroup(
                         sinex_model::query::BoundColumn::generated("snippet", FieldType::Text),
                     ))),
@@ -63,7 +63,7 @@ impl Compiler<'_> {
             }
         }
         let mut query = (*join.inner).clone();
-        query.stages.push(Stage::Fields(projected));
+        query.stages.push(Stage::Fields(fields));
         Ok((self.inner_compiler(&query)?.compile(&query)?, display))
     }
 
@@ -260,19 +260,20 @@ impl Compiler<'_> {
         Ok(sql)
     }
 
-    /// Event contributors of successful positive order predicates. Ordinary
+    /// Event contributors of successful positive order predicates. Other
     /// predicates add none; negation never invents a positive match.
     pub(super) fn predicate_parents(&self, outer: &Cols, expression: &Expr) -> Result<SqlFragment> {
         query_language::depth::deeper(|| {
             match expression {
                 Expr::Order(join) => {
                     let (inner, _display) = self.compile_inner(join)?;
-                    let condition = self.join_condition(outer, &join.on, &inner, "proof_inner")?;
+                    let condition =
+                        self.join_condition(outer, &join.on, &inner, "matched_inner")?;
                     let mut out = SqlFragment::text(
-                        "ARRAY(SELECT DISTINCT unnest(proof_inner.\"_parents\") FROM (",
+                        "ARRAY(SELECT DISTINCT unnest(matched_inner.\"_parents\") FROM (",
                     );
                     out.append(inner.answer)
-                        .push(") proof_inner WHERE ")
+                        .push(") matched_inner WHERE ")
                         .append(condition)
                         .push(")");
                     Ok(out)
@@ -382,12 +383,12 @@ impl Compiler<'_> {
                     .enumerate()
                     .map(|(index, name)| (name.clone(), format!("_value{index}")))
                     .collect::<std::collections::BTreeMap<_, _>>();
-                for (logical, physical) in [
+                for (name, alias) in [
                     ("match.id", "_id"),
                     ("match.distance", "_distance"),
                     ("match.coarse", "_coarse"),
                 ] {
-                    renamed.insert(logical.into(), physical.into());
+                    renamed.insert(name.into(), alias.into());
                 }
                 let candidate = Cols::Named {
                     r: i.clone(),

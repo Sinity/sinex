@@ -389,7 +389,7 @@ fn stable_progress(value: serde_json::Value) -> serde_json::Value {
 fn same(actual: &State, expected: &State, what: &str) {
     assert!(
         actual.positions == expected.positions,
-        "{what}: committed cursor/carry proof differs (actual digest {}, expected digest {})",
+        "{what}: committed cursor/carry summary differs (actual digest {}, expected digest {})",
         blake3::hash(&serde_json::to_vec(&actual.positions).unwrap()),
         blake3::hash(&serde_json::to_vec(&expected.positions).unwrap())
     );
@@ -505,8 +505,8 @@ async fn kill_at(target: &Target, command: &mut Command, ready: Option<&str>, lo
             tokio::time::sleep(Duration::from_millis(2)).await;
         }
     }
-    let extent_barrier = lock.contains("core.blob_extents");
-    if extent_barrier {
+    let pause_extents = lock.contains("core.blob_extents");
+    if pause_extents {
         // Catalog transitions also update extent markers. Pause only the
         // descriptor INSERT, after its segment bytes have been synced.
         sqlx::raw_sql(
@@ -523,12 +523,12 @@ async fn kill_at(target: &Target, command: &mut Command, ready: Option<&str>, lo
         .unwrap();
     }
     sqlx::query("BEGIN").execute(&mut harness).await.unwrap();
-    let barrier = if extent_barrier {
+    let held_lock = if pause_extents {
         "SELECT pg_advisory_xact_lock(hashtextextended('sinex.test.extent_insert',0))"
     } else {
         lock
     };
-    sqlx::query(barrier).execute(&mut harness).await.unwrap();
+    sqlx::query(held_lock).execute(&mut harness).await.unwrap();
     let mut child = child.unwrap_or_else(|| Process::start(command));
     let me: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
         .fetch_one(&mut harness)
@@ -557,16 +557,16 @@ async fn kill_at(target: &Target, command: &mut Command, ready: Option<&str>, lo
     };
     child.kill().unwrap();
     child.wait().unwrap();
-    if extent_barrier {
+    if pause_extents {
         assert!(
             blocked_query.starts_with("INSERT INTO core.blob_extents"),
-            "extent barrier blocked another operation: {blocked_query}"
+            "extent pause blocked another operation: {blocked_query}"
         );
     }
     if lock.contains("core.blob_segments") {
         assert!(
             blocked_query.starts_with("INSERT INTO core.blob_segments"),
-            "segment barrier blocked another operation: {blocked_query}"
+            "segment lock blocked another operation: {blocked_query}"
         );
     }
     // The backend is still queued on the lock; end it so its transaction can
@@ -578,7 +578,7 @@ async fn kill_at(target: &Target, command: &mut Command, ready: Option<&str>, lo
         .unwrap();
     sqlx::query("ROLLBACK").execute(&mut harness).await.unwrap();
     // Termination sends a signal; rollback and session-lock release finish
-    // asynchronously. Recovery starts after that backend has actually exited.
+    // asynchronously. Recovery starts after that backend has exited.
     let deadline = Instant::now() + WAIT_LIMIT;
     loop {
         let present: bool =
@@ -616,7 +616,7 @@ async fn kill_at(target: &Target, command: &mut Command, ready: Option<&str>, lo
         );
         tokio::time::sleep(Duration::from_millis(2)).await;
     }
-    if extent_barrier {
+    if pause_extents {
         sqlx::raw_sql(
             "DROP TRIGGER pause_extent_insert ON core.blob_extents;
              DROP FUNCTION core.pause_extent_insert();",
@@ -637,7 +637,7 @@ fn lock(table: &str) -> String {
 async fn verified_stage_state(target: &Target, inputs: &Inputs) -> State {
     // The generic extractor below is also used by unrelated clipboard and
     // lifecycle rules. Its old normalized positions are replaced only AFTER
-    // both native cursor claims have passed the independent custody proof.
+    // both built-in source cursors have passed the independent custody check.
     let positions = progress::positions(target, inputs).await;
     let mut state = state(&mut target.connect().await).await;
     state.positions = positions;
@@ -655,7 +655,7 @@ async fn material_ids(target: &Target, bindings: Option<&[String]>) -> Vec<uuid:
 }
 
 /// An unchanged look still records coverage. Every extra material must be
-/// that exact binding's zero-event observation, while native IDs stay fixed.
+/// that binding's zero-event observation, and earlier material IDs stay.
 async fn checked_unchanged_coverage(target: &Target, bindings: &[String], before: &[uuid::Uuid]) {
     let after = material_ids(target, None).await;
     assert!(before.iter().all(|id| after.binary_search(id).is_ok()));
@@ -674,10 +674,10 @@ async fn checked_unchanged_coverage(target: &Target, bindings: &[String], before
         let (binding, kind, parser, manifest): (String, String, String, serde_json::Value) =
             sqlx::query_as("SELECT i.binding,i.kind,m.parser,m.manifest FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id WHERE m.id=$1")
                 .bind(material).fetch_one(&mut conn).await.unwrap();
-        let native = binding.strip_prefix("source.observation:").unwrap();
-        assert!(bindings.iter().any(|expected| expected == native));
+        let observed_binding = binding.strip_prefix("source.observation:").unwrap();
+        assert!(bindings.iter().any(|expected| expected == observed_binding));
         assert!(
-            observed.insert(native.to_owned()),
+            observed.insert(observed_binding.to_owned()),
             "one observation per binding"
         );
         assert_eq!(kind, "source-observation");
@@ -693,15 +693,15 @@ async fn checked_unchanged_coverage(target: &Target, bindings: &[String], before
         .fetch_all(&mut conn)
         .await
         .unwrap();
-        assert_eq!(events.len(), 1, "coverage material has one exact reading");
+        assert_eq!(events.len(), 1, "coverage material has one reading");
         let (source, kind, payload) = &events[0];
         assert_eq!(source, "source.observation");
         assert_eq!(kind, "source.coverage");
-        assert_eq!(payload["binding"], native);
+        assert_eq!(payload["binding"], observed_binding);
         assert_eq!(payload["host"], HOST);
         assert_eq!(
             payload["observed_source"],
-            native.split_once(':').unwrap().0
+            observed_binding.split_once(':').unwrap().0
         );
         assert_eq!(payload["events"], 0);
         assert_eq!(payload["failures"], 0);
@@ -736,25 +736,25 @@ async fn stage_survives(inputs: Inputs, ready: Option<&str>, lock_sql: &str) {
             inputs.zsh_binding(),
             format!("terminal.atuin-history:{}@{HOST}", inputs.atuin.display()),
         ];
-        for (owner, before) in [(&reference, &expected), (&target, &actual)] {
-            let native_materials = material_ids(owner, Some(&bindings)).await;
-            let all_materials = material_ids(owner, None).await;
-            finish(&mut owner.stage(&inputs));
-            consistent(owner).await;
+        for (store, before) in [(&reference, &expected), (&target, &actual)] {
+            let binding_materials = material_ids(store, Some(&bindings)).await;
+            let all_materials = material_ids(store, None).await;
+            finish(&mut store.stage(&inputs));
+            consistent(store).await;
             same(
-                &verified_stage_state(owner, &inputs).await,
+                &verified_stage_state(store, &inputs).await,
                 before,
                 "an unchanged path staged again",
             );
             assert_eq!(
-                material_ids(owner, Some(&bindings)).await,
-                native_materials,
-                "unchanged native inputs preserve every actual material identity"
+                material_ids(store, Some(&bindings)).await,
+                binding_materials,
+                "unchanged inputs keep every material identity"
             );
-            checked_unchanged_coverage(owner, &bindings, &all_materials).await;
+            checked_unchanged_coverage(store, &bindings, &all_materials).await;
         }
-        // Both stores replay their own captured bytes and explicit predecessor
-        // cuts. No cursor coordinate is borrowed from the other store.
+        // Both stores replay their own captured bytes and explicit previous-part
+        // boundaries. No cursor coordinate is borrowed from the other store.
         let scope = [
             "--event-type",
             "command.imported",
@@ -773,7 +773,7 @@ async fn stage_survives(inputs: Inputs, ready: Option<&str>, lock_sql: &str) {
         ] {
             assert!(
                 replayed.positions == before.positions,
-                "{label}: replay preserves proven frontier/carry (before {}, after {})",
+                "{label}: replay preserves checked position/carry (before {}, after {})",
                 blake3::hash(&serde_json::to_vec(&before.positions).unwrap()),
                 blake3::hash(&serde_json::to_vec(&replayed.positions).unwrap()),
             );
@@ -786,13 +786,13 @@ async fn stage_survives(inputs: Inputs, ready: Option<&str>, lock_sql: &str) {
             assert_eq!(
                 replayed.events - before.events,
                 inputs.expected_events as i64,
-                "{label}: ordinary replay adds one historical reading per native record",
+                "{label}: replay adds one historical reading per captured record",
             );
         }
         same(
             &replayed_target,
             &replayed_reference,
-            "ordinary replay after restart",
+            "replay after restart",
         );
     }
 }
@@ -1089,14 +1089,14 @@ async fn publisher_survives(between_pages: bool) {
     let target = Target::new(&inputs);
     let nats = devkit::nats::test_nats().expect("run through `xtask test`");
     let subjects = sinex_protocol::Subjects::new(nats.prefix());
-    let mut origin_conn = target.connect().await;
-    let origin = sinex_store::commit_log::HistoryOrigin::establish(&mut origin_conn)
+    let mut start_conn = target.connect().await;
+    let stream_start = sinex_store::commit_log::StreamStart::establish(&mut start_conn)
         .await
         .unwrap();
-    assert_eq!(origin.position, 0);
+    assert_eq!(stream_start.position, 0);
     let js = async_nats::jetstream::new(async_nats::connect(nats.url()).await.unwrap());
-    // The fixture owns a fresh native stream before acquiring either fault
-    // lock, so both barriers name the exact incarnation the daemon will use.
+    // The fixture owns a fresh NATS stream before acquiring either fault
+    // lock, so both fault locks name the stream instance the daemon will use.
     let mut config = async_nats::jetstream::stream::Config {
         name: subjects.confirmed_stream(),
         subjects: vec![subjects.confirmed_all()],
@@ -1107,8 +1107,8 @@ async fn publisher_survives(between_pages: bool) {
         .metadata
         .insert("sinex_confirmed_contract".into(), "5".into());
     config.metadata.insert(
-        "sinex_history_origin".into(),
-        serde_json::to_string(&origin).unwrap(),
+        "sinex_stream_start".into(),
+        serde_json::to_string(&stream_start).unwrap(),
     );
     let stream = js.create_stream(config).await.unwrap();
     finish(&mut target.stage(&inputs));
@@ -1209,7 +1209,7 @@ async fn publisher_survives(between_pages: bool) {
                 assert_eq!(
                     expected.get(&event),
                     Some(&commit_seq),
-                    "the message names its exact committed event and position"
+                    "the message names its committed event and position"
                 );
                 assert!(seen.insert(event), "event {event} is on the stream twice");
             }
@@ -1239,7 +1239,7 @@ async fn publisher_killed_between_pages() {
 }
 
 /// Kill after the segment group is synced and before its database boundary
-/// commits. Ordinary startup truncates the uncommitted tail; retry re-admits it.
+/// commits. Startup truncates the uncommitted tail; retry re-admits it.
 #[devkit::test]
 async fn synced_uncommitted_segment_tail_is_truncated_on_restart() {
     let inputs = Inputs::first_transaction();
@@ -1275,7 +1275,7 @@ async fn synced_uncommitted_segment_tail_is_truncated_on_restart() {
         scalar(&mut conn, "SELECT count(*) FROM raw.positions").await,
         0
     );
-    // A local stage reopens through the same recovery path as ordinary daemon startup.
+    // A local stage reopens through the same recovery path as daemon startup.
     finish(&mut target.stage(&inputs));
     consistent(&target).await;
     same(
@@ -1375,7 +1375,7 @@ async fn partial_segment_append_recovers_without_advancing_its_cursor() {
     assert_eq!(
         output.status.signal(),
         Some(25),
-        "the kernel must interrupt the actual append: {}",
+        "the kernel must interrupt the append in progress: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     let committed: i64 =

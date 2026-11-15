@@ -680,11 +680,11 @@ async fn follow_notice_waits_for_the_initial_cursor(db: devkit::pg::TestDatabase
 }
 
 #[devkit::test]
-async fn follow_wakes_when_a_delayed_search_projection_commits(db: devkit::pg::TestDatabase) {
+async fn follow_wakes_when_delayed_search_read_model_commits(db: devkit::pg::TestDatabase) {
     let mut w = world(db).await;
     admit(&w, &["before"], 0).await;
-    // Pause the actual maintainer after a durable baseline. Search text itself
-    // is also projected by admission, so locking it would block the writer.
+    // Pause the read-model maintainer after a committed baseline. Search text itself
+    // is also written by admission, so locking it would block the writer.
     w._stop.send_replace(true);
     tokio::time::timeout(
         std::time::Duration::from_secs(10),
@@ -715,7 +715,7 @@ async fn follow_wakes_when_a_delayed_search_projection_commits(db: devkit::pg::T
     submit_events(&w, vec![command("cargo build", 1)]).await;
     let mut monitor = w.reads.acquire().await.unwrap();
     // The writer wake has been consumed when follow reaches its blocked
-    // materialization watermark query. The search maintainer is stopped.
+    // read-model position query. The search maintainer is stopped.
     let follow_pid = tokio::time::timeout(std::time::Duration::from_secs(10), async {
         loop {
             let pid: Option<i32> = sqlx::query_scalar(
@@ -732,7 +732,7 @@ async fn follow_wakes_when_a_delayed_search_projection_commits(db: devkit::pg::T
         }
     })
     .await
-    .expect("follow did not inspect the delayed projection watermark");
+    .expect("follow did not inspect the delayed read-model position");
     positions_lock.rollback().await.unwrap();
     drop(positions);
     tokio::time::timeout(std::time::Duration::from_secs(10), async {
@@ -750,7 +750,7 @@ async fn follow_wakes_when_a_delayed_search_projection_commits(db: devkit::pg::T
         }
     })
     .await
-    .expect("follow did not finish inspecting the old projection watermark");
+    .expect("follow did not finish inspecting the old read-model position");
     drop(monitor);
     let (stop, stopped) = watch::channel(false);
     w._stop = stop;
@@ -764,7 +764,7 @@ async fn follow_wakes_when_a_delayed_search_projection_commits(db: devkit::pg::T
         .await,
     );
 
-    // No second writer commit occurs: only durable read-model progress can wake it.
+    // No second writer commit occurs: only committed read-model progress can wake it.
     read_until(&mut body, &mut seen, "cargo build").await;
     assert_eq!(seen.matches("cargo build").count(), 1);
     assert!(!seen.contains("\"before\""));
@@ -775,7 +775,7 @@ async fn follow_wakes_when_a_delayed_search_projection_commits(db: devkit::pg::T
 #[devkit::test]
 async fn guarded_values_follow_the_token(db: devkit::pg::TestDatabase) {
     let w = world(db).await;
-    // An agent may raise a floor.
+    // An agent may raise a minimum class.
     let (_, body) = call_unbounded(
         &w,
         Some(AGENT),
@@ -829,7 +829,7 @@ async fn guarded_values_follow_the_token(db: devkit::pg::TestDatabase) {
         "search must not match withheld text: {s}"
     );
 
-    // Lowering a floor weakens protection: the operator's alone.
+    // Lowering a minimum class weakens protection: the operator's alone.
     let (_, body) = call_unbounded(
         &w,
         Some(AGENT),
@@ -853,7 +853,7 @@ async fn guarded_values_follow_the_token(db: devkit::pg::TestDatabase) {
     .await;
     assert_eq!(body["outcome"], json!("ok"), "{body}");
     let (_, body) = call_unbounded(&w, Some(READ), json!({"method": "privacy-verify"})).await;
-    assert_eq!(body["result"]["below_floor"], json!(0), "{body}");
+    assert_eq!(body["result"]["below_minimum"], json!(0), "{body}");
 }
 
 /// Sealed values: unreadable at rest and while locked, readable to the

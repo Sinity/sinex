@@ -5,7 +5,7 @@ fn context() -> Context {
 }
 
 #[devkit::test]
-fn native_subjects_lower_without_entering_the_shared_query_grammar() {
+fn recall_subjects_bind_outside_the_shared_grammar() {
     let ctx = context();
     let template = parse(
         "recall last where cwds ^ \"/src/tide (notes)\" | limit 2",
@@ -40,12 +40,12 @@ fn native_subjects_lower_without_entering_the_shared_query_grammar() {
 }
 
 #[devkit::test]
-fn saved_execution_uses_the_template_and_keeps_authored_text_as_evidence() {
+fn saved_query_runs_its_template_and_keeps_its_text() {
     let ctx = context();
     let mut saved =
         saved::SavedQuery::from_text("remember".into(), "recall last".into(), vec![], &ctx)
             .unwrap();
-    saved.query = "The authored text is retained independently".into();
+    saved.query = "The authored text is kept independently".into();
     let definitions = std::collections::BTreeMap::from([("remember".into(), saved)]);
     let bound = saved::bind_saved("query:remember", &ctx, &definitions).unwrap();
     assert!(matches!(bound.source, Source::RecallLast { .. }));

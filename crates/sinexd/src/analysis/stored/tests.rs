@@ -169,7 +169,7 @@ fn an_empty_answer_cites_the_request_and_unknown_coverage_never_measures_zero() 
 }
 
 #[devkit::test]
-fn figures_cut_under_another_logical_day_are_incomparable_instead_of_zero() {
+fn figures_from_another_day_setting_are_incomparable() {
     let request = question();
     let mut other_period = figure(&request);
     let shifted = Timestamp::from_unix_ns(request.started_at.unix_ns() + 1).unwrap();
@@ -203,7 +203,7 @@ fn figures_cut_under_another_logical_day_are_incomparable_instead_of_zero() {
 }
 
 #[devkit::test]
-fn a_closed_day_replaces_the_provisional_claim_at_its_actual_evaluation_clock() {
+fn closed_day_replaces_provisional_value_at_evaluation() {
     let mut request = question();
     request.operation = "brief".into();
     request.recipe = None;
@@ -252,7 +252,7 @@ fn a_closed_day_replaces_the_provisional_claim_at_its_actual_evaluation_clock() 
 }
 
 #[devkit::test]
-fn a_daily_brief_keeps_the_failed_read_reason_and_its_exact_source_citation() {
+fn daily_brief_keeps_failed_read_reason_and_citation() {
     let mut request = question();
     request.operation = "brief".into();
     request.recipe = None;

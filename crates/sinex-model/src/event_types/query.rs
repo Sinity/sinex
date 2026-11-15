@@ -1,4 +1,4 @@
-//! Moment marks and saved questions are ordinary authored records.
+//! Moment marks and saved questions are authored records like any other.
 use crate::Timestamp;
 use crate::query::saved::Parameter;
 use schemars::JsonSchema;

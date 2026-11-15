@@ -1,5 +1,5 @@
-//! Identifiers. Every stored identity is a UUIDv7, minted when the thing is
-//! created; event IDs are never derived from content, so a replay mints new
+//! Identifiers. Every stored identity is a UUIDv7, made when the thing is
+//! created; event IDs are never derived from content, so a replay makes new
 //! ones.
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -57,7 +57,7 @@ ids! {
 
 impl EventId {
     /// When Sinex made this reading (`ts_coided`): the time inside the UUIDv7.
-    /// Every `EventId` is minted as a v7, so this never invents a time.
+    /// Every `EventId` is made as a v7, so this never invents a time.
     pub fn ts_coided(&self) -> Option<crate::Timestamp> {
         let (secs, nanos) = self.0.get_timestamp()?.to_unix();
         let ns = i128::from(secs) * 1_000_000_000 + i128::from(nanos);
@@ -65,7 +65,7 @@ impl EventId {
     }
 }
 
-/// The millisecond a UUIDv7 in text form was minted in, in Unix
+/// The millisecond a UUIDv7 in text form was made in, in Unix
 /// milliseconds; none for text that is not a UUIDv7.
 pub fn uuid7_millisecond(text: &str) -> Option<i64> {
     let id = Uuid::parse_str(text).ok()?;
@@ -79,9 +79,9 @@ pub fn uuid7_millisecond(text: &str) -> Option<i64> {
         .checked_add(i64::from(nanos / 1_000_000))
 }
 
-/// The span a start-minted UUIDv7 token is alive for, from a record that
-/// holds it: from the token's mint millisecond until the record's time, or
-/// until the mint time plus the record's `length` field (in nanoseconds)
+/// The span a UUIDv7 token made at the start is alive for, from a record that
+/// holds it: from the millisecond the token was made until the record's time,
+/// or until that millisecond plus the record's `length` field (in nanoseconds)
 /// when that is later. A record holding the same token lies inside this
 /// span, widened by `slack_ns` on both sides; a read for a token's partners
 /// stops at its bounds.

@@ -61,7 +61,7 @@ fn stage_takes_several_paths_and_its_options() {
             "--parser",
             "takeout",
             "--account",
-            "owner@example.test",
+            "account@example.test",
             "--export-date",
             "2030-01-01",
             "--follow",
@@ -81,7 +81,7 @@ fn stage_takes_several_paths_and_its_options() {
                 "/synthetic/takeout-002.zip".into()
             ],
             parser: vec!["takeout".into()],
-            account: Some("owner@example.test".into()),
+            account: Some("account@example.test".into()),
             export_date: Some("2030-01-01".into()),
             follow: Some(true),
             batch_events: None,

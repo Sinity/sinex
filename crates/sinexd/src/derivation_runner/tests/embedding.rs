@@ -1,11 +1,11 @@
-//! Supplied vectors traverse ordinary admission, the derivation runner and
-//! rebuildable pgvector projection without constructing a provider.
+//! Supplied vectors go through admission, the derivation runner and
+//! rebuildable pgvector index without constructing a provider.
 use super::*;
 use sinex_derivations::embedding::Embeddings;
 use sinex_model::event_types::embedding::{EmbeddingSpace, SuppliedEmbedding, TextEmbedding};
 
 #[devkit::test]
-async fn supplied_vectors_derive_rank_and_recompute_with_exact_source_parents(
+async fn supplied_vectors_derive_rank_and_recompute_with_source_parents(
     db: devkit::pg::TestDatabase,
 ) {
     let w = World::with_keys(db, vec![]).await;

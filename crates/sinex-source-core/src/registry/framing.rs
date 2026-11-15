@@ -46,7 +46,7 @@ impl Framer {
         (self.slice)(bytes)
     }
 
-    /// Exact source byte ranges. Bodies hold only the undecided record and read
+    /// Source byte ranges. Bodies hold only the undecided record and read
     /// buffer; the returned range metadata grows with record count. A whole
     /// record can be large.
     pub fn ranges(self, reader: &mut dyn Read) -> std::io::Result<Vec<(usize, usize)>> {

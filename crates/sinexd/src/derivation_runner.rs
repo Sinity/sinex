@@ -7,7 +7,7 @@
 //!   keys oldest first, reads each key's current inputs, computes, and submits
 //!   the outputs as the key's complete output set. The dirty mark clears in
 //!   the same transaction unless the key was dirtied again meanwhile. Keys whose
-//!   outputs wait on evidence outside their window are recomputed whenever
+//!   outputs wait on records outside their window are recomputed whenever
 //!   their derivation runs again.
 //! - **Per-event derivations:** read committed events after their position, in
 //!   commit order, and commit the new position with their outputs. One that
@@ -22,7 +22,7 @@
 //! downstream derivation from running.
 //!
 //! The runner wakes on `wake`, which the daemon signals after every commit, and
-//! also looks for work every so often, for keys that settle with time.
+//! also looks for work every so often, for keys that become final with time.
 use crate::writer::{Priority, WriterHandle};
 use crate::{Error, Result};
 use serde_json::Value;
@@ -241,7 +241,7 @@ impl DerivationRunner {
             registry::register_derivation(&mut runner.read, d, crate::build_identity::current()?)
                 .await?;
         }
-        runner.archive_retired_outputs().await?;
+        runner.archive_removed_derivation_outputs().await?;
         Ok(runner)
     }
 
@@ -251,15 +251,19 @@ impl DerivationRunner {
     /// producer, once: a later start finds no registration, so an undo of the
     /// archive stands. A refused or interrupted archive keeps the registration
     /// and is resumed at the next start.
-    async fn archive_retired_outputs(&mut self) -> Result<()> {
+    async fn archive_removed_derivation_outputs(&mut self) -> Result<()> {
         // Every derivation the build has, and any this runner was started
         // with beyond them, is current.
         let mut known = crate::catalog::derivation_names();
         known.extend(self.runs.keys().cloned());
-        let retired = registry::retired_derivations(&mut self.read, &known).await?;
-        for producer in retired {
-            match crate::lifecycle::retire_source(&mut self.read, &self.writer, producer.clone())
-                .await?
+        let removed = registry::removed_derivations(&mut self.read, &known).await?;
+        for producer in removed {
+            match crate::lifecycle::archive_removed_source(
+                &mut self.read,
+                &self.writer,
+                producer.clone(),
+            )
+            .await?
             {
                 crate::lifecycle::Answer::Done(_) => {
                     registry::forget_derivation(&mut self.read, &producer).await?;
@@ -268,7 +272,7 @@ impl DerivationRunner {
                 // resumable; the daemon still starts.
                 crate::lifecycle::Answer::Refused(reason)
                 | crate::lifecycle::Answer::StoppedEarly(reason, _) => {
-                    eprintln!("sinexd: archiving a retired derivation's outputs stopped: {reason}");
+                    eprintln!("sinexd: archiving a removed derivation's outputs stopped: {reason}");
                 }
             }
         }
@@ -1088,7 +1092,7 @@ fn hash_version(event: &mut Event, name: &str, version: u32) {
 
 /// Each derivation's rank: 0 when no derivation produces any of its inputs,
 /// otherwise one more than the highest rank among those that do. A cycle
-/// (which no catalog should have) settles at the catalog's size.
+/// (which no catalog should have) stops at the catalog's size.
 fn ranks(catalog: &[Derivation]) -> BTreeMap<String, u32> {
     let limit = u32::try_from(catalog.len()).unwrap_or(u32::MAX);
     let mut rank: BTreeMap<&str, u32> = catalog.iter().map(|d| (d.name.as_str(), 0)).collect();
@@ -1534,12 +1538,12 @@ pub(crate) async fn compute_now(
 }
 
 /// Exact targets use the same snapshot as the key's read mark, including
-/// unknown-time evidence. Transfer budgets never substitute a nearby record.
+/// unknown-time records. Transfer budgets never substitute a nearby record.
 async fn exact_inputs(
     conn: &mut PgConnection,
     ids: Vec<sinex_model::EventId>,
 ) -> Result<Vec<Event>> {
-    let mut reader = derivations::ExactInputs::new(ids, ROWS_PER_PAGE, sinex_store::PAGE_BYTES)?;
+    let mut reader = derivations::ListedInputs::new(ids, ROWS_PER_PAGE, sinex_store::PAGE_BYTES)?;
     let mut inputs = Vec::new();
     while let Some(page) = reader.next(conn).await? {
         inputs.extend(page.into_iter().map(|row| row.event));

@@ -56,7 +56,7 @@ pub struct Nearest {
     /// One answer set per value of this payload field seen in the window.
     pub per: Option<&'static str>,
     pub count: i64,
-    /// With `per`: each value is a start-minted token, and its read stops at
+    /// With `per`: each value is a token made when its run started, and its read stops at
     /// the lifetime the window records holding it give it.
     pub lifetime: Option<sinex_model::TokenLifetime>,
 }
@@ -920,7 +920,7 @@ pub async fn latest_reading_orders(
     if producers.is_empty() {
         return Ok(BTreeMap::new());
     }
-    // Admission and tombstoning keep runs.events equal to retained event rows.
+    // Admission and tombstoning keep runs.events equal to stored event rows.
     // Empty runs need no history; archived/replaced readings still own maxima.
     Ok(
         sqlx::query_file!("src/derivations/latest_reading_orders.sql", producers)
@@ -967,7 +967,7 @@ pub async fn dirty(
         .collect())
 }
 
-/// Keys of `derivation` waiting on evidence outside their window, with when
+/// Keys of `derivation` waiting on inputs outside their window, with when
 /// each started waiting.
 pub async fn waiting(
     conn: &mut PgConnection,
@@ -1044,7 +1044,7 @@ pub async fn children_outputs(
     Ok(out)
 }
 
-/// The producer versions that actually made the selected inputs, including mixed histories.
+/// The producer versions that made the selected inputs, including mixed histories.
 pub async fn producer_versions(
     conn: &mut PgConnection,
     inputs: &[sinex_model::EventId],
@@ -1183,5 +1183,5 @@ pub mod selection;
 #[cfg(test)]
 mod tests;
 
-mod exact;
-pub use exact::ExactInputs;
+mod listed;
+pub use listed::ListedInputs;

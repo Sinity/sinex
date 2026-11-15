@@ -1,4 +1,4 @@
-//! Durable extent-prefix pins belong to the existing operation owner.
+//! Backup holds pin extent prefixes; each hold belongs to the operation that made it.
 pub(crate) const HOLDS: &str = "CREATE TABLE core.backup_holds (
   operation_id uuid PRIMARY KEY REFERENCES core.operations(id),
   commit_position bigint NOT NULL CHECK (commit_position >= 0),

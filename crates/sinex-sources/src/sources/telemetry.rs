@@ -1,7 +1,7 @@
 //! Sinex's own state: the daemon samples its parts every minute (how far the
 //! publisher and each derivation are behind, how many keys wait, each source's
 //! events) and spools one JSON line per part, which this source reads like any
-//! live capture. Samples use ordinary event admission and replay.
+//! live capture. Samples use the same event admission and replay as other sources.
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sinex_model::event_types::telemetry::SinexTelemetry;
@@ -87,7 +87,7 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
         name: "sinex-telemetry",
         accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
-            owner: sinex_source_core::discovery::Owner::System,
+            captured_by: sinex_source_core::discovery::CapturedBy::System,
             locations: &[],
             capabilities: &[],
             credentials: &[],

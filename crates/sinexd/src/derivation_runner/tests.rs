@@ -343,7 +343,7 @@ async fn an_open_interval_waits_and_closes_on_the_next_transition(db: devkit::pg
 }
 
 /// A derivation with one key per command, each always waiting for more
-/// evidence.
+/// input.
 struct Waiting;
 
 impl Keyed for Waiting {
@@ -392,7 +392,7 @@ impl Keyed for Waiting {
 }
 
 #[devkit::test]
-async fn a_waiting_key_remains_eligible_for_late_evidence(db: devkit::pg::TestDatabase) {
+async fn waiting_key_remains_eligible_for_late_input(db: devkit::pg::TestDatabase) {
     let w = World::with_keys(db, vec![Box::new(Waiting)]).await;
     let waiting = "SELECT count(*) FROM derivation.waiting";
     w.admit(vec![zsh("a", 0, 1)]).await;
@@ -406,7 +406,7 @@ async fn a_waiting_key_remains_eligible_for_late_evidence(db: devkit::pg::TestDa
     d.catch_up().await.unwrap();
     assert_eq!(w.count(waiting).await, 2);
 
-    // Elapsed time does not supply the missing evidence.
+    // Elapsed time does not supply the missing input.
     d.clock = Some(Timestamp(Timestamp::now().0 + time::Duration::days(30)));
     w.admit(vec![zsh("c", 20, 3)]).await;
     d.catch_up().await.unwrap();
@@ -453,7 +453,7 @@ async fn a_key_dirtied_again_stays_dirty(db: devkit::pg::TestDatabase) {
     .fetch_one(&mut conn)
     .await
     .unwrap();
-    // A settle computed before the latest dirt (dirty_seq 0) leaves the mark.
+    // A final computation before the latest dirt (dirty_seq 0) leaves the mark.
     let batch = Batch {
         run: RunId::new(),
         kind: BatchKind::Derived {
@@ -960,7 +960,7 @@ mod external;
 
 mod selected_provenance;
 
-mod retired;
+mod removed;
 
 mod tokens;
 

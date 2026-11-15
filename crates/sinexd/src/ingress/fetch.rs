@@ -17,7 +17,7 @@ pub(crate) struct Grants {
     #[serde(default)]
     pub public_context: bool,
     #[serde(default)]
-    pub write: Option<super::authority::WriteGrant>,
+    pub write: Option<super::write_access::WriteGrant>,
     pub kind_prefixes: Vec<String>,
     pub classes: Vec<Class>,
 }
@@ -120,7 +120,7 @@ pub(crate) fn load(path: Option<&std::path::Path>) -> Result<ProducerGrants> {
             }
         }
     }
-    super::authority::validate(&grants)?;
+    super::write_access::validate(&grants)?;
     Ok(grants)
 }
 use sinex_protocol::FetchRefusal as Refusal;
@@ -134,7 +134,7 @@ fn denied() -> Refusal {
 fn missing() -> Refusal {
     Refusal {
         kind: FetchRefusalKind::Missing,
-        reason: "requested retained data is unavailable".into(),
+        reason: "requested stored data is unavailable".into(),
     }
 }
 fn unavailable(error: impl std::fmt::Display) -> Refusal {
@@ -250,24 +250,24 @@ impl Requests {
             sinex_store::query::read_one_snapshot(&mut conn)
                 .await
                 .map_err(unavailable)?;
-            let ownership =
+            let material_family =
                 sinex_store::producer_reads::material_family(&mut conn, request.material.0)
                     .await
                     .map_err(unavailable)?
                     .ok_or_else(missing)?;
-            let (Some(_family), Some(prefixes)) = ownership else {
+            let (Some(_family), Some(prefixes)) = material_family else {
                 return Err(unavailable(
-                    "historical material family ownership is unknown",
+                    "the family that wrote the historical material is unknown",
                 ));
             };
-            let owner_scope = Grants {
+            let material_scope = Grants {
                 indexed_catalog: None,
                 public_context: false,
                 write: None,
                 kind_prefixes: prefixes,
                 classes: vec![],
             };
-            if !grant.intersects(&owner_scope) {
+            if !grant.intersects(&material_scope) {
                 return Err(denied());
             }
             let classes = grant
@@ -320,12 +320,10 @@ impl Requests {
                     .await
                     .map_err(unavailable)?;
             let (_, name, version) = sources.into_iter().next().ok_or_else(|| {
-                unavailable(
-                    "material source authority is unknown; explicit historical mapping required",
-                )
+                unavailable("material source is unknown; explicit historical mapping required")
             })?;
             let source = sinex_model::SourceRef {
-                name: name.ok_or_else(|| unavailable("material source authority is unknown"))?,
+                name: name.ok_or_else(|| unavailable("material source is unknown"))?,
                 version: u32::try_from(
                     version.ok_or_else(|| unavailable("material source version is unknown"))?,
                 )

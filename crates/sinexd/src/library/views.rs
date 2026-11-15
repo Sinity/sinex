@@ -67,7 +67,7 @@ pub(crate) async fn item_view(conn: &mut PgConnection, item: &str) -> R<Value> {
         item: item.to_owned(),
         ..Target::default()
     };
-    // Tags and properties are the projection's rows; ratings and notes are
+    // Tags and properties are the read model's rows; ratings and notes are
     // each author's own and are listed from the current records.
     let shown_rows = sinex_store::library_shown::of_item(conn, item).await?;
     let mut targets: BTreeMap<String, (Vec<Value>, serde_json::Map<String, Value>)> =

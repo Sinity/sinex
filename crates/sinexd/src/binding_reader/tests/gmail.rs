@@ -1,6 +1,6 @@
 use super::*;
 use crate::Result;
-use crate::intake::request;
+use crate::submit::request;
 use serde_json::json;
 use sinex_source_core::Reader;
 use sinex_sources::sources::gmail::{self, GmailReader, api};

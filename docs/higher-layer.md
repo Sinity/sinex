@@ -7,7 +7,7 @@ The higher layer answers the question an operator or an agent has on returning t
 These products carry the purposes Lynchpin served as a stopgap, rebuilt on primary data. (ruling 2026-08-16, cc:ec60fadc-f448-407d-baab-ce3741265a67:3f5eec78-a742-429f-b9e8-6078dbb6b172).
 
 - **Purposes are ported; formats are not.** Lynchpin's NDJSON products, DuckDB snapshots, graph nodes and hard-coded scores are evidence of intent. Sinex never reads them as input and rebuilds each purpose on the original source data. (ruling 2026-07-07, cc:cce07895-09a1-4d90-9313-3017a899291d:2cd02fc1-4978-4b92-8707-3bae0794d7ad).
-- **Results reach the operator in ordinary work**: agent session start, resumption, the day pack, Today and signals. A product that needs a new daily ritual to be useful does not count.
+- **Results reach the operator in the course of his work**: agent session start, resumption, the day pack, Today and signals. A product that needs a new daily ritual to be useful does not count.
 - **No prescriptions.** No streaks, productivity scores, nudges, or actions taken on the operator's behalf from a narrative. The products describe; they do not grade.
 - **Operator time and agent time are separate measures** everywhere. Agent work runs beside operator work, not instead of it.
 
@@ -15,18 +15,18 @@ These products carry the purposes Lynchpin served as a stopgap, rebuilt on prima
 
 Presence comes from physical input first, because agents and passive emitters keep windows, titles and notifications changing while the operator is away, so window focus is not evidence that the operator is there.
 
-**Evidence.** Physical input on the non-virtual evdev layer; human prose prompts (Polylogue messages written by the human, excluding dispatch prompts written by orchestrating agents); commands typed in interactive shells; the operator's journal entries, notes and task edits; lock, unlock, suspend and display-off. A uinput event counts as operator input only when paired with its physical source. ActivityWatch AFK and compositor idle are **claims** to reconcile, never facts, and are never rewritten.
+**Evidence.** Physical input on the non-virtual evdev layer; human prose prompts (Polylogue messages written by the human, excluding dispatch prompts written by orchestrating agents); commands typed in interactive shells; the operator's journal entries, notes and task edits; lock, unlock, suspend and display-off. A uinput event counts as operator input only when paired with its physical source. ActivityWatch AFK and compositor idle are **reports** to reconcile, never facts, and are never rewritten.
 
 **Algorithm**, per scope (host and seat), profile `presence/v1`:
 
 1. Physical events at most 30 s apart form an input bout. Pointer motion counts for presence, not for typing figures.
 2. The operator is present from bout start to bout end, extended through a quiet allowance of up to 300 s only when the same foreground window holds on both sides. Display, playback and agent output never extend presence.
 3. Absent where lock, suspend or display-off evidence exists, or after the no-input threshold (default 180 s; 120 s is kept in the profile for sensitivity).
-4. **Unknown** where no physical-input coverage exists. In that era the fallback reconciles the AFK claim with prompts and commands, labelled `method=claim_reconciled`.
+4. **Unknown** where no physical-input coverage exists. In that era the fallback reconciles the AFK report with prompts and commands, labelled `method=claim_reconciled`.
 
 - **Missing capture is not inactivity.** A watcher outage or an unreadable source is a typed gap ([gaps](sources.md#gaps)), and presence over it is unknown.
 - `presence.interval` carries `method`, support (bouts, acts), the reconciled claim and contradicting observations. Corrections that Lynchpin applied to archived data (sleep overlap, stuck window, empty app) are labelled rules in the profile, not edits to source records.
-- When older keylog history is admitted, presence over that era is recomputed through the ordinary path; there is no special backfill.
+- When older keylog history is admitted, presence over that era is recomputed through the usual path; there is no special backfill.
 
 ## Agency
 
@@ -51,7 +51,7 @@ Each elementary segment of the boundary sweep ([attention](#attention)) gets `ag
 - **`activity.session`** is a presence envelope. It joins windows across gaps shorter than the break threshold (profile default 15 min) and closes on explicit absence: lock, suspend or a rest interval. Breaks of 2 to 15 min inside it are `short_break` members and never count as focus. It carries `operator_present_s`, short breaks, seconds by agency, and `delegated_overlap_s`; multi-source counts are context counts, not a measure of activity.
 - A session's identity is its first stable window; its owning day is the logical day of that start; it may cross any number of hours and days.
 - **Episode boundaries come from semantic keys ([episodes](#work-episodes)), never from session gaps**, because fixed time-outs cap at about 70% precision on task boundaries.
-- `shell.session` (commands in one terminal, partitioned by host and the native shell or terminal session identity where captured), `activity.session` and `work.episode` are three different things. `recall last` keeps the shell-session meaning; the cross-source selector is explicit ([recall](recall.md)).
+- `shell.session` (commands in one terminal, partitioned by host and the shell's or terminal's own session identity where captured), `activity.session` and `work.episode` are three different things. `recall last` keeps the shell-session meaning; the cross-source selector is explicit ([recall](recall.md)).
 
 ## Attention
 
@@ -89,23 +89,23 @@ The exact attribution registry is deployment data under
 identities and effective-dated facts; derivation never opens a repository.
 Structured session `objectives` contain `kind` (`task` or `pull_request`),
 `reference` and `repository`. At the highest present tier, competing exact
-references remain unresolved. Work acts retain optional native terminal and git
-identity, and checks retain `revision`, `check_name` and `check_passed`.
+references remain unresolved. Work acts keep optional terminal and git
+identity, and checks keep `revision`, `check_name` and `check_passed`.
 A passing check resolves an earlier failure only for the same repository,
 revision and check name. Missing fields keep the failure open.
 
-**Inferred tiers** are qualified proposals that never displace an exact owner:
+**Inferred tiers** are qualified proposals that never displace an exact project link:
 
 - normalised title tokens matched against the project registry;
 - `inferred_flanked`: a span with no key, flanked within one activity session by the same exact project on both sides with gaps within the quiet allowance;
 - `inferred_overlap`: work-event overlap within ±30 s, used only where the window join of rung 4 was not captured.
 
-No numeric confidence floor admits an inferred tier. Each inferred method carries its name, its evidence and its leave-one-signal-out precision (hide an exact key on spans that have one and predict it from the rest). An inferred tier is shown as a visible proposal only when that precision on held-out exact cases meets the profile threshold (proposed 0.9); otherwise the time stays unallocated.
+No bare confidence number admits an inferred tier. Each inferred method carries its name, its evidence and its leave-one-signal-out precision (hide an exact key on spans that have one and predict it from the rest). An inferred tier is shown as a visible proposal only when that precision on held-out exact cases meets the profile threshold (proposed 0.9); otherwise the time stays unallocated.
 
 **Conserved operator time.** `activity.project_span` carries interval, scope, activity-span references, project shares as exact rationals, the unallocated share, `ladder_rung` and reason (`exact`, `inferred_*`, `conflicting`) per share, conflicting links, the window-join evidence, the profile and supported seconds.
 
 - For every eligible operator interval, shares plus unallocated equal one.
-- One exact uncontradicted owner receives the time. Conflicting exact owners leave it unallocated unless a recorded allocation rule supplies shares; equal division is never invented.
+- One exact uncontradicted project receives the time. Conflicting exact projects leave it unallocated unless a recorded allocation rule supplies shares; equal division is never invented.
 - Cross-device overlap first forms one operator-time union; within a device, overlapping source records form one union and a fused record and its members never both count. Three observers of ten minutes are ten operator minutes.
 - Operator time, shell runtime, machine work and agent time are separate measures; a background agent's runtime never multiplies operator time. Supervising time is shown beside operator project time, not counted in it, so either total can be read.
 - AI commit authorship comes only from trustworthy identities (commit trailers, Polylogue's commit links), never from a commit author string alone.
@@ -126,7 +126,7 @@ Anchors are structured objectives only, in order: an explicit task reference nam
 
 **Labels are extractive and name their source**: the task title, pull-request title, branch name, the first human prompt's derived title, or the top commit subjects. An abstractive label written by a model is a [model feature](derivations.md#model-features).
 
-**Outcomes are distinct facts**: recorded work, commit, push, pull request opened, pull request merged, task closed, check passed on a named commit, deployed revision, accepted behaviour. A closed task is not proof of verification; a nearby passing test does not certify another revision; an agent message saying "done" is an authored claim, not acceptance. Contradictions and reopened work stay visible, and every "current" item carries its observation time and coverage.
+**Outcomes are distinct facts**: recorded work, commit, push, pull request opened, pull request merged, task closed, check passed on a named commit, deployed revision, accepted behaviour. A closed task does not show verification; a nearby passing test does not show another revision works; an agent message saying "done" is an authored claim, not acceptance. Contradictions and reopened work stay visible, and every "current" item carries its observation time and coverage.
 
 ### Interruptions and resumptions
 
@@ -152,7 +152,7 @@ The resume card is the boxed rendering of an episode's resume pack, an activity 
 
 Asked with no argument, the answer is the top three candidate episodes, ranked by most recent operator act, then open failures and waits, then interruptions from an agent or an external source; one line each, with the full card for the first. Asked with a project, task, session, episode or time, it returns that episode's card.
 
-Polylogue's work arrives as ordinary kinds through the producer contract: `polylogue.session`, `polylogue.prompt`, `polylogue.tool_call`, `polylogue.live_interval` (waiting, working, stalled, idle) and `polylogue.commit_link`, declared in Polylogue's producer `hello` with each kind's [stratum](recall.md#strata) ([producers](producers.md#kind-registration)). The agency, attribution and episode derivations read them like any kind, and Sinex knows no Polylogue kind by name. Decided target (2026-11-01): the current build's atomic `polylogue.work_snapshot` with its reducer versions and `work.coverage` go; Polylogue resumes from its confirmed-stream position like any consumer. The signed coverage a `work_snapshot` frame once had to carry is gone: such a frame is admitted like any other, its reading order deciding which snapshot is newer. Unknown outcomes stay unknown with partial coverage, never a negative result.
+Polylogue's work arrives as kinds like any other through the producer contract: `polylogue.session`, `polylogue.prompt`, `polylogue.tool_call`, `polylogue.live_interval` (waiting, working, stalled, idle) and `polylogue.commit_link`, declared in Polylogue's producer `hello` with each kind's [recall class](recall.md#recall-classes) ([producers](producers.md#kind-registration)). The agency, attribution and episode derivations read them like any kind, and Sinex knows no Polylogue kind by name. Decided target (2026-11-01): the current build's atomic `polylogue.work_snapshot` with its reducer versions and `work.coverage` go; Polylogue resumes from its confirmed-stream position like any consumer. The signed coverage a `work_snapshot` frame once had to carry is gone: such a frame is admitted like any other, its reading order deciding which snapshot is newer. Unknown outcomes stay unknown with partial coverage, never a negative result.
 
 Resume packs are recomputed on suspension and on new evidence. The session-start hook reads a prepared pack; a stale or missing pack returns the episode's reference and age, never a synchronous rebuild or a model call (deadline and request shape: [agent arrival](recall.md#agent-arrival)). Polylogue's session-start brief embeds the here pack by reference with its budget share; Sinex owns presence, agency, attribution, episodes and the machine-side trail, and Polylogue owns its own half ([Polylogue agents](https://github.com/Sinity/polylogue/blob/master/docs/agents.md)).
 
@@ -179,8 +179,8 @@ What appears in "Worth a look" is chosen by **selection rules declared in the re
 - **Studies, findings, experiments and forecasts** are [personal evidence](evidence.md). A computed analysis is a `study.result`, keyed by the study revision and its evidence identity; reusing it requires the same question, method, grant-sensitive selection and evidence, and an exact historical result stays readable. Decided target: this replaces the current `recipe.answer`, because a recipe is a list of sections and an answer is one query evaluation ([vocabulary](vocabulary.md)).
 - **A finding** declares its evidence class (authorship class, epistemic role, claim status), period, unit, denominator, method and settings, estimability, estimate and uncertainty, caveats, and supporting and contradicting references. Association is never presented as causation.
 - **`rhythm.deviation`** is a stored event per day and measure, computed from a prior-only window (default 28 calendar days with at least 14 observed days, in settings). Too little evidence is not estimable, never a zero deviation. Retrospective baselines are not stored. Rhythm's default input measures are daily physical key presses and typing seconds from `input.workload`; only days with complete recorded input coverage enter the baseline, and fewer than 200 presses leaves typing seconds not estimable. `rhythm.window_days` and `rhythm.minimum_days` configure the window and required sample.
-- **`pattern.match`** finds configured sequences: kinds, ordered predicates, maximum gap and scope. It stores the template version, ordered parents and actual gaps, labelled as co-occurrence. Build, fix and test cycles, AI work followed by file overlap and a commit, and deep work followed by a commit are templates. Every valid match is stored; a top N is presentation.
-- **Relationships are typed reference events and joins**, not a stored graph: mention, about, same resource, explicit task or commit closure, membership; each endpoint is checked at admission. Time, project and containment relations are ordinary joins. Corroboration lists its sources, never a weighted score.
+- **`pattern.match`** finds configured sequences: kinds, ordered predicates, maximum gap and scope. It stores the template version, ordered parents and measured gaps, labelled as co-occurrence. Build, fix and test cycles, AI work followed by file overlap and a commit, and deep work followed by a commit are templates. Every valid match is stored; a top N is presentation.
+- **Relationships are typed reference events and joins**, not a stored graph: mention, about, same resource, explicit task or commit closure, membership; each endpoint is checked at admission. Time, project and containment relations are plain joins. Corroboration lists its sources, never a weighted score.
 - Agent annotations keep author, session, target, rubric and check state; an unchecked claim is never promoted into a measured fact.
 - **Operator time and agent time are never summed** in any pack, lane or figure.
 - **Compare is a verb.** Any two selections (this week and the prior four, this day a year ago, before and after a configuration change) compare lane by lane as figures with both sides' units, denominators and coverage; a side with insufficient coverage is not estimable. "On this day" is a compare across years, and a year without coverage is labelled unobserved.
@@ -207,14 +207,14 @@ Narratives are a first-class product: rich prose over the operator's recent past
 
 ### The narrative corpus
 
-- The corpus is a set of `narrative.entry` events per period, project and thread that agents and the operator extend and revise over stored evidence. Each entry has an author (computed by the daemon), citations, and the entry or entries it revises; a revision is a new entry naming its predecessor, never an edit.
+- The corpus is a set of `narrative.entry` events per period, project and thread that agents and the operator extend and revise over stored evidence. Each entry has an author (computed by the daemon), citations, and the entry or entries it revises; a revision is a new entry naming the previous entry, never an edit.
 - It differs from the assembly: the assembly is deterministic and keyed; the corpus is authored and accumulates.
-- It is read in the [reader web](web.md) and through the query language. Agents write entries through the ordinary authored-write path (`record`, [callers](interfaces.md#callers)); outside agents may also write through the ingress as outside derivations ([producers](producers.md)).
+- It is read in the [reader web](web.md) and through the query language. Agents write entries through the usual authored-write path (`record`, [callers](interfaces.md#callers)); outside agents may also write through the ingress as outside derivations ([producers](producers.md)).
 - Writing entries with a model is a model feature and is off; the record contract and the reader exist without it.
 
 ## Rest and the wake view
 
-- `rest.interval` comes from native wearable and phone exports, with measured or inferred boundaries and the instrument tier (band, phone, or inferred from input absence). A night without samples is `unknown`, never unslept. Source formats are in [source families](source-families.md).
+- `rest.interval` comes from the wearables' and phone's own exports, with measured or inferred boundaries and the instrument tier (band, phone, or inferred from input absence). A night without samples is `unknown`, never unslept. Source formats are in [source families](source-families.md).
 - `day.wake` is derived from `rest.interval` ends: one event per wake, with the rest interval as its parent. It offers a wake-to-wake view beside the logical day ([time](derivations.md#time)).
 - Rest has no fusion family: each provider's records stay separate. Overlapping records of one night are one rest for the wake view, whose wake is their latest end and whose parents are all of them.
 
@@ -228,11 +228,11 @@ Each is a derivation with its inputs, output kind, key and time rule.
 | Screen grounding | `screen.text`, accessibility text, `activity.span` → `screen.grounding` | joins recognised text to the attention span it was on screen during |
 | Plan versus actual | authored plans (todos, calendar, task estimates) and episodes → `plan.comparison` | descriptive; no score |
 | Consumption episodes | plays, visits, reading → `consumption.episode` | grouped by resource and session |
-| Communication threads | mail, chat → `thread.membership`, `thread.span` | identity from provider or account IDs or actual reply links, never subject text alone |
+| Communication threads | mail, chat → `thread.membership`, `thread.span` | identity from provider or account IDs or real reply links, never subject text alone |
 | Note links | a [note](recall.md#notes) anchored at an instant, and nearby records → `reference.about` | delayed linking by stable keys and containing time |
 | Paste attribution | clipboard and later text → `reference.pasted_from` | exact content identity |
 | Machine episodes and incidents | machine metrics, journal, unit intervals → `machine.episode`, `machine.incident` | thresholds from configuration; signatures as declared templates |
-| Component reports | typed component observations → `component.report` | requires an actual observation feed and an expected-component set; silence and run rows never imply a healthy status |
+| Component reports | typed component observations → `component.report` | requires a real observation feed and an expected-component set; silence and run rows never imply a healthy status |
 | Resource mentions | text fields → `resource.mention` | every URL, path, tool and email mention with exact field and range; an email address is not a person |
 
 ### Entities
@@ -249,7 +249,7 @@ Self-reports are [notes](recall.md#notes) whose body carries an instrument value
 
 ## What Lynchpin's purposes become
 
-Sinex's coverage of Lynchpin is judged by purpose, not by module, one purpose at a time, each switched off only when its replacement passes its named check ([retiring Lynchpin](evidence.md#retiring-lynchpin)). Lynchpin's MCP tools and actions map onto Sinex's ordinary surfaces: status, the query language, recall and the evidence units ([interfaces](interfaces.md)). Nothing needs a separate operations tool for materializing or pruning, because every product is a maintained derivation. Lynchpin's lessons kept: title normalisation and heartbeat re-merging belong in source parsers; agency is modelled and used; the attention parameters are a named profile; deep work and fragmentation are descriptive products shown in period and compare views with their numerators and denominators, never on Today and never as a score of the operator.
+Sinex's coverage of Lynchpin is judged by purpose, not by module, one purpose at a time, each switched off only when its replacement passes its named check ([retiring Lynchpin](evidence.md#retiring-lynchpin)). Lynchpin's MCP tools and actions map onto Sinex's usual surfaces: status, the query language, recall and the evidence units ([interfaces](interfaces.md)). Nothing needs a separate operations tool for materializing or pruning, because every product is a maintained derivation. Lynchpin's lessons kept: title normalisation and heartbeat re-merging belong in source parsers; agency is modelled and used; the attention parameters are a named profile; deep work and fragmentation are descriptive products shown in period and compare views with their numerators and denominators, never on Today and never as a score of the operator.
 
 ## Performance
 

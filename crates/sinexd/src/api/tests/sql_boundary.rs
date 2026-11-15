@@ -1,4 +1,4 @@
-//! Arbitrary SELECT expressions cannot change the SQL reader's authority.
+//! Arbitrary SELECT expressions cannot change the SQL reader's access.
 use super::*;
 
 #[devkit::test]

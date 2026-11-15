@@ -8,7 +8,7 @@ use sinex_model::event_types::capture::{Gap, SequenceGap};
 #[serde(transparent)]
 pub struct Carry(Vec<Head>);
 
-// Earlier parser versions carried null. It means no continuity evidence.
+// Earlier parser versions carried null. It means continuity is unknown.
 impl<'de> Deserialize<'de> for Carry {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         Ok(match Option::<Vec<Head>>::deserialize(deserializer)? {

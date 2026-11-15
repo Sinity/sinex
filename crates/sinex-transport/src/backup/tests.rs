@@ -38,7 +38,8 @@ async fn paused_producer_backup_keeps_checkpoint_before_later_acknowledgment() {
     let paused = PausedProducer::pause(client.clone(), Subjects::sinex(), producer.clone())
         .await
         .unwrap();
-    // An ACK arriving after P may not retire raw bytes or advance this checkpoint.
+    // An acknowledgment arriving after P may not delete raw bytes or advance
+    // this checkpoint.
     let later_source = source.clone();
     let (attempting, attempted) = tokio::sync::oneshot::channel();
     let advance = tokio::spawn(async move {
@@ -62,7 +63,7 @@ async fn paused_producer_backup_keeps_checkpoint_before_later_acknowledgment() {
         b"stable-frame-id:raw-bytes"
     );
     // Only captured producer bytes are restored alongside old core P. The later
-    // native checkpoint cannot cause the retained frame to be skipped on restart.
+    // checkpoint cannot cause the kept frame to be skipped on restart.
     std::fs::write(
         source.path().join("checkpoint"),
         std::fs::read(output.path().join("checkpoint")).unwrap(),
@@ -123,15 +124,15 @@ async fn producer_restart_refuses_the_old_pause_instead_of_copying_new_state() {
 }
 
 #[devkit::test]
-fn captured_native_bytes_survive_source_deletion_and_reject_symlinks() {
+fn captured_bytes_survive_source_deletion_and_reject_symlinks() {
     let source = tempfile::tempdir().unwrap();
     let output = tempfile::tempdir().unwrap();
-    std::fs::write(source.path().join("raw"), b"retained-source-bytes").unwrap();
+    std::fs::write(source.path().join("raw"), b"kept-source-bytes").unwrap();
     let files = capture_tree(source.path(), output.path(), &AtomicBool::new(false)).unwrap();
     std::fs::remove_file(source.path().join("raw")).unwrap();
     assert_eq!(
         std::fs::read(output.path().join("raw")).unwrap(),
-        b"retained-source-bytes"
+        b"kept-source-bytes"
     );
     let captured = Captured {
         directory: output,
@@ -144,7 +145,7 @@ fn captured_native_bytes_survive_source_deletion_and_reject_symlinks() {
 }
 
 #[devkit::test]
-fn cancellation_stops_a_native_copy_at_a_transfer_unit_without_a_finished_identity() {
+fn cancellation_stops_copy_at_a_transfer_unit() {
     struct CancellingReader<'a> {
         bytes: std::io::Cursor<Vec<u8>>,
         flag: &'a AtomicBool,
@@ -167,7 +168,7 @@ fn cancellation_stops_a_native_copy_at_a_transfer_unit_without_a_finished_identi
     assert_eq!(output, vec![7; 64 * 1024]);
     let source = tempfile::tempdir().unwrap();
     let destination = tempfile::tempdir().unwrap();
-    std::fs::write(source.path().join("raw"), b"owned bytes").unwrap();
+    std::fs::write(source.path().join("raw"), b"producer bytes").unwrap();
     assert!(
         capture_tree(source.path(), destination.path(), &flag)
             .unwrap_err()
@@ -177,7 +178,7 @@ fn cancellation_stops_a_native_copy_at_a_transfer_unit_without_a_finished_identi
 }
 
 #[devkit::test]
-async fn acknowledged_wait_markers_keep_native_sealing_outside_the_response_hash() {
+async fn wait_markers_stay_outside_the_response_hash() {
     use sinex_protocol::replies::ReplyFrame;
     let broker = devkit::nats::test_nats().unwrap();
     let producer = broker.prefix().to_owned();
@@ -188,15 +189,15 @@ async fn acknowledged_wait_markers_keep_native_sealing_outside_the_response_hash
     let mut observed = client.subscribe(format!("{prefix}.>")).await.unwrap();
     client.flush().await.unwrap();
     let (finish, finished) = tokio::sync::oneshot::channel();
-    let owner = client.clone();
+    let daemon = client.clone();
     let server = tokio::spawn(async move {
         let message = incoming.next().await.unwrap();
         crate::replies::respond_json_wait(
-            &owner,
+            &daemon,
             message.reply.unwrap().to_string(),
             async move {
                 finished.await.unwrap();
-                Some(serde_json::json!({"native_generation":"sealed"}))
+                Some(serde_json::json!({"generation":"sealed"}))
             },
             Duration::from_secs(2),
         )
@@ -213,7 +214,7 @@ async fn acknowledged_wait_markers_keep_native_sealing_outside_the_response_hash
                 return;
             }
         }
-        panic!("native sealing never advertised its wait");
+        panic!("sealing never advertised its wait");
     });
     let value: serde_json::Value = crate::replies::request_inbox(
         &client,
@@ -224,7 +225,7 @@ async fn acknowledged_wait_markers_keep_native_sealing_outside_the_response_hash
     )
     .await
     .unwrap();
-    assert_eq!(value, serde_json::json!({"native_generation":"sealed"}));
+    assert_eq!(value, serde_json::json!({"generation":"sealed"}));
     observer.await.unwrap();
     server.await.unwrap();
 }

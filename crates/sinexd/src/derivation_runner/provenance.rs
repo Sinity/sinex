@@ -28,7 +28,7 @@ pub(super) async fn stamp(
             versions
         };
         output.payload["read_as"] = position.into();
-        // Unchanged inputs retain their exact read context across a recompute.
+        // Unchanged inputs keep their read context across a recompute.
         if let Some(previous) = prior.get(&record_key(output))
             && output.class == previous.class
             && parent_ids(output) == parent_ids(previous)

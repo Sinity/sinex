@@ -118,11 +118,11 @@ async fn empty_directory_files_keep_distinct_paths_bytes_and_locations_through_r
             ("b.md", json!("")),
             ("c.md", json!("gamma"))
         ],
-        "ordinary capture: {before:?}; replay: {after:?}; removed: {final_notes:?}"
+        "capture: {before:?}; replay: {after:?}; removed: {final_notes:?}"
     );
     assert_eq!(
         after, before,
-        "replay preserves paths, exact bodies, record offsets and record hashes"
+        "replay preserves paths, bodies, record offsets and record hashes"
     );
     let record_offsets: std::collections::BTreeSet<_> = before.iter().map(|r| r.2).collect();
     assert_eq!(record_offsets.len(), 3);

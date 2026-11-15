@@ -166,7 +166,7 @@ fn startup_counts_an_unacknowledged_batch_once_and_then_counts_new_capture() {
 }
 
 #[devkit::test]
-fn a_native_spool_name_does_not_stop_health_reporting() {
+fn non_utf8_spool_name_keeps_health_reporting() {
     use std::os::unix::ffi::OsStringExt;
     let dir = tempfile::tempdir().unwrap();
     let spool = dir

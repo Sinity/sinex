@@ -241,18 +241,18 @@ impl KindDeclaration {
                 field,
                 evidence_field,
             } => {
-                let evidence = payload.get(evidence_field);
-                let quality = evidence
+                let time_quality = payload.get(evidence_field);
+                let quality = time_quality
                     .and_then(|value| value.get("quality"))
                     .cloned()
                     .and_then(|value| serde_json::from_value::<TimeQuality>(value).ok())
                     .unwrap_or(TimeQuality::Unknown);
                 if quality == TimeQuality::Unknown
-                    || evidence
+                    || time_quality
                         .and_then(|value| value.get("precision"))
                         .and_then(Value::as_str)
                         != Some("instant")
-                    || evidence
+                    || time_quality
                         .and_then(|value| value.get("until"))
                         .is_some_and(|value| !value.is_null())
                 {

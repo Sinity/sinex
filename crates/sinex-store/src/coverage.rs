@@ -1,4 +1,4 @@
-//! Source inventory for coverage reports. Coverage evidence is admitted as source.coverage events.
+//! Source inventory for coverage reports. Coverage itself is admitted as source.coverage events.
 use crate::Result;
 use sqlx::PgConnection;
 

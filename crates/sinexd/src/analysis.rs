@@ -1,6 +1,6 @@
-//! Stored analysis products and their presentation. Requests retain their
+//! Stored analysis products and their presentation. Requests keep their
 //! source bytes; the keyed product derivation maintains panels, answers,
-//! findings and context packs through the ordinary admission lifecycle.
+//! findings and context packs through the admission lifecycle.
 use crate::{Error, Result};
 use sinex_analysis::Span;
 use sinex_model::Timestamp;
@@ -24,7 +24,7 @@ pub(crate) use recipes::{Recipe, run};
 #[derive(Clone)]
 pub(crate) struct Settings {
     pub time_settings: TimeSettings,
-    /// The effective logical-day boundary and named zone, reported with every answer.
+    /// The effective day boundary and named zone, reported with every answer.
     pub label: String,
 }
 

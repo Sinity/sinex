@@ -75,7 +75,7 @@ fn expression_operands(e: &Expr, out: &mut Vec<(TimeFn, FieldRef)>) {
         _ => {}
     })
 }
-fn ordinary(e: &Expr) -> Option<Expr> {
+fn without_calendar_operands(e: &Expr) -> Option<Expr> {
     query_language::depth::deeper(|| {
         let mut needs = Vec::new();
         expression_operands(e, &mut needs);
@@ -83,7 +83,7 @@ fn ordinary(e: &Expr) -> Option<Expr> {
             return Some(e.clone());
         }
         if let Expr::And(a, b) = e {
-            match (ordinary(a), ordinary(b)) {
+            match (without_calendar_operands(a), without_calendar_operands(b)) {
                 (Some(a), Some(b)) => Some(Expr::And(Box::new(a), Box::new(b))),
                 (a, b) => a.or(b),
             }
@@ -185,7 +185,7 @@ pub(crate) async fn compile_with_stats(
 }
 
 impl Compiler<'_> {
-    /// A projected calendar label retains its shared bucket boundary.
+    /// A selected calendar label keeps its shared bucket boundary.
     pub(super) fn time_bucket_label(
         &self,
         func: TimeFn,
@@ -349,8 +349,8 @@ impl Preparation<'_> {
     ) -> Result<()> {
         if let Some((from, to)) = prefix.finite_time_bounds(field) {
             // SQL timestamp parameters have a microsecond grid. Include the
-            // adjacent grid points in this candidate superset; SQL retains its
-            // actual predicates and boundary membership uses exact nanoseconds.
+            // adjacent grid points in this candidate superset; SQL keeps the
+            // original predicates and boundary membership compares full nanoseconds.
             let from = from
                 .checked_sub(jiff::SignedDuration::from_micros(1))
                 .unwrap_or(from);
@@ -439,7 +439,7 @@ impl Preparation<'_> {
         Box::pin(async move {
             let mut prefix = Query {
                 source: q.source.clone(),
-                filter: q.filter.as_ref().and_then(ordinary),
+                filter: q.filter.as_ref().and_then(without_calendar_operands),
                 stages: vec![],
                 ranked: q.ranked,
             };
@@ -457,7 +457,7 @@ impl Preparation<'_> {
                 }
                 let mut input = prefix.clone();
                 if let Stage::Where(e) = stage
-                    && let Some(e) = ordinary(e)
+                    && let Some(e) = without_calendar_operands(e)
                 {
                     input.stages.push(Stage::Where(e));
                 }

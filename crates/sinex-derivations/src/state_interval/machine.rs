@@ -1,4 +1,5 @@
-//! Native machine transitions share the state-interval product and admission path.
+//! Captured machine transitions (units, sleep, boots) share the state-interval
+//! product and admission path.
 use super::*;
 use sinex_model::record::stable;
 const UNIT: &[&str] = &["unit.started", "unit.stopped", "boot.started"];

@@ -82,7 +82,7 @@ fn family_of(a: &Side, b: &Side) -> Result<&'static Family> {
 
 /// The placement a duplicate decision needs. Library items remain separate
 /// identities regardless of their dates; fusion decisions must fit the
-/// family's actual reading so its derivation can apply them.
+/// family's reading so its derivation can apply them.
 struct PairContext {
     family: Option<&'static Family>,
     key: Option<Value>,
@@ -268,7 +268,7 @@ impl Api {
             &self.host,
             now,
         );
-        let done = crate::intake::request(
+        let done = crate::submit::request(
             &mut conn,
             writer,
             &self.blobs,

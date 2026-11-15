@@ -192,9 +192,7 @@ async fn telemetry_payloads_use_the_callers_class_grants(db: devkit::pg::TestDat
 }
 
 #[devkit::test]
-async fn telemetry_uses_ordinary_admission_commit_order_and_visibility(
-    db: devkit::pg::TestDatabase,
-) {
+async fn telemetry_uses_admission_commit_order_and_visibility(db: devkit::pg::TestDatabase) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();

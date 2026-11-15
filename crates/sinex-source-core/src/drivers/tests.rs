@@ -125,11 +125,11 @@ fn batches_are_drained_lazily() {
         limits,
     )
     .unwrap()
-    .with_host(Some("owner-attested-host".into()));
+    .with_host(Some("daemon-host".into()));
     let mut batches = prepared.batches().unwrap();
     let first = batches.next().unwrap().unwrap();
     let BatchKind::Source(progress) = &first.kind else {
-        panic!("native progress required")
+        panic!("source progress required")
     };
     assert_eq!(
         progress.source,
@@ -138,7 +138,7 @@ fn batches_are_drained_lazily() {
             version: 1
         })
     );
-    assert_eq!(progress.host.as_deref(), Some("owner-attested-host"));
+    assert_eq!(progress.host.as_deref(), Some("daemon-host"));
     assert_eq!(
         progress.input.host, "h",
         "untrusted source claim is preserved independently"
@@ -252,7 +252,7 @@ fn backfill_of_a_large_file_peaks_well_under_its_size() {
         grew >> 20,
         size >> 20
     );
-    // Allocator reuse settles a few MiB above the first part's peak; a
+    // Allocator reuse levels off a few MiB above the first part's peak; a
     // 192 MiB input measured the same as this one (34 MiB grown).
     let later = peak.saturating_sub(after_first.unwrap());
     assert!(

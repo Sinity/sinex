@@ -26,7 +26,7 @@ use tokio::sync::{Notify, watch};
 use tokio::task::JoinSet;
 
 /// How often the derivation runner looks for work when no commit woke it:
-/// keys whose outputs wait on evidence outside their window settle with time.
+/// keys whose outputs wait on readings outside their window are decided as time passes.
 const RUNNER_IDLE: Duration = Duration::from_secs(30);
 
 /// How often the binding runner reads every configured binding again.
@@ -523,7 +523,7 @@ async fn finish_tasks(
         shutdown.record(done);
     }
     let released = if writer_connected {
-        // Reacquiring the same session lock proves that the preceding native
+        // Reacquiring the same session lock shows that the daemon's previous
         // writer released its transaction and claim, including after abort.
         forget_admitted(database, blobs).await
     } else {

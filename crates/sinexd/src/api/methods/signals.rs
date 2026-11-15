@@ -1,4 +1,4 @@
-//! Authored signal revisions are ordinary request material.
+//! Authored signal revisions are submitted as request material.
 use super::*;
 use crate::{Error, Result};
 use sinex_model::event_types::signal::{RuleWritten, SignalRecord};
@@ -143,7 +143,7 @@ impl Api {
             grants: grants.collect(),
             written_at: now,
         }));
-        let done = crate::intake::request(
+        let done = crate::submit::request(
             &mut conn,
             writer,
             &self.blobs,

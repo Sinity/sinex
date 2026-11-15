@@ -44,7 +44,7 @@ impl Session {
         }
     }
 
-    fn evidence(&mut self, phase: &str) -> String {
+    fn diagnostics(&mut self, phase: &str) -> String {
         let child = self.child.as_mut().unwrap();
         let pid = child.id();
         let status = child.try_wait();
@@ -97,7 +97,7 @@ impl Session {
             assert!(
                 Instant::now() < self.until,
                 "session did not report {count} publishing failures (saw {failed}); {}",
-                self.evidence("waiting for publishing failure")
+                self.diagnostics("waiting for publishing failure")
             );
             let read = reader.read_line(&mut line).unwrap();
             self.stderr_read += read as u64;
@@ -111,7 +111,7 @@ impl Session {
                 assert!(
                     !line.is_empty(),
                     "session ended before publishing failed: {log}; {}",
-                    self.evidence("waiting for publishing failure")
+                    self.diagnostics("waiting for publishing failure")
                 );
             }
             log.push_str(&line);
@@ -137,7 +137,7 @@ impl Session {
             assert!(
                 Instant::now() < self.until,
                 "session did not stop on its own; {}",
-                self.evidence("waiting for session exit")
+                self.diagnostics("waiting for session exit")
             );
             std::thread::sleep(Duration::from_millis(10));
         }
@@ -301,7 +301,7 @@ exec sleep 3600
                 self.pids().into_iter().take(4).collect::<Vec<_>>(),
                 self.descendants().into_iter().take(4).collect::<Vec<_>>(),
                 std::fs::metadata(self.root.join("heartbeat")).map(|m| m.len()),
-                session.evidence("waiting for fake capture readiness")
+                session.diagnostics("waiting for fake capture readiness")
             );
             std::thread::sleep(Duration::from_millis(10));
         }
@@ -337,7 +337,7 @@ exec sleep 3600
             assert!(
                 Instant::now() < session.until,
                 "capture stopped after publishing failed; {}",
-                session.evidence("waiting for capture heartbeat after publishing failure")
+                session.diagnostics("waiting for capture heartbeat after publishing failure")
             );
             std::thread::sleep(Duration::from_millis(10));
         }
@@ -362,10 +362,7 @@ exec sleep 3600
         let pids = self.pids();
         let descendants = self.descendants();
         assert!(!pids.is_empty(), "at least one real child was required");
-        assert!(
-            !descendants.is_empty(),
-            "the child had an actual descendant"
-        );
+        assert!(!descendants.is_empty(), "the child had a descendant");
         for pid in pids.into_iter().chain(descendants) {
             assert!(
                 !Path::new(&format!("/proc/{pid}")).exists(),
@@ -507,7 +504,7 @@ fn a_first_record_after_saved_empty_polls_reaches_transport_while_capture_contin
         assert!(
             Instant::now() < session.until,
             "both empty spool polls were not saved; {}",
-            session.evidence("waiting for saved empty spool polls")
+            session.diagnostics("waiting for saved empty spool polls")
         );
         std::thread::sleep(Duration::from_millis(10));
     }
@@ -637,7 +634,7 @@ async fn capture_stops_its_child_when_only_the_command_receives_sigterm() {
         assert!(
             Instant::now() < daemon.until,
             "journal reader did not start; {}",
-            daemon.evidence("waiting for journal reader startup")
+            daemon.diagnostics("waiting for journal reader startup")
         );
         tokio::time::sleep(Duration::from_millis(10)).await;
     };
@@ -656,7 +653,7 @@ async fn capture_stops_its_child_when_only_the_command_receives_sigterm() {
         assert!(
             Instant::now() < daemon.until,
             "capture did not stop after SIGTERM; {}",
-            daemon.evidence("waiting for journal command exit")
+            daemon.diagnostics("waiting for journal command exit")
         );
         tokio::time::sleep(Duration::from_millis(10)).await;
     }

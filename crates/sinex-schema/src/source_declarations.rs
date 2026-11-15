@@ -1,4 +1,4 @@
-//! Registered native source versions and owner-assigned transport provenance.
+//! Registered built-in source versions and daemon-assigned transport provenance.
 pub(crate) const TABLE: &str = "CREATE TABLE registry.source_declarations (
   name text NOT NULL,
   version bigint NOT NULL CHECK (version >= 0),

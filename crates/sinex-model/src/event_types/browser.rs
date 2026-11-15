@@ -16,7 +16,7 @@ use serde_json::{Map, Value};
     quality = intrinsic
 )]
 pub struct BrowserVisit {
-    /// Native file generation scoped by the event's host and profile.
+    /// Generation of the browser's database file, scoped by the event's host and profile.
     pub database_generation: String,
     /// The profile directory, such as `google-chrome/Default`.
     pub profile: String,
@@ -48,7 +48,7 @@ pub struct BrowserVisit {
     quality = intrinsic
 )]
 pub struct BrowserUrl {
-    /// Native file generation scoped by the event's host and profile.
+    /// Generation of the browser's database file, scoped by the event's host and profile.
     pub database_generation: String,
     pub profile: String,
     /// Chromium's `urls.id`.

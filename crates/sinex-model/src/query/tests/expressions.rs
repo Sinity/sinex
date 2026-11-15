@@ -103,7 +103,7 @@ fn natural_matches_follow_the_field_vocabulary() {
 }
 
 #[devkit::test]
-fn year_is_an_integer_and_native_commands_use_the_operation_boundary() {
+fn year_is_integer_and_commands_need_an_operation() {
     let query = q("events | fields year(when) as calendar_year | where calendar_year >= 2026");
     assert!(matches!(&query.stages[1], Stage::Where(Expr::Compare {
         lhs: Operand::Field(FieldRef::TypedGroup(column)), ..
@@ -118,11 +118,11 @@ fn year_is_an_integer_and_native_commands_use_the_operation_boundary() {
 }
 
 #[devkit::test]
-fn saved_authored_evidence_does_not_replace_the_executable_template() {
+fn saved_text_does_not_replace_its_template() {
     use crate::query::saved::{SavedQuery, bind_saved};
     use std::collections::BTreeMap;
     let mut definition = SavedQuery::from_text(
-        "retained".into(),
+        "kept".into(),
         "events where source = synthetic".into(),
         vec![],
         &ctx(),
@@ -130,9 +130,9 @@ fn saved_authored_evidence_does_not_replace_the_executable_template() {
     .unwrap();
     definition.query = "events where source = changed".into();
     let bound = bind_saved(
-        "query:retained",
+        "query:kept",
         &ctx(),
-        &BTreeMap::from([("retained".into(), definition)]),
+        &BTreeMap::from([("kept".into(), definition)]),
     )
     .unwrap();
     assert!(

@@ -21,7 +21,7 @@ async fn tombstone(conn: &mut PgConnection, id: Uuid) {
 }
 
 #[devkit::test]
-async fn exact_pairs_survive_gaps_redelivery_and_partial_erasure(db: devkit::pg::TestDatabase) {
+async fn published_pairs_survive_gaps_redelivery_and_partial_erasure(db: devkit::pg::TestDatabase) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     let a = Uuid::from_u128(1);
     let gap = Uuid::from_u128(2);
@@ -129,7 +129,7 @@ async fn duplicate_acknowledgments_are_erased_without_losing_other_copies(
 }
 
 #[devkit::test]
-async fn random_identifiers_keep_exact_copies_through_scattered_erasure(
+async fn random_identifiers_keep_every_copy_through_scattered_erasure(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();

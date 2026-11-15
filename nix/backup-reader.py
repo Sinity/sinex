@@ -44,7 +44,8 @@ def main():
             if metadata.st_uid != uid or metadata.st_mode & 0o077:
                 raise ValueError("backup artifact directories must be private to the daemon")
         # The cwd inode remains pinned even if the daemon renames its parents.
-        # Borg's ordinary Linux walk opens children with O_NOFOLLOW; no
+        # Borg's Linux directory walk opens children with O_NOFOLLOW; no
+
         # --read-special option is enabled by this module.
         os.fchdir(fd)
     finally:

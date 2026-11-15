@@ -108,7 +108,7 @@ pub(crate) async fn materialize(
             request.by = actor.into();
             let now = Timestamp::now();
             let acquired = super::request::request_material(request.clone(), actor, host, now);
-            let done = crate::intake::request(
+            let done = crate::submit::request(
                 conn,
                 writer,
                 blobs,

@@ -32,7 +32,7 @@ pub async fn load(
         return Ok(BTreeMap::new());
     }
     // A caller may name the same kind once per event. SQL joins and immutable
-    // definition validation operate on exact kind identities, once each.
+    // definition validation operate on each kind name and version once.
     let refs = refs.iter().collect::<BTreeSet<_>>();
     let names: Vec<_> = refs.iter().map(|r| r.name.clone()).collect();
     let versions: Vec<_> = refs

@@ -34,23 +34,23 @@ fn item(path: &Path) -> Item {
     }
 }
 
-fn disposition<'a>(file: &'a StagedFile, name: &str) -> &'a Disposition {
+fn outcome<'a>(file: &'a StagedFile, name: &str) -> &'a Outcome {
     &file
         .members
         .iter()
         .find(|m| m.name == name)
         .unwrap_or_else(|| panic!("{name} is not in the inventory"))
-        .disposition
+        .outcome
 }
 
-fn read_by(source: &str) -> Disposition {
-    Disposition::Read {
+fn read_by(source: &str) -> Outcome {
+    Outcome::Read {
         sources: vec![source.into()],
     }
 }
 
-fn not_interpreted() -> Disposition {
-    Disposition::StoredNotInterpreted { candidates: vec![] }
+fn not_interpreted() -> Outcome {
+    Outcome::StoredNotInterpreted { candidates: vec![] }
 }
 
 /// A Takeout export in three parts, as Google splits a large one: products
@@ -109,19 +109,19 @@ fn stage_inventory_total() {
 
     let first = &plan.files[0];
     assert_eq!(
-        disposition(first, "Takeout/Keep/First note.json"),
+        outcome(first, "Takeout/Keep/First note.json"),
         &read_by(google_takeout::keep::SPEC.name)
     );
     assert_eq!(
-        disposition(first, "Takeout/Chrome/History.json"),
+        outcome(first, "Takeout/Chrome/History.json"),
         &read_by(takeout_chrome::SPEC.name)
     );
     assert_eq!(
-        disposition(first, "Takeout/Travel/Trips.json"),
+        outcome(first, "Takeout/Travel/Trips.json"),
         &not_interpreted()
     );
     assert_eq!(
-        disposition(first, "Takeout/archive_browser.html"),
+        outcome(first, "Takeout/archive_browser.html"),
         &not_interpreted()
     );
     let FileReading::Parsed { formats } = &first.reading else {
@@ -142,11 +142,11 @@ fn stage_inventory_total() {
 
     let second = &plan.files[1];
     assert_eq!(
-        disposition(second, "Takeout/Calendar/Personal.ics"),
+        outcome(second, "Takeout/Calendar/Personal.ics"),
         &read_by(sources::calendar::SPEC.name)
     );
     assert_eq!(
-        disposition(second, "Takeout/Tasks/Tasks.json"),
+        outcome(second, "Takeout/Tasks/Tasks.json"),
         &read_by(google_takeout::tasks::SPEC.name)
     );
 
@@ -155,7 +155,7 @@ fn stage_inventory_total() {
     assert_eq!(third.reading, FileReading::Unparsed { candidates: vec![] });
     assert!(third.bindings.is_empty());
     assert_eq!(
-        disposition(third, "Takeout/Drive/Document.pdf"),
+        outcome(third, "Takeout/Drive/Document.pdf"),
         &not_interpreted()
     );
 }
@@ -168,14 +168,14 @@ fn a_failed_binding_marks_exactly_its_members_failed() {
     let file = &mut plan.files[0];
     file.mark_failed(google_takeout::keep::SPEC.name, "synthetic read error");
     assert_eq!(
-        disposition(file, "Takeout/Keep/First note.json"),
-        &Disposition::Failed {
+        outcome(file, "Takeout/Keep/First note.json"),
+        &Outcome::Failed {
             sources: vec![google_takeout::keep::SPEC.name.into()],
             reason: "synthetic read error".into()
         }
     );
     assert_eq!(
-        disposition(file, "Takeout/Chrome/History.json"),
+        outcome(file, "Takeout/Chrome/History.json"),
         &read_by(takeout_chrome::SPEC.name)
     );
     assert_eq!(file.members.len(), listed(&parts[0]).len());
@@ -280,8 +280,8 @@ fn stage_strict_detection() {
     );
     assert!(staged.files[0].bindings.is_empty());
     assert_eq!(
-        disposition(&staged.files[0], "history-one"),
-        &Disposition::StoredNotInterpreted {
+        outcome(&staged.files[0], "history-one"),
+        &Outcome::StoredNotInterpreted {
             candidates: vec!["first-synthetic".into(), "second-synthetic".into()]
         }
     );
@@ -314,19 +314,19 @@ fn a_member_two_sources_would_read_is_read_by_neither() {
     // messenger reader, so neither Keep, Chrome nor messenger reads them; the
     // candidates are the formats `--parser` would take.
     assert_eq!(
-        disposition(file, "Takeout/Keep/Contested.json"),
-        &Disposition::StoredNotInterpreted {
+        outcome(file, "Takeout/Keep/Contested.json"),
+        &Outcome::StoredNotInterpreted {
             candidates: vec!["messenger".into(), "takeout".into()]
         }
     );
     assert_eq!(
-        disposition(file, "Takeout/Chrome/History.json"),
-        &Disposition::StoredNotInterpreted {
+        outcome(file, "Takeout/Chrome/History.json"),
+        &Outcome::StoredNotInterpreted {
             candidates: vec!["messenger".into(), "takeout-chrome".into()]
         }
     );
     assert_eq!(
-        disposition(file, "Takeout/Keep/media/photo.jpg"),
+        outcome(file, "Takeout/Keep/media/photo.jpg"),
         &not_interpreted()
     );
     assert!(file.bindings.is_empty());
@@ -363,7 +363,7 @@ fn a_named_parser_reads_without_detection() {
         }
     );
     assert_eq!(
-        disposition(&staged.files[0], "history"),
+        outcome(&staged.files[0], "history"),
         &read_by(bash::SPEC.name)
     );
     let error = plan(
@@ -474,11 +474,8 @@ fn a_tgz_is_inventoried_without_writing_its_members_out() {
         ]
     );
     assert_eq!(
-        disposition(file, "Takeout/Keep/Note.json"),
+        outcome(file, "Takeout/Keep/Note.json"),
         &read_by(google_takeout::keep::SPEC.name)
     );
-    assert_eq!(
-        disposition(file, "Takeout/Drive/Large.bin"),
-        &not_interpreted()
-    );
+    assert_eq!(outcome(file, "Takeout/Drive/Large.bin"), &not_interpreted());
 }

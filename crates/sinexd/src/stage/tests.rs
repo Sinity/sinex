@@ -145,7 +145,7 @@ async fn a_multipart_takeout_is_inventoried_and_accounted(db: devkit::pg::TestDa
             .collect();
         assert_eq!(inventoried, listed);
     }
-    let disposition = |file: &Value, name: &str| {
+    let member_outcome = |file: &Value, name: &str| {
         file["members"]
             .as_array()
             .unwrap()
@@ -154,9 +154,9 @@ async fn a_multipart_takeout_is_inventoried_and_accounted(db: devkit::pg::TestDa
             .unwrap()["disposition"]
             .clone()
     };
-    assert_eq!(disposition(&files[0], "Takeout/Keep/First.json"), "read");
+    assert_eq!(member_outcome(&files[0], "Takeout/Keep/First.json"), "read");
     assert_eq!(
-        disposition(&files[0], "Takeout/Travel/Trips.json"),
+        member_outcome(&files[0], "Takeout/Travel/Trips.json"),
         "stored_not_interpreted"
     );
     assert_eq!(files[2]["reading"]["as"], "unparsed");

@@ -45,7 +45,7 @@ fn nested_includes_keep_context_duplicate_references_cycles_missing_files_and_ch
             .to_string()
             .contains("include cycle")
     );
-    // The child is its own ordinary input: its revision is not hidden by unchanged parent bytes.
+    // The child is an input of its own: its revision is not hidden by unchanged parent bytes.
     assert_eq!(bindings[0].input, child);
     std::fs::write(&child, "03/01 Changed\n  Assets:Example  2 TEST\n").unwrap();
     let changed = plan(&root, &settings).unwrap();
@@ -165,7 +165,7 @@ fn nested_duplicate_include_paths_remain_distinct() {
 }
 
 #[devkit::test]
-fn native_time_formats_are_kept_as_written_records_without_generating_transactions() {
+fn time_formats_are_kept_as_written_records_without_transactions() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("main.journal");
     std::fs::write(
@@ -188,7 +188,7 @@ fn native_time_formats_are_kept_as_written_records_without_generating_transactio
             .find(|b| b.input.file_name().unwrap() == name)
             .unwrap();
         let source = (super::super::FORMAT.source)(binding).unwrap();
-        let events = super::super::tests::intake::export_restart(
+        let events = super::super::tests::shared_read::export_restart(
             bytes,
             super::super::driver(binding.input.clone(), binding.settings.host.clone()),
             source.as_ref(),
@@ -261,7 +261,7 @@ fn parsed_include_records_keep_one_resolution_list_per_duplicate() {
     let bindings = plan(&root, &Settings::new("example-host")).unwrap();
     let binding = bindings.iter().find(|b| b.input == root).unwrap();
     let source = (super::super::FORMAT.source)(binding).unwrap();
-    let events = super::super::tests::intake::export_restart(
+    let events = super::super::tests::shared_read::export_restart(
         raw,
         super::super::driver(root, "example-host".into()),
         source.as_ref(),
@@ -288,7 +288,7 @@ fn changed_include_block_reports_unavailable_resolution_without_using_the_previo
     let binding = bindings.iter().find(|b| b.input == root).unwrap();
     let source = (super::super::FORMAT.source)(binding).unwrap();
     let changed = b"include other.journal\n";
-    let events = super::super::tests::intake::export_restart(
+    let events = super::super::tests::shared_read::export_restart(
         changed,
         super::super::driver(root, "example-host".into()),
         source.as_ref(),
@@ -343,7 +343,7 @@ fn prefixed_includes_strip_inline_comments_and_preserve_the_declared_format_and_
     assert_eq!(bindings[1].settings.options["journal_format"], "timedot");
     let binding = bindings.iter().find(|b| b.input == root).unwrap();
     let source = (super::super::FORMAT.source)(binding).unwrap();
-    let events = super::super::tests::intake::export_restart(
+    let events = super::super::tests::shared_read::export_restart(
         raw,
         super::super::driver(root, "example-host".into()),
         source.as_ref(),

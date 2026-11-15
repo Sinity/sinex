@@ -20,7 +20,7 @@ pub fn derived<'a, P: EventPayload>(
     .expect("derived payloads are keyed objects with at least one parent")
 }
 
-/// A declared JSON output; bundled declarations also supply their exact Rust
+/// A declared JSON output; bundled declarations also supply their Rust
 /// validator. Invalid and unavailable definitions are explicit errors.
 pub fn derived_json<'a>(
     declaration: &sinex_model::KindDeclaration,
@@ -81,7 +81,7 @@ fn build<'a>(
     make(Origin::Derived { parents }, hash, class)
 }
 
-/// The complete stored payload and exact parents determine a derived reading.
+/// The complete stored payload and its parents determine a derived reading.
 pub fn payload_hash(payload: &Value, parents: &[EventId]) -> [u8; 32] {
     let mut sorted = parents.to_vec();
     sorted.sort_unstable();

@@ -14,7 +14,7 @@ Every computation from admitted evidence upward runs as a derivation: a declared
 
 - A **per-event derivation** maps one admitted input to zero or more outputs.
 - A **keyed derivation** computes the complete output set of one key (a period, a scope, an episode) from the inputs it selects, including intervals that overlap its period.
-- Derivations read only committed events, in commit order. Inside `sinexd` they read PostgreSQL and admit directly; outside, they are durable subscribers of the [confirmed stream](producers.md#the-confirmed-stream) and send their outputs back through the ingress. Both obey every rule on this page.
+- Derivations read only committed events, in commit order. Inside `sinexd` they read PostgreSQL and admit directly; outside, they are subscribers of the [confirmed stream](producers.md#the-confirmed-stream) and send their outputs back through the ingress. Both obey every rule on this page.
 - Paged readers choose event identities and apply their row and byte budgets before fetching payloads. A separate materialized fetch loads payloads for that ID batch once before joining its page metadata. Its inclusive UUID bounds exclude chunks and compressed row groups outside the selected ID range; exact membership excludes gaps inside that range. A sparse batch can span unselected row groups inside its bounds, so the row budget alone does not bound decompression work.
 - The daemon does the I/O; the `sinex-derivations` crate computes from supplied values, so every computation is testable without a database.
 - A derivation reads its inputs in a read snapshot that ends before its outputs go to the writer. A snapshot held across a wait on the writer would keep its locks on event chunks; an exclusive chunk lock request queued behind them (TimescaleDB compression asks for one) would then hold back the writer's own chunk locks, a wait cycle PostgreSQL cannot detect because one edge is inside the daemon. A keyed pass larger than one writer batch reads each batch's keys in a new snapshot with its own read mark; keys not yet computed when a batch fills are read again in the next one.
@@ -36,7 +36,7 @@ Every computation from admitted evidence upward runs as a derivation: a declared
 The `analysis.products` derivation reads admitted `analysis.request` questions,
 selected daily figures and `source.coverage` observations. It stores panels,
 recipe answers, findings and daily context packs. An empty or not-estimable answer
-retains its request as a parent. Questions reuse their canonical identity; changed
+keeps its request as a parent. Questions reuse their identity; changed
 inputs replace the complete output set. The selected coverage retains the latest
 read status per source binding and host, including failure reasons, alongside the
 declared intervals that overlap the question. A running process or a successful
@@ -62,11 +62,11 @@ Registration is validated at start. Unknown types, dependency cycles and unimple
 
 A keyed derivation reads outward until its semantic stop: a genuine gap, a matching closing transition, or the end of stored evidence.
 
-- It records the ranges it actually read for each key, empty ranges included: scope, kinds and the commit-position interval read. These ranges are also how a keyed aggregate cites its parents ([payload](#the-common-payload-contract)). Any later insertion, change of time or scope, replacement or lifecycle transition intersecting those ranges marks the key dirty.
+- It records the ranges it read for each key, empty ranges included: scope, kinds and the commit-position interval read. These ranges are also how a keyed aggregate cites its parents ([payload](#the-common-payload-contract)). Any later insertion, change of time or scope, replacement or lifecycle transition intersecting those ranges marks the key dirty.
 - Before clearing a key, the runner checks for changes since the read in the key's newly computed ranges, not only its former ones. A dirty mark raised during a computation survives that computation's commit.
 - There is no fixed lookback, neighbour count, day edge, event count or maximum duration. A polling horizon may stop periodic refresh, but it never makes a later closer irrelevant: a closer arriving a month late still changes the key.
 
-Admission checks affected output ranges in the same transaction as the input change. Its session writer claim excludes concurrent lifecycle and output-replacement writes throughout the paged check. It traverses the selected derivations' existing output memberships in key order, excluding archived members by event identity. Each transfer page binds its exact event IDs before reading payloads; the payload read is prepared afresh so PostgreSQL can prune compressed batches using those IDs. A range is then tested against that retained payload once, with inclusive endpoints and the declaration's null and open-end rules. All transfer pages contribute to one distinct affected-key set; paging never limits which keys become dirty.
+Admission checks affected output ranges in the same transaction as the input change. Its session writer claim excludes concurrent lifecycle and output-replacement writes throughout the paged check. It traverses the selected derivations' existing output memberships in key order, excluding archived members by event identity. Each transfer page binds its event IDs before reading payloads; the payload read is prepared afresh so PostgreSQL can prune compressed batches using those IDs. A range is then tested against that payload once, with inclusive endpoints and the declaration's null and open-end rules. All transfer pages contribute to one distinct affected-key set; paging never limits which keys become dirty.
 
 ## Versions
 
@@ -77,9 +77,9 @@ Every event records the producer version of the parser or derivation that made i
 - **Nothing recomputes at daemon start.** A build carrying a new version computes only new and dirty keys with it, and answers spanning both versions disclose the mix. History is recomputed, for `recompute` derivations, only by the switch, after its compare. Status shows each derivation's pending switch and its compare result.
 - **A changed setting is a new version.** A change to anything a derivation reads as configuration (a profile parameter, the logical-day boundary, a fusion rule file) is a version change of that derivation and follows the same rules.
 
-`recompute DERIVATION --compare` stores a comparison ID tied to the installed build, its logical-day settings, and the input and lifecycle positions used throughout the comparison. Its initial per-kind input fingerprint and native commit/change range boundaries come from one statement snapshot. The after-check and switch inspect only newer events and visibility changes of the input kinds, plus the existing tombstone counter. Unrelated captures do not invalidate the comparison. Per-event comparisons match prior unarchived outputs by exact parent membership; an output citing several inputs participates in each input's comparison. The initial fingerprint streams matching-kind metadata once through the existing kind indexes; it does not search unrelated newer history through the global commit feed. Validation does not repeat that history scan. A comparison that covered only a time range cannot select a version. `recompute DERIVATION --switch ID` consumes a full comparison of that same declaration and build; changed inputs refuse the switch and require another comparison. The writer records the caller and comparison in `producer_switch`, selects the version and, for `recompute`, archives its live output chains before scheduling the complete new output set. A `keep_history` declaration preserves those chains and its read position. Startup records available producers and leaves stored keys and positions unchanged. It loads historical reading-order maxima for its per-event producers together from retained run/event history, including archived and replaced readings; empty or absent producers start at zero. `status` lists selected and available versions. Runs record the full source commit and dirty flag; a build lacking that identity refuses producer execution.
+`recompute DERIVATION --compare` stores a comparison ID tied to the installed build, its logical-day settings, and the input and lifecycle positions used throughout the comparison. Its initial per-kind input fingerprint and commit/change range boundaries come from one statement snapshot. The after-check and switch inspect only newer events and visibility changes of the input kinds, plus the existing tombstone counter. Unrelated captures do not invalidate the comparison. Per-event comparisons match prior unarchived outputs by exact parent membership; an output citing several inputs participates in each input's comparison. The initial fingerprint streams matching-kind metadata once through the existing kind indexes; it does not search unrelated newer history through the global commit feed. Validation does not repeat that history scan. A comparison that covered only a time range cannot select a version. `recompute DERIVATION --switch ID` consumes a full comparison of that same declaration and build; changed inputs refuse the switch and require another comparison. The writer records the caller and comparison in `producer_switch`, selects the version and, for `recompute`, archives its live output chains before scheduling the complete new output set. A `keep_history` declaration preserves those chains and its read position. Startup records available producers and leaves stored keys and positions unchanged. It loads historical reading-order maxima for its per-event producers together from stored run/event history, including archived and replaced readings; empty or absent producers start at zero. `status` lists selected and available versions. Runs record the full source commit and dirty flag; a build lacking that identity refuses producer execution.
 
-Stored products disclose the producers that actually made their selected inputs and ancestors,
+Stored products disclose the producers that made their selected inputs and ancestors,
 grouped by source, run manifest and build, and material parser version. A shared
 daemon run does not replace a source parser's version. Missing historical run or
 manifest metadata remains an explicit null entry with its event count.
@@ -88,9 +88,9 @@ manifest metadata remains an explicit null entry with its event count.
 
 - A derived record's key is computed from its parents' keys or offsets plus its window or scope; never from the producer version, event IDs, commit order or text alone. Typed opaque fields are encoded as tuples, never joined by punctuation. (Record keys in general: [identity](events.md#identity).)
 - A new version's output for the same key is a new reading of the same record; the previous reading is its history.
-- Request-made derived events (a recipe answer, a kept query result, a finding produced for a question) are keyed `query:<hash>` over the canonical question plus its resolved read context, and recompute like any keyed aggregate.
-- Ties break by stable keys: material digest, anchor, output index or source record key, then genuine source order where the source records one. Never commit order, arrival order or event ID, all of which replay changes.
-- A late first member, bridge, split or merge can change keys. Every affected owner is recomputed and its full set replaced. No alias redirects an old group to an arbitrarily chosen new one: a current query may return several replacement groups, and an exact citation of the old reading stays historical.
+- Request-made derived events (a recipe answer, a kept query result, a finding produced for a question) are keyed `query:<hash>` over the question in canonical form plus its resolved read context, and recompute like any keyed aggregate.
+- Ties break by stable keys: material digest, record offset, output index or source record key, then genuine source order where the source records one. Never commit order, arrival order or event ID, all of which replay changes.
+- A late first member, bridge, split or merge can change keys. Every affected group is recomputed and its full set replaced. No alias redirects an old group to an arbitrarily chosen new one: a current query may return several replacement groups, and an exact citation of the old reading stays historical.
 
 ## Derivations and the lifecycle
 
@@ -100,7 +100,7 @@ The states, archive, restore, replay and tombstone are defined in [the lifecycle
 - **Keyed aggregates re-derive.** Archiving one input of a keyed aggregate (a day's figures, an episode, a fused group) archives the aggregate and marks its key dirty; the derivation then produces a new reading from what remains live. A keyed output whose inputs are unchanged is re-admitted as a new reading over live parents, never kept over archived ones.
 - **Per-event outputs check their parent at admission.** An output whose parent was archived while it was being computed is refused by admission, and its key is dirtied again.
 - **Restore re-derives.** Restoring a chain whose root is a keyed aggregate restores nothing stored: its keys are marked dirty and recompute from what is live, once, after the restore's last batch.
-- **Tombstoned events are never parents.** A derivation never selects a tombstoned event; a new reading of the same record, by replay or re-import, is an ordinary input.
+- **Tombstoned events are never parents.** A derivation never selects a tombstoned event; a new reading of the same record, by replay or re-import, is an input like any other.
 - Derived subtrees replay like anything else ([replay](lifecycle.md#replay)).
 
 ## Time
@@ -193,12 +193,12 @@ Two families are defined and built (default; open operator question):
 
 | Output | Inputs | Content |
 |---|---|---|
-| `command.fused` | the shell integration's `command.reported`, Atuin's rows, the shells' history files, and kitty's `cmd_end` reports holding a token; other history databases join only when defined against their actual sources | exact command text after outer trimming, host, start, optional cwd, session, duration, exit and execution token, members with how each joined, basis, all parents |
+| `command.fused` | the shell integration's `command.reported`, Atuin's rows, the shells' history files, and kitty's `cmd_end` reports holding a token; other history databases join only when defined against their sources | exact command text after outer trimming, host, start, optional cwd, session, duration, exit and execution token, members with how each joined, basis, all parents |
 | `mail.fused` | Gmail, IMAP, Maildir, mbox and Outlook copies of one account | account, Message-ID, headers, labels, members with how each joined, basis |
 
-- **Commands** are scoped by host. The shell integration Sinex ships mints one execution token (a UUIDv7 of the command's start) per command; its report and kitty's record of the command's end both carry it, so they join by identifier (namespace `execution`) whatever their time distance: a key reads a token's partners however far from its hour, and a record holding a token dirties the hours of the record that started it, found at the token's mint time. Every partner lies within the token's lifetime, from its mint time to the end the report records (`token_length`, the report's `duration_ns`), widened by the family's window; a read for a token's partners is an indexed range that stops there, so a token without a partner costs one bounded read. Kitty's records join only by token, never by time, and never count as a command of their own: one without a token is not a command occurrence, and one whose report is lost leaves the command to the Atuin row. A record of a command's end is timed at the end while the fused record is timed at the start, so a consumer reading the later window would otherwise count the command twice. The report also records the Atuin row started for the execution, which joins it by identifier (namespace `atuin`) within one key's reach. Otherwise commands match closest first within 2 s, and within 60 s only when the match is unique. A command's hour is the hour of its first start.
+- **Commands** are scoped by host. The shell integration Sinex ships makes one execution token (a UUIDv7 of the command's start) per command; its report and kitty's record of the command's end both carry it, so they join by identifier (namespace `execution`) whatever their time distance: a key reads a token's partners however far from its hour, and a record holding a token dirties the hours of the record that started it, found at the token's creation time. Every partner lies within the token's lifetime, from its creation time to the end the report records (`token_length`, the report's `duration_ns`), widened by the family's window; a read for a token's partners is an indexed range that stops there, so a token without a partner costs one bounded read. Kitty's records join only by token, never by time, and never count as a command of their own: one without a token is not a command occurrence, and one whose report is lost leaves the command to the Atuin row. A record of a command's end is timed at the end while the fused record is timed at the start, so a consumer reading the later window would otherwise count the command twice. The report also records the Atuin row started for the execution, which joins it by identifier (namespace `atuin`) within one key's reach. Otherwise commands match closest first within 2 s, and within 60 s only when the match is unique. A command's hour is the hour of its first start.
 - **Mail** is scoped by account and keyed by account and Message-ID: copies join by Message-ID within the account whatever dates their stores give them; no Date-header agreement is required. Consumers read a day beyond their period for mail.
-- Every other family is built once it is defined against its actual sources. Until then window focus, page visits, media plays, clipboard copies and notifications are separate source records.
+- Every other family is built once it is defined against its sources. Until then window focus, page visits, media plays, clipboard copies and notifications are separate source records.
 
 ## Intervals
 
@@ -214,7 +214,7 @@ One `state.interval` derivation, with declared rules for adjacent transitions, o
 
 Adjacent-transition range reads first find the day's touched scopes, then stream
 narrow observation metadata once in time order. Only one boundary state per
-touched scope is retained. Scope count does not multiply history scans; an empty
+touched scope is kept. Scope count does not multiply history scans; an empty
 day returns before history is streamed. The reader and fold share the same Rust
 scope, subject and stable record-key interpretation. Scope takes the first
 string `scope` or `bucket`, including an empty string, then the captured record
@@ -222,16 +222,16 @@ identity. Focus uses a nonempty window ID or `class:` plus the class; workspace
 uses `workspace:` plus the first non-null ID or name, preserving literal strings
 and serialized non-string JSON. Missing subjects never count as same-state refreshes.
 AFK observations participate in the same scope-normalized range rather than a
-separate field-based neighbour lookup. Every refresh through the first actual
+separate field-based neighbour lookup. Every refresh through the first real
 closer remains in reach, including stored evidence whose clock is later than
 the runner's clock. All observations at the closing microsecond reach the fold,
 which applies recorded sequence and stable record ordering to their parents.
 
 This corrects input selection for the existing version 3 fold; its full-input
-output identities and semantic version are unchanged. Runs retain the new build
-identity. Dirty and waiting keys use ordinary replacement, retaining superseded
+output identities and semantic version are unchanged. Runs record the new build
+identity. Dirty and waiting keys use the usual replacement, keeping superseded
 readings as history. Closed historical keys require explicit selective
-recomputation; deploying this reader does not repair them automatically or retire
+recomputation; deploying this reader does not repair them automatically or remove
 unrelated interval families. Original observations and their material remain intact.
 
 ## Documents and tags
@@ -239,13 +239,13 @@ unrelated interval families. Original observations and their material remain int
 ### Documents and citable chunks
 
 - `document.parsed` and `document.chunk` derive from admitted note text, extracted document text (`document.text` over stored bytes: PDF pages, plain text, Markdown, HTML, DOCX, ODT) and captured terminal output. DOCX and ODT text is read from the archive member in pieces, never decompressed whole into memory; the PDF reader may run for a minute plus ten seconds per MiB of the document, after which it is stopped and that document is a failed input. A command with no captured output produces no chunks.
-- JSON, JSONL, NDJSON, CSV and TSV are structured data, not generic document text. Library capture retains their bytes and typed copy facts; document extraction excludes them before fetching content, including older copies labeled `text/plain`. The document reader version changes through the ordinary compare/switch operation, which withdraws obsolete generic projections before replay.
+- JSON, JSONL, NDJSON, CSV and TSV are structured data, not generic document text. Library capture keeps their bytes and typed copy facts; document extraction excludes them before fetching content, including older copies labeled `text/plain`. The document reader version changes through the usual compare/switch operation, which withdraws obsolete generic readings before replay.
 - Computation reads the stored record, never the original path; a moved or vanished file changes nothing.
 - Document metadata: stable record and part identity, format, title, parsed front matter and its status, wikilinks, text length, body range, chunk count, optional source time.
 - A chunk holds its record, part, index, complete text, and `(input field, byte start, byte end)` on UTF-8 boundaries, with `input[field][start..end]` equal to the chunk. For converted documents a range addresses the extracted text or a page, never fictional source offsets; page or region references are added where the extractor supplies them.
 - Chunk sizes are partition targets, never input ceilings: output beyond 4 MiB is complete, and every non-whitespace character is represented in some chunk.
 - Invalid front matter keeps the text with its diagnostic; an empty document has metadata and zero chunks; an unsupported or encrypted input is a typed failure whose bytes stay readable. A document that shrinks from ten chunks to two leaves two live chunks.
-- Text and chunks are searchable through the ordinary query and its declared `search` ([query](query.md)). There is no second document index.
+- Text and chunks are searchable through the query language and its declared `search` ([query](query.md)). There is no second document index.
 
 ### Declared tags and classifications
 
@@ -260,10 +260,10 @@ unrelated interval families. Original observations and their material remain int
 
 Derivations that call a model provider are off (default; open operator question). No provider is constructed or probed at start, no weights are downloaded, and no request is made.
 
-They stay off until the features are redesigned purpose first: search ranking, OCR beyond the local engine, speech transcription with speaker separation, model-written [narratives](higher-layer.md#narratives) and the [narrative corpus](higher-layer.md#the-narrative-corpus), classification, episode labels, and [model suggestions](higher-layer.md#model-suggestions). The settled inputs to that design:
+They stay off until the features are redesigned purpose first: search ranking, OCR beyond the local engine, speech transcription with speaker separation, model-written [narratives](higher-layer.md#narratives) and the [narrative corpus](higher-layer.md#the-narrative-corpus), classification, episode labels, and [model suggestions](higher-layer.md#model-suggestions). The decided inputs to that design:
 
 - Cloud processing is acceptable on privacy; cost, latency and capability decide between providers.
-- Cost is an operating setting, not a design driver or an activation gate. (ruling 2026-10-11, cc:e3e37f29-2490-47ae-89ef-fd40b6242e9a:07bbe1df-c4cd-4c59-b07e-540182d93fdd).
+- Cost is an operating setting, not a design driver or a condition for turning a feature on. (ruling 2026-10-11, cc:e3e37f29-2490-47ae-89ef-fd40b6242e9a:07bbe1df-c4cd-4c59-b07e-540182d93fdd).
 - Local models are first-class providers. (ruling 2026-05-30, cc:34a46275-7b63-44c2-ac47-bdf5388514a7:8b965461-8556-4cef-96c5-2a92532222d1).
 - What reaches a provider follows the same [privacy](privacy.md) output rules as every other caller; there is no separate model allowlist.
 
@@ -273,7 +273,7 @@ Local OCR runs. It calls no provider and spends nothing, so the off switch above
 
 - It is a deterministic-tool derivation of `screen.text` from stored frames, and runs by default when the engine is installed. Its producer version includes the engine and the engine's version.
 - `screen.text` is searchable.
-- One segment has one canonical `screen.text` reading. Captured accessibility text, including observed empty text, takes precedence; an explicitly selected and validated recorded OCR binding comes next, followed by the configured local engine. Ambiguous requested bindings report unavailable until selected rather than choosing a receipt by arrival time.
+- One segment has one shown `screen.text` reading. Captured accessibility text, including observed empty text, takes precedence; an explicitly selected and validated recorded OCR binding comes next, followed by the configured local engine. Ambiguous requested bindings report unavailable until selected rather than choosing a reading by arrival time.
 - A versioned screen reading distinguishes available text (`Some("")` is observed empty) from typed unavailable status with no text, regions or effect claims. A new unavailable reading replaces stale text under the same segment key. Historical positive readings remain available historical evidence. Requested missing or archived target references are unavailable status, not verified evidence or fabricated parents.
 
 ### The contract every model output follows
@@ -296,9 +296,9 @@ Local OCR runs. It calls no provider and spends nothing, so the off switch above
 
 **Embeddings rank; they never filter.** Once embeddings are on, Sinex search may combine a stored similarity as a ranking term over the filtered set (`similar:`); it never removes a row the filters selected.
 
-Supplied `embedding.supplied` receipts cite their target reading as a parent. The deterministic `text.embeddings` derivation validates the receipt's identity fields, BLAKE3 digest encoding, provider/model/revision/settings/dimension space, finite components and exact count, then stores a complete `text.embedding` with the supplied receipt as its parent. This path constructs no provider and rereads no purchased embedding. Source replacement archives the old embedding before recomputation.
+Supplied `embedding.supplied` events cite their target reading as a parent. The deterministic `text.embeddings` derivation validates the supplied event's identity fields, BLAKE3 digest encoding, provider/model/revision/settings/dimension space, finite components and exact count, then stores a complete `text.embedding` with the supplied event as its parent. This path constructs no provider and rereads no purchased embedding. Source replacement archives the old embedding before recomputation.
 
-The `read.embeddings` consumer builds a pgvector projection and an HNSW index for each supported space and dimension. Original f64 components remain in the stored event. Projection rows state indexed, exact, fallback or unavailable coverage and its reason. Extension type/index limits and precision range choose a fallback; they never truncate the stored vector. Initial projection and rebuild read retained events in bounded pages, including after commit-log pruning, and commit the projection with its position. Tombstoning removes projected copies in the same transaction.
+The `read.embeddings` consumer builds a pgvector read model and an HNSW index for each supported space and dimension. Original f64 components remain in the stored event. Read-model rows state indexed, exact, fallback or unavailable coverage and its reason. Extension type/index limits and precision range choose a fallback; they never truncate the stored vector. The initial build and a rebuild read stored events in bounded pages, including after commit-log pruning, and commit the read model with its position. Tombstoning removes the copied vectors in the same transaction.
 
 `similar:sinex:ev/<embedding-id>` reuses that exact supplied embedding under the reader's grants and read position. Similarity scores every filtered row, using the best compatible chunk where several are present. Rows without a compatible vector retain unknown rank. The approximate index supplies candidates for optimization, while query membership and exact fallback remain independent of its recall. Model-driven text-to-vector requests remain disabled.
 

@@ -22,7 +22,7 @@ codebase it came from. Tests are judged by what they can catch:
 
 A test that only restates a generator or a helper, a test of deleted
 machinery, or a SQL-substring check where a row comparison can be made has no
-value and is not written. The predecessor's test cases are ported as cases,
+value and is not written. The earlier Sinex's test cases are ported as cases,
 inputs and expected outcomes checked against the format knowledge, never
 re-blessed from new output. A mock that asserts its own setup tests nothing;
 tests run against real PostgreSQL and NATS, which devkit makes cheap.
@@ -61,7 +61,7 @@ against the live prepared database whenever the checked crate compiles.
 
 Each test that needs PostgreSQL gets its own copy of the schema database from
 a template (`devkit::pg::test_database()`), so database tests run in
-parallel. Native runs and Nix package builds disable connections to the
+parallel. Local runs and Nix package builds disable connections to the
 finished template and use a separate read-only schema database for SQLx.
 Background workers therefore cannot block test clones by connecting to the
 template. Disposable PostgreSQL clusters and NATS servers are owned by the
@@ -69,7 +69,7 @@ test run and reaped on every exit path.
 
 ## Development runs and reports
 
-`cargo xtask run --watch --output DIR` builds the daemon and runs it with an owned PostgreSQL cluster, schema database and NATS server. The output directory must be new; it holds private tokens, runtime process/socket identities and any explicitly selected session spools. The runner never selects the host's services. Readiness requires HTTP 200 from the API. A failed rebuild leaves the previous daemon running and records the build failure; edits during a build trigger another build. `--seconds SECONDS` bounds a smoke run. Cancellation stops the owned processes; retained private output is inspected separately from disposable service data.
+`cargo xtask run --watch --output DIR` builds the daemon and runs it with an owned PostgreSQL cluster, schema database and NATS server. The output directory must be new; it holds private tokens, runtime process/socket identities and any explicitly selected session spools. The runner never selects the host's services. Readiness requires HTTP 200 from the API. A failed rebuild leaves the previous daemon running and records the build failure; edits during a build trigger another build. `--seconds SECONDS` bounds a smoke run. Cancellation stops the owned processes; kept private output is inspected separately from disposable service data.
 
 Sources are explicit in a development run: `--sources FILE` selects daemon bindings, and repeated `--session-source NAME` selects session captures. The generated session source file preserves configured exclusions and excludes every unselected catalog capture, including media and file watches. The watcher ignores its output directory. A checkout has one development-stack lock, released when the process exits.
 
@@ -77,7 +77,7 @@ Sources are explicit in a development run: `--sources FILE` selects daemon bindi
 
 Crash cases share a two-slot nextest group, which bounds how many whole backfills compete for the test PostgreSQL at once while the rest of the suite runs beside them. The group changes scheduling only; per-test deadlines stay fixed.
 
-The daemon shutdown test reads the supervisor's actual task-join summary: every task, including a completed task not yet joined, must finish without failed joins or abort requests. It also checks process exit, writer-lock release and unchanged readings and source bytes across restart. Elapsed shutdown time is diagnostic; the production drain and test harness retain their own bounded deadlines.
+The daemon shutdown test reads the supervisor's task-join summary: every task, including a completed task not yet joined, must finish without failed joins or abort requests. It also checks process exit, writer-lock release and unchanged readings and source bytes across restart. Elapsed shutdown time is diagnostic; the production drain and test harness keep their own bounded deadlines.
 
 `cargo xtask coverage --output DIR --format html -- -p CRATE` uses a separate instrumented build. Formats are `html`, `lcov` and `json`; `coverage.json` retains LLVM data and `summary.json` records arguments, line coverage and function regions. `--threshold PERCENT` is an optional caller-selected threshold. Output directories are new; failed children, empty selections and malformed or missing reports are errors. The shared runner mechanics belong to [devkit](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/devkit/README.md).
 
@@ -125,7 +125,7 @@ The journey through it, each step with its exact expected evidence:
 
 The world passes when every specified fact and outcome is present, none is
 invented, and every claim and number resolves to its evidence. Evaluation
-results are stored as ordinary answer events, so they replay and compare
+results are stored as answer events, so they replay and compare
 across versions of the derivations.
 
 ## Properties tested
@@ -141,7 +141,7 @@ one changes:
 
 - An admission batch commits whole or not at all, and commit positions are dense, in batch order and never regress (`events_and_progress_commit_together`, `commit_seq_is_dense_and_in_batch_order`, `a_second_transaction_waits_for_the_first_to_commit`).
 - One writer: a second claim is refused (`only_one_connection_can_claim_the_writer`).
-- A crash at every point between segment append, sync, commit and truncate leaves no committed row citing missing bytes, and an ordinary restart reaches the uninterrupted run's state (`sinexd/tests/integration/crash.rs`: `synced_uncommitted_segment_tail_is_truncated_on_restart`, `partial_segment_append_recovers_without_advancing_its_cursor`, the `stage_killed_*`, `replay_killed_*` and `publisher_killed_*` cases).
+- A crash at every point between segment append, sync, commit and truncate leaves no committed row citing missing bytes, and a normal restart reaches the uninterrupted run's state (`sinexd/tests/integration/crash.rs`: `synced_uncommitted_segment_tail_is_truncated_on_restart`, `partial_segment_append_recovers_without_advancing_its_cursor`, the `stage_killed_*`, `replay_killed_*` and `publisher_killed_*` cases).
 - A source cursor never passes an unadmitted record, and a refused record keeps its failure tied to its bytes (`source_content_refusals_keep_material_failures_and_advance_the_cursor`).
 - Read models rebuilt from events equal the ones maintained incrementally (`search_modes_apply_to_live_indexing_and_its_rebuild`).
 - Lifecycle state order holds after every operation: no live event has a non-live parent (`assert_state_order` in `sinex-store/src/lifecycle/tests.rs`).
@@ -157,14 +157,14 @@ what was live at that position ([lifecycle.md](lifecycle.md)).
 ## Crash tests
 
 Crash tests stop the process at the real durability boundaries and reopen
-through the ordinary path, which must treat what it finds as normal
+through the normal path, which must treat what it finds as normal
 ([architecture.md](architecture.md) owns the durability order and the states
 a crash may leave):
 
 - between segment append, sync, commit and truncate;
 - between an archive change and the recompute of the dirty keys it causes;
 - between the transactions of a replay;
-- around the publisher's acknowledgement on the confirmed stream.
+- around the publisher's acknowledgment on the confirmed stream.
 
 A kill point earns its own test only when it leaves a different state.
 Every statement inside one admission transaction leaves the same one (nothing
@@ -186,19 +186,19 @@ NixOS VM tests boot the shipped modules
 
 Run `cargo xtask vm --output DIR`, optionally repeating `--scenario NAME`, on committed source so Nix and the run record use the same input. The runner attempts every selected scenario and preserves original build logs plus `results.json`.
 
-The native Rust suite tests GNU tar restoration of sparse files, native names, extended attributes and access ACLs. The Nix package check excludes only that exact setter-dependent restoration test because the builder's syscall filter prevents setting xattrs and ACLs; native assertions remain enabled. Its existing peak-RSS test also runs under native nextest, which gives it the separate process required by its measurement. Package checks do not replace the native suite.
+The Rust suite run outside Nix tests GNU tar restoration of sparse files, file names as stored, extended attributes and access ACLs. The Nix package check excludes only that setter-dependent restoration test because the builder's syscall filter prevents setting xattrs and ACLs; those assertions remain enabled outside Nix. Its existing peak-RSS test also runs under nextest outside Nix, which gives it the separate process required by its measurement. Package checks do not replace the suite run outside Nix.
 
 ## Fuzzing
 
 Fuzzing runs as tests over the real boundaries: COPY encoding, manifests,
 producer frames and the query parser. Bounded replay of each target's corpus
-runs inside the ordinary test run, and so do property tests that generate new
+runs inside the regular test run, and so do property tests that generate new
 query inputs on every run: queries assembled from the language's words, seed
 queries with bytes changed, inserted or removed, and arbitrary text. The
 nightly `fuzz` workflow runs those properties on master through `cargo
 xtask test --profile fuzz -p sinex-fuzz` with `PROPTEST_CASES=200000`. The
 `fuzz` nextest profile selects the generated-input properties and lets them
-run without the ordinary per-test deadline; a longer run is the same command
+run without the usual per-test deadline; a longer run is the same command
 with a larger case count, not a separate command. The harness (`fuzz/`) is a workspace
 member, so its tests build in the same feature resolution as every other
 test. (ruling 2026-03-12, cc-queued:065c511c-e336-4e59-825b-eeefc71cdaae@2026-03-12T00:31:10Z).

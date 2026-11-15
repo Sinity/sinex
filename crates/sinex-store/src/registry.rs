@@ -126,7 +126,7 @@ mod tests;
 
 /// Registered derivations that are not among `known`: producers a build
 /// removed, whose outputs are archived once and whose registration then ends.
-pub async fn retired_derivations(conn: &mut PgConnection, known: &[String]) -> Result<Vec<String>> {
+pub async fn removed_derivations(conn: &mut PgConnection, known: &[String]) -> Result<Vec<String>> {
     Ok(sqlx::query_scalar!(
         "SELECT name FROM registry.derivations WHERE name <> ALL($1::text[]) ORDER BY name",
         known,
@@ -135,8 +135,8 @@ pub async fn retired_derivations(conn: &mut PgConnection, known: &[String]) -> R
     .await?)
 }
 
-/// End a retired derivation's registration once its outputs are archived, so
-/// a later start, or an undo of that archive, finds nothing to retire.
+/// End a removed derivation's registration once its outputs are archived, so
+/// a later start, or an undo of that archive, finds nothing to archive.
 pub async fn forget_derivation(conn: &mut PgConnection, name: &str) -> Result<()> {
     sqlx::query!("DELETE FROM registry.derivations WHERE name = $1", name)
         .execute(&mut *conn)

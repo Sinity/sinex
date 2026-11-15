@@ -269,9 +269,9 @@ fn maildir_coordinates_distinguish_equal_messages_and_survive_flag_changes() {
         assert_eq!(original.text, other.text);
         assert_eq!(other.message_id, None);
     }
-    let native = read("h", "/mail", "new/one");
+    let top_level = read("h", "/mail", "new/one");
     assert!(
-        native.native_id.is_some(),
+        top_level.native_id.is_some(),
         "top-level Maildir has an empty folder name"
     );
 }
@@ -290,14 +290,14 @@ fn equal_mbox_messages_without_ids_use_their_own_locations() {
     }
 }
 #[devkit::test]
-fn native_maildir_names_keep_distinct_identity_and_survive_flag_changes() {
+fn raw_byte_maildir_names_keep_identity_across_flag_changes() {
     use base64::Engine;
     let raw = &b"Subject: same\n\nbody\n"[..];
-    let read = |path: &str, native: Option<&[u8]>| {
+    let read = |path: &str, path_bytes: Option<&[u8]>| {
         let mut member = serde_json::json!({"path":path, "stream_offset":0,"length":raw.len()});
-        if let Some(native) = native {
+        if let Some(path_bytes) = path_bytes {
             member["native_path_bytes"] = base64::engine::general_purpose::STANDARD
-                .encode(native)
+                .encode(path_bytes)
                 .into();
         }
         let manifest = sinex_model::Manifest::from_json(serde_json::json!({
@@ -316,12 +316,12 @@ fn native_maildir_names_keep_distinct_identity_and_survive_flag_changes() {
             .0
             .remove(0)
     };
-    let native = read("INBOX/new/a%FF", Some(b"INBOX/new/a\xff"));
+    let raw_name = read("INBOX/new/a%FF", Some(b"INBOX/new/a\xff"));
     let renamed = read("INBOX/cur/a%FF:2,RS", Some(b"INBOX/cur/a\xff:2,RS"));
     let text = read("INBOX/new/a%FF", None);
-    assert_eq!(native.native_id, renamed.native_id);
-    assert_ne!(native.native_id, text.native_id);
-    assert_eq!(native.text, text.text);
+    assert_eq!(raw_name.native_id, renamed.native_id);
+    assert_ne!(raw_name.native_id, text.native_id);
+    assert_eq!(raw_name.text, text.text);
 }
 
 #[devkit::test]

@@ -1,4 +1,4 @@
-//! Authenticated analysis requests retain their own source material.
+//! Authenticated analysis requests keep their own source material.
 use serde_json::{Map, Value, json};
 use sinex_model::event_types::analysis::AnalysisRequest;
 use sinex_model::{
@@ -14,7 +14,7 @@ pub const REQUEST: SourceSpec = SourceSpec {
     origin: Origin::Request,
     expect: Expectation::OnDemand,
     expires_after: None,
-    purpose: "canonical analysis questions",
+    purpose: "authored analysis questions",
     class: Class::Open,
     parser: "analysis-request",
     parser_version: 2,
@@ -103,7 +103,7 @@ pub const FORMAT: sinex_source_core::binding::InputFormat =
         name: "analysis",
         accepts: &[],
         discovery: sinex_source_core::discovery::DiscoverySpec {
-            owner: sinex_source_core::discovery::Owner::System,
+            captured_by: sinex_source_core::discovery::CapturedBy::System,
             locations: &[],
             capabilities: &[],
             credentials: &[],

@@ -44,7 +44,7 @@ fn parse(observation: SourceCoverage) -> Vec<sinex_source_core::DrainOutput> {
 fn unchanged_source_read_keeps_material_provenance_and_unknown_coverage() {
     let out = parse(observation());
     let RecordOutcome::Events { events, .. } = &out[0].outcomes[0] else {
-        panic!("coverage evidence did not parse");
+        panic!("coverage observation did not parse");
     };
     assert_eq!(
         events[0].payload_as::<SourceCoverage>().unwrap(),
@@ -55,9 +55,9 @@ fn unchanged_source_read_keeps_material_provenance_and_unknown_coverage() {
 
 #[devkit::test]
 fn failed_source_read_cannot_claim_observed_coverage() {
-    let mut evidence = observation();
-    evidence.state = CoverageState::Observed;
-    evidence.failures = 1;
-    let out = parse(evidence);
+    let mut observed = observation();
+    observed.state = CoverageState::Observed;
+    observed.failures = 1;
+    let out = parse(observed);
     assert!(matches!(out[0].outcomes[0], RecordOutcome::Failure { .. }));
 }

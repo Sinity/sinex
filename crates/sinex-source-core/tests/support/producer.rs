@@ -93,10 +93,9 @@ pub(crate) async fn refusing(
             let acknowledgments: Vec<_> = {
                 let rows = answers.lock().unwrap();
                 rows.values()
-                    .filter(|receipt| {
-                        (query.frames.contains(&receipt.frame)
-                            || query.numbers.contains(&receipt.number))
-                            && receipt.number > query.after
+                    .filter(|ack| {
+                        (query.frames.contains(&ack.frame) || query.numbers.contains(&ack.number))
+                            && ack.number > query.after
                     })
                     .cloned()
                     .collect()
@@ -185,7 +184,7 @@ pub(crate) async fn refusing(
             let number = {
                 let rows = recorded.lock().unwrap();
                 rows.get(frame.frame())
-                    .map(|receipt| receipt.number)
+                    .map(|ack| ack.number)
                     .unwrap_or(rows.len() as i64 + 1)
             };
             let content_hash = sinex_transport::producer::content_hash(&frame).unwrap();

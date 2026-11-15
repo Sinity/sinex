@@ -34,9 +34,9 @@ pub(crate) fn context(client: async_nats::Client) -> jetstream::Context {
 
 const CONTRACT: &str = "5";
 const CONTRACT_KEY: &str = "sinex_confirmed_contract";
-const ORIGIN_KEY: &str = "sinex_history_origin";
+const STREAM_START_KEY: &str = "sinex_stream_start";
 
-pub(crate) fn history_origin(stream: &stream::Stream) -> Result<commit_log::HistoryOrigin> {
+pub(crate) fn read_stream_start(stream: &stream::Stream) -> Result<commit_log::StreamStart> {
     let metadata = &stream.cached_info().config.metadata;
     if metadata.get(CONTRACT_KEY).map(String::as_str) != Some(CONTRACT) {
         return Err(Error::internal(
@@ -44,8 +44,8 @@ pub(crate) fn history_origin(stream: &stream::Stream) -> Result<commit_log::Hist
         ));
     }
     let encoded = metadata
-        .get(ORIGIN_KEY)
-        .ok_or_else(|| Error::internal("confirmed stream has no history origin"))?;
+        .get(STREAM_START_KEY)
+        .ok_or_else(|| Error::internal("confirmed stream has no recorded start position"))?;
     serde_json::from_str(encoded).map_err(Error::from)
 }
 async fn confirmed_stream(
@@ -55,12 +55,12 @@ async fn confirmed_stream(
 ) -> Result<stream::Stream> {
     match js.get_stream(subjects.confirmed_stream()).await {
         Ok(found) => {
-            history_origin(&found)?.validate(conn).await?;
+            read_stream_start(&found)?.validate(conn).await?;
             Ok(found)
         }
         Err(error) if matches!(error.kind(),jetstream::context::GetStreamErrorKind::JetStream(ref e) if e.error_code()==jetstream::ErrorCode::STREAM_NOT_FOUND) =>
         {
-            let origin = commit_log::HistoryOrigin::establish(conn).await?;
+            let stream_start = commit_log::StreamStart::establish(conn).await?;
             let mut config = stream::Config {
                 name: subjects.confirmed_stream(),
                 subjects: vec![subjects.confirmed_all()],
@@ -70,17 +70,19 @@ async fn confirmed_stream(
                 ..Default::default()
             };
             config.metadata.insert(CONTRACT_KEY.into(), CONTRACT.into());
-            config
-                .metadata
-                .insert(ORIGIN_KEY.into(), serde_json::to_string(&origin)?);
+            config.metadata.insert(
+                STREAM_START_KEY.into(),
+                serde_json::to_string(&stream_start)?,
+            );
             let found = js.get_or_create_stream(config).await?;
-            history_origin(&found)?.validate(conn).await?;
+            read_stream_start(&found)?.validate(conn).await?;
             Ok(found)
         }
         Err(error) => Err(Error::from(error).within("confirmed stream")),
     }
 }
-/// Establish a fresh snapshot origin, or verify the existing incarnation.
+/// Create the stream at a fresh start position, or check the existing stream
+/// instance.
 pub(crate) async fn ensure_stream(
     conn: &mut PgConnection,
     js: &jetstream::Context,
@@ -196,22 +198,29 @@ pub(crate) async fn publish_pending_measured(
     mut page_done: impl FnMut(PageTiming),
 ) -> Result<Published> {
     let stream = confirmed_stream(conn, js, subjects).await?;
-    let origin = history_origin(&stream)?;
+    let stream_start = read_stream_start(&stream)?;
     let instance = stream_instance(&stream);
     let consumer = consumer_for(&instance);
     let (saved, _) = commit_log::consumer_position(conn, &consumer).await?;
-    let position =
-        align_with_stream(conn, &stream, &instance, &consumer, saved, origin.position).await?;
+    let position = align_with_stream(
+        conn,
+        &stream,
+        &instance,
+        &consumer,
+        saved,
+        stream_start.position,
+    )
+    .await?;
     let mut cursor = commit_log::ChangeCursor::after(position);
-    let mut settled = position;
+    let mut acknowledged = position;
     let mut total = Published::default();
     total.tombstoned += erase_tombstoned_in(conn, js, subjects, &instance).await?;
     loop {
         let started = Instant::now();
-        let page = commit_log::stream_changes_after_origin(
+        let page = commit_log::stream_changes_after_start(
             conn,
             cursor,
-            &origin,
+            &stream_start,
             PAGE,
             sinex_store::PAGE_BYTES,
         )
@@ -244,7 +253,7 @@ pub(crate) async fn publish_pending_measured(
                     &instance,
                     &consumer,
                     &[],
-                    Some(origin.position),
+                    Some(stream_start.position),
                     &mut total,
                 )
                 .await?;
@@ -277,7 +286,7 @@ pub(crate) async fn publish_pending_measured(
             acknowledge += timing.0;
             record += timing.1;
             commit += timing.2;
-            settled = complete.unwrap();
+            acknowledged = complete.unwrap();
         }
         if split < page.entries.len() {
             let timing = publish_chunk(
@@ -313,7 +322,7 @@ pub(crate) async fn publish_pending_measured(
         page_done(PageTiming {
             events,
             changes,
-            commit_seq: settled,
+            commit_seq: acknowledged,
             read,
             acknowledge,
             record,
@@ -332,7 +341,7 @@ pub(crate) async fn publish_pending_measured(
 /// PostgreSQL keeps the position and published records for them. The stream
 /// keeps its name and creation time, and its next messages reuse the lost
 /// sequence numbers. Reading back from the stream's newest message to the
-/// completion marker at or below the saved position settles both crash cases:
+/// completion marker at or below the saved position resolves both crash cases:
 /// - Event references met on the way are recorded. A crash between JetStream's
 ///   acknowledgment and the commit leaves them unlisted, and an unlisted copy
 ///   would escape erasure.
@@ -350,7 +359,7 @@ async fn align_with_stream(
     instance: &str,
     consumer: &str,
     saved: i64,
-    origin: i64,
+    stream_start: i64,
 ) -> Result<i64> {
     let last = stream.cached_info().state.last_sequence;
     let mut unlisted = Vec::new();
@@ -381,7 +390,7 @@ async fn align_with_stream(
         }
         seq -= 1;
     }
-    let held = marker.unwrap_or(origin).max(origin);
+    let held = marker.unwrap_or(stream_start).max(stream_start);
     let mut tx = conn.begin().await?;
     commit_log::record_published_in(&mut tx, instance, &unlisted).await?;
     if held < saved {
@@ -396,8 +405,9 @@ async fn align_with_stream(
     Ok(held)
 }
 
-/// Data acknowledgments and exact erasures precede a cumulative completion
-/// barrier. Partial-position ack pairs are durable without a scalar checkpoint.
+/// Data acknowledgments and erasures come before a cumulative completion
+/// marker. The acknowledged (event, stream sequence) pairs of a partly
+/// published position are saved without moving the position checkpoint.
 #[allow(clippy::too_many_arguments)]
 async fn publish_chunk(
     conn: &mut PgConnection,
@@ -522,7 +532,7 @@ async fn publish_chunk(
     total.tombstoned += erase_tombstoned_in(&mut tx, js, subjects, instance).await?;
     let mut record = record_started.elapsed();
     if let Some(position) = complete {
-        let barrier_started = Instant::now();
+        let marker_started = Instant::now();
         publish(
             js,
             subjects.confirmed_control(),
@@ -536,7 +546,7 @@ async fn publish_chunk(
         .map_err(|error| {
             Error::internal(format!("confirmed position did not acknowledge: {error}"))
         })?;
-        acknowledge += barrier_started.elapsed();
+        acknowledge += marker_started.elapsed();
         let record_started = Instant::now();
         commit_log::set_consumer_position(&mut tx, consumer, position, 0).await?;
         record += record_started.elapsed();
@@ -546,8 +556,8 @@ async fn publish_chunk(
     Ok((acknowledge, record, commit_started.elapsed()))
 }
 
-/// Erasure is an idempotent physical action. Ordered tombstone notices come
-/// from the canonical change feed, never from this cleanup pass.
+/// Erasure deletes stream messages and can repeat safely. Ordered tombstone
+/// notices come from the commit log's change feed, never from this cleanup pass.
 async fn erase_tombstoned_in(
     conn: &mut PgConnection,
     js: &jetstream::Context,

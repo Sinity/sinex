@@ -5,7 +5,7 @@ use std::os::unix::fs::{FileExt, MetadataExt, PermissionsExt};
 use std::process::Command;
 
 #[devkit::test]
-fn gnu_tar_restores_native_names_sparse_data_attributes_and_access_acl() {
+fn gnu_tar_restores_raw_names_sparse_data_attributes_and_access_acl() {
     let root = tempfile::tempdir().unwrap();
     let destination = tempfile::tempdir().unwrap();
     let name = std::ffi::OsString::from_vec(b"long\npercent%\xff.md".to_vec());
@@ -106,7 +106,7 @@ fn gnu_tar_restores_native_names_sparse_data_attributes_and_access_acl() {
 }
 
 #[devkit::test]
-fn empty_files_and_long_native_names_have_distinct_restorable_tar_members() {
+fn empty_files_and_long_raw_names_have_distinct_restorable_tar_members() {
     let root = tempfile::tempdir().unwrap();
     let name = format!("{}💡.md", "x".repeat(160));
     for path in ["a.md", "b.md", &name, "percent%FF.md"] {
@@ -146,7 +146,7 @@ fn empty_files_and_long_native_names_have_distinct_restorable_tar_members() {
 }
 
 #[devkit::test]
-fn membership_facts_do_not_replace_native_files_when_tar_is_extracted() {
+fn membership_facts_do_not_replace_captured_files_in_tar() {
     let root = tempfile::tempdir().unwrap();
     let destination = tempfile::tempdir().unwrap();
     std::fs::create_dir(root.path().join(".sinex-membership")).unwrap();

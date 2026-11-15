@@ -23,7 +23,7 @@ pub struct GitIdentity {
     pub branch: Option<String>,
 }
 
-/// A terminal adapter's exact identity, scoped to its captured host and process.
+/// A terminal adapter's identity, scoped to its captured host and process.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TerminalIdentity {
     pub host: String,
@@ -44,7 +44,7 @@ pub enum WorkCoverageState {
     Unavailable,
 }
 
-/// Exact snapshot coverage; unknown source times never become zero activity.
+/// What a snapshot covers; unknown source times never become zero activity.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(version = 2, type = "work.coverage", key = ["session"], replace = newer)]
 pub struct WorkCoverage {
@@ -58,7 +58,7 @@ pub struct WorkCoverage {
     pub reasons: std::collections::BTreeMap<String, u64>,
 }
 
-/// Source clock evidence stays separate from its timestamp.
+/// How good the source's clock is, kept separate from its timestamp.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct WorkTimeQuality {
     pub quality: crate::TimeQuality,
@@ -103,7 +103,7 @@ pub struct WorkAct {
     pub agency: Agency,
     pub action: String,
     pub path: Option<String>,
-    /// Unknown until native outcome or check evidence establishes it.
+    /// Unknown until the action's own outcome or a check shows it.
     #[serde(default)]
     pub failed: Option<bool>,
     #[serde(default)]
@@ -198,7 +198,7 @@ pub struct WorkResumption {
     pub episode: String,
     pub suspension: String,
     pub resumed_at: Timestamp,
-    /// Unknown without a recorded return of focus to this exact objective.
+    /// Unknown without a recorded return of focus to this objective.
     pub lag_s: Option<f64>,
     pub act: CitedReading,
 }
@@ -238,7 +238,7 @@ pub struct ActivityDay {
     pub boundary_method: String,
     pub provisional: bool,
     pub agency_seconds: std::collections::BTreeMap<String, f64>,
-    /// Recorded delegated time; unknown without timed delegated evidence.
+    /// Recorded delegated time; unknown without timed records of delegated work.
     pub agent_s: Option<f64>,
     pub profile: String,
 }
@@ -271,8 +271,8 @@ pub struct AgentctlEvent {
     /// When AgentCTL wrote the line (`emitted_at`, or `completed_at` in the
     /// oldest lines).
     pub at: Option<Timestamp>,
-    /// The line's other fields. The execution receipt and evidence (file
-    /// manifests of the checkout) are left in the stored line.
+    /// The line's other fields. AgentCTL's `execution_receipt` and evidence
+    /// fields (file manifests of the checkout) are left in the stored line.
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub extra: Map<String, Value>,
 }

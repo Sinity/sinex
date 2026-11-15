@@ -1,6 +1,6 @@
 use super::*;
 
-fn predecessor(files: &[(&str, &[u8], i128)]) -> sinex_model::Manifest {
+fn older_bundle(files: &[(&str, &[u8], i128)]) -> sinex_model::Manifest {
     let mut end = 0;
     let mut members = Vec::new();
     let mut records = Vec::new();
@@ -43,8 +43,8 @@ fn bundle_memory(files: &[(&str, &[u8], i128)], through: u64) -> std::sync::Arc<
 }
 
 #[devkit::test]
-fn predecessor_facts_preserve_mtime_and_exact_admitted_record_boundary() {
-    let manifest = predecessor(&[("a.md", b"", -7), ("b.md", b"beta", 42)]);
+fn older_bundle_facts_keep_mtime_and_admitted_record_boundary() {
+    let manifest = older_bundle(&[("a.md", b"", -7), ("b.md", b"beta", 42)]);
     let mut state = DirState::default();
     state.remember_members(&manifest, 1).unwrap();
     let file = state.files[Path::new("a.md")].unwrap();
@@ -58,10 +58,10 @@ fn predecessor_facts_preserve_mtime_and_exact_admitted_record_boundary() {
 }
 
 #[devkit::test]
-fn unchanged_predecessor_input_checkpoints_without_new_material_and_retries_until_ack() {
+fn unchanged_older_bundle_input_checkpoints_without_new_material_and_retries_until_ack() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("a.md"), b"alpha").unwrap();
-    let manifest = predecessor(&[("a.md", b"alpha", -17)]);
+    let manifest = older_bundle(&[("a.md", b"alpha", -17)]);
     let material = MaterialId::new();
     let committed = cursor(material, 6);
     let mut state = DirState::default();
@@ -111,7 +111,7 @@ fn unchanged_predecessor_input_checkpoints_without_new_material_and_retries_unti
     assert!(progress.material.is_none());
     assert!(batches[0].records.is_empty());
     assert_eq!(progress.memory.as_ref().unwrap().material, material);
-    // Lost acknowledgement must not clear the cache upgrade in the running reader.
+    // Lost acknowledgment must not clear the cache upgrade in the running reader.
     assert!(d.poll(&committed, &mut state).unwrap().memory.is_some());
     // A restart after the database committed needs no second observation/material.
     let mut restarted = DirState::default();
@@ -125,14 +125,14 @@ fn unchanged_predecessor_input_checkpoints_without_new_material_and_retries_unti
 }
 
 #[devkit::test]
-fn newer_tar_facts_win_over_older_predecessor_members() {
+fn newer_tar_facts_win_over_older_bundle_members() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("a.md"), b"modern").unwrap();
     let current = driver(dir.path().to_owned(), 4096)
         .poll(&Value::Null, &mut DirState::default())
         .unwrap();
     let modern = current.material.unwrap();
-    let old = predecessor(&[("a.md", b"older", 11), ("b.md", b"beta", 12)]);
+    let old = older_bundle(&[("a.md", b"older", 11), ("b.md", b"beta", 12)]);
     let mut state = DirState::default();
     state.remember_members(&modern.manifest, u64::MAX).unwrap();
     state.remember_members(&old, u64::MAX).unwrap();
@@ -145,10 +145,10 @@ fn newer_tar_facts_win_over_older_predecessor_members() {
 }
 
 #[devkit::test]
-fn changed_predecessor_bytes_use_current_tar_and_original_removal_offsets_survive() {
+fn changed_older_bundle_bytes_use_current_tar_and_original_removal_offsets_survive() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("a.md"), b"newer").unwrap();
-    let old = predecessor(&[("a.md", b"older", 11), ("b.md", b"beta", 12)]);
+    let old = older_bundle(&[("a.md", b"older", 11), ("b.md", b"beta", 12)]);
     let material = MaterialId::new();
     let mut state = DirState::default();
     state.remember_members(&old, u64::MAX).unwrap();
@@ -173,8 +173,8 @@ fn changed_predecessor_bytes_use_current_tar_and_original_removal_offsets_surviv
 }
 
 #[devkit::test]
-fn malformed_predecessor_facts_and_ranges_are_refused() {
-    let good = predecessor(&[("a.md", b"alpha", 11), ("b.md", b"beta", 12)]);
+fn malformed_older_bundle_facts_and_ranges_are_refused() {
+    let good = older_bundle(&[("a.md", b"alpha", 11), ("b.md", b"beta", 12)]);
     for (key, value) in [
         ("hash", json!("not-a-hash")),
         ("mtime_ns", json!("not-a-time")),
@@ -185,7 +185,7 @@ fn malformed_predecessor_facts_and_ranges_are_refused() {
         assert!(state.remember_members(&bad, u64::MAX).is_err());
         assert!(
             state.remember_members(&bad, u64::MAX).is_err(),
-            "a retry cannot forget malformed evidence"
+            "a retry cannot forget malformed facts"
         );
     }
     let mut overlap = good.clone();
@@ -215,7 +215,7 @@ fn malformed_predecessor_facts_and_ranges_are_refused() {
 fn only_the_checkpoint_cursor_acknowledges_a_pending_memory_save() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("a.md"), b"alpha").unwrap();
-    let old = predecessor(&[("a.md", b"alpha", -17)]);
+    let old = older_bundle(&[("a.md", b"alpha", -17)]);
     let crate::Reading::Polled(mut reader) =
         crate::binding::walked(driver(dir.path().to_owned(), 4096))
     else {
@@ -284,7 +284,7 @@ fn older_metadata_fills_only_saved_file_locations_within_its_admitted_prefix() {
     std::fs::write(dir.path().join("b.md"), b"beta").unwrap();
     let current = MaterialId::new();
     let older = MaterialId::new();
-    let older_manifest = predecessor(&[("a.md", b"alpha", -17), ("b.md", b"beta", -18)]);
+    let older_manifest = older_bundle(&[("a.md", b"alpha", -17), ("b.md", b"beta", -18)]);
     let memory = bundle_memory(&[("a.md", b"alpha", -17), ("b.md", b"beta", -18)], 6);
     let mut d = driver(dir.path().to_owned(), 4096);
     d.removed_at_source = true;
@@ -300,7 +300,7 @@ fn older_metadata_fills_only_saved_file_locations_within_its_admitted_prefix() {
     let snapshot_id = MaterialId::new();
     let snapshot = stored_part(
         snapshot_id,
-        predecessor(&[("a.md", b"alpha", -17)]),
+        older_bundle(&[("a.md", b"alpha", -17)]),
         Some(6),
     );
     assert!(
@@ -309,7 +309,7 @@ fn older_metadata_fills_only_saved_file_locations_within_its_admitted_prefix() {
             .unwrap()
     );
     assert!(reader.restore(&committed, snapshot).unwrap());
-    let earlier = predecessor(&[("b.md", b"beta", -18), ("obsolete.md", b"gone", -19)]);
+    let earlier = older_bundle(&[("b.md", b"beta", -18), ("obsolete.md", b"gone", -19)]);
     assert!(
         !reader
             .restore(&committed, stored_part(older, earlier, Some(10)))
@@ -340,7 +340,7 @@ fn older_metadata_fills_only_saved_file_locations_within_its_admitted_prefix() {
 #[devkit::test]
 fn missing_or_contradictory_part_boundaries_are_diagnosed() {
     let dir = tempfile::tempdir().unwrap();
-    let part = predecessor(&[("a.md", b"alpha", -17)]);
+    let part = older_bundle(&[("a.md", b"alpha", -17)]);
     for through in [None, Some(7)] {
         let crate::Reading::Polled(mut reader) =
             crate::binding::walked(driver(dir.path().to_owned(), 4096))
@@ -355,17 +355,17 @@ fn missing_or_contradictory_part_boundaries_are_diagnosed() {
                 )
                 .unwrap_err()
                 .to_string()
-                .contains("admitted-prefix evidence")
+                .contains("admitted prefix")
         );
     }
 }
 
 #[devkit::test]
-fn predecessor_observations_follow_the_existing_part_target_without_duplicate_material() {
+fn older_bundle_observations_follow_the_existing_part_target_without_duplicate_material() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("a.md"), b"alpha").unwrap();
     std::fs::write(dir.path().join("b.md"), b"beta").unwrap();
-    let part = predecessor(&[("a.md", b"alpha", -17), ("b.md", b"beta", -18)]);
+    let part = older_bundle(&[("a.md", b"alpha", -17), ("b.md", b"beta", -18)]);
     let mut state = DirState::default();
     state.remember_members(&part, u64::MAX).unwrap();
     state.finish_remembering();
@@ -410,7 +410,7 @@ fn a_checkpoint_behind_the_admitted_prefix_keeps_the_newer_suffix_facts() {
             ),
         ]);
         let memory = restore::memory_of(&files, &HashMap::new(), 6);
-        let mut manifest = predecessor(&[("a.md", b"alpha", -17), ("b.md", b"newer", -16)]);
+        let mut manifest = older_bundle(&[("a.md", b"alpha", -17), ("b.md", b"newer", -16)]);
         if removed {
             manifest.members[1]
                 .details
@@ -439,7 +439,7 @@ fn a_checkpoint_behind_the_admitted_prefix_keeps_the_newer_suffix_facts() {
 }
 
 #[devkit::test]
-fn exact_checkpoint_prefix_does_not_apply_unadmitted_suffix_and_beyond_prefix_is_refused() {
+fn checkpoint_prefix_skips_unadmitted_suffix_and_refuses_beyond() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("a.md"), b"alpha").unwrap();
     std::fs::write(dir.path().join("b.md"), b"older").unwrap();
@@ -467,7 +467,7 @@ fn exact_checkpoint_prefix_does_not_apply_unadmitted_suffix_and_beyond_prefix_is
     let material = MaterialId::new();
     let memory_part = stored_part(
         material,
-        predecessor(&[("a.md", b"alpha", -17), ("b.md", b"newer", -16)]),
+        older_bundle(&[("a.md", b"alpha", -17), ("b.md", b"newer", -16)]),
         Some(6),
     )
     .reference;

@@ -265,7 +265,7 @@ pub const FORMAT: InputFormat = InputFormat {
     name: "machine-telemetry",
     accepts: &[],
     discovery: sinex_source_core::discovery::DiscoverySpec {
-        owner: sinex_source_core::discovery::Owner::System,
+        captured_by: sinex_source_core::discovery::CapturedBy::System,
         locations: &[
             sinex_source_core::discovery::Location {
                 root: "declared",

@@ -1,7 +1,8 @@
 # Sinex
 
-Sinex keeps a durable record of one person's digital life. It stores the
-exact bytes of everything its sources produce (shell and terminal history,
+Sinex keeps a record of one person's digital life. It stores the
+original bytes of everything
+ its sources produce (shell and terminal history,
 window focus, D-Bus, input devices, browser history, mail, chat exports,
 media, files, and the records of other programs such as
 [Polylogue](https://github.com/Sinity/polylogue)), reads those bytes into

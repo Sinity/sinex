@@ -162,7 +162,7 @@ pub async fn set_request_deadline(
 
 /// The transaction uses the same request budget, reduced by acquisition and
 /// earlier statements. PostgreSQL interprets zero as unlimited, so an expired
-/// finite budget is one millisecond and is also checked by the request owner.
+/// finite budget is one millisecond and is also checked by the request handler.
 pub async fn local_request_deadline(conn: &mut PgConnection) -> Result<()> {
     let remaining: Option<i32> = sqlx::query_scalar("SELECT CASE WHEN remaining IS NULL OR remaining > 2147483647 THEN 0 ELSE greatest(1, ceil(remaining))::int END FROM (SELECT nullif(current_setting('sinex.request_deadline', true), '')::numeric - extract(epoch FROM clock_timestamp()) * 1000 AS remaining) budget WHERE current_setting('sinex.request_deadline', true) IS NOT NULL")
         .fetch_optional(&mut *conn).await?;
@@ -336,15 +336,15 @@ async fn run_inner(
     .fetch_one(&mut *tx)
     .await?;
     let scope = (scope.user, scope.grants);
-    let definition_evidence = saved_context
+    let saved_definitions = saved_context
         .as_ref()
         .map(serde_json::to_value)
         .transpose()
         .map_err(|error| Error::Invalid(error.to_string()))?;
-    let question = cursor::question_from_evidence(
+    let question = cursor::question_identity(
         question_form,
         programmatic,
-        definition_evidence.as_ref(),
+        saved_definitions.as_ref(),
         &ctx,
         &scope,
     )?;

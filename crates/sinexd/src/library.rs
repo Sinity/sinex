@@ -1,5 +1,5 @@
 //! Media library commands. Scans and previews feed the library derivation;
-//! curation goes through request intake as planned curation records. Reads
+//! curation goes through the request path as planned curation records. Reads
 //! use live events.
 use crate::writer::WriterHandle;
 use crate::{Error, Result};
@@ -13,8 +13,8 @@ use sinex_store::Blobs;
 use sqlx::PgConnection;
 
 mod curation;
-mod intake;
 mod media;
+mod scan;
 mod views;
 
 use views::{collection_view, item_view, rank_view};
@@ -80,13 +80,13 @@ impl Library<'_> {
                 .details
                 .insert("owned_blobs".into(), serde_json::to_value(stored.cited)?);
         }
-        // Boxed: the intake future is the bulk of every library write, and
+        // Boxed: the request future is the bulk of every library write, and
         // inline it gave each caller's debug-build poll frame a ~15 KiB slot
         // per await site, enough to overflow a 2 MiB thread stack.
         let source = std::sync::Arc::new(library_source::request_source());
         let result = match stored.curation {
             true => {
-                Box::pin(crate::intake::request_curation(
+                Box::pin(crate::submit::request_curation(
                     conn,
                     self.writer,
                     self.blobs,
@@ -98,7 +98,7 @@ impl Library<'_> {
                 .await?
             }
             false => {
-                Box::pin(crate::intake::request(
+                Box::pin(crate::submit::request(
                     conn,
                     self.writer,
                     self.blobs,

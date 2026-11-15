@@ -401,7 +401,7 @@ pub const FORMAT: InputFormat = InputFormat {
     name: "hledger",
     accepts: &[],
     discovery: sinex_source_core::discovery::DiscoverySpec {
-        owner: sinex_source_core::discovery::Owner::System,
+        captured_by: sinex_source_core::discovery::CapturedBy::System,
         locations: &[
             sinex_source_core::discovery::Location {
                 root: "environment",
@@ -440,7 +440,7 @@ pub const FORMAT: InputFormat = InputFormat {
         );
         let input_format = b.settings.option("journal_format").unwrap_or("journal");
         if !matches!(input_format, "journal" | "timeclock" | "timedot") {
-            return Err("unknown native journal format".into());
+            return Err("unknown journal format".into());
         }
         source.parser.input_format = input_format.into();
         source.parser.initial_year = b

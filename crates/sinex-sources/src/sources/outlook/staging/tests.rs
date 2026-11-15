@@ -144,12 +144,12 @@ fn folders_of_one_revision_share_conversion_until_the_last_reader_closes() {
     drop(b);
     assert!(
         !stage.exists(),
-        "weak cache entries retain no scratch directory"
+        "weak cache entries keep no scratch directory"
     );
 }
 
 #[devkit::test]
-fn an_empty_conversion_still_binds_and_retains_its_native_acquisition() {
+fn empty_conversion_still_binds_and_keeps_its_original_pst() {
     let root = tempfile::tempdir().unwrap();
     let converter = root.path().join("readpst");
     std::fs::write(
@@ -159,9 +159,13 @@ fn an_empty_conversion_still_binds_and_retains_its_native_acquisition() {
     .unwrap();
     std::fs::set_permissions(&converter, std::fs::Permissions::from_mode(0o700)).unwrap();
     let input = root.path().join("empty.pst");
-    std::fs::write(&input, b"native empty PST fixture bytes").unwrap();
+    std::fs::write(&input, b"original empty PST fixture bytes").unwrap();
     let bindings = plan_with(&input, &Settings::default(), &converter).unwrap();
-    assert_eq!(bindings.len(), 1, "empty exports are acquisition evidence");
+    assert_eq!(
+        bindings.len(),
+        1,
+        "empty exports are still recorded acquisitions"
+    );
     let Reading::Shared(reader) = reader_with(&bindings[0], &converter).unwrap() else {
         panic!("shared reader");
     };
@@ -170,7 +174,7 @@ fn an_empty_conversion_still_binds_and_retains_its_native_acquisition() {
     assert_eq!(reader.acquisition().unwrap().path, input);
     assert_eq!(
         std::fs::read(&input).unwrap(),
-        b"native empty PST fixture bytes"
+        b"original empty PST fixture bytes"
     );
     drop(reader);
     assert!(!stage.exists());

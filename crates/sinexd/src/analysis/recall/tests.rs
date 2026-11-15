@@ -3,7 +3,7 @@ use serde_json::json;
 
 #[devkit::test]
 fn recall_descriptions_keep_recorded_objectives_checks_and_source_states() {
-    let episode = json!({"event_type":"work.episode","payload":{"label":"Recorded branch label","objective":{"reference":"task:example","repository":"/synthetic/repo"},"state":"suspended","trail":[{"text":"retained detail"}]}});
+    let episode = json!({"event_type":"work.episode","payload":{"label":"Recorded branch label","objective":{"reference":"task:example","repository":"/synthetic/repo"},"state":"suspended","trail":[{"text":"recorded detail"}]}});
     assert_eq!(
         description(&episode),
         "Recorded branch label; objective task:example; repository /synthetic/repo; state suspended"
@@ -13,7 +13,7 @@ fn recall_descriptions_keep_recorded_objectives_checks_and_source_states() {
         description(&act),
         "check; Recorded branch label; check unit tests: failed; revision abc123"
     );
-    let coverage = json!({"event_type":"source.coverage","payload":{"observed_source":"synthetic.source","state":"recorded_unknown_coverage","reason":"input checked successfully; no new events","binding":"retained-binding"}});
+    let coverage = json!({"event_type":"source.coverage","payload":{"observed_source":"synthetic.source","state":"recorded_unknown_coverage","reason":"input checked successfully; no new events","binding":"synthetic-binding"}});
     assert_eq!(
         description(&coverage),
         "synthetic.source; state recorded_unknown_coverage; input checked successfully; no new events"

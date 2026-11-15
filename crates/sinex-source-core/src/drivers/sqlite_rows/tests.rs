@@ -93,16 +93,16 @@ fn a_restart_with_rebuilt_memory_stores_nothing_new() {
         "the start-up full pass finds every row already stored: no new part"
     );
 
-    // The open row settles: read by rowid, though it no longer matches.
+    // The open row closes: read by rowid, though it no longer matches.
     Connection::open(&path)
         .unwrap()
         .execute_batch("UPDATE t SET n = 7 WHERE id = 'b'")
         .unwrap();
-    let settled = d
+    let closed = d
         .poll(&again.cursor_without_material, &mut rebuilt)
         .unwrap();
-    assert_eq!(lines(&settled)[0]["n"], json!(7));
-    let s = settled.material.as_ref().unwrap();
+    assert_eq!(lines(&closed)[0]["n"], json!(7));
+    let s = closed.material.as_ref().unwrap();
     assert_eq!(
         (s.cursor_at)(material_bytes(s).len()).unwrap()["open"],
         Value::Null

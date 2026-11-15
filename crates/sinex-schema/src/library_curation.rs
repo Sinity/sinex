@@ -1,4 +1,4 @@
-//! The library's shown-value projection: for each target and tag or
+//! The library's shown-value read model: for each target and tag or
 //! property, the value the library shows, its level and state, and the
 //! records supporting it. The writer keeps it equal to the precedence over
 //! the live curation records in every transaction that changes them

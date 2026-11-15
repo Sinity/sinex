@@ -1,5 +1,5 @@
 //! One material record and parser for every capture gap. Capture callers
-//! persist these records with their spool and supply the stream's class floor.
+//! persist these records with their spool and supply the stream's minimum class.
 use crate::registry::{Expectation, Origin, Shape};
 use crate::{Parser, RecordContext, RecordError};
 pub use sinex_model::event_types::capture::Gap;
@@ -33,7 +33,7 @@ impl Parser for GapParser {
     }
 }
 
-/// Callers supply the affected stream's class, including configured floors.
+/// Callers supply the affected stream's class, including configured minimum classes.
 pub fn source(class: sinex_model::Class) -> crate::DeclaredSource<GapParser> {
     crate::DeclaredSource {
         spec: crate::SourceSpec {
@@ -52,7 +52,7 @@ pub fn source(class: sinex_model::Class) -> crate::DeclaredSource<GapParser> {
     }
 }
 
-/// A gap is an ordinary JSON-line material. Its boundaries are supplied by the
+/// A gap is a JSON-line material like any other. Its boundaries are supplied by the
 /// stream; acquisition time does not fill an unknown boundary.
 pub fn material(
     gap: &Gap,

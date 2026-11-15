@@ -1,4 +1,4 @@
-//! Forecast command adapters. Reads share ordinary event visibility.
+//! Forecast command adapters. Reads share event visibility with every other read.
 use super::*;
 use crate::{Error, Result};
 use sinex_model::Timestamp;
@@ -196,7 +196,7 @@ impl Api {
             &self.host,
             now,
         );
-        let done = crate::intake::request(
+        let done = crate::submit::request(
             &mut conn,
             writer,
             &self.blobs,
@@ -274,7 +274,7 @@ async fn report(conn: &mut PgConnection) -> Result<Value> {
     }
     let mut pairs = Vec::new();
     let mut inputs = Vec::new();
-    let mut unavailable_evidence = 0;
+    let mut unavailable_resolutions = 0;
     for (forecast, (id, issue)) in issued {
         inputs.push(id);
         let mut outcomes = Vec::new();
@@ -292,7 +292,7 @@ async fn report(conn: &mut PgConnection) -> Result<Value> {
                 return Err(Error::bad_request("resolution has no evidence"));
             }
             if !available_evidence(conn, &resolution.evidence).await? {
-                unavailable_evidence += 1;
+                unavailable_resolutions += 1;
                 continue;
             }
             inputs.push(id);
@@ -313,6 +313,6 @@ async fn report(conn: &mut PgConnection) -> Result<Value> {
     }
     let report = sinex_analysis::forecast::score(pairs).map_err(Error::bad_value)?;
     Ok(
-        json!({"report":report,"commit_seq":position,"inputs":inputs,"withheld_events":withheld,"unavailable_evidence":unavailable_evidence}),
+        json!({"report":report,"commit_seq":position,"inputs":inputs,"withheld_events":withheld,"unavailable_resolutions":unavailable_resolutions}),
     )
 }

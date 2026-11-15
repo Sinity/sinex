@@ -24,7 +24,7 @@ async fn stored_class(conn: &mut PgConnection, id: EventId) -> String {
 }
 
 #[devkit::test]
-async fn warm_batches_see_rules_floors_and_new_sources(db: devkit::pg::TestDatabase) {
+async fn warm_batches_see_rules_minimum_classes_and_new_sources(db: devkit::pg::TestDatabase) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
@@ -34,7 +34,7 @@ async fn warm_batches_see_rules_floors_and_new_sources(db: devkit::pg::TestDatab
     let seq = privacy::add_rule(&mut changes, &rule("later", "later rule", Action::Classify))
         .await
         .unwrap();
-    privacy::set_source_class(&mut changes, "unseen floor", Class::Guarded, "test")
+    privacy::set_source_class(&mut changes, "unseen raised", Class::Guarded, "test")
         .await
         .unwrap();
     admit_one(&mut conn, &batch(vec![keyed("first", 1, 1, 1)])).await;
@@ -42,9 +42,9 @@ async fn warm_batches_see_rules_floors_and_new_sources(db: devkit::pg::TestDatab
     admit_one(&mut conn, &batch(vec![event.clone()])).await;
     assert_eq!(stored_class(&mut conn, event.id).await, "guarded");
 
-    let floor = keyed("unseen floor", 1, 1, 1);
-    admit_one(&mut conn, &batch(vec![floor.clone()])).await;
-    assert_eq!(stored_class(&mut conn, floor.id).await, "guarded");
+    let raised = keyed("unseen raised", 1, 1, 1);
+    admit_one(&mut conn, &batch(vec![raised.clone()])).await;
+    assert_eq!(stored_class(&mut conn, raised.id).await, "guarded");
 
     privacy::end_rule(&mut changes, "later rule", "test")
         .await
@@ -158,7 +158,7 @@ async fn hash_initialization_commits_before_a_failed_admission(db: devkit::pg::T
 }
 
 #[devkit::test]
-async fn rules_and_floors_committed_out_of_order_reach_the_next_batch(
+async fn rules_and_minimum_classes_committed_out_of_order_reach_the_next_batch(
     db: devkit::pg::TestDatabase,
 ) {
     let url = db.url(None);
@@ -188,17 +188,17 @@ async fn rules_and_floors_committed_out_of_order_reach_the_next_batch(
     );
 
     let mut tx = late.begin().await.unwrap();
-    privacy::set_source_class(&mut tx, "floor", Class::Guarded, "test")
+    privacy::set_source_class(&mut tx, "raised", Class::Guarded, "test")
         .await
         .unwrap();
     let maximum = privacy::set_source_class(&mut changes, "other", Class::Guarded, "test")
         .await
         .unwrap();
-    let before = keyed("floor", 1, 1, 1);
+    let before = keyed("raised", 1, 1, 1);
     admit_one(&mut conn, &batch(vec![before.clone()])).await;
     assert_eq!(stored_class(&mut conn, before.id).await, "open");
     tx.commit().await.unwrap();
-    let after = keyed("floor", 2, 1, 1);
+    let after = keyed("raised", 2, 1, 1);
     admit_one(&mut conn, &batch(vec![after.clone()])).await;
     assert_eq!(stored_class(&mut conn, after.id).await, "guarded");
     assert_eq!(

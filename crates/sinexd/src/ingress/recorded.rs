@@ -1,4 +1,5 @@
-//! Retained own material evidence and an independent current header check.
+//! A material Sinex recorded from this producer, and an independent check of
+//! its headers against the current source declaration.
 use super::*;
 use crate::Result;
 use sinex_protocol::{
@@ -10,34 +11,34 @@ impl Requests {
         &self,
         conn: &mut PgConnection,
         producer: &str,
-        claim: &RecordedContinuationRequest,
+        asked: &RecordedContinuationRequest,
     ) -> Result<RecordedContinuation> {
         let unknown = |reason: &str| RecordedContinuation::Unknown {
-            request: claim.clone(),
+            request: asked.clone(),
             reason: reason.into(),
         };
-        if claim.frame.is_empty() || claim.frame.contains('\0') {
-            return Ok(unknown("material_receipt_identity_unknown"));
+        if asked.frame.is_empty() || asked.frame.contains('\0') {
+            return Ok(unknown("material_ack_identity_unknown"));
         }
-        let Some(saved) = commit_log::recorded_material(conn, producer, &claim.frame).await? else {
-            return Ok(unknown("material_receipt_not_recorded"));
+        let Some(saved) = commit_log::recorded_material(conn, producer, &asked.frame).await? else {
+            return Ok(unknown("material_ack_not_recorded"));
         };
-        if saved.receipt.number <= 0 || saved.receipt.refusal_kind().is_some() {
-            return Ok(unknown("material_receipt_not_positive"));
+        if saved.stored_frame.number <= 0 || saved.stored_frame.refusal_kind().is_some() {
+            return Ok(unknown("material_ack_not_positive"));
         }
-        let content_hash = saved.receipt.content_hash();
+        let content_hash = saved.stored_frame.content_hash();
         if content_hash.is_none_or(|hash| {
             hash.strip_prefix("blake3:")
                 .is_none_or(|hex| blake3::Hash::from_hex(hex).is_err())
         }) {
-            return Ok(unknown("material_receipt_identity_unknown"));
+            return Ok(unknown("material_ack_identity_unknown"));
         }
-        if content_hash != Some(claim.frame_content_hash.as_str())
-            || saved.receipt.material_id != Some(claim.material.0)
-            || saved.blob.as_deref() != Some(claim.blob.as_str())
-            || saved.length.and_then(|length| u64::try_from(length).ok()) != Some(claim.length)
+        if content_hash != Some(asked.frame_content_hash.as_str())
+            || saved.stored_frame.material_id != Some(asked.material.0)
+            || saved.blob.as_deref() != Some(asked.blob.as_str())
+            || saved.length.and_then(|length| u64::try_from(length).ok()) != Some(asked.length)
         {
-            return Ok(unknown("material_receipt_binding_mismatch"));
+            return Ok(unknown("material_ack_binding_mismatch"));
         }
         if !saved.available {
             return Ok(unknown("material_custody_unavailable"));
@@ -51,27 +52,27 @@ impl Requests {
             saved.family,
             saved.write_kind_prefixes,
         ) else {
-            return Ok(unknown("material_source_authority_unknown"));
+            return Ok(unknown("material_source_unknown"));
         };
         if name.is_empty() || family.is_empty() || blake3::Hash::from_hex(&fingerprint).is_err() {
-            return Ok(unknown("material_source_authority_unknown"));
+            return Ok(unknown("material_source_unknown"));
         }
         let binding = RecordedMaterialBinding {
-            receipt: acknowledgment(saved.receipt)?,
-            material: claim.material,
-            blob: claim.blob.clone(),
-            length: claim.length,
+            ack: acknowledgment(saved.stored_frame)?,
+            material: asked.material,
+            blob: asked.blob.clone(),
+            length: asked.length,
             source: sinex_model::SourceRef { name, version },
             source_fingerprint: fingerprint,
             family,
             write_kind_prefixes: prefixes,
             producer_host: saved.producer_host,
         };
-        let headers = if claim.uses.is_empty() {
+        let headers = if asked.uses.is_empty() {
             RecordedHeaders::NotRequested
         } else {
             match self
-                .continuation_headers(conn, producer, &binding, &claim.uses)
+                .continuation_headers(conn, producer, &binding, &asked.uses)
                 .await
             {
                 Ok(()) => RecordedHeaders::PermittedHeaders,
@@ -83,8 +84,8 @@ impl Requests {
                 },
             }
         };
-        Ok(RecordedContinuation::Retained {
-            request: claim.clone(),
+        Ok(RecordedContinuation::Stored {
+            request: asked.clone(),
             binding: Box::new(binding),
             headers,
         })
@@ -97,16 +98,18 @@ impl Requests {
         binding: &RecordedMaterialBinding,
         uses: &[sinex_protocol::RecordedHeaderUse],
     ) -> Result<(), Check> {
-        let native =
-            authority::built_in_declaration(conn, &self.read_grants, producer, &binding.source)
+        let registered =
+            write_access::built_in_declaration(conn, &self.read_grants, producer, &binding.source)
                 .await?;
-        if native.family != binding.family || native.fingerprint() != binding.source_fingerprint {
+        if registered.family != binding.family
+            || registered.fingerprint() != binding.source_fingerprint
+        {
             return Err(Check::Configuration(
-                "retained source differs from the current owner declaration".into(),
+                "recorded material's source differs from the current source declaration".into(),
             ));
         }
         for header in uses {
-            authority::event(&self.read_grants, producer, &header.kind.name, header.class)
+            write_access::event(&self.read_grants, producer, &header.kind.name, header.class)
                 .map_err(|error| Check::Configuration(error.to_string()))?;
             if header.kind.name.contains('\0') {
                 return Err(Check::Configuration("header kind name contains NUL".into()));
@@ -124,17 +127,16 @@ impl Requests {
             .await
             .map_err(|error| Check::Unavailable(error.to_string()))?;
         for header in uses {
-            let registered = kinds.get(&header.kind).ok_or_else(|| {
+            let kind = kinds.get(&header.kind).ok_or_else(|| {
                 Check::Configuration("header kind version is not registered".into())
             })?;
-            let hash = registered.definition_hash();
+            let hash = kind.definition_hash();
             if hash != header.kind_definition_hash
-                || !native.allows(&header.kind, &hash)
-                || (registered.declaring_producer != "sinex"
-                    && registered.declaring_producer != binding.family)
+                || !registered.allows(&header.kind, &hash)
+                || (kind.declaring_producer != "sinex" && kind.declaring_producer != binding.family)
             {
                 return Err(Check::Configuration(
-                    "header differs from the exact retained source contract".into(),
+                    "header is outside the recorded material's source declaration".into(),
                 ));
             }
         }

@@ -93,7 +93,7 @@ pub struct ComputedKey {
     pub key: Value,
     /// The dirty mark the computation saw; a later mark survives.
     pub dirty_seq: i64,
-    /// Some output still waits for evidence outside the key's window.
+    /// Some output still waits for inputs outside the key's window.
     pub waiting: bool,
     /// A time-dependent output may refresh without another input.
     pub refresh_at: Option<sinex_model::Timestamp>,
@@ -576,11 +576,12 @@ pub(crate) async fn mark_inputs_dirty(
                 break;
             }
             let ids: Vec<_> = page.iter().map(|row| row.event_id).collect();
-            let owners: Vec<_> = page.iter().map(|row| row.derivation.clone()).collect();
+            let output_derivations: Vec<_> =
+                page.iter().map(|row| row.derivation.clone()).collect();
             let output_keys: Vec<_> = page.iter().map(|row| row.key.clone()).collect();
             let selected = sqlx::query_as::<_, AffectedKey>(include_str!("affected_outputs.sql"))
                 .bind(&ids)
-                .bind(&owners)
+                .bind(&output_derivations)
                 .bind(&output_keys)
                 .bind(&output_types)
                 .bind(&names)
@@ -599,13 +600,13 @@ pub(crate) async fn mark_inputs_dirty(
         dirty.extend(affected);
     }
     // Outcome counts describe offered marks, including repeated input offers;
-    // the affected-target union and its durable rows remain unchanged.
+    // the affected-target union and its stored rows remain unchanged.
     Ok(mark_dirty(conn, dirty, seq).await? + repeated_marks)
 }
 
 /// Every live descendant leaves the live set in this transaction, including
 /// keyed aggregates. Their keys recompute new readings from the remaining
-/// live inputs; the stored descendants never retain an archived parent.
+/// live inputs; the stored descendants never keep an archived parent.
 pub(crate) async fn mark_archived_dirty(
     conn: &mut PgConnection,
     ids: &[Uuid],
@@ -633,8 +634,8 @@ pub(crate) async fn mark_archived_dirty(
     Ok(marked)
 }
 
-/// Use the selected chain's kinds before reading payloads. Ownership keys
-/// still become dirty even when no current derivation consumes their kind.
+/// Use the selected chain's kinds before reading payloads. Keys that already
+/// have these outputs still become dirty even when no current derivation consumes their kind.
 pub(crate) async fn mark_selected_dirty(
     conn: &mut PgConnection,
     selected: &[(Uuid, &str)],
@@ -683,8 +684,8 @@ async fn mark_dirty_events(
         .collect();
     let mut marked = mark_inputs_dirty(conn, &inputs, seq, keys).await?;
     // A key may come from a request or a semantic join rather than from the
-    // output's fields. Its existing ownership also makes it dirty.
-    let owners = sqlx::query!(
+    // output's fields. Being the key of an existing output also makes it dirty.
+    let output_keys = sqlx::query!(
         "SELECT DISTINCT derivation, key FROM derivation.outputs WHERE event_id = ANY($1)",
         ids,
     )
@@ -708,7 +709,7 @@ async fn mark_dirty_events(
     };
     marked += mark_dirty(
         conn,
-        owners
+        output_keys
             .into_iter()
             .filter(|row| {
                 !computed

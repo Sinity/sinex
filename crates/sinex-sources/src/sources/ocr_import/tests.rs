@@ -82,9 +82,9 @@ fn invalid_ocr_is_diagnosed_and_missing_confidence_stays_unknown() {
 }
 
 #[devkit::test]
-fn native_ocr_json_arrays_keep_each_box_and_reject_malformed_entries() {
+fn ocr_json_arrays_keep_each_box_and_reject_malformed_entries() {
     let parser = OcrParser {
-        input: "native-array".into(),
+        input: "json-array".into(),
         format: Format::Json,
     };
     let bytes = br#"[{"text":"first","bbox":[10,20,300,60],"coordinate_units":"pixels","confidence":0.87},{"text":"second"}]"#;

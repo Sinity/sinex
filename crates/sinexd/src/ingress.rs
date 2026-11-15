@@ -24,7 +24,6 @@
 //! materials the producer registered, and `<root>.lifecycle.<producer>` takes
 //! a lifecycle request (archive, restore, undo) with the producer as actor.
 use crate::{Error, Result};
-pub(crate) mod authority;
 mod bytes;
 mod confirmed_consumer;
 pub(crate) mod fetch;
@@ -33,6 +32,7 @@ pub(crate) mod replay;
 mod signals;
 mod snapshot;
 mod stream_messages;
+pub(crate) mod write_access;
 
 use crate::writer::{Priority, WriteError, WriterHandle};
 use async_nats::jetstream::{self, AckKind, consumer, stream};
@@ -404,10 +404,10 @@ impl Ingest {
                 .and_then(|(_, suffix)| suffix.split('/').next())
                 .and_then(|name| Uuid::parse_str(name).ok());
             if let Some(material) = named {
-                let owned =
+                let registered_by_producer =
                     commit_log::producer_material_registered(&mut self.conn, producer, material)
                         .await?;
-                if owned {
+                if registered_by_producer {
                     for location in &mut locations {
                         location.material = sinex_model::MaterialId(material);
                     }
@@ -437,14 +437,14 @@ impl Ingest {
     }
 
     async fn configuration(&mut self, producer: &str) -> Result<Option<String>> {
-        let family = match authority::write(&self.grants, producer) {
+        let family = match write_access::write(&self.grants, producer) {
             Ok(write) => write.family.clone(),
             Err(reason) => return Ok(Some(reason.to_string())),
         };
         let privacy =
             sinex_store::privacy::load(&mut self.conn, [producer, family.as_str()].into_iter())
                 .await?;
-        let version = (privacy.seq, privacy.floors.get(producer).copied());
+        let version = (privacy.seq, privacy.minimum_classes.get(producer).copied());
         let changed = self
             .privacy_versions
             .insert(producer.into(), version)
@@ -487,7 +487,7 @@ impl Ingest {
         let mut emitted = if let Some(source) = source {
             sinex_store::source_declarations::load(&mut self.conn, source)
                 .await?
-                .ok_or_else(|| Error::not_found("native source declaration disappeared"))?
+                .ok_or_else(|| Error::not_found("registered source declaration disappeared"))?
                 .kinds
                 .into_iter()
                 .map(|kind| kind.kind.name)
@@ -605,7 +605,7 @@ impl Ingest {
         producer: &str,
         source: &sinex_model::SourceRef,
     ) -> Result<sinex_model::SourceDeclaration, Check> {
-        authority::built_in_declaration(&mut self.conn, &self.grants, producer, source).await
+        write_access::built_in_declaration(&mut self.conn, &self.grants, producer, source).await
     }
 
     fn check_declarations(
@@ -613,11 +613,11 @@ impl Ingest {
         producer: &str,
         declarations: &[sinex_model::KindDeclaration],
     ) -> Result<(), Check> {
-        let write = authority::write(&self.grants, producer)
+        let write = write_access::write(&self.grants, producer)
             .map_err(|error| Check::Configuration(error.to_string()))?;
         for declaration in declarations {
             if declaration.declaring_producer != write.family
-                || !authority::matches(&write.kind_prefixes, &declaration.kind.name)
+                || !write_access::matches(&write.kind_prefixes, &declaration.kind.name)
                 || !write
                     .source_declarations
                     .iter()
@@ -629,7 +629,7 @@ impl Ingest {
                     })
             {
                 return Err(Check::Configuration(
-                    "declaration is outside the configured logical family".into(),
+                    "declaration is outside the configured family".into(),
                 ));
             }
         }
@@ -644,14 +644,14 @@ impl Ingest {
         failures: &[ProducerFailure],
         replay: bool,
     ) -> Result<Vec<RecordOutcome>, Check> {
-        let family = authority::write(&self.grants, producer)
+        let family = write_access::write(&self.grants, producer)
             .map_err(|error| Check::Configuration(error.to_string()))?
             .family
             .clone();
         for event in events {
-            authority::event(&self.grants, producer, &event.kind.name, event.class)
+            write_access::event(&self.grants, producer, &event.kind.name, event.class)
                 .map_err(|error| Check::Configuration(error.to_string()))?;
-            // A bad identifier is durable content failure, not a transient
+            // A bad identifier is a permanent content failure, not a transient
             // database outage. PostgreSQL text parameters cannot contain NUL.
             if event.kind.name.contains('\0') {
                 return Err(Check::Refused("event kind name contains NUL".into()));
@@ -675,26 +675,26 @@ impl Ingest {
             .find(|reference| !declarations.contains_key(reference))
         {
             return Err(Check::Refused(format!(
-                "namespace_refused: exact kind declaration {}@{} is not registered",
+                "namespace_refused: kind declaration {}@{} is not registered",
                 reference.name, reference.version
             )));
         }
         if declarations.values().any(|declaration| {
             declaration.declaring_producer != "sinex" && declaration.declaring_producer != family
         }) {
-            return Err(Check::Refused(
-                "kind belongs to another logical family".into(),
-            ));
+            return Err(Check::Refused("kind belongs to another family".into()));
         }
-        let native = match source {
+        let registered = match source {
             Some(source) => Some(self.built_in_declaration(producer, source).await?),
             None => None,
         };
-        let write = authority::write(&self.grants, producer)
+        let write = write_access::write(&self.grants, producer)
             .map_err(|error| Check::Configuration(error.to_string()))?;
         for declaration in declarations.values() {
-            let allowed = match &native {
-                Some(native) => native.allows(&declaration.kind, &declaration.definition_hash()),
+            let allowed = match &registered {
+                Some(registered) => {
+                    registered.allows(&declaration.kind, &declaration.definition_hash())
+                }
                 None => write.canonical_kinds.iter().any(|known| {
                     known.kind == declaration.kind
                         && known.definition_hash() == declaration.definition_hash()
@@ -702,7 +702,7 @@ impl Ingest {
             };
             if !allowed {
                 return Err(Check::Configuration(
-                    "event is outside its exact owner source or canonical declaration".into(),
+                    "event is outside its registered source or canonical declaration".into(),
                 ));
             }
         }
@@ -710,7 +710,7 @@ impl Ingest {
             && (!failures.is_empty() || events.iter().any(|event| event.location.is_some()))
         {
             return Err(Check::Configuration(
-                "material readings require an explicit registered native source".into(),
+                "material readings require an explicit registered source".into(),
             ));
         }
         // Every cited material must be registered first.
@@ -732,15 +732,15 @@ impl Ingest {
             }
         }
         if !cited.is_empty() {
-            let ownership = sinex_store::producer_reads::material_owners(&mut self.conn, &cited)
+            let families = sinex_store::producer_reads::material_families(&mut self.conn, &cited)
                 .await
                 .map_err(|error| Check::Unavailable(error.to_string()))?;
             if cited.iter().any(|id| {
-                !ownership.iter().any(|owner| {
-                    owner.0 == Some(*id) && owner.1.as_deref() == Some(family.as_str())
+                !families.iter().any(|(material, material_family)| {
+                    *material == Some(*id) && material_family.as_deref() == Some(family.as_str())
                 })
             }) {
-                return Err(Check::Refused("material family ownership is unavailable or belongs to another family; explicit mapping is required for historical material".into()));
+                return Err(Check::Refused("the family that wrote the material is unknown or another family; explicit mapping is required for historical material".into()));
             }
         }
         if let Some(source) = source {
@@ -753,7 +753,7 @@ impl Ingest {
                         && name.as_deref() == Some(source.name.as_str())
                         && (replay || *version == Some(i64::from(source.version)))
                 }) {
-                    return Err(Check::Configuration("material and event native sources differ or historical source authority is unknown".into()));
+                    return Err(Check::Configuration("material and event sources differ or the historical material source is unknown".into()));
                 }
             }
         }
@@ -833,7 +833,7 @@ fn assigned_orders(frame: Option<&Ingress>, records: &[RecordOutcome]) -> Vec<Ev
 
 fn sealed(privacy: &sinex_store::privacy::RuleSet) -> bool {
     privacy
-        .floors
+        .minimum_classes
         .values()
         .any(|class| *class == sinex_model::Class::Sealed)
         || privacy
@@ -1066,7 +1066,7 @@ impl Requests {
     }
 
     async fn connect(&self, producer: &str, hello: &ProducerHello) -> Result<ProducerWelcome> {
-        let write = authority::write(&self.read_grants, producer).ok();
+        let write = write_access::write(&self.read_grants, producer).ok();
         let mut conn = self.reads.acquire().await?;
         let family = write.map(|write| write.family.as_str()).unwrap_or(producer);
         let privacy = sinex_store::privacy::load(&mut conn, [producer, family].into_iter()).await?;
@@ -1083,13 +1083,13 @@ impl Requests {
                 || hello
                     .event_types
                     .iter()
-                    .any(|kind| !authority::matches(&write.kind_prefixes, kind))
+                    .any(|kind| !write_access::matches(&write.kind_prefixes, kind))
         }) {
             let write = write.expect("capability branch requires a write grant");
             let undelegated = hello
                 .event_types
                 .iter()
-                .filter(|kind| !authority::matches(&write.kind_prefixes, kind))
+                .filter(|kind| !write_access::matches(&write.kind_prefixes, kind))
                 .collect::<Vec<_>>();
             Some(format!(
                 "producer hello is outside its write kind or class capability: offered_class={:?}, class_authorized={}, undelegated_kinds={undelegated:?}",
@@ -1143,9 +1143,9 @@ impl Requests {
         )
         .await?;
         let mut continuations = Vec::with_capacity(request.continuations.len());
-        for claim in &request.continuations {
+        for asked in &request.continuations {
             continuations.push(
-                self.recorded_continuation(&mut conn, producer, claim)
+                self.recorded_continuation(&mut conn, producer, asked)
                     .await?,
             );
         }
@@ -1183,13 +1183,18 @@ impl Requests {
                     .iter()
                     .find(|(id, _, _)| *id == row.material_id)
                     .ok_or_else(|| {
-                        Error::internal(
-                            "material source authority is unknown; explicit historical mapping required",
-                        )
-                    })?;
+                    Error::internal(
+                        "material source is unknown; explicit historical mapping required",
+                    )
+                })?;
                 let source = sinex_model::SourceRef {
-                    name: name.clone().ok_or_else(|| Error::internal("material source authority is unknown"))?,
-                    version: u32::try_from(version.ok_or_else(|| Error::internal("material source version is unknown"))?)?,
+                    name: name
+                        .clone()
+                        .ok_or_else(|| Error::internal("material source is unknown"))?,
+                    version: u32::try_from(
+                        version
+                            .ok_or_else(|| Error::internal("material source version is unknown"))?,
+                    )?,
                 };
                 Ok(ProducerMaterial {
                     extents: row.extents,
@@ -1217,7 +1222,7 @@ impl Requests {
             .collect()
     }
 
-    /// Answer a lifecycle request exactly as the same CLI request is
+    /// Answer a lifecycle request as the same CLI request is
     /// answered, with the producer as the actor. Tombstoning is reserved to
     /// the operator, as on the API.
     async fn lifecycle(&self, producer: &str, request: Lifecycle) -> sinex_protocol::Reply {
@@ -1350,7 +1355,7 @@ impl Requests {
                     })
                 }
                 Ok(sinex_protocol::ReplayQuery::Materials { query }) => {
-                    let family = match authority::write(&self.read_grants, &producer) {
+                    let family = match write_access::write(&self.read_grants, &producer) {
                         Ok(write) => write.family.clone(),
                         Err(error) => {
                             return Some(ResponseBody::Error {
@@ -1459,7 +1464,7 @@ async fn consume(client: async_nats::Client, mut ingest: Ingest) -> Result<()> {
                     .publish(
                         ingest.subjects.ack(&producer),
                         serde_json::to_vec(&hint)
-                            .expect("receipt hint serializes")
+                            .expect("ack hint serializes")
                             .into(),
                     )
                     .await;

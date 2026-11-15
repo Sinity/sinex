@@ -250,7 +250,7 @@ fn session_captures_available_streams_without_selection_flags() {
     context
         .environment
         .insert("PATH".into(), bin.display().to_string());
-    let selected = captures(&context, Owner::Session).unwrap().bindings;
+    let selected = captures(&context, CapturedBy::Session).unwrap().bindings;
     let names: Vec<_> = selected
         .iter()
         .map(|(_, binding)| binding.name.clone())
@@ -278,14 +278,14 @@ fn session_captures_available_streams_without_selection_flags() {
         }),
     );
     assert!(
-        captures(&context, Owner::Session)
+        captures(&context, CapturedBy::Session)
             .unwrap()
             .bindings
             .iter()
             .all(|(_, binding)| binding.source != "desktop.clipboard")
     );
     assert!(
-        captures(&DiscoveryContext::default(), Owner::Session)
+        captures(&DiscoveryContext::default(), CapturedBy::Session)
             .unwrap()
             .bindings
             .is_empty()
@@ -368,7 +368,7 @@ fn invalid_capture_settings_do_not_disable_other_streams() {
     assert!(inputs.iter().any(|input| input.source == "session.media"
         && input.availability == Availability::Unavailable(Cause::Failed)));
     assert!(
-        captures(&context, Owner::Session)
+        captures(&context, CapturedBy::Session)
             .unwrap()
             .bindings
             .iter()
@@ -408,7 +408,7 @@ fn capture_selection_uses_the_formats_discovery_callback() {
         spool: PathBuf::from("/synthetic/spool"),
         ..Default::default()
     };
-    let captures = select_captures(&context, Owner::Session, &[&FORMAT]);
+    let captures = select_captures(&context, CapturedBy::Session, &[&FORMAT]);
     assert_eq!(captures.len(), 1);
     assert_eq!(
         captures[0].1.input,
@@ -420,7 +420,7 @@ fn capture_selection_uses_the_formats_discovery_callback() {
             reason: "fixture exclusion".into(),
         }),
     );
-    assert!(select_captures(&context, Owner::Session, &[&FORMAT]).is_empty());
+    assert!(select_captures(&context, CapturedBy::Session, &[&FORMAT]).is_empty());
 }
 
 #[devkit::test]
@@ -456,14 +456,19 @@ fn takeout_keeps_calendar_bindings_and_applies_calendar_settings_and_exclusions(
 }
 
 #[devkit::test]
-fn daemon_status_reports_session_ownership_without_session_capabilities() {
+fn daemon_status_leaves_session_captures_to_producer() {
     let root = tempfile::tempdir().unwrap();
     let context = context(root.path());
     let inputs = status(&context).unwrap();
     let captures: Vec<_> = inputs.iter().filter(|input| input.capture).collect();
     assert!(!captures.is_empty());
     for input in captures {
-        if sources::format(&input.format).unwrap().discovery.owner == Owner::Session {
+        if sources::format(&input.format)
+            .unwrap()
+            .discovery
+            .captured_by
+            == CapturedBy::Session
+        {
             assert_eq!(input.availability, Availability::ProducerReported);
             assert!(input.bindings.is_empty());
             assert!(
@@ -477,7 +482,7 @@ fn daemon_status_reports_session_ownership_without_session_capabilities() {
     }
 }
 
-/// A home tree holding the canonical inputs of several sources, as a host
+/// A home tree holding the inputs of several sources, as a host
 /// would have them; everything is synthetic.
 fn synthetic_home(root: &Path) -> DiscoveryContext {
     let mut context = context(root);
@@ -533,7 +538,7 @@ fn default_total_on_a_fixture_host() {
             }
         }
     }
-    // Every source whose canonical input the fixture host has is captured,
+    // Every source whose input the fixture host has is captured,
     // with no per-source setting.
     for source in [
         "terminal.atuin-history",

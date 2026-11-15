@@ -1,5 +1,5 @@
-//! Owner-installed native source declarations. Transport credentials authorize
-//! their use; source labels in an event payload never confer that authority.
+//! Source declarations the operator installs with Sinex. Transport credentials
+//! decide who may use them; a source label in an event payload grants nothing.
 use crate::{KindDeclaration, SourceRef};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -29,8 +29,8 @@ impl SourceDeclaration {
     }
 }
 
-/// Owner-installed cache projection contract. Its exact kind definitions are
-/// read requirements, independently of any credential's write authority.
+/// A snapshot catalog the operator installs: the kind definitions, by hash, a
+/// consumer's snapshot reads, independently of any credential's write grant.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SnapshotCatalog {

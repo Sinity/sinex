@@ -17,7 +17,7 @@ fn package(root: &Path, directory: &str, name: &str, manifest: &str, source: &st
 }
 
 #[devkit::test]
-fn native_packages_and_targets_keep_daemon_unit_tests_without_unrelated_builds() {
+fn package_and_target_flags_build_only_selected_tests() {
     let fixture = tempfile::tempdir().unwrap();
     let root = fixture.path();
     fs::write(

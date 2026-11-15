@@ -13,7 +13,7 @@ Relation transforms use explicit pipes: `commands where since:7d | group by cwd 
 
 `| group by F | first N` selects the first N original rows in each group, preserving the incoming order and each row's identity and provenance. It keeps the original row fields for later filters and projections.
 
-`recall`, `trace`, `parents` and `descendants` are Sinex operations. Their adapters carry ordinary shared relation bodies and transforms in a typed template; they are not source variants of the shared query language. For example, `recall yesterday | fields when, text` uses a recall operation and a shared projection.
+`recall`, `trace`, `parents` and `descendants` are Sinex operations. Their adapters carry shared relation bodies and transforms in a typed template; they are not source variants of the shared query language. For example, `recall yesterday | fields when, text` uses a recall operation and a shared projection.
 
 The same query text runs on every surface. An answer carries its rows, the total, the
 resolved read context (clock, zone, commit position), a continuation, and `read_as`, the
@@ -42,7 +42,7 @@ through its registered bindings.
 |---|---|
 | `events` | one live reading: `id`, `event_type`, `source`, `host`, `when`, `time_quality`, `seen`, `written`, `origin`, `material`, `offset`, `output`, `parents`, `producer`, `producer_version`, `run`, `text`, `key`, `class`, `commit_seq`, `written_by`, `payload` |
 | `archive` | an archived reading: the event fields plus `archived`, `reason`, `operation`, `archived_seq`; history is implicit, so there is no pointer to a replacing reading |
-| `tombstones` | a tombstone skeleton: event ID, source, type, `ts_orig`, time, reason, operation, material and anchor |
+| `tombstones` | a tombstone skeleton: event ID, source, type, `ts_orig`, time, reason, operation, material and record offset |
 | `materials` | a stored material: `id`, `binding`, `parser`, `parser_version`, `hash`, `size`, `status` (`live`, `archived`, `tombstoned`), `origin_path`, `host`, `part`, `previous_part`, `events`, `first`, `last` |
 | `runs` | a producer execution: `id`, `producer`, `producer_version`, `host`, `started`, `ended`, `status`, `events`, `failed`, `refused` |
 | `operations` | a user act: `id`, `kind`, `author`, `via`, `scope`, `started`, `outcome`, `affected` |
@@ -50,7 +50,7 @@ through its registered bindings.
 | `inputs` | one input of a binding (a file, an export, an archive member): records read, events made, suppressed, matched to another input, record errors with the first unparsed form |
 | `gaps` | one gap interval of a binding: `binding`, `from`, `to`, `state` (`gap`, `unknown`, `estimated`), `reason`, `missing_count` (known or unknown) |
 | `shapes` | one observed payload shape of a binding over an interval: fields added, removed and retyped against the declaration and the previous shape |
-| `failures` | one refused or failed record: material, anchor, binding, source, reason |
+| `failures` | one refused or failed record: material, record offset, binding, source, reason |
 | `duplicates` | one considered fusion pair and its decision state ([fusion](derivations.md#fusion)) |
 | `coverage` | one source, input and hour in the [coverage vocabulary](sources.md#completeness) (decided target) |
 | `stages` | one stage operation with its inventory and accounting ([staging](materials.md#inventory-and-progress); decided target) |
@@ -65,21 +65,21 @@ Further units belong to the pages that own their concepts: `packs`, `notes`, `la
 ([library](library.md#surfaces)); `figures`, `metrics`, `constructs`, `studies`,
 `findings`, `forecasts`, `places`, `visits` and `intakes`
 ([personal evidence](evidence.md#surfaces)); `signals`, `deliveries` and `prompts`
-([signals](interfaces.md#signals)). Every event row carries `stratum` (its kind's
-[stratum](recall.md#strata)) and `host`; act and span rows carry `agency`.
+([signals](interfaces.md#signals)). Every event row carries `recall_class` (its kind's
+[recall class](recall.md#recall-classes)) and `host`; act and span rows carry `agency`.
 
 Sinex's catalog extensions (decided target): `holding at T` and `holding during W`
 select interval rows whose span contains T or overlaps W, served by the span index (the
 order relation `containing` with an instant); `| lanes [L,…]` groups a result's rows into
 named lanes with per-lane counts and continuations; `compare A B` is the relation behind
 the compare recipe, rows of `(lane, measure, a, b, unit, a_coverage, b_coverage)`;
-`day_of_year(when)` and `anniversary(DATE)` match the same logical calendar day across
+`day_of_year(when)` and `anniversary(DATE)` match the same calendar day, under the day setting, across
 years (29 February matches only 29 February and answers "no such day" in other years).
 
 Archived visibility is a relation and read-context choice: `events` excludes
 readings archived at the selected position; `archive` exposes archive history.
 `| as of POSITION` selects historical visibility at that exact commit. It does
-not make every archived reading part of ordinary `events`, and current privacy
+not make every archived reading part of the default `events`, and current privacy
 and tombstone policy still applies. There is no separate `archived` table name
 or global include-archived switch.
 
@@ -91,11 +91,11 @@ sinexctl 'failures where source = health.samsung'
 
 ### Aliases
 
-Aliases are payload projections over registered, produced event types: `commands`,
+Aliases are payload views over registered, produced event types: `commands`,
 `duplicates`, `shell-sessions`, `activity-sessions`, `episodes`, `intervals`, `now`, `figures`,
 `focus`, `visits`, `plays`, `items`, `media`, `curation`, and one for each
 [higher-layer](higher-layer.md) kind once its producer exists. An alias exists only with
-its producer, so an alias never answers from nothing. Every duration projection states
+its producer, so an alias never answers from nothing. Every duration alias states
 its unit. `kinds [KIND]` lists which aliases expand to which event types.
 
 `commands` reads a [fusion family](derivations.md#fusion): its fused commands plus the
@@ -111,7 +111,7 @@ each source's records are rows of their own, so counts across sources are per so
 
 Use `similar:sinex:ev/<embedding-id>` with a stored `text.embedding` reference. It ranks the filtered event relation in that exact vector space and retains rows without a vector at unknown rank. It is a positive ranking directive in the root AND conditions; OR, NOT and conflicting references are explicit refusals. The reference obeys grants and the selected read position. This supplied-vector path enables no model provider.
 
-Event relations also expose `start` and `end` for actual declared spans; a point event has unknown span bounds, and an ongoing span has an unknown end. `snippet` is the generated search excerpt, available to explicit projections; it is unknown when the relation has no ranked search.
+Event relations also expose `start` and `end` for declared spans; a point event has unknown span bounds, and an ongoing span has an unknown end. `snippet` is the generated search excerpt, available to explicit projections; it is unknown when the relation has no ranked search.
 
 ### Typed payload fields
 
@@ -318,7 +318,7 @@ sinexctl 'queries'
   It is cited as `sinex:result/<id>` and read as the relation `result:<id>` inside
   another query, where it reproduces at its read context.
 - Any answer that is cited, delivered (a brief, a signal delivery, a context pack) or
-  produced by a recipe is stored the same way. An ordinary interactive read is not.
+  produced by a recipe is stored the same way. An interactive read is not.
 
 ## Citation forms
 
@@ -367,7 +367,7 @@ condition. What each identity means is in [events](events.md#citations); the for
   down to descendants. Each event appears once and distinct branches are kept;
   unavailable, withheld, archived and tombstoned links are named; continuation reaches
   any depth. `--bytes` prints the stored range on a terminal only.
-- **`REF related`** lists events sharing a native key (URL, path, commit, thread) with
+- **`REF related`** lists events sharing a key such as a URL, path, commit or thread with
   the reference, naming the matching field and the key's domain.
 
 ## AI conversation text

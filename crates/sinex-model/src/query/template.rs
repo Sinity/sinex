@@ -1,5 +1,5 @@
-//! Product commands carry ordinary query relations through the shared grammar.
-//! Authored text is evidence; a template is the executable definition.
+//! Product commands carry query relations through the shared grammar.
+//! The authored text is kept as written; a template is the executable definition.
 use super::*;
 use query_language::ast as syntax;
 use serde::{Deserialize, Serialize};

@@ -121,7 +121,7 @@ self: {
         machine.succeed("rm -rf /var/lib/sinex/store/* /var/lib/sinex/backups/*")
         machine.succeed("rm /var/lib/sinex/zsh_history /var/lib/sinex/after-hold")
 
-    with subtest("restore this exact main and key archive pair alone"):
+    with subtest("restore this main and key archive pair alone"):
         machine.succeed("mkdir -p /restore/main /restore/keys")
         main_archive = pair["main"]["name"]
         key_archive = pair["keys"]["name"]
@@ -143,7 +143,8 @@ self: {
     after = events()
     after_files = files("/var/lib/sinex/store")
     assert after == before, f"restored events differ: {before} vs {after}"
-    assert after_files == before_files, f"restored exact segment bytes differ: {before_files!r} vs {after_files!r}"
+    assert after_files == before_files, f"restored segment bytes differ:
+ {before_files!r} vs {after_files!r}"
 
     with subtest("stopping the backup also stops its archive jobs"):
         machine.succeed("rm -f /run/release-backup-copy /run/sinex-backup/artifact-ready; touch /run/hold-backup-copy")

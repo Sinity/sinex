@@ -40,7 +40,7 @@ async fn the_source_rows_follow_the_catalog(db: devkit::pg::TestDatabase) {
 }
 
 #[devkit::test]
-async fn expectations_as_data_store_each_declaration_exactly(db: devkit::pg::TestDatabase) {
+async fn expectations_as_data_store_each_declaration_unchanged(db: devkit::pg::TestDatabase) {
     let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
         .await
         .unwrap();

@@ -943,6 +943,6 @@ mod calendar;
 
 mod follow;
 
-mod projection;
+mod fields;
 
 mod temporal_selectors;

@@ -285,7 +285,7 @@ fn grouped_repeated_and_saved_outputs_use_their_entering_column_types() {
 }
 
 #[devkit::test]
-fn promoted_and_grouped_boolean_time_columns_keep_their_actual_types() {
+fn promoted_and_grouped_boolean_time_columns_keep_their_types() {
     let query = q("events | join near (commands) within 5m | where match.duration >= \"001.50\"");
     assert_eq!(
         values(&query, "match.duration"),

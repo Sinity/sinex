@@ -32,8 +32,8 @@ pub(crate) trait Consumer: Send + Sync {
     /// The saved position: the last commit position already handled.
     fn position<'a>(&'a self, conn: &'a mut PgConnection) -> BoxFuture<'a, Result<i64>>;
 
-    /// Handle `events` (those it wants, in commit order) and durably record
-    /// `up_to` as the new position together with the effect.
+    /// Handle `events` (those it wants, in commit order) and commit `up_to` as
+    /// the new position in the same transaction as the effect.
     fn handle<'a>(
         &'a mut self,
         events: &'a [Committed],
@@ -43,7 +43,7 @@ pub(crate) trait Consumer: Send + Sync {
 }
 
 /// Run the reader until `stop` is set. `commits` changes whenever the writer
-/// commits a batch. `completed` wakes readers after durable consumer progress.
+/// commits a batch. `completed` wakes readers after a consumer saves its progress.
 pub(crate) async fn run(
     mut conn: PgConnection,
     mut consumers: Vec<Box<dyn Consumer>>,
@@ -135,7 +135,7 @@ pub(crate) async fn run(
 pub(crate) trait ReadModel: Send + Sync {
     fn name(&self) -> &'static str;
     fn wants(&self, event_type: &str) -> bool;
-    /// Initialize from retained events before following a possibly pruned log.
+    /// Initialize from stored events before following a possibly pruned log.
     fn initialize<'a>(&'a self, _: &'a mut PgConnection) -> BoxFuture<'a, Result<()>> {
         Box::pin(async { Ok(()) })
     }
@@ -219,7 +219,7 @@ impl ReadModel for SearchText {
     }
 }
 
-/// Vector projection and per-space pgvector indexes over stored embeddings.
+/// Vector read model and per-space pgvector indexes over stored embeddings.
 struct EmbeddingVectors;
 impl ReadModel for EmbeddingVectors {
     fn name(&self) -> &'static str {

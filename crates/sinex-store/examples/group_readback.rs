@@ -1,4 +1,4 @@
-//! Explicit numeric-UID qualification of protected shared-store read authority.
+//! Checks, by explicit numeric UID, who may read the protected shared store.
 use hashed_blobs::Extent;
 use sinex_store::Blobs;
 use std::os::unix::fs::PermissionsExt;

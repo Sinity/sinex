@@ -1,4 +1,4 @@
-//! Source read outcomes whose retained bytes can parent derived coverage.
+//! Source read outcomes whose stored bytes can parent derived coverage.
 use crate::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

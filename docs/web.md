@@ -11,14 +11,14 @@ render in [query](query.md) and [recall](recall.md).
 ## Technology
 
 `sinexd` renders HTML with `maud` from the same typed answers that feed the CLI and MCP,
-so a page and the command behind it cannot disagree. Pages are ordinary links and GET
+so a page and the command behind it cannot disagree. Pages are plain links and GET
 forms; writes are POSTs of operation-table requests. The shared TypeScript shell from
 `web-shell` handles keys, the palette, copy, SSE fragment swaps, one event connection per
 browser, and the timeline element, which draws lanes in the client from typed series
 rows that Sinex bins server-side (at most one mark per pixel); live updates arrive as server-rendered fragments over SSE with the commit
 position as the event ID, so the browser never assembles a view from JSON; the timeline
 element is the one exception, drawing typed series rows (decided target). The web is
-the one graphical surface: there is no native application, because an installed web
+the one graphical surface: there is no desktop application, because an installed web
 app reaches the desktop's notification and shortcut services while keeping URLs as
 citations and one shell shared with Polylogue; desktop integration goes through the
 desktop's own services. The reader uses the API only and holds no database of its own.
@@ -116,7 +116,7 @@ Every view has a data contract: the operation it calls and what it must show. Ev
 | Sources (`/sources`) | one row per source (grouped by host), one cell per day in the coverage vocabulary, the state with its reason; derivation lag, failures, stored-unparsed materials, disk runway; missing is never drawn as zero |
 | Inputs (`/inputs/ID`) | `sources NAME` per-input accounting: records read, new, the same as another export, revised, removed at source, failures with the first unreadable form ([sources relation](interfaces.md#the-sources-relation)) |
 | Stage (`/stage`) | a drop zone and the list of stage operations, each opening to its inventory with per-product accounting, what paces it, and the stored-but-not-interpreted section with candidate parsers ([inventory](materials.md#inventory-and-progress)) |
-| Material (`/materials/ID`; decided target) | manifest, part sequence, a record strip (anchors with their readings, live or archived, coloured by run), a byte view of any record range (escapes never executed), the runs that read it, and replay with compare |
+| Material (`/materials/ID`; decided target) | manifest, part sequence, a record strip (record offsets with their readings, live or archived, coloured by run), a byte view of any record range (escapes never executed), the runs that read it, and replay with compare |
 | Hosts (`/hosts/NAME`; decided target) | contact, clock offset, spool and inputs with transfer classes ([hosts](hosts.md#surfaces)) |
 | Backed | Polylogue on Sinex, from both sides ([status](interfaces.md#polylogue-on-sinex)) |
 | Inbox, Why, Signals, Attention (`/notices`, `/signals`, `/attention`) | the common `signals` views: notices by interrupted, held and passive with `why`; rules with author, channel, last firing and usefulness, and a rule editor with a live backtest strip; a 24-hour strip of presence, deep work and quiet hours with every interrupting delivery drawn on it |
@@ -134,7 +134,7 @@ Every view has a data contract: the operation it calls and what it must show. Ev
 
 Keys follow the shared table in `web-shell` (the same key means the same act in both products; a focused card rebinds keys visibly as a card layer): Today `g h`, Timeline `g t`, Day `g d`, Episodes `g e`, Sources `g s`, notices `g n`, the counterpart in the other product `g o`; `[` `]` previous and next day or period; `-` `=` zoom, `0` fits the selection; `G` jumps to now; `j` `k` and `Enter` move and descend, `Backspace` ascends; `r` recalls the moment under the cursor; `y` and `Y` copy the focused line's citation and the selection's URL; `a` writes a note at the cursor's instant or on the focused line; `c` compares; `/` opens the query box.
 
-**Counterparts** (decided target): each view maps to the matching place in Polylogue or names why none exists (a library item has none). A Day or Timeline selection maps to Polylogue's Timeline over the same span; an event of a `polylogue.*` kind to the Polylogue object it names; Signals to Signals. Every reference rendered in a page is a link to its owner's view when the owner is configured, and plain text with "not configured" when not; a standalone Sinex renders nothing of Polylogue and calls nothing of it.
+**Counterparts** (decided target): each view maps to the matching place in Polylogue or names why none exists (a library item has none). A Day or Timeline selection maps to Polylogue's Timeline over the same span; an event of a `polylogue.*` kind to the Polylogue object it names; Signals to Signals. Every reference rendered in a page is a link to its product's view when that product is configured, and plain text with "not configured" when not; a standalone Sinex renders nothing of Polylogue and calls nothing of it.
 
 **Desktop integration:** two deployment-bound hotkeys, note (a one-line prompt that writes a note with client context) and recall now (a notification showing the moment pack's first lines, with open and note actions), both through the desktop's own services.
 

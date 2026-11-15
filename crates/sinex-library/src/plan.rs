@@ -449,7 +449,7 @@ fn place(
 
 /// Check, inside the transaction that admits them, that planned authored
 /// records still place as they were planned: every withdrawal target exists,
-/// every base is current, and no other record holds a slot a record claims.
+/// every base is current, and no other record holds a slot a record takes.
 /// Each record is checked against the stored records plus the request's
 /// earlier records. Imported and proposed records fork by design and are
 /// not checked.
@@ -476,12 +476,12 @@ pub async fn verify(conn: &mut Conn, records: &[Curation]) -> Result<(), String>
     snapshot.load_slots(conn, &slots).await.map_err(error)?;
     for record in records {
         let revision = curation::revision(record);
-        let claimed: Vec<String> = Statement::of(record)
+        let statement_slots: Vec<String> = Statement::of(record)
             .slots()
             .iter()
             .map(slot_digest)
             .collect();
-        if claimed != record.slots {
+        if statement_slots != record.slots {
             return Err(format!(
                 "{revision}: its stored slots are not its statement's"
             ));

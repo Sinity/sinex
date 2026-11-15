@@ -246,7 +246,7 @@ async fn a_missing_server_is_retried_once_when_it_appears() {
     let matched = ok(&socket, json!({"method":"query","query":watched["query"]}));
     assert_eq!(
         matched["total"], 1,
-        "the exact watched payload creates one group: {matched}"
+        "the watched payload creates one group: {matched}"
     );
     wait_scalar(&mut conn, "SELECT count(*) FROM core.events WHERE event_type='signal.outcome' AND payload->'outcome'->'result'->>'reason'='no_notification_server'", 1).await;
     let delivery: uuid::Uuid =

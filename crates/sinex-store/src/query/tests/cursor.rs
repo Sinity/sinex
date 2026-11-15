@@ -138,9 +138,7 @@ async fn runs(conn: &mut PgConnection) -> Vec<RunId> {
 }
 
 #[devkit::test]
-async fn duplicate_projected_rows_cannot_cancel_the_view_change_check(
-    db: devkit::pg::TestDatabase,
-) {
+async fn duplicate_selected_rows_cannot_cancel_the_view_change_check(db: devkit::pg::TestDatabase) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
@@ -341,7 +339,7 @@ async fn page_count_and_rows_keep_one_snapshot_across_concurrent_run_completion(
         }
         assert!(
             Instant::now() < deadline,
-            "query did not reach the gated count projection"
+            "query did not reach the paused payload read"
         );
         tokio::time::sleep(Duration::from_millis(2)).await;
     }
@@ -473,7 +471,7 @@ async fn cursor_secret_is_not_public_sql_and_open_paging_needs_no_unlock(
     assert_eq!(first.total, next.total);
 }
 #[devkit::test]
-async fn canonical_equivalent_questions_keep_one_keyset(db: devkit::pg::TestDatabase) {
+async fn equivalent_questions_keep_one_keyset(db: devkit::pg::TestDatabase) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();

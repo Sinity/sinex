@@ -2,7 +2,7 @@
 pub use sinex_model::stage::{Report, Reports};
 use sinex_model::{
     lifecycle::OperationResult,
-    stage::{Disposition, FileReading, ProductState},
+    stage::{FileReading, Outcome, ProductState},
 };
 
 pub fn render(report: &Report) -> String {
@@ -66,7 +66,7 @@ pub fn render(report: &Report) -> String {
         let unread: Vec<_> = file
             .members
             .iter()
-            .filter(|m| matches!(m.disposition, Disposition::StoredNotInterpreted { .. }))
+            .filter(|m| matches!(m.outcome, Outcome::StoredNotInterpreted { .. }))
             .map(|m| m.name.as_str())
             .collect();
         if !unread.is_empty() && matches!(file.reading, FileReading::Parsed { .. }) {

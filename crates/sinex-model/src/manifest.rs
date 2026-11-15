@@ -76,7 +76,7 @@ pub struct Member {
     pub details: Map<String, Value>,
 }
 
-/// Filesystem facts retained independently of a parser's interpretation.
+/// Filesystem facts stored independently of how a parser reads the file.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileNode {
     pub mode: u32,

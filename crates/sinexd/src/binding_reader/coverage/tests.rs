@@ -112,7 +112,7 @@ async fn coverage_restart_keeps_guarded_state_and_client_masking(db: devkit::pg:
         [false]
     );
     rounds.end(&mut context.read_conn).await.unwrap();
-    let retained: serde_json::Value =
+    let stored: serde_json::Value =
         sqlx::query_scalar("SELECT payload FROM core.events WHERE event_type='source.coverage'")
             .fetch_one(&mut context.read_conn)
             .await
@@ -146,7 +146,7 @@ async fn coverage_restart_keeps_guarded_state_and_client_masking(db: devkit::pg:
         .fetch_one(&mut context.read_conn)
         .await
         .unwrap();
-        assert_eq!(unchanged, retained);
+        assert_eq!(unchanged, stored);
         rounds.end(&mut context.read_conn).await.unwrap();
         context.close().await.unwrap();
     }
@@ -168,8 +168,8 @@ async fn coverage_restart_keeps_old_readings_and_resumes_current_state(
     );
     rounds.end(&mut context.read_conn).await.unwrap();
 
-    // Reconstruct a predecessor reading that the current admission path
-    // would never write. Its source field predates observed_source.
+    // Recreate a reading of an older kind version that the current admission
+    // path would never write. Its source field predates observed_source.
     let (old_id, old_payload): (uuid::Uuid, serde_json::Value) = sqlx::query_as(
         "INSERT INTO core.events
            (id,event_type,source,run_id,material_id,record_offset,parents,ts_orig,ts_quality,
@@ -195,13 +195,13 @@ async fn coverage_restart_keeps_old_readings_and_resumes_current_state(
         [false]
     );
     assert_eq!(count(&mut context, COVERAGE_READINGS).await, 2);
-    let retained: serde_json::Value =
+    let stored: serde_json::Value =
         sqlx::query_scalar("SELECT payload FROM core.events WHERE id=$1")
             .bind(old_id)
             .fetch_one(&mut context.read_conn)
             .await
             .unwrap();
-    assert_eq!(retained, old_payload);
+    assert_eq!(stored, old_payload);
     let current: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM core.events e WHERE event_type='source.coverage' AND kind_version=$1
          AND NOT EXISTS(SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)",
@@ -310,7 +310,7 @@ async fn coverage_on_change(db: devkit::pg::TestDatabase) {
 }
 
 #[devkit::test]
-async fn binding_reads_store_their_evidence_with_bytes_under_one_run(db: devkit::pg::TestDatabase) {
+async fn binding_reads_store_coverage_with_bytes_in_one_run(db: devkit::pg::TestDatabase) {
     let root = tempfile::tempdir().unwrap();
     let input = root.path().join("history");
     std::fs::write(&input, b"").unwrap();
@@ -327,44 +327,41 @@ async fn binding_reads_store_their_evidence_with_bytes_under_one_run(db: devkit:
         );
     }
     rounds.end(&mut context.read_conn).await.unwrap();
-    let evidence: Vec<(serde_json::Value, Option<uuid::Uuid>)> = sqlx::query_as(
+    let coverage: Vec<(serde_json::Value, Option<uuid::Uuid>)> = sqlx::query_as(
         "SELECT payload, material_id FROM core.events WHERE event_type='source.coverage' ORDER BY commit_seq"
     ).fetch_all(&mut context.read_conn).await.unwrap();
     assert_eq!(
-        evidence.len(),
+        coverage.len(),
         2,
         "the unchanged second read writes nothing"
     );
-    assert_eq!(evidence[0].0["state"], "recorded_unknown_coverage");
-    assert_eq!(evidence[1].0["state"], "missing");
+    assert_eq!(coverage[0].0["state"], "recorded_unknown_coverage");
+    assert_eq!(coverage[1].0["state"], "missing");
     let mut observed_runs = std::collections::BTreeSet::new();
-    for (payload, material) in evidence {
+    for (payload, material) in coverage {
         let blob: String = sqlx::query_scalar("SELECT blob FROM raw.materials WHERE id=$1")
-            .bind(material.expect("coverage has retained material"))
+            .bind(material.expect("coverage has stored material"))
             .fetch_one(&mut context.read_conn)
             .await
             .unwrap();
         let bytes = context.blobs.read(&blob).unwrap();
-        let retained: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(retained, payload);
+        let stored: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(stored, payload);
         assert_eq!(payload["observed_source"], "terminal.zsh-history");
         let observed_run: uuid::Uuid =
             serde_json::from_value(payload["observed_run"].clone()).unwrap();
         observed_runs.insert(observed_run);
-        let native: (String, String, String, String, String) = sqlx::query_as(
+        let observed: (String, String, String, String, String) = sqlx::query_as(
             "SELECT m.name,m.kind,m.version,m.build,r.host FROM core.runs r JOIN core.manifests m ON m.id=r.manifest_id WHERE r.id=$1"
         ).bind(observed_run).fetch_one(&mut context.read_conn).await.unwrap();
-        assert_eq!(native.0, "terminal.zsh-history");
-        assert_eq!(native.1, "source");
+        assert_eq!(observed.0, "terminal.zsh-history");
+        assert_eq!(observed.1, "source");
         assert_eq!(
-            native.2,
+            observed.2,
             sinex_sources::sources::zsh::SPEC.parser_version.to_string()
         );
-        assert!(
-            !native.3.is_empty(),
-            "the actual native run records its build"
-        );
-        assert_eq!(native.4, "synthetic");
+        assert!(!observed.3.is_empty(), "the observed run records its build");
+        assert_eq!(observed.4, "synthetic");
         let identity: (String, String) = sqlx::query_as("SELECT m.name,m.kind FROM core.events e JOIN core.runs r ON r.id=e.run_id JOIN core.manifests m ON m.id=r.manifest_id WHERE e.material_id=$1")
             .bind(material.unwrap()).fetch_one(&mut context.read_conn).await.unwrap();
         assert_eq!(

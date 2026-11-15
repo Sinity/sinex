@@ -141,13 +141,13 @@ async fn bounded_payload_pages_equal_window_and_keep_exact_membership(
     assert_eq!(result.len(), 1);
     assert_eq!(identities(&result[0].1), identities(&expected));
     assert!(grouped.next(&mut conn).await.unwrap().is_none());
-    let mut exact =
-        ExactInputs::new(vec![ids[4], ids[0], ids[0], ids[2], EventId::new()], 2, 1).unwrap();
-    let mut exact_rows = Vec::new();
-    while let Some(rows) = exact.next(&mut conn).await.unwrap() {
-        exact_rows.extend(rows);
+    let mut listed =
+        ListedInputs::new(vec![ids[4], ids[0], ids[0], ids[2], EventId::new()], 2, 1).unwrap();
+    let mut listed_rows = Vec::new();
+    while let Some(rows) = listed.next(&mut conn).await.unwrap() {
+        listed_rows.extend(rows);
     }
-    assert_eq!(identities(&exact_rows), identities(&expected));
+    assert_eq!(identities(&listed_rows), identities(&expected));
     let feed = after_seq(&mut conn, &[LogEntry::EVENT_TYPE.into()], 0, 10, i64::MAX)
         .await
         .unwrap();
@@ -205,13 +205,13 @@ async fn bounded_payload_fetches_return_selected_rows_beside_many_compressed_row
         feed.iter().map(|r| r.event.id).collect::<Vec<_>>(),
         vec![ids[4], ids[5]]
     );
-    let mut exact = ExactInputs::new(vec![ids[4], ids[5]], 2, i64::MAX).unwrap();
-    let mut exact_rows = Vec::new();
-    while let Some(rows) = exact.next(&mut conn).await.unwrap() {
-        exact_rows.extend(rows);
+    let mut listed = ListedInputs::new(vec![ids[4], ids[5]], 2, i64::MAX).unwrap();
+    let mut listed_rows = Vec::new();
+    while let Some(rows) = listed.next(&mut conn).await.unwrap() {
+        listed_rows.extend(rows);
     }
     assert_eq!(
-        exact_rows.iter().map(|r| r.event.id).collect::<Vec<_>>(),
+        listed_rows.iter().map(|r| r.event.id).collect::<Vec<_>>(),
         vec![ids[4], ids[5]]
     );
     let page = crate::commit_log::after(&mut conn, 4, 2, i64::MAX)

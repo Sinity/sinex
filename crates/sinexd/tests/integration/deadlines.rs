@@ -67,7 +67,7 @@ async fn cli_deadline_cancels_a_locked_read_and_none_waits_for_release() {
     );
     ready(&mut process, root.path()).await;
     let mut lock = PgConnection::connect(&database).await.unwrap();
-    // Wait for the actual API pool to be installed; socket creation precedes
+    // Wait for the API pool to be installed; socket creation precedes
     // the first completed request during startup.
     let mut initial = cli(&client, root.path(), "none");
     let initial = tokio::task::spawn_blocking(move || initial.output().unwrap())

@@ -48,7 +48,7 @@ One segment spool driver in `sinex-source-core` writes every spool, binary or te
 - **An interrupted tail is kept,** and its readable records are admitted.
 - **Gaps** use the one gap encoding: sequence numbers are assigned before a record is enqueued, so a record lost to a local overflow leaves a counted hole, and the driver writes the `capture.gap` once storage resumes. Gap counters travel on a separate small control path, so a saturated packet queue cannot hide the fault.
 - **Removal** of a spool copy happens only for acknowledged, closed segments behind the committed cursor ([capture survival](sources.md#capture-survival)), and only when no stream-specific pin (AT-SPI unfinished work, an open selection transfer) holds them.
-- **A writer queue** separates socket draining from spool writes and syncs, so a slow disk never stalls the capture socket. Its packet and byte bounds are sized from the measured burst rate and storage-stall duration with recorded headroom; they are never a limit on the size of a valid record. High-water marks, bytes, wait duration and overflow counts are exposed. A large queue is finite protection, not a claim of losslessness through an unlimited disk stall.
+- **A writer queue** separates socket draining from spool writes and syncs, so a slow disk never stalls the capture socket. Its packet and byte bounds are sized from the measured burst rate and storage-stall duration with recorded headroom; they are never a limit on the size of a valid record. Peak queue depth, bytes, wait duration and overflow counts are exposed. A large queue is finite protection, not a claim of losslessness through an unlimited disk stall.
 
 ### The spool holds the raw format
 
@@ -61,15 +61,15 @@ The spool format is the raw format. There is no deduplication, debounce, MIME se
 
 ## Grain
 
-**One compact generic event per natural record.** The generic event carries header fields and the record's location in the raw capture (material, block offset and length). Arguments, bodies and native records are decoded from the raw bytes on demand and never copied into the payload, because the stored bytes are already the lossless copy and a second copy would multiply database size by the stream rate.
+**One compact generic event per natural record.** The generic event carries header fields and the record's location in the raw capture (material, block offset and length). Arguments, bodies and the records inside them are decoded from the raw bytes on demand and never copied into the payload, because the stored bytes are already the lossless copy and a second copy would multiply database size by the stream rate.
 
-**Traffic a capture causes is not a natural record.** A capture's own query traffic (AT-SPI tree-read calls and replies, D-Bus bootstrap reads and registrations) is kept complete in the raw capture but gets no generic event. A packet is caused by the capture when it is sent by, or addressed to, one of the capture's own ordinary connections. The natural record of a capture-initiated read is its result unit, citing its packet range: for AT-SPI, one node finished. Only traffic the capture observes becomes `bus.message`.
+**Traffic a capture causes is not a natural record.** A capture's own query traffic (AT-SPI tree-read calls and replies, D-Bus bootstrap reads and registrations) is kept complete in the raw capture but gets no generic event. A packet is caused by the capture when it is sent by, or addressed to, one of the capture's own non-monitor connections. The natural record of a capture-initiated read is its result unit, citing its packet range: for AT-SPI, one node finished. Only traffic the capture observes becomes `bus.message`.
 
 **Packet-range reads.** Derivations read a generic event's bytes as a checked range within its material, through one mechanism in the derivation runner shared by every stream; the bytes read scale with the relevant packet ranges, not with segment length times event count ([derivations](derivations.md)).
 
 **Search.** The generic stream kinds that carry raw content (`bus.message`, the `a11y.event` node records) declare `search: none`; their typed derived events are indexed under their own declarations. Excluding a kind from search restricts neither raw queries nor what is stored.
 
-**Arguments on demand.** `show --arguments` decodes a generic event's arguments from its packet. It has the exposure of reading the raw material: it is gated by the material's class, and field rules are not reapplied to the decoded values ([privacy](privacy.md)).
+**Arguments on demand.** `show --arguments` decodes a generic event's arguments from its packet. It has the exposure of reading the raw material: access to it follows the material's class, and field rules are not reapplied to the decoded values ([privacy](privacy.md)).
 
 **Classes.** The session streams' sources and generic kinds (`bus.message`, `desktop.input`, `desktop.selection`, `desktop.a11y`) are declared `Guarded` explicitly, and derived events inherit their parents' classes. Classes govern output only: the buses, input and selections are captured whole, nothing is filtered at capture, and the raw material holds plaintext. Privacy of captured input is applied at output and never limits capture ([privacy](privacy.md)).
 
@@ -99,11 +99,11 @@ Capture stays in Sinex's own processes.
 
 ### Capture
 
-Source `machine.dbus`. One monitor connection per actual bus: the system bus and each applicable session bus. Monitors are keyed by bus ID, so an alias of a bus never gets a second monitor, and the configured binding path stays stable so a discovered alias cannot reset its cursor.
+Source `machine.dbus`. One monitor connection per distinct bus: the system bus and each applicable session bus. Monitors are keyed by bus ID, so an alias of a bus never gets a second monitor, and the configured binding path stays stable so a discovered alias cannot reset its cursor.
 
 - The monitor attaches an unfiltered message stream and calls `org.freedesktop.DBus.Monitoring.BecomeMonitor([], 0)`; an empty rule list is all traffic, including unicast calls and replies. Capture begins at the successful conversion and keeps the queued traffic that follows its reply. The bus ID is read before conversion; a converted monitor sends nothing further and hosts no object server.
 - The broker accepts a monitor only from UID 0 or the bus owner. The system-bus monitor therefore runs as root with group `sinex`, an empty capability bounding set, `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome`, `PrivateNetwork` and `RestrictAddressFamilies=AF_UNIX`; its only writable path is its spool. The session-bus monitor runs as the operator, who owns that bus.
-- A second, ordinary connection per bus holds `org.freedesktop.systemd1.Manager.Subscribe()` where a manager exists, for the whole capture, reissued after manager owner replacement or reconnect. It subscribes after the monitor is ready, then makes the bootstrap reads: `ListNames`, `GetNameOwner` for acquired well-known names, MPRIS root and Player `GetAll` for existing and newly acquired players, and systemd `ListUnits`, with activation disabled. A failed bootstrap read is an error, never empty state; bootstrap replies observe state at their reply, not an atomic history.
+- A second, non-monitor connection per bus holds `org.freedesktop.systemd1.Manager.Subscribe()` where a manager exists, for the whole capture, reissued after manager owner replacement or reconnect. It subscribes after the monitor is ready, then makes the bootstrap reads: `ListNames`, `GetNameOwner` for acquired well-known names, MPRIS root and Player `GetAll` for existing and newly acquired players, and systemd `ListUnits`, with activation disabled. A failed bootstrap read is an error, never empty state; bootstrap replies observe state at their reply, not an atomic history.
 - Bootstrap and subscription traffic is capture-caused: it is in the spool and parsed for carry, but gets no `bus.message`. Each bootstrap read's result is one record citing the packet range of its call and reply, and initial-state typed views (players, units, name owners) derive from it.
 - Private peer sockets (including systemd's private socket) are not bus traffic. Journald is captured independently; kernel and udev datagrams belong to [netlink](#netlink).
 
@@ -157,7 +157,7 @@ A bus material mixes notifications, player data and unrelated traffic. Tombstoni
 
 ### Capture
 
-Source `desktop.input`. Every `/dev/input/event*` node is captured, including virtual keyboards, mice, touch, tablets, controllers, switches and unknown devices; discovery decides what applies and an exclusion needs a recorded reason. Every native `input_event` the kernel returns is kept with its kernel timestamp, including synchronization and miscellaneous records, before debounce or remapping. (ruling 2026-03-17, cc:6c1674bb-e912-438c-9de4-62658fb48cf4:41d66e2e-0047-4e0f-b937-56044c511122).
+Source `desktop.input`. Every `/dev/input/event*` node is captured, including virtual keyboards, mice, touch, tablets, controllers, switches and unknown devices; discovery decides what applies and an exclusion needs a recorded reason. Every `input_event` the kernel returns is kept with its kernel timestamp, including synchronization and miscellaneous records, before debounce or remapping. (ruling 2026-03-17, cc:6c1674bb-e912-438c-9de4-62658fb48cf4:41d66e2e-0047-4e0f-b937-56044c511122).
 
 - **Reading.** `read(2)` into reusable buffers with epoll gives the exact bytes. Device metadata and state queries use a separately opened read-only descriptor, because a state-query ioctl can flush queued events on the descriptor it is issued on. Capture opens read-only, nonblocking and close-on-exec, and never grabs, masks, debounces or reinjects. The default `CLOCK_REALTIME` is kept; `EVIOCSCLOCKID` is never called, since it can flush queued records. The synchronizing device iterator is not used, because it can substitute synthesized events.
 - **The scanner** runs as the Sinex account with supplementary group `input`, starts before any graphical session, database or NATS, and is the **one spool writer**: one binding, one part sequence, one cursor. Logind device handover cannot serve here, because it requires the session's exclusive controller and pauses inactive devices.
@@ -172,7 +172,7 @@ A device that a remapping pipeline grabs is captured through `sinex-session inpu
 
 - Launched as root, the helper opens and verifies the device, drops supplementary groups, GID and UID to the configured account before touching locks or the socket, takes the per-device advisory lock, then grabs the device.
 - It forwards every original byte to stdout in order, before debounce or remapping, and sends a capture copy with metadata to the scanner over a local Unix stream socket. Stdout never waits for the scanner, a disk sync or NATS. The helper never opens the spool.
-- Read, record and packet sequences are assigned by the acquisition owner before sending; the handshake carries the open UUID and next sequences, so a scanner restart cannot renumber a surviving helper's packets.
+- Read, record and packet sequences are assigned by the process holding the device lock before sending; the handshake carries the open UUID and next sequences, so a scanner restart cannot renumber a surviving helper's packets.
 - If the socket fails or the scanner cannot keep up, forwarding continues; the unsent capture copy is discarded and its known sequence range is sent as a gap on reconnect (unknown after a crash). No unbounded queue grows behind a failed scanner.
 - The runtime directory `/run/sinex/evdev` is 0750 and the socket 0660; the scanner checks `SO_PEERCRED` and accepts capture messages only from the configured UID.
 - Whoever holds a device's lock owns its acquisition. Without a working helper the scanner takes the lock and reads directly; a helper takes over by handover through the socket, and both record the boundary. Every new descriptor gets a new open UUID, and the interval between owners is reported with an unknown loss extent. A grabbed device with no working helper is unavailable, never proven idle by empty reads.
@@ -184,7 +184,7 @@ The spool is pcapng with `LINKTYPE_USER0`, under `${stateDir}/spool/evdev/`. Int
 
 | Block | Holds | Event |
 |---|---|---|
-| Interface description, one per device open | the device description: host, boot ID, open UUID, ABI, endianness and native offsets, clock, layer, class, capabilities, optional explicit parent; non-UTF-8 strings as hex | `input.device`; unchanged repeated metadata has the same equivalence key |
+| Interface description, one per device open | the device description: host, boot ID, open UUID, ABI, endianness and kernel structure offsets, clock, layer, class, capabilities, optional explicit parent; non-UTF-8 strings as hex | `input.device`; unchanged repeated metadata has the same equivalence key |
 | Enhanced packet, one per `SYN_REPORT` packet | the packet layout below | `input.event` |
 | Enhanced packet flagged incomplete | the bytes available when a close or capture boundary interrupted a packet | `input.capture` citing the raw range; never an invented complete packet |
 | Interface statistics comment | a state query: ioctl, exact returned bytes, query interval and sequence range, reason, errors | `input.state` |
@@ -193,17 +193,17 @@ The spool is pcapng with `LINKTYPE_USER0`, under `${stateDir}/spool/evdev/`. Int
 
 Active device descriptions are repeated at the start of each segment, so replay needs no list of earlier opens.
 
-The enhanced packet's data is a packet header, its read contributions, and the native records:
+The enhanced packet's data is a packet header, its read contributions, and the kernel records:
 
 - header: `packet_sequence:u64 | first_record_sequence:u64 | record_count:u64 | contribution_count:u64 | flags:u8`; `epb_packetid` repeats `packet_sequence`;
-- each contribution: `read_sequence:u64 | record_count:u64 | received_realtime_before_ns:i64 | received_monotonic_ns:i64 | received_boottime_ns:i64 | received_realtime_after_ns:i64`, followed by that read's native records;
-- added integers are little-endian; native records keep their ABI and endianness. The clock samples bracket the read; a read covering several packets repeats its samples, and a packet spanning reads keeps every contribution.
+- each contribution: `read_sequence:u64 | record_count:u64 | received_realtime_before_ns:i64 | received_monotonic_ns:i64 | received_boottime_ns:i64 | received_realtime_after_ns:i64`, followed by that read's kernel records;
+- added integers are little-endian; kernel records keep their ABI and endianness. The clock samples bracket the read; a read covering several packets repeats its samples, and a packet spanning reads keeps every contribution.
 
 Packets are assembled per open across reads, keeping `SYN_MT_REPORT` and every other record inside them. There is no packet-size refusal or truncation. An orderly close or shutdown writes available bytes of an unfinished packet as an incomplete block; an unclean end has an unknown unspooled extent.
 
 ### input.event
 
-`input.event` holds compact header facts: device open UUID, packet and first-record sequence, record count, event-family mask, ABI and endianness, layer and device class, descriptor reference, the terminating record's native time and clock, receipt time and sampling interval. A family outside the mask's range sets an unknown-family flag; the mask never excludes records. Codes, values and native records are decoded from stored bytes on demand.
+`input.event` holds compact header facts: device open UUID, packet and first-record sequence, record count, event-family mask, ABI and endianness, layer and device class, descriptor reference, the terminating record's kernel time and clock, receipt time and sampling interval. A family outside the mask's range sets an unknown-family flag; the mask never excludes records. Codes, values and kernel records are decoded from stored bytes on demand.
 
 - **Key:** `(device_open, packet_sequence)`. Open UUIDs are globally unique and their descriptions fix host and boot, so identical bytes and timestamps stay distinct. Other evdev records key by open plus sequence, or by scanner, segment and offset where no open exists.
 - **Time:** the terminating record's valid kernel time is the packet's event time; an invalid time stays unknown and receipt time never substitutes for it. The bracketing clock samples expose clock steps and suspend.
@@ -254,7 +254,7 @@ Decoded text, `clipboard.copied`, `clipboard.selected` and pastes are [derivatio
 ### Failures and restart
 
 - On restart, the capture task takes the exclusive spool-writer lock, recovers only its local journal and transfer files, and starts a fresh Wayland connection without waiting for NATS, frame resends or cursor recovery; one capture writer and one publisher share the state without a publisher-held capture lock.
-- A start record without a terminal result becomes `interrupted`, keeping the actual prefix with its recomputed digest and never an invented EOF. A `.partial` file without a synced start record is also recorded as interrupted. Already journaled terminal IDs prevent finalizing a transfer twice. A partial final journal line is resolved before acquisition can pass it, never spliced into later JSON.
+- A start record without a terminal result becomes `interrupted`, keeping the received prefix with its recomputed digest and never an invented EOF. A `.partial` file without a synced start record is also recorded as interrupted. Already journaled terminal IDs prevent finalizing a transfer twice. A partial final journal line is resolved before acquisition can pass it, never spliced into later JSON.
 - A process crash and a power loss are distinguished: only synced groups are promised after power loss, and recovered lengths are reported.
 - A reconnect creates a new connection ID and fresh initial observations, even when bytes equal the previous connection's; initial state cannot fill the gap. Seat removal stops new requests and drains existing pipes; shutdown closes remaining pipes and finalizes interrupted prefixes.
 - A corrupt byte file, failed local write, full disk or unreadable spool is a visible local fault, never an acknowledged omission.
@@ -263,12 +263,12 @@ Decoded text, `clipboard.copied`, `clipboard.selected` and pastes are [derivatio
 
 ### Capture
 
-The accessibility bus is captured through the D-Bus stream's machinery: its address from `org.a11y.Bus.GetAddress` on the session bus, its actual bus ID from `GetId`, one whole-bus monitor (`BecomeMonitor([], 0)`), the same pcapng framing with `LINKTYPE_DBUS`, sync, reconnection, descriptor handling and safe decoder. Source `desktop.a11y`, format `atspi`. A failure to obtain monitoring access is a named coverage fault, never a switch to signal-only capture.
+The accessibility bus is captured through the D-Bus stream's machinery: its address from `org.a11y.Bus.GetAddress` on the session bus, its bus ID from `GetId`, one whole-bus monitor (`BecomeMonitor([], 0)`), the same pcapng framing with `LINKTYPE_DBUS`, sync, reconnection, descriptor handling and safe decoder. Source `desktop.a11y`, format `atspi`. A failure to obtain monitoring access is a named coverage fault, never a switch to signal-only capture.
 
 - **Observed traffic** (signals, and calls and replies between other clients) gets the same compact `bus.message` as on the other buses.
-- **Registration.** An ordinary connection calls `Registry.RegisterEvent` with an empty application restriction and the explicit interests `object:`, `window:`, `document:`, `focus:`, `terminal:`, `mouse:` and `keyboard:`, after the monitor is capturing. An empty event class is never registered as a wildcard: the empty application restriction, not an empty class, means every application. Unknown signals stay captured whenever emitted.
-- **Triggers.** Scheduling scans the synced monitor records, so every trigger has an exact capture UUID and sequence even when signals repeat. Replay reads only the monitor, never scheduling callbacks.
-- Ordinary connections request no direct peer connections, since that traffic would bypass the monitored bus. Typed proxies may decode results for traversal, but the complete replies come from the monitor.
+- **Registration.** A non-monitor connection calls `Registry.RegisterEvent` with an empty application restriction and the explicit interests `object:`, `window:`, `document:`, `focus:`, `terminal:`, `mouse:` and `keyboard:`, after the monitor is capturing. An empty event class is never registered as a wildcard: the empty application restriction, not an empty class, means every application. Unknown signals stay captured whenever emitted.
+- **Triggers.** Scheduling scans the synced monitor records, so every trigger has a capture UUID and sequence even when signals repeat. Replay reads only the monitor, never scheduling callbacks.
+- Non-monitor connections request no direct peer connections, since that traffic would bypass the monitored bus. Typed proxies may decode results for traversal, but the complete replies come from the monitor.
 - The Sinex module enables the accessibility bus and toolkit accessibility (`services.gnome.at-spi2-core.enable`, `QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1`, `ACCESSIBILITY_ENABLED=1`) where the stream applies; Chromium-based browsers additionally need renderer accessibility enabled. A terminal that publishes no accessibility tree is covered by terminal recording ([source families](source-families.md)).
 
 ### Tree reads
@@ -281,13 +281,13 @@ The focused window is read on focus gain and every 30 seconds while it stays foc
 - **Merging.** Per `(bus ID, unique owner, root)` there is at most one active and one unstarted read. A trigger joins the unstarted read if one exists; trigger membership is frozen before its first node call, so a trigger arriving during a read belongs to the next one. Different roots never merge, and focus signals are never merged or dropped. Each trigger links to its request through its own small record.
 - **Traversal.** Each tree starts with one `Cache.GetItems` per participating application, whose items supply identity, parent, index, child count, interfaces, name, role, description and state for the nodes it lists. `Accessible.GetChildren` runs once per expanded node; `GetAll(Accessible)` covers uncached properties; attributes, relations, component extents, Text `GetAll`, default attributes, text ranges and attribute runs are read separately. An unsupported bulk method is an explicit field failure.
 - **No ceilings.** Finite readable trees have no node, depth, text or duration cap. Text is read over the complete character count in transfers of 16,384 characters (character offsets, not bytes), with an explicit empty read for zero. Attribute runs must advance or produce a named failure. Invisible, offscreen and sensitive-role nodes are read.
-- **Walk state.** The walk is iterative, with frontier, visited references, trigger links and unfinished calls in `work.sqlite` beside the spool, streamed rather than held in memory. Repeated references are recorded as edges without expanding them again. A provider that cannot list children yields a partial tree, never a zero-child success; field failures let other fields and nodes continue.
-- **Scheduling.** One ordinary query connection, at most one outstanding tree call per application owner, rotating after each node and yielding between calls and text transfers so signal draining and stop run. A two-second call deadline is a scheduling safeguard: a timed-out field is marked incomplete and retried with interruptible backoff from 250 ms to 30 seconds while its owner exists, with no attempt limit and without blocking ready work for other roots. Confirmed disappearance or rejection is a terminal field failure; an owner loss closes its outstanding work. A hung application never stops another application's reads or signal capture.
-- A tree's status is complete, partial with terminal failures, or interrupted, with outstanding retries counted separately. A timed-out node is never reported as a complete tree. Reported read intervals and delays are the actual ones; a tree is never presented as existing at focus time.
+- **Walk state.** The walk is iterative, with the next nodes to visit, visited references, trigger links and unfinished calls in `work.sqlite` beside the spool, streamed rather than held in memory. Repeated references are recorded as edges without expanding them again. A provider that cannot list children yields a partial tree, never a zero-child success; field failures let other fields and nodes continue.
+- **Scheduling.** One query connection, at most one outstanding tree call per application owner, rotating after each node and yielding between calls and text transfers so signal draining and stop run. A two-second call deadline is a scheduling safeguard: a timed-out field is marked incomplete and retried with interruptible backoff from 250 ms to 30 seconds while its owner exists, with no attempt limit and without blocking ready work for other roots. Confirmed disappearance or rejection is a terminal field failure; an owner loss closes its outstanding work. A hung application never stops another application's reads or signal capture.
+- A tree's status is complete, partial with terminal failures, or interrupted, with outstanding retries counted separately. A timed-out node is never reported as a complete tree. Reported read intervals and delays are the measured ones; a tree is never presented as existing at focus time.
 
 ### Read records
 
-Tree-read calls and replies are capture-caused: they stay complete in the spool and get no `bus.message`. The read is recorded as logical records in interface statistics comments, through the shared metadata mechanism:
+Tree-read calls and replies are capture-caused: they stay complete in the spool and get no `bus.message`. The read is recorded as records in interface statistics comments, through the shared metadata mechanism:
 
 | Record | Content |
 |---|---|
@@ -298,11 +298,11 @@ Tree-read calls and replies are capture-caused: they stay complete in the spool 
 | `NodeFinished` | attempt, object, end time, packet interval, call and failure counts, status |
 | `TreeFinished` | attempt, status, node, call and failure counts, end time |
 
-- **`NodeFinished` is a node's one observation** and becomes one `a11y.event`; its packet interval, query connection and the caller-serial correlation identify every exact reply, including missing and timed-out ones. `NodeStarted` is context for it, not another event. Tree lifecycle and trigger-link records also become compact `a11y.event` observations.
-- Node-start context is written before the node's calls are issued; with one active node per application connection, the parser attaches `(attempt, object)` to calls and replies through ordinary caller-serial carry, and a late reply keeps its original context. A timed-out node is paused with recorded resume context before its connection does other work.
+- **`NodeFinished` is a node's one observation** and becomes one `a11y.event`; its packet interval, query connection and the caller-serial correlation identify every reply, including missing and timed-out ones. `NodeStarted` is context for it, not another event. Tree lifecycle and trigger-link records also become compact `a11y.event` observations.
+- Node-start context is written before the node's calls are issued; with one active node per application connection, the parser attaches `(attempt, object)` to calls and replies through caller-serial carry, and a late reply keeps its original context. A timed-out node is paused with recorded resume context before its connection does other work.
 - `NodeFinished` is written only after the writer confirms the node's replies were appended. Records sync in cohorts on the shared one-second sync.
 - References use capture UUID and sequence. Host, session and bus are binding and material metadata; an object reference is bus ID, unique owner and path. Receipt time has captured quality; trigger and read times stay separate.
-- A monitor loss while ordinary calls succeed interrupts the observation; decoded proxy values alone never complete it.
+- A monitor loss while non-monitor calls succeed interrupts the observation; decoded proxy values alone never complete it.
 
 Focus, text changes, screen text and observed windows are [derivations](derivations.md) of these records and the observed `bus.message` events.
 
@@ -311,7 +311,7 @@ Focus, text changes, screen text and observed windows are [derivations](derivati
 - `work.sqlite` is rebuildable work, not the only copy of captured replies or triggers. Its checkpoint advances transactionally only after scheduling from synced records, and node completions are recorded only through the writer's last synced position.
 - Cleanup honours both publication and the work checkpoint: segments holding unfinished request, context or call evidence are pinned, `TreeFinished` is synced before a request's pins are released, and a missing or unreadable work database blocks cleanup until it is rebuilt from the pinned records. A broken pin is a visible fault, never an empty work queue.
 - After a restart, uncertain in-flight attempts close as interrupted. If bus ID and owner still match, a new read linked to the original request runs with its real later times; otherwise the disappearance is recorded. A reconnect gets a new capture UUID and a fresh startup observation; missed ticks or focus are never replayed into supposed past trees.
-- A bus disconnection opens a gap, stops ordinary reads and retries discovery with interruptible backoff from 250 ms to 30 seconds. Stop cancels connection, call, sync and retry waits before joining.
+- A bus disconnection opens a gap, stops reads and retries discovery with interruptible backoff from 250 ms to 30 seconds. Stop cancels connection, call, sync and retry waits before joining.
 
 ## PipeWire
 
@@ -319,11 +319,11 @@ Every PipeWire capture source, sink monitor and application stream available to 
 
 ## screen
 
-Every display is recorded continuously at its actual mode as standard video segments whose every frame is reconstructible; each closed segment is a `screen.segment`. Dropped frames and mode changes are counted and recorded as `encoder` gaps, and an unsupported encoder is an unavailable capability, never a silently lower rate. The full requirements are in [source families](source-families.md).
+Every display is recorded continuously at its current mode as standard video segments whose every frame is reconstructible; each closed segment is a `screen.segment`. Dropped frames and mode changes are counted and recorded as `encoder` gaps, and an unsupported encoder is an unavailable capability, never a silently lower rate. The full requirements are in [source families](source-families.md).
 
 ## netlink
 
-A small privileged producer reads native netlink messages into a pcapng spool with `LINKTYPE_NETLINK`:
+A small privileged producer reads netlink messages into a pcapng spool with `LINKTYPE_NETLINK`:
 
 - conntrack `NEW`, `UPDATE` and `DESTROY` and the initial state, both directions, as `net.flow`; a snapshot entry is never a new connection;
 - udev kernel and processed uevents with all properties, sequence, action and device path, as `device.uevent`; subscription comes before inventory, and inventory means present, never added;
@@ -333,11 +333,11 @@ Socket overflow is an `overflow` gap. The full requirements are in [source famil
 
 ## journald
 
-Journald is stored in journal export format: every entry with repeated and binary fields, cursor, realtime, monotonic, boot and source times, namespace and all trusted and user fields, one `journal.entry` per entry. Reading resumes by the actual cursor; vacuum and rotation gaps are reported. The full requirements are in [source families](source-families.md).
+Journald is stored in journal export format: every entry with repeated and binary fields, cursor, realtime, monotonic, boot and source times, namespace and all trusted and user fields, one `journal.entry` per entry. Reading resumes by the journal's cursor; vacuum and rotation gaps are reported. The full requirements are in [source families](source-families.md).
 
 ## Hyprland
 
-Hyprland's socket2 is stored whole in its own line framing, with `hyprctl -j` snapshots on connection and on relevant changes; the reader subscribes before taking a snapshot and drains events concurrently, and a snapshot is present state, never a fabricated open or start. Its records are the window and workspace kinds; unknown event text is kept. A busy terminal program animates a spinner at the start of its title many times a second; a title change whose text, apart from a leading run of progress glyphs followed by a space (Braille patterns, the dingbat stars and asterisks, circles with a half or quarter marked, the middle dot, the asterisk), equals the window's last stored title is read with no event. ActivityWatch's kitty titles use the same rule. The stored line keeps every frame. Other window managers are ordinary sources ([source families](source-families.md)).
+Hyprland's socket2 is stored whole in its own line framing, with `hyprctl -j` snapshots on connection and on relevant changes; the reader subscribes before taking a snapshot and drains events concurrently, and a snapshot is present state, never a fabricated open or start. Its records are the window and workspace kinds; unknown event text is kept. A busy terminal program animates a spinner at the start of its title many times a second; a title change whose text, apart from a leading run of progress glyphs followed by a space (Braille patterns, the dingbat stars and asterisks, circles with a half or quarter marked, the middle dot, the asterisk), equals the window's last stored title is read with no event. ActivityWatch's kitty titles use the same rule. The stored line keeps every frame. Other window managers are sources like any other ([source families](source-families.md)).
 
 ## browser
 

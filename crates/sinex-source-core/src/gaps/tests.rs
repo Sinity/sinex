@@ -3,7 +3,7 @@ use crate::{DrainInput, Limits, Source};
 use sinex_model::{Class, ReadingOrder, Timestamp};
 
 #[test]
-fn gap_uses_the_normal_material_and_parser_with_the_stream_floor() {
+fn gap_uses_the_normal_material_and_parser_with_minimum_class() {
     let gap = Gap {
         stream: "example.input".into(),
         start: None,

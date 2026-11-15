@@ -47,7 +47,7 @@ fn csv_rows_are_windows_1250_with_polish_headers() {
 }
 
 #[devkit::test]
-fn blind_copies_are_distinct_from_ordinary_copies() {
+fn blind_copies_are_distinct_from_visible_copies() {
     let header = cp1250("Temat,DW: (adres),UDW: (adres)\n");
     let (_, header) = CsvParser
         .parse(

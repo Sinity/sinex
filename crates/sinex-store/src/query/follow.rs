@@ -2,7 +2,7 @@
 use super::*;
 use sinex_model::query::{Op, SortBy, SortKey};
 
-/// Safe upper position for event subscriptions. Requiring the search projection
+/// Safe upper position for event subscriptions. Requiring the search read model
 /// for every event query also covers text fields selected or used by joins.
 pub async fn follow_position(conn: &mut PgConnection) -> Result<i64> {
     let committed = current_seq(conn).await?;

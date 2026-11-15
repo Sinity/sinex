@@ -70,14 +70,12 @@ async fn duplicate_kind_references_keep_exact_versions_missing_and_invalid_ident
 }
 
 #[devkit::test]
-async fn repeated_native_kinds_still_check_each_event_source_and_membership(
-    db: devkit::pg::TestDatabase,
-) {
+async fn repeated_kinds_still_check_each_event_source_and_membership(db: devkit::pg::TestDatabase) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
     let source = sinex_model::SourceRef {
-        name: "synthetic.native".into(),
+        name: "synthetic.built-in".into(),
         version: 1,
     };
     let declaration = sinex_model::SourceDeclaration {
@@ -108,7 +106,7 @@ async fn repeated_native_kinds_still_check_each_event_source_and_membership(
     );
     let mut wrong_source = offered.clone();
     if let RecordOutcome::Events { events, .. } = &mut wrong_source.records[0] {
-        events[1].source = "synthetic.foreign".into();
+        events[1].source = "synthetic.other".into();
     }
     let error = register::provenance(&mut conn, &wrong_source, None)
         .await
@@ -117,7 +115,7 @@ async fn repeated_native_kinds_still_check_each_event_source_and_membership(
     assert!(
         error
             .to_string()
-            .contains("outside its exact native source declaration")
+            .contains("outside its built-in source declaration")
     );
     for version in [CommandImported::VERSION, 9_999] {
         let mut wrong_kind = offered.clone();
@@ -129,7 +127,7 @@ async fn repeated_native_kinds_still_check_each_event_source_and_membership(
             register::provenance(&mut conn, &wrong_kind, None)
                 .await
                 .is_err(),
-            "a registered foreign kind or unavailable exact version cannot join a permitted batch"
+            "a registered kind of another source or an unavailable version cannot join a permitted batch"
         );
     }
 }

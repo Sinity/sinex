@@ -153,9 +153,9 @@ fn status_uses_the_module_capture_state_path() {
 }
 
 #[devkit::test]
-fn a_missing_native_state_path_is_reported_as_unavailable() {
+fn missing_non_utf8_state_path_is_unavailable() {
     use std::os::unix::ffi::OsStringExt;
-    let root = std::env::temp_dir().join(format!("capture-native-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("capture-non-utf8-{}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();
     let state = root.join(std::ffi::OsString::from_vec(b"state-\xff".to_vec()));
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_sinexctl"))

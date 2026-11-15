@@ -570,8 +570,8 @@ fn read_sequence_into(
         }],
     })?;
     let mut carry = Value::Null;
-    for (position, (m, native)) in sequence.iter().zip(parsers).enumerate() {
-        let source = &native.source;
+    for (position, (m, parser)) in sequence.iter().zip(parsers).enumerate() {
+        let source = &parser.source;
         // A later part read again what the reader had not admitted of this one.
         let admitted = sequence
             .get(position + 1)
@@ -672,7 +672,7 @@ fn read_sequence_into(
                         name: source.spec().name.into(),
                         version: source.spec().parser_version,
                     }),
-                    host: native.host.clone(),
+                    host: parser.host.clone(),
                 },
                 records,
                 archive: Vec::new(),

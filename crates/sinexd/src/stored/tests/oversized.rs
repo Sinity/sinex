@@ -32,7 +32,7 @@ struct PaddedJson {
     at: u64,
 }
 impl PaddedJson {
-    const PREFIX: &'static [u8] = b"{\"command\":\"retained\",\"ignored\":[";
+    const PREFIX: &'static [u8] = b"{\"command\":\"kept\",\"ignored\":[";
     const SUFFIX: &'static [u8] = b"]}\n";
     fn len(&self) -> u64 {
         Self::PREFIX.len() as u64 + self.padding + Self::SUFFIX.len() as u64
@@ -115,7 +115,7 @@ fn oversized_stored_json_replays_with_bounded_raw_record_memory() {
         let sinex_model::RecordOutcome::Events { events, .. } = &chunks[0].outcomes[0] else {
             panic!()
         };
-        assert_eq!(events[0].payload["command"], "retained");
+        assert_eq!(events[0].payload["command"], "kept");
         assert_eq!(
             name,
             format!(
@@ -157,6 +157,6 @@ fn oversized_stored_json_replays_with_bounded_raw_record_memory() {
     }
     assert!(
         peaks[1] < peaks[0] + 16 * 1024,
-        "doubling a record must not retain an additional whole raw record: {peaks:?}"
+        "doubling a record must not keep an additional whole raw record: {peaks:?}"
     );
 }

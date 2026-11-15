@@ -4,7 +4,7 @@ use sinex_model::InputRef;
 use sqlx::PgConnection;
 use uuid::Uuid;
 
-pub async fn material_owners(
+pub async fn material_families(
     conn: &mut PgConnection,
     ids: &[Uuid],
 ) -> Result<Vec<(Option<Uuid>, Option<String>)>> {
@@ -56,7 +56,7 @@ pub async fn material_classes(conn: &mut PgConnection, id: Uuid) -> Result<Vec<M
 pub async fn material_input(conn: &mut PgConnection, id: Uuid) -> Result<Option<InputRef>> {
     Ok(sqlx::query!("SELECT i.kind,i.locator,i.host FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id WHERE m.id=$1",id).fetch_optional(conn).await?.map(|row|InputRef{kind:row.kind,locator:row.locator,host:row.host}))
 }
-/// The read authority of held bytes: one descriptor per extent, in order.
+/// Where held bytes are read from: one descriptor per extent, in order.
 pub async fn descriptors(conn: &mut PgConnection, hash: &str) -> Result<Option<Vec<Vec<u8>>>> {
     Ok(
         sqlx::query_scalar!("SELECT core.blob_descriptors($1) AS descriptors", hash)
@@ -65,7 +65,7 @@ pub async fn descriptors(conn: &mut PgConnection, hash: &str) -> Result<Option<V
     )
 }
 
-/// Source authority captured with the original material receipt, never inferred
+/// The source recorded with the material's original frame, never inferred
 /// from a current parser or a producer-controlled input label.
 pub async fn material_sources(
     conn: &mut PgConnection,

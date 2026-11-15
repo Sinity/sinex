@@ -182,7 +182,7 @@ async fn assert_provenance(
     let record: Value = serde_json::from_slice(&material_bytes[offset..end]).unwrap();
     assert_eq!(
         record["content"], content,
-        "trace reaches the exact retained source record"
+        "trace reaches the stored source record"
     );
     copy["material"].as_str().unwrap().to_owned()
 }

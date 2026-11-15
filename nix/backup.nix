@@ -17,7 +17,8 @@ let
     failOnWarnings = true;
     appendFailedSuffix = true;
     # The upstream sandbox is read-only. Both repository identity reads take
-    # Borg's ordinary locks, and the hooks keep root and daemon copies of each archive's info.
+    # Borg's locks, and the hooks keep root and daemon copies of each archive's info.
+
     readWritePaths = [ control root ] ++ localRepositories;
     preHook = ''
       sinexBackupRun=$(cat ${pkgs.lib.escapeShellArg "${control}/active"})

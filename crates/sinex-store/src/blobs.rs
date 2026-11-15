@@ -186,7 +186,9 @@ impl Blobs {
             return Ok(());
         }
         if !state.initialized {
-            return Err(crate::Error::Invalid("load the authoritative database extent index before appending to an existing store".into()));
+            return Err(crate::Error::Invalid(
+                "load the database extent index before appending to an existing store".into(),
+            ));
         }
         if state.writer.is_none() {
             state.writer = Some(SegmentWriter::open(
@@ -226,7 +228,7 @@ impl Blobs {
             crate::Error::Invalid(format!("blob {name} has no committed or pending extent"))
         })
     }
-    /// Encoded descriptors are the portable read authority carried in producer
+    /// Encoded descriptors say where to read the bytes and travel in producer
     /// acknowledgments: one per extent, in reading order.
     pub fn descriptors(&self, name: &str) -> Result<Vec<Vec<u8>>> {
         Ok(self.extents(name)?.iter().map(Extent::encode).collect())

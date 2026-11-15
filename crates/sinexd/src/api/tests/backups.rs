@@ -202,13 +202,13 @@ async fn backup_holds_require_operator_access_and_page_without_expiry(
     assert_eq!(listed["result"]["holds"], json!([]));
 }
 
-/// Staging a directory in a native spool format stores its bytes as
+/// Staging a directory in Sinex's spool format stores its bytes as
 /// materials; the staged directory is not one of the daemon's spools, so a
 /// backup neither writes into it nor copies it. An unreadable spool under the
 /// daemon's spool root still refuses the backup, and the refused attempt
 /// releases its own hold.
 #[devkit::test]
-async fn backup_leaves_staged_native_directories_alone_and_refuses_unreadable_spools(
+async fn backup_skips_staged_spool_directories_and_refuses_unreadable_spools(
     db: devkit::pg::TestDatabase,
 ) {
     use sinex_source_core::drivers::live_stream::{Rotation, SpoolWriter, capture_lines};
@@ -296,7 +296,7 @@ async fn backup_leaves_staged_native_directories_alone_and_refuses_unreadable_sp
     .await;
     assert_eq!(released["outcome"], "ok", "{released}");
 
-    // A retained clipboard spool under the spool root that the daemon cannot
+    // A kept clipboard spool under the spool root that the daemon cannot
     // read refuses the backup.
     let clipboard = spool.join("clipboard");
     let mut writer = SpoolWriter::open(&clipboard, Rotation::default()).unwrap();

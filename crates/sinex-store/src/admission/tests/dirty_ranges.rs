@@ -194,7 +194,7 @@ async fn dirty_ranges_page_compressed_members_and_keep_distinct_keys(db: devkit:
       ($1,'{"label":1.5}','01800000-0000-7000-8000-000000002002'),
       ($1,'{"wrong_kind":true}','01800000-0000-7000-8000-000000002259'),
       ($1,'{"missing":true}','01800000-0000-7000-8000-00000000dead'),
-      ('fixture.other_ranges','{"other_owner":true}','01800000-0000-7000-8000-00000000225a')"#,
+      ('fixture.other_ranges','{"other_key":true}','01800000-0000-7000-8000-00000000225a')"#,
     )
     .bind(NAME)
     .execute(&mut *conn)
@@ -281,9 +281,9 @@ async fn dirty_ranges_page_compressed_members_and_keep_distinct_keys(db: devkit:
                 .copied()
                 .collect::<std::collections::HashSet<_>>()
                 .len(),
-        "duplicate event has distinct owners in one page"
+        "duplicate event has distinct derivations in one page"
     );
-    let owners: Vec<_> = first.iter().map(|row| row.derivation.clone()).collect();
+    let output_derivations: Vec<_> = first.iter().map(|row| row.derivation.clone()).collect();
     let page_keys: Vec<_> = first.iter().map(|row| row.key.clone()).collect();
     let output_types = vec![KIND.to_owned()];
     let names = vec![NAME.to_owned(); 2];
@@ -297,7 +297,7 @@ async fn dirty_ranges_page_compressed_members_and_keep_distinct_keys(db: devkit:
     let checked_keys = sqlx::query_file!(
         "src/admission/affected_outputs.sql",
         &ids,
-        &owners,
+        &output_derivations,
         &page_keys,
         &output_types,
         &names,

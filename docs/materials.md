@@ -43,11 +43,11 @@ A source stores at least one material from which every event it emits can be re-
 - **Input**: something observed repeatedly, identified by binding, kind, locator and host. It outlives its readings.
 - **Observation**: one look that found a change. Unchanged looks advance a counter and the last-looked time only.
 - **Revision**: an input's content as of one observation (appended, rewritten, replaced, truncated, snapshot), chained per input. A revision's bytes are an ordered list of **extents** over immutable stored bytes, so an append costs only the new bytes. Older revisions stay readable forever, so "what did this file contain on Tuesday" has an answer.
-- **Events anchor into material parts,** never into a revision, so a later revision never moves an anchor.
+- **Events point into material parts,** never into a revision, so a later revision never moves a record offset.
 
-Each question has one owner, written once, in the transaction that learns it:
+Each question is answered in one place, written once, in the transaction that learns it:
 
-| Question | Owner |
+| Question | Answered by |
 |---|---|
 | what the input looked like | observations |
 | which bytes Sinex holds | revisions and their extents |
@@ -62,12 +62,12 @@ An observation records every metadata item the acquisition can read, not a fixed
 Raw bytes go into the shared append-only **segment log** ([`hashed-blobs`](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/hashed-blobs/README.md)). The writer appends a group's new bytes, syncs once per group, and commits the extents in the same transaction as the rows that cite them. A crash leaves at most an uncommitted segment tail, which is truncated when the segment is opened; the full durability order and its crash states are in [architecture](architecture.md#durability-order).
 
 - **An event cites only stored bytes.** A material row names extents already appended and synced.
-- **Held material.** The newest part of a growing input is held until its final cursor is admitted, so a failed admission retries the same bytes. After process loss, a driver may capture input again into a new linked part. Its manifest records `previous_through`, the exact admitted cut of the predecessor; replay reads the predecessor only to that cut. The predecessor's stored bytes remain intact.
-- **Open parts** are flushed before any event citing their bytes commits. Each batch carries the part's synced length, and admission refuses an anchor beyond it.
+- **Held material.** The newest part of a growing input is held until its final cursor is admitted, so a failed admission retries the same bytes. After process loss, a driver may capture input again into a new linked part. Its manifest records `previous_through`, the admitted end of the previous part; replay reads the previous part only to that end. The previous part's stored bytes remain intact.
+- **Open parts** are flushed before any event citing their bytes commits. Each batch carries the part's synced length, and admission refuses a record offset beyond it.
 - **Deduplication of bytes** checks the stored-bytes index plus the hashes appended in groups not yet committed, so two equal blobs in flight are stored once.
-- **Bytes rewritten whole are stored as chunks.** A producer may send a material of an input its source rewrites whole (a document saved again, a conversation export regenerated) as the ordered list of its content-defined chunks (the shared [`hashed-blobs`](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/hashed-blobs/README.md) chunker: FastCDC cut points, 16/64/256 KiB). Sinex stores each chunk it does not already hold and records the material's name with its chunk names in order (`core.blob_chunks`) once the chunks read back as exactly the named bytes, so a revision that changed in one place costs only the chunks around the change. Readers see the same bytes: a chunked blob's read authority is its chunks' extent descriptors in order, and range reads cross chunk boundaries. A chunk several materials share is removed only when no held blob lists it.
-- **Extent deletion markers** change with the catalog transition in the same transaction. A newly committed extent inherits its own catalog's deletion status unless another held blob lists it as a chunk; chunks without a catalog row start unmarked. Removing a chunk's direct catalog owner preserves its extent while another held blob lists it, and admitting a new chunk list clears its chunks' markers. Orphan cleanup owns its separate markers. Committing new bytes reads only their catalog names and never scans older extents to reconcile status.
-- **Read authority** is the encoded extent descriptor in `core.blob_extents` (for chunked bytes, the descriptors of their chunks in order); `core.blob_segments` records the committed end. Producer material acknowledgments and material/replay listings carry those descriptors so shared-store readers need no database access or hash-based file lookup.
+- **Bytes rewritten whole are stored as chunks.** A producer may send a material of an input its source rewrites whole (a document saved again, a conversation export regenerated) as the ordered list of its content-defined chunks (the shared [`hashed-blobs`](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/hashed-blobs/README.md) chunker: FastCDC cut points, 16/64/256 KiB). Sinex stores each chunk it does not already hold and records the material's name with its chunk names in order (`core.blob_chunks`) once the chunks read back as exactly the named bytes, so a revision that changed in one place costs only the chunks around the change. Readers see the same bytes: a chunked blob is read through its chunks' extent descriptors in order, and range reads cross chunk boundaries. A chunk several materials share is removed only when no held blob lists it.
+- **Extent deletion markers** change with the catalog transition in the same transaction. A newly committed extent inherits its own catalog's deletion status unless another held blob lists it as a chunk; chunks without a catalog row start unmarked. Removing the catalog entry that names a chunk directly preserves its extent while another held blob lists it, and admitting a new chunk list clears its chunks' markers. Orphan cleanup owns its separate markers. Committing new bytes reads only their catalog names and never scans older extents to reconcile status.
+- **Where bytes are read from** is the encoded extent descriptor in `core.blob_extents` (for chunked bytes, the descriptors of their chunks in order); `core.blob_segments` records the committed end. Producer material acknowledgments and material/replay listings carry those descriptors so shared-store readers need no database access or hash-based file lookup.
 - **Owned JSON records** decode through bounded record-range readers and hash the same bytes as they stream. Borrowed text parsers retain the input their parsing contract needs; the storage reader retains a compressed frame and a decoded frame rather than the whole record.
 - **Names** are `blake3:<hex>` of the uncompressed bytes. Frames are seekable zstd; a range read decompresses and verifies only the frames it needs.
 
@@ -82,7 +82,7 @@ Deduplication here is of stored bytes only. Whether a second copy of the same co
 
 ## Bulky fields by reference
 
-A kind may declare fields carried by reference to the event's byte range instead of inline: screen frames, audio segments, full accessibility trees, long terminal scrollback. The event carries the typed facts and the anchor; readers fetch the bytes by range under the same output rules as any payload ([privacy](privacy.md)). The kind's declaration says which fields are carried this way.
+A kind may declare fields carried by reference to the event's byte range instead of inline: screen frames, audio segments, full accessibility trees, long terminal scrollback. The event carries the typed facts and the record offset; readers fetch the bytes by range under the same output rules as any payload ([privacy](privacy.md)). The kind's declaration says which fields are carried this way.
 
 ## Re-chunking
 
@@ -131,9 +131,9 @@ An archive is decided member by member. Every format whose layout an archive has
 
 ### Inventory and accounting
 
-A stage records what it holds before any record is parsed: its **inventory**. Every member of every staged file appears in it exactly once, read from the archive's own listing, with its disposition. A ZIP's central directory is read without decompressing any member. A tar, or a gzip-compressed tar such as a Takeout `.tgz` part, is listed by streaming its headers through the decoder and skipping each member's data, so listing writes nothing and holds no member:
+A stage records what it holds before any record is parsed: its **inventory**. Every member of every staged file appears in it exactly once, read from the archive's own listing, with its outcome. A ZIP's central directory is read without decompressing any member. A tar, or a gzip-compressed tar such as a Takeout `.tgz` part, is listed by streaming its headers through the decoder and skipping each member's data, so listing writes nothing and holds no member:
 
-| Disposition | Meaning |
+| Outcome | Meaning |
 |---|---|
 | read | read by the named source's binding |
 | failed | the binding that would read it failed; the bytes stay stored |

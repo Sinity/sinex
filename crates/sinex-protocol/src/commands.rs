@@ -314,12 +314,12 @@ pub const COMMANDS: &[Command] = &[
             opt(
                 "command_record",
                 ArgKind::Text,
-                "native command record key observed by the client",
+                "the command's source record key, as the client saw it",
             ),
             opt(
                 "focus_record",
                 ArgKind::Text,
-                "native focus record key observed by the client",
+                "the focus change's source record key, as the client saw it",
             ),
         ],
         access: Access::Operator,
@@ -372,7 +372,7 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "timeline",
-        summary: "Events in time order, with ordinary query filters and paging.",
+        summary: "Events in time order, with query filters and paging.",
         args: &[
             pos_opt(
                 "query",
@@ -715,7 +715,7 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "stage-show",
-        summary: "One stage: its inventory with every member's disposition, each product's accounting, and how it ended.",
+        summary: "One stage: its inventory with every member's outcome, each product's accounting, and how it ended.",
         args: &[pos("operation", ArgKind::Text, "the stage's operation")],
         access: Access::Read,
         mcp: true,
@@ -790,7 +790,7 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "privacy-class",
-        summary: "Set a source's class floor; lowering it is the operator's alone.",
+        summary: "Set a source's minimum class; lowering it is the operator's alone.",
         args: &[
             pos("source", ArgKind::Text, "the source"),
             pos("class", ArgKind::Text, "open, guarded or sealed"),
@@ -800,7 +800,7 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "privacy-verify",
-        summary: "Count live events below their source's class floor (admitted before the floor was raised; a replay fixes them).",
+        summary: "Count live events below their source's minimum class (admitted before the minimum was raised; a replay fixes them).",
         args: &[],
         access: Access::Read,
         mcp: true,
@@ -835,7 +835,7 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         name: "analysis-run",
-        summary: "Read the maintained answer of a canonical analysis question (correlations, trends, deviations), with its stored coverage, evidence and selected commit position.",
+        summary: "Read the maintained answer of an analysis question (correlations, trends, deviations), with its stored coverage, evidence and selected commit position.",
         args: &[
             pos(
                 "recipe",

@@ -1,4 +1,4 @@
-//! Explicit imports through staging, intake, admission and stored-byte replay.
+//! Explicit imports through staging, submission to the writer, admission and stored-byte replay.
 use serde_json::Value;
 
 fn item(path: &std::path::Path, parser: &str) -> sinex_sources::stage::Item {

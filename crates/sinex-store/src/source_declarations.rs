@@ -1,4 +1,4 @@
-//! Immutable owner-installed native source versions.
+//! Immutable installed versions of built-in sources.
 use crate::{Error, Result};
 use futures::TryStreamExt;
 use sinex_model::{KindDeclaration, KindRef, SourceDeclaration, SourceRef};
@@ -20,7 +20,7 @@ pub async fn register(conn: &mut PgConnection, declarations: &[SourceDeclaration
                 Some((_, hash)) => {
                     if *hash != kind.definition_hash() {
                         return Err(Error::Invalid(
-                            "owner source artifacts disagree on one kind version".into(),
+                            "installed source catalogs disagree on one kind version".into(),
                         ));
                     }
                 }
@@ -38,7 +38,7 @@ pub async fn register(conn: &mut PgConnection, declarations: &[SourceDeclaration
         })
     }) {
         return Err(Error::Invalid(
-            "owner source artifact conflicts with a registered kind version".into(),
+            "installed source catalog conflicts with a registered kind version".into(),
         ));
     }
     let names = refs
@@ -52,14 +52,14 @@ pub async fn register(conn: &mut PgConnection, declarations: &[SourceDeclaration
             .bind(names).fetch(&mut *tx);
         while let Some(value) = rows.try_next().await? {
             let saved: KindDeclaration = serde_json::from_value(value).map_err(|error| {
-                Error::Invalid(format!("invalid owner source declaration: {error}"))
+                Error::Invalid(format!("invalid installed source declaration: {error}"))
             })?;
             if expected
                 .get(&saved.kind)
                 .is_some_and(|(known, hash)| **known != saved && *hash != saved.definition_hash())
             {
                 return Err(Error::Invalid(
-                    "immutable owner artifacts disagree on one kind version".into(),
+                    "installed source catalogs disagree on one kind version".into(),
                 ));
             }
         }
@@ -98,11 +98,11 @@ pub async fn load(
         .bind(&source.name).bind(i64::from(source.version)).fetch_optional(conn).await?;
     row.map(|(fingerprint, value)| {
         let declaration: SourceDeclaration = serde_json::from_value(value).map_err(|error| {
-            Error::Invalid(format!("invalid owner source declaration: {error}"))
+            Error::Invalid(format!("invalid installed source declaration: {error}"))
         })?;
         if &declaration.source != source || declaration.fingerprint() != fingerprint {
             return Err(Error::Invalid(
-                "owner source declaration fingerprint differs".into(),
+                "installed source declaration fingerprint differs".into(),
             ));
         }
         Ok(declaration)

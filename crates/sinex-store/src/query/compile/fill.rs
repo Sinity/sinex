@@ -10,7 +10,7 @@ impl Compiler<'_> {
         fill: &Fill,
         renamed: &BTreeMap<String, String>,
     ) -> Result<SqlFragment> {
-        let physical = |name: &str| {
+        let alias_of = |name: &str| {
             renamed
                 .get(name)
                 .cloned()
@@ -28,12 +28,12 @@ impl Compiler<'_> {
             })
             .ok_or_else(|| invalid("fill requires a time key"))?;
         let (key, func) = time_key;
-        let key = physical(&key);
+        let key = alias_of(&key);
         let dimensions: Vec<String> = group
             .keys
             .iter()
             .filter(|k| !matches!(k.unnamed(), Operand::TimeFn(..)))
-            .map(|k| physical(&k.column()))
+            .map(|k| alias_of(&k.column()))
             .collect();
         let (ticks, bucket) = if func == TimeFn::Hour {
             let local = |at| -> Result<SqlFragment> {
@@ -110,7 +110,7 @@ impl Compiler<'_> {
             .push("), filled_buckets AS (SELECT ")
             .append(bucket)
             .push(format!(" AS {} FROM filled_ticks GROUP BY 1)", quote(&key)));
-        let all_keys: Vec<String> = group.keys.iter().map(|k| physical(&k.column())).collect();
+        let all_keys: Vec<String> = group.keys.iter().map(|k| alias_of(&k.column())).collect();
         out.push(", filled_keys AS (SELECT b.*");
         if !dimensions.is_empty() {
             out.push(", d.* FROM filled_buckets b CROSS JOIN (SELECT DISTINCT ")
@@ -132,8 +132,8 @@ impl Compiler<'_> {
         for aggregate in &group.aggregates {
             select.push(SqlFragment::text(format!(
                 "g.{} AS {}",
-                quote(&physical(&aggregate.column())),
-                quote(&physical(&aggregate.column()))
+                quote(&alias_of(&aggregate.column())),
+                quote(&alias_of(&aggregate.column()))
             )));
         }
         select.push(SqlFragment::text(
@@ -154,7 +154,7 @@ impl Compiler<'_> {
         let recorded: Vec<String> = all_keys
             .iter()
             .cloned()
-            .chain(group.aggregates.iter().map(|a| physical(&a.column())))
+            .chain(group.aggregates.iter().map(|a| alias_of(&a.column())))
             .map(|name| format!("g.{}", quote(&name)))
             .chain(["g.\"_parents\"".into(), "'recorded'".into()])
             .collect();

@@ -561,7 +561,7 @@ fn delivery_id(event: &sinex_model::Event) -> Result<String> {
 
 /// Withdraw handoffs whose basis changed: no delivery event and no outlet
 /// work, only an outcome saying why it was not sent. Admitting one would
-/// certify evidence the current policy or lifecycle no longer holds. The
+/// record a basis the current policy or lifecycle no longer holds. The
 /// evaluator retracts the firing, and the readings its rows cited are
 /// forgotten, so the next evaluation selects them afresh and the rule fires
 /// again from its current rows if it still finds them.
@@ -643,7 +643,7 @@ fn outcome(delivery: &str, outcome: ::signals::Outcome, at: Timestamp) -> Signal
 
 /// Notices already begun by the desktop deliverer leave the outbox: their
 /// attempt is in its persisted state from then on.
-fn settle(state: &mut Checkpoint) {
+fn drop_begun_notices(state: &mut Checkpoint) {
     let notifications = &state.notifications;
     state.outbox.retain(|id, pending| match pending {
         Pending::Notice { notice } => notifications
@@ -665,7 +665,7 @@ async fn persist(
     mut commit: Commit,
     at: Timestamp,
 ) -> Result<()> {
-    settle(&mut commit.checkpoint);
+    drop_begun_notices(&mut commit.checkpoint);
     let writer = api
         .writer
         .as_ref()
@@ -674,7 +674,7 @@ async fn persist(
         writer.submit_signals(None, commit).await?;
         return Ok(());
     }
-    crate::intake::request_checkpoint(
+    crate::submit::request_checkpoint(
         conn,
         writer,
         &api.blobs,

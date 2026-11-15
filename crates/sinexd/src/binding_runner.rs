@@ -130,13 +130,14 @@ pub(crate) fn plan(config: &Config, host: &str) -> Result<Vec<(&'static InputFor
     .bindings)
 }
 
-/// Native spool obligations at the exported core cut, plus configured spools
-/// whose acquired bytes have not yet produced a database checkpoint.
+/// The bindings whose spools a backup must copy: spools still pending at the
+/// exported snapshot position, plus configured spools whose acquired bytes
+/// have not yet produced a database checkpoint.
 ///
-/// A saved binding that is no longer configured is a retained spool only when
+/// A saved binding that is no longer configured still has a spool to copy only when
 /// its input lies under the daemon's spool root (`spool`): the daemon's own
-/// capture writes and retires only there. Any other saved binding of a native
-/// format was staged, and staging stored its bytes whole as materials, so
+/// capture writes and removes spool files only there. Any other saved binding
+/// of a spool-writing source was staged, and staging stored its bytes whole as materials, so
 /// nothing in that input is pending.
 pub(crate) async fn backup_bindings(
     conn: &mut PgConnection,
@@ -146,13 +147,13 @@ pub(crate) async fn backup_bindings(
 ) -> Result<Vec<Binding>> {
     use sinex_source_core::registry::{Origin, Shape};
     let specs = sources::specs();
-    let native = |spec: &sinex_source_core::registry::SourceSpec| {
+    let writes_spool = |spec: &sinex_source_core::registry::SourceSpec| {
         matches!(spec.origin, Origin::Input(Shape::LiveStream | Shape::Media))
     };
     bindings.retain(|binding| {
         specs
             .iter()
-            .filter(|spec| native(spec))
+            .filter(|spec| writes_spool(spec))
             .any(|spec| spec.name == binding.source && spec.parser == binding.parser)
     });
     for row in sinex_store::bindings::all(conn).await? {
@@ -167,11 +168,11 @@ pub(crate) async fn backup_bindings(
             .collect::<Vec<_>>();
         if candidates.is_empty() {
             return Err(Error::internal(format!(
-                "saved native binding {} has unknown source {}",
+                "saved binding {} has unknown source {}",
                 row.binding, row.source
             )));
         }
-        if !candidates.iter().any(|spec| native(spec)) {
+        if !candidates.iter().any(|spec| writes_spool(spec)) {
             continue;
         }
         let configured = bindings.iter().find(|binding| binding.name == row.binding);
@@ -197,7 +198,7 @@ pub(crate) async fn backup_bindings(
                 .await?
                 .ok_or_else(|| {
                     Error::internal(format!(
-                        "saved binding {} has no parser evidence at material {material}",
+                        "saved binding {} has no recorded parser at material {material}",
                         row.binding
                     ))
                 })?
@@ -252,14 +253,14 @@ pub(crate) async fn backup_bindings(
                 });
             if !empty {
                 return Err(Error::internal(format!(
-                    "saved binding {} has no material evidence identifying its input format",
+                    "saved binding {} has no material that identifies its input format",
                     row.binding
                 )));
             }
             configured.parser.clone()
         } else {
             return Err(Error::internal(format!(
-                "saved binding {} has no material evidence identifying its input format",
+                "saved binding {} has no material that identifies its input format",
                 row.binding
             )));
         };
@@ -278,7 +279,7 @@ pub(crate) async fn backup_bindings(
                 row.binding
             )));
         }
-        if native(spec) {
+        if writes_spool(spec) {
             bindings.push(Binding {
                 name: row.binding.clone(),
                 source: row.source.clone(),

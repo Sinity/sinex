@@ -100,7 +100,7 @@ pub fn status(context: &DiscoveryContext) -> Result<Vec<DiscoveredInput>, String
     for input in &mut inputs {
         if input.capture
             && sources::format(&input.format)
-                .is_some_and(|format| format.discovery.owner == Owner::Session)
+                .is_some_and(|format| format.discovery.captured_by == CapturedBy::Session)
             && input.availability != Availability::Excluded
         {
             input.availability = Availability::ProducerReported;
@@ -230,7 +230,7 @@ pub(crate) fn paths(
     })
 }
 
-/// A format owns its locations and planner. Shared source names retain all formats.
+/// A format declares its locations and planner. A source name several formats share keeps all of them.
 pub fn discover_format(format: &InputFormat, context: &DiscoveryContext) -> Vec<DiscoveredInput> {
     let mut out = Vec::new();
     for spec in (format.specs)() {
@@ -307,7 +307,7 @@ pub fn discover_format(format: &InputFormat, context: &DiscoveryContext) -> Vec<
         }
         if format.capture.is_some() {
             out.extend(
-                capture_inputs(context, format.discovery.owner, true)
+                capture_inputs(context, format.discovery.captured_by, true)
                     .into_iter()
                     .filter(|input| input.format == format.name && input.source == spec.name),
             );
@@ -389,10 +389,13 @@ pub struct CapturePlan {
 }
 
 /// The same spool names as explicit session selections, so positions survive discovery.
-pub fn captures(context: &DiscoveryContext, owner: Owner) -> Result<CapturePlan, String> {
+pub fn captures(
+    context: &DiscoveryContext,
+    captured_by: CapturedBy,
+) -> Result<CapturePlan, String> {
     validate(context)?;
     Ok(CapturePlan {
-        bindings: select_captures(context, owner, sources::formats()),
+        bindings: select_captures(context, captured_by, sources::formats()),
         exclude: context
             .exclude
             .iter()
@@ -405,10 +408,10 @@ pub fn captures(context: &DiscoveryContext, owner: Owner) -> Result<CapturePlan,
 /// Existing spools can drain after their session capabilities have disappeared.
 pub fn spools(
     context: &DiscoveryContext,
-    owner: Owner,
+    captured_by: CapturedBy,
 ) -> Result<Vec<(&'static InputFormat, Binding)>, String> {
     validate(context)?;
-    let inputs = capture_inputs(context, owner, false);
+    let inputs = capture_inputs(context, captured_by, false);
     let mut bindings = Vec::new();
     for input in inputs {
         if matches!(input.availability, Availability::Unavailable(_)) {
@@ -422,13 +425,13 @@ pub fn spools(
 
 fn select_captures(
     context: &DiscoveryContext,
-    owner: Owner,
+    captured_by: CapturedBy,
     formats: &[&'static InputFormat],
 ) -> Vec<(&'static InputFormat, Binding)> {
     formats
         .iter()
         .copied()
-        .filter(|format| format.capture.is_some() && format.discovery.owner == owner)
+        .filter(|format| format.capture.is_some() && format.discovery.captured_by == captured_by)
         .flat_map(|format| {
             (format.discover)(format, context)
                 .into_iter()
@@ -451,14 +454,14 @@ fn select_captures(
 
 fn capture_inputs(
     context: &DiscoveryContext,
-    owner: Owner,
+    captured_by: CapturedBy,
     check_capabilities: bool,
 ) -> Vec<DiscoveredInput> {
     let mut out = Vec::new();
     for format in sources::formats()
         .iter()
         .copied()
-        .filter(|format| format.capture.is_some() && format.discovery.owner == owner)
+        .filter(|format| format.capture.is_some() && format.discovery.captured_by == captured_by)
     {
         let spec = (format.specs)()[0];
         if context.exclude.get(spec.name).is_some_and(Option::is_some) {

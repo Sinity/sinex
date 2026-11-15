@@ -2,7 +2,7 @@ use super::*;
 use sinex_model::event_types::CommandReported;
 use sinex_model::event_types::session::TerminalReport;
 
-/// The token the shell integration mints for a command started at `secs`.
+/// The token the shell integration makes for a command started at `secs`.
 fn token(secs: i64, n: u32) -> String {
     let ms = u64::try_from(T + secs).unwrap() * 1000;
     format!(

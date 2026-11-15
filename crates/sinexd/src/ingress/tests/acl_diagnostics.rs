@@ -96,7 +96,7 @@ pub(super) fn report<T>(
                 "permission_lines": permissions, "authorization_lines": count("Authorization Violation"),
                 "disconnect_lines": count("Disconnected"), "closed_lines": count("Closed"),
                 "error_lines": count("[ERR]"), "fatal_lines": count("[FTL]"),
-                // In publication order: create, delete, foreign, old scope, raw GET, own NEXT.
+                // In publication order: create, delete, other consumer, old scope, raw GET, own NEXT.
                 "synthetic_subject_lines": subject_lines,
             },
         })
@@ -104,8 +104,8 @@ pub(super) fn report<T>(
     if !matches!(outcome, Ok(Ok(_))) {
         match log
             .as_deref()
-            .ok_or("owned_log_unavailable")
-            .and_then(retain_log)
+            .ok_or("server_log_unavailable")
+            .and_then(save_log)
         {
             Ok(path) => eprintln!("acl_private_server_log={}", path.display()),
             Err(category) => eprintln!("acl_private_server_log_unavailable={category}"),
@@ -113,7 +113,7 @@ pub(super) fn report<T>(
     }
 }
 
-fn retain_log(log: &str) -> Result<std::path::PathBuf, &'static str> {
+fn save_log(log: &str) -> Result<std::path::PathBuf, &'static str> {
     use std::io::Write;
     use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
     let base = std::env::var_os("TEST_DURABLE_TMPDIR")

@@ -1,7 +1,7 @@
 use super::*;
 
 #[devkit::test]
-fn json_records_keep_their_exact_original_spelling_and_order() {
+fn json_records_keep_their_original_spelling_and_order() {
     let input = br#"{"ignored":"prefix", "a/b":{"~key":[12, -2.00e+4, true, null, "\\u0061", {"x": 1}, [2, 3]]}, "tail":[0]}"#;
     let mut got = Vec::new();
     visit(

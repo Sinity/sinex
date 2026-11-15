@@ -347,7 +347,7 @@ async fn a_pending_version_computes_new_dirty_keys_without_recomputing_history(
 }
 
 #[devkit::test]
-async fn comparison_selection_requires_the_exact_logical_day_setting(db: devkit::pg::TestDatabase) {
+async fn comparison_selection_requires_same_day_setting(db: devkit::pg::TestDatabase) {
     let w = World::with_keys(db, vec![Box::new(Days::<1>)]).await;
     w.admit(vec![zsh("first", 0, 1)]).await;
     let mut next = w.driver_with(vec![Box::new(Days::<2>)], vec![]).await;

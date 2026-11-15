@@ -122,12 +122,12 @@ fn atuin() -> (Snapshot, Fixture) {
     )
 }
 #[devkit::test]
-fn valid_different_part_layouts_have_equal_proven_progress() {
+fn part_layouts_give_equal_checked_progress() {
     let (split, fixture) = zsh();
     let mut whole = split.clone();
     let first = Uuid::from_u128(1);
     let second = Uuid::from_u128(2);
-    let cut = whole.parts[&first].bytes.len();
+    let split_at = whole.parts[&first].bytes.len();
     let tail = whole.parts.remove(&second).unwrap();
     whole
         .parts
@@ -139,7 +139,7 @@ fn valid_different_part_layouts_have_equal_proven_progress() {
     whole.cursor["part_index"] = json!(0);
     whole.cursor["through"] = json!(whole.parts[&first].bytes.len());
     whole.facts[1].material = first;
-    whole.facts[1].record_offset = cut as u64;
+    whole.facts[1].record_offset = split_at as u64;
     assert_eq!(
         validate(&split, &fixture).unwrap(),
         validate(&whole, &fixture).unwrap()
@@ -148,7 +148,7 @@ fn valid_different_part_layouts_have_equal_proven_progress() {
     assert!(validate(&rows, &fixture).is_ok());
 }
 #[devkit::test]
-fn every_consumed_grain_requires_authority_even_with_a_valid_frontier() {
+fn consumed_grain_without_reading_is_refused() {
     let (mut snapshot, fixture) = zsh();
     snapshot.facts.remove(0);
     assert!(
@@ -179,10 +179,10 @@ fn wrong_material_input_source_or_generation_cannot_normalize() {
     }
 }
 #[devkit::test]
-fn inside_outside_record_and_broken_chain_cuts_are_refused() {
+fn bad_boundaries_and_broken_chain_are_refused() {
     let (snapshot, fixture) = zsh();
     for field in [
-        "inside", "outside", "link", "cut", "gap", "overlap", "cycle",
+        "inside", "outside", "link", "boundary", "gap", "overlap", "cycle",
     ] {
         let mut bad = snapshot.clone();
         match field {
@@ -195,7 +195,7 @@ fn inside_outside_record_and_broken_chain_cuts_are_refused() {
             "link" => {
                 bad.parts.get_mut(&Uuid::from_u128(2)).unwrap().previous = Some(Uuid::from_u128(99))
             }
-            "cut" => {
+            "boundary" => {
                 bad.parts.get_mut(&Uuid::from_u128(2)).unwrap().manifest["previous_through"] =
                     json!(1)
             }
@@ -214,7 +214,7 @@ fn inside_outside_record_and_broken_chain_cuts_are_refused() {
     }
 }
 #[devkit::test]
-fn same_maximum_does_not_hide_a_missing_native_row() {
+fn same_maximum_does_not_hide_missing_row() {
     let (mut bad, fixture) = atuin();
     let material = Uuid::from_u128(1);
     let bytes = &mut bad.parts.get_mut(&material).unwrap().bytes;
@@ -232,11 +232,11 @@ fn same_maximum_does_not_hide_a_missing_native_row() {
 #[devkit::test]
 fn memory_and_full_carry_are_checked_independently() {
     let (snapshot, fixture) = atuin();
-    for field in ["bytes", "owner", "part", "counter"] {
+    for field in ["bytes", "material", "part", "counter"] {
         let mut bad = snapshot.clone();
         match field {
             "bytes" => bad.memory.as_mut().unwrap().1[9] ^= 1,
-            "owner" => bad.memory.as_mut().unwrap().0 = Uuid::from_u128(99),
+            "material" => bad.memory.as_mut().unwrap().0 = Uuid::from_u128(99),
             "part" => bad.cursor["memory_part"] = json!(99),
             _ => bad.cursor["changed_since_memory"] = json!(1),
         }
@@ -253,12 +253,12 @@ fn unrecorded_rewrite_and_unknown_cursor_fields_remain_semantic() {
     bad.cursor["unrecorded_rewrite"] = json!("rewritten");
     assert!(validate(&bad, &fixture).is_err());
     let mut bad = snapshot;
-    bad.cursor["future_native_field"] = json!(1);
+    bad.cursor["future_cursor_field"] = json!(1);
     assert!(validate(&bad, &fixture).is_err());
 }
 
 #[devkit::test]
-fn recaptured_same_input_repeat_has_exact_prior_reading_authority() {
+fn recaptured_repeat_is_explained_by_prior_reading() {
     let (original, fixture) = atuin();
     let mut repeated = original.clone();
     let root = Uuid::from_u128(1);
@@ -284,14 +284,14 @@ fn recaptured_same_input_repeat_has_exact_prior_reading_authority() {
     repeated.cursor["through"] = json!(bytes.len());
     repeated.cursor["memory_part"] = json!(1);
     repeated.memory.as_mut().unwrap().0 = tail;
-    // No new event exists at (tail, 0): the prior exact same-input reading
-    // proves this legitimately suppressed repeat, including typed identity.
+    // No new event exists at (tail, 0): the prior same-input reading with the same hash
+    // explains this suppressed repeat, including typed identity.
     assert_eq!(
         validate(&original, &fixture).unwrap(),
         validate(&repeated, &fixture).unwrap()
     );
     let mut bad = repeated.clone();
-    bad.facts[1].payload["native_id"] = json!("different-native-row");
+    bad.facts[1].payload["native_id"] = json!("different-row");
     assert!(validate(&bad, &fixture).is_err());
     let mut bad = repeated;
     bad.parts.get_mut(&tail).unwrap().input = Uuid::from_u128(99);
@@ -303,7 +303,7 @@ fn recaptured_same_input_repeat_has_exact_prior_reading_authority() {
 }
 
 #[devkit::test]
-fn foreign_database_generation_and_unproved_record_selection_are_refused() {
+fn other_generation_and_record_selection_are_refused() {
     let (snapshot, fixture) = atuin();
     let mut bad = snapshot.clone();
     bad.parts.get_mut(&Uuid::from_u128(1)).unwrap().manifest["database_generation"] =

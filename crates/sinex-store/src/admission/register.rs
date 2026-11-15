@@ -244,7 +244,7 @@ pub(super) async fn frame(
     Ok(())
 }
 
-/// Exact frame retries return the committed result before advancing any order.
+/// Identical frame retries return the committed result before advancing any order.
 pub(crate) async fn recorded(
     conn: &mut PgConnection,
     frame: &sinex_model::IngressFrame,
@@ -348,7 +348,7 @@ pub(super) async fn provenance(
         .await?
         .ok_or_else(|| {
             Error::Invalid(format!(
-                "native source {} version {} is not registered",
+                "built-in source {} version {} is not registered",
                 source.name, source.version
             ))
         })?;
@@ -358,7 +358,7 @@ pub(super) async fn provenance(
         .is_some_and(|family| family != &declaration.family)
     {
         return Err(Error::Invalid(
-            "native source belongs to another configured family".into(),
+            "built-in source belongs to another configured family".into(),
         ));
     }
     let fingerprint = declaration.fingerprint();
@@ -368,26 +368,26 @@ pub(super) async fn provenance(
         .is_some_and(|known| known != &fingerprint)
     {
         return Err(Error::Invalid(
-            "native source fingerprint differs from the owner catalog".into(),
+            "built-in source fingerprint differs from the installed catalog".into(),
         ));
     }
     let refs = batch.events().map(Event::kind_ref).collect::<BTreeSet<_>>();
     let kinds = sinex_schema::kinds::load(conn, &refs.into_iter().collect::<Vec<_>>()).await?;
     // Definitions and the source contract are immutable within this admission
-    // snapshot. Validate each exact kind once; every event still proves source
+    // snapshot. Validate each kind version once; every event still checks source
     // and membership below, including repeated kinds with a different source.
     if kinds
         .values()
         .any(|kind| !declaration.allows(&kind.kind, &kind.definition_hash()))
     {
         return Err(Error::Invalid(
-            "event is outside its exact native source declaration".into(),
+            "event is outside its built-in source declaration".into(),
         ));
     }
     for event in batch.events() {
         if event.source != source.name || !kinds.contains_key(&event.kind_ref()) {
             return Err(Error::Invalid(
-                "event is outside its exact native source declaration".into(),
+                "event is outside its built-in source declaration".into(),
             ));
         }
     }
@@ -425,21 +425,21 @@ impl Outcome {
     }
 }
 
-/// Native keyed readings cite materials and inputs registered by the owner.
+/// Keyed readings of built-in sources cite materials and inputs registered by the daemon.
 /// Their field keys remain the keys the kind declares, independent of which
 /// captured copy supplied the reading.
-pub(crate) async fn native_inputs(
+pub(crate) async fn built_in_inputs(
     conn: &mut PgConnection,
     batch: &Batch,
     events: &[Event],
 ) -> Result<()> {
-    let native = match &batch.kind {
+    let built_in = match &batch.kind {
         BatchKind::Source(progress) => progress.source.as_ref(),
         BatchKind::Ingress(frame) => frame.built_in_source.as_ref(),
         BatchKind::Replay { source, .. } => source.as_ref(),
         _ => None,
     };
-    if native.is_none() {
+    if built_in.is_none() {
         return Ok(());
     }
     let ids = events
@@ -461,7 +461,7 @@ pub(crate) async fn native_inputs(
     .collect();
     if ids.iter().any(|id| !registered.contains(id)) {
         return Err(Error::Invalid(
-            "native reading has no owner-registered immutable input".into(),
+            "built-in source reading has no daemon-registered immutable input".into(),
         ));
     }
     Ok(())

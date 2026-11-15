@@ -30,13 +30,14 @@ pub struct InventoryMember {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size: Option<u64>,
     #[serde(flatten)]
-    pub disposition: Disposition,
+    pub outcome: Outcome,
 }
 
 /// What became of one member. Every member is in exactly one of these.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+// The operations log stores inventories with this tag name.
 #[serde(tag = "disposition", rename_all = "snake_case")]
-pub enum Disposition {
+pub enum Outcome {
     /// Read by these sources' bindings.
     Read { sources: Vec<String> },
     /// The binding meant to read it failed; its bytes stay stored.
@@ -124,7 +125,7 @@ pub struct SourceTotals {
     pub mb_per_s: f64,
 }
 
-/// Durable progress, including accounting committed with each binding's cursor.
+/// Saved progress, including accounting committed with each binding's cursor.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SavedProgress {
     #[serde(flatten)]

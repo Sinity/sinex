@@ -285,7 +285,7 @@ fn assert_large_frame_transfers(wire: &[Ingress]) {
             let chunks: Vec<_> = wire.iter().filter(|item| matches!(item, Ingress::Chunk { for_frame, blob: name, .. } if for_frame == frame && name == blob)).cloned().collect();
             assert!(
                 !chunks.is_empty(),
-                "large logical frame must transfer encoded custody"
+                "large frame must transfer encoded custody"
             );
             let mut encoded = Vec::new();
             let mut descriptor = None;
@@ -544,7 +544,7 @@ async fn three_identical_byte_refusals_keep_the_spool_and_advance_without_a_part
     std::fs::write(&path, bytes).unwrap();
     let material = sinex_model::MaterialId::new();
     let blob = format!("blake3:{}", blake3::hash(bytes).to_hex());
-    let logical = Ingress::Material {
+    let material_frame = Ingress::Material {
         frame: "material".into(),
         material: Box::new(MaterialFrame {
             source: sinex_model::SourceRef {
@@ -571,7 +571,7 @@ async fn three_identical_byte_refusals_keep_the_spool_and_advance_without_a_part
     // covers byte failures in its JSON transfer.
     producer.max_message = 1;
     UnacknowledgedFrames {
-        frames: vec![logical, Ingress::Events { source:None,
+        frames: vec![material_frame, Ingress::Events { source:None,
 frame: "dependent".into(), events: vec![event(1)], failures: vec![] }],
         position: Position { cursor: json!({"segment":0,"last_material":material,"part_base":0,"inner":{"offset":4,"material":material,"part_index":0,"through":4}}), ..Position::default() },
         skip_position: Some(Position { cursor: json!({"segment":0,"last_material":material,"part_base":0,"inner":{"offset":bytes.len(),"material":material,"part_index":0,"through":bytes.len()}}), carry: json!({"after":"whole material"}), ..Position::default() }),
@@ -589,13 +589,13 @@ frame: "dependent".into(), events: vec![event(1)], failures: vec![] }],
     assert!(position.cursor["last_material"].is_null());
     assert_eq!(std::fs::read(&path).unwrap(), bytes);
     let received = received.lock().unwrap();
-    let logical: Vec<_> = received
+    let frames: Vec<_> = received
         .iter()
         .filter(|frame| !matches!(frame, Ingress::Chunk { .. }))
         .collect();
-    assert_eq!(logical.len(), 3);
+    assert_eq!(frames.len(), 3);
     assert!(
-        logical
+        frames
             .iter()
             .all(|frame| matches!(frame, Ingress::LargeFrame { .. }))
     );
@@ -606,7 +606,7 @@ frame: "dependent".into(), events: vec![event(1)], failures: vec![] }],
             .unwrap()
             .is_none()
     );
-    // A new producer reads the same ordinary position and its failure.
+    // A new producer reads the same position and its failure.
     assert_eq!(
         Position::load(&state, "binding")
             .unwrap()
@@ -673,7 +673,7 @@ async fn a_byte_refusal_rebuilds_a_large_frame_and_succeeds_on_the_next_attempt(
         };
         (blob.clone(), *length)
     };
-    // Both attempts were rebuilt from the same logical frame. Only its name changes.
+    // Both attempts were rebuilt from the same frame. Only its name changes.
     assert_ne!(json_bytes(received[0]).0, json_bytes(received[1]).0);
     assert_eq!(position.cursor, json!({"segment":1}));
 }
@@ -819,7 +819,7 @@ fn plaintext_positions_and_unacknowledged_frames_require_draining() {
     assert!(error.contains("invalid encoded producer state"), "{error}");
     assert_eq!(std::fs::read(&position).unwrap(), bytes);
     // Missing optional fields still default inside the current encoded format.
-    write_durably(&position, &serde_json::from_slice::<Value>(bytes).unwrap()).unwrap();
+    write_synced(&position, &serde_json::from_slice::<Value>(bytes).unwrap()).unwrap();
     let loaded = Position::load(dir.path(), "binding").unwrap();
     assert_eq!(loaded.cursor, json!({"segment":4}));
     assert_eq!(loaded.carry, json!({"partial":"synthetic"}));
@@ -879,7 +879,7 @@ async fn a_stale_malformed_acknowledgment_does_not_refuse_another_frame() {
 }
 
 #[devkit::test]
-fn failed_spool_segments_survive_cleanup_and_native_paths_survive_position_restart() {
+fn failed_segments_survive_cleanup_and_raw_paths_survive_restart() {
     use std::os::unix::ffi::{OsStrExt, OsStringExt};
     let dir = tempfile::tempdir().unwrap();
     let path = dir
@@ -1092,25 +1092,25 @@ async fn a_saved_invalid_name_restarts_under_a_valid_attempt_name() {
 }
 
 #[devkit::test(multi_thread)]
-async fn a_missing_spool_requires_verified_retained_material_bytes() {
+async fn missing_spool_needs_verified_stored_material_bytes() {
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
-    standin(&nats, &subjects, "retained").await;
+    standin(&nats, &subjects, "stored").await;
     let producer = Producer::connect(
         nats.url(),
         None,
         subjects,
-        "retained",
+        "stored",
         &ProducerHello::default(),
     )
     .await
     .unwrap();
     let root = tempfile::tempdir().unwrap();
     let store = Store::open(root.path()).unwrap();
-    let bytes = b"synthetic retained bytes";
+    let bytes = b"synthetic stored bytes";
     let blob = format!("blake3:{}", blake3::hash(bytes));
     let frame = Ingress::Material {
-        frame: "retained/material".into(),
+        frame: "stored/material".into(),
         material: Box::new(MaterialFrame {
             source: sinex_model::SourceRef {
                 name: "synthetic.source".into(),
@@ -1140,7 +1140,7 @@ async fn a_missing_spool_requires_verified_retained_material_bytes() {
     }];
     frame_bytes::write(
         &store.0,
-        "retained",
+        "stored",
         frame.frame(),
         &blob,
         bytes.len() as u64,
@@ -1148,11 +1148,11 @@ async fn a_missing_spool_requires_verified_retained_material_bytes() {
     )
     .unwrap();
     assert!(producer.rebuild(&frame, &ranges, &store).is_ok());
-    let retained = frame_bytes::directory(&store.0, "retained", frame.frame())
+    let stored = frame_bytes::directory(&store.0, "stored", frame.frame())
         .join(blob.strip_prefix("blake3:").unwrap());
     // A same-length replacement must fail the hash check; truncation must fail the length check.
     for replacement in [vec![b'x'; bytes.len()], vec![]] {
-        std::fs::write(&retained, replacement).unwrap();
+        std::fs::write(&stored, replacement).unwrap();
         assert!(matches!(
             producer.rebuild(&frame, &ranges, &store),
             Err(Error::Local(_))
@@ -1173,8 +1173,8 @@ fn producer_positions_and_fact_journals_persist_only_the_shared_encoding() {
     position.save(directory.path(), "binding").unwrap();
     let path = Position::path(directory.path(), "binding");
     let disk = std::fs::read(&path).unwrap();
-    let logical = serde_json::to_vec(&position).unwrap();
-    assert!(disk.len() < logical.len() / 20);
+    let json = serde_json::to_vec(&position).unwrap();
+    assert!(disk.len() < json.len() / 20);
     assert!(
         !disk
             .windows(4096)
@@ -1202,8 +1202,8 @@ fn producer_positions_and_fact_journals_persist_only_the_shared_encoding() {
     frames.save(directory.path(), "binding").unwrap();
     let path = UnacknowledgedFrames::path(directory.path(), "binding");
     let disk = std::fs::read(&path).unwrap();
-    let logical = serde_json::to_vec(&frames).unwrap();
-    assert!(disk.len() < logical.len() / 20);
+    let json = serde_json::to_vec(&frames).unwrap();
+    assert!(disk.len() < json.len() / 20);
     assert_eq!(
         UnacknowledgedFrames::load(directory.path(), "binding")
             .unwrap()
@@ -1214,9 +1214,9 @@ fn producer_positions_and_fact_journals_persist_only_the_shared_encoding() {
 }
 
 #[devkit::test]
-fn failed_native_readings_keep_exact_source_and_reject_mixed_sources() {
+fn failed_readings_keep_source_and_reject_mixed_sources() {
     let source = sinex_model::SourceRef {
-        name: "native.synthetic".into(),
+        name: "test.synthetic".into(),
         version: 7,
     };
     let make = |source| {
@@ -1227,7 +1227,7 @@ fn failed_native_readings_keep_exact_source_and_reject_mixed_sources() {
         });
         Ingress::Events {
             source: Some(source),
-            frame: "native/reading".into(),
+            frame: "test/reading".into(),
             events: vec![reading],
             failures: vec![],
         }
@@ -1250,7 +1250,7 @@ fn failed_native_readings_keep_exact_source_and_reject_mixed_sources() {
             &[
                 frame,
                 make(sinex_model::SourceRef {
-                    name: "native.other".into(),
+                    name: "test.other".into(),
                     version: 7
                 })
             ],
@@ -1310,7 +1310,7 @@ async fn local_material_is_one_frame() {
     let ack = producer.deliver(frame.clone(), &store).await.unwrap();
     assert_eq!(ack.refusal(), None);
     assert_eq!(*received.lock().unwrap(), vec![frame]);
-    let mut actual = Vec::new();
+    let mut stored = Vec::new();
     frame_bytes::reader(
         root.path(),
         "local",
@@ -1319,7 +1319,7 @@ async fn local_material_is_one_frame() {
         bytes.len() as u64,
     )
     .unwrap()
-    .read_to_end(&mut actual)
+    .read_to_end(&mut stored)
     .unwrap();
-    assert_eq!(actual, bytes);
+    assert_eq!(stored, bytes);
 }

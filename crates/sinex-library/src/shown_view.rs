@@ -1,8 +1,8 @@
-//! The shown-value projection (`core.library_shown`): for every target and
+//! The shown-value read model (`core.library_shown`): for every target and
 //! tag or property, the value [`crate::shown`] chooses from the current
 //! curation records. The writer refreshes it inside every transaction that
 //! changes a curation record (a request, a replay, an archive or a restore),
-//! for exactly the items those records are about, so it always equals the
+//! for the items those records are about, so it always equals the
 //! function over the live records.
 use crate::curation::{self, CURATION, Snapshot, target_text};
 use crate::shown::{self, Shown, Values};
@@ -106,16 +106,16 @@ pub async fn refresh_since(conn: &mut Conn, since: i64) -> curation::Result<usiz
     let changed: Vec<Curation> = curation::decode(CURATION, rows)?;
     let mut items: BTreeSet<String> = BTreeSet::new();
     let mut snapshot = Snapshot::new();
-    let mut frontier: BTreeSet<String> = BTreeSet::new();
+    let mut next_roots: BTreeSet<String> = BTreeSet::new();
     for record in &changed {
-        frontier.insert(record.root.clone());
+        next_roots.insert(record.root.clone());
         if let Some(target) = &record.target {
             items.insert(target.item.clone());
         }
     }
     let mut followed: BTreeSet<String> = BTreeSet::new();
-    while !frontier.is_empty() {
-        let roots: Vec<String> = std::mem::take(&mut frontier)
+    while !next_roots.is_empty() {
+        let roots: Vec<String> = std::mem::take(&mut next_roots)
             .into_iter()
             .filter(|root| followed.insert(root.clone()))
             .collect();
@@ -129,7 +129,7 @@ pub async fn refresh_since(conn: &mut Conn, since: i64) -> curation::Result<usiz
             .filter_map(|w| authored::Target::parse(w).ok())
             .map(|w| w.root().to_owned())
             .collect();
-        frontier.extend(named.into_iter().filter(|root| !followed.contains(root)));
+        next_roots.extend(named.into_iter().filter(|root| !followed.contains(root)));
     }
     items.extend(
         snapshot

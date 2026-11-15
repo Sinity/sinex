@@ -345,7 +345,7 @@ async fn gaps_are_where_coverage_does_not_reach(db: devkit::pg::TestDatabase) {
     assert_eq!(all[1].to, "2026-09-17T02:00:00Z");
     assert_eq!(
         all[2].to, "2026-09-17T02:00:00Z",
-        "an ordinary coverage reading does not prove temporal coverage of its own observer"
+        "a coverage reading does not show temporal coverage of its own observer"
     );
     let unknown = gaps(
         &mut conn,
@@ -459,7 +459,7 @@ async fn stored_questions_rederive_after_late_inputs_and_reuse_their_request_mat
             .fetch_one(&mut conn)
             .await
             .unwrap();
-    assert_eq!(requests, 1, "repeated reads reuse the retained request");
+    assert_eq!(requests, 1, "repeated reads reuse the stored request");
     let material: i64 =
         sqlx::query_scalar("SELECT count(*) FROM raw.materials WHERE parser='analysis-request'")
             .fetch_one(&mut conn)

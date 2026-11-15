@@ -7,8 +7,8 @@ use serde_json::{Value, json};
 use sinex_derivations::AnyPerEvent;
 use sqlx::{Connection, PgConnection};
 
-/// Install only the build's trusted native catalog while the owner holds the
-/// writer claim. Request payloads cannot register their own source authority.
+/// Install only the build's built-in catalog while the daemon holds the
+/// writer claim. Request payloads cannot register sources of their own.
 pub(crate) async fn install_built_in_sources(conn: &mut PgConnection) -> Result<()> {
     let mut tx = conn
         .begin()
@@ -19,7 +19,7 @@ pub(crate) async fn install_built_in_sources(conn: &mut PgConnection) -> Result<
         .map_err(|error| Error::from(error).within("writing the source registry"))?;
     sinex_store::source_declarations::register(&mut tx, &source_declarations())
         .await
-        .map_err(|error| Error::from(error).within("registering native sources"))?;
+        .map_err(|error| Error::from(error).within("registering built-in sources"))?;
     tx.commit()
         .await
         .map_err(|error| Error::from(error).within("committing source catalog"))
@@ -194,8 +194,8 @@ pub(crate) fn render() -> String {
 #[cfg(test)]
 mod tests;
 
-/// Every actual native declaration version, without collapsing older formats
-/// into the newest parser selected by the current-source projection.
+/// Every built-in declaration version, without collapsing older formats
+/// into the newest parser selected by the current-source view.
 pub(crate) fn source_declarations() -> Vec<sinex_model::SourceDeclaration> {
     let kinds = sinex_model::event_types::declarations();
     let mut declarations: std::collections::BTreeMap<
@@ -220,7 +220,7 @@ pub(crate) fn source_declarations() -> Vec<sinex_model::SourceDeclaration> {
                     .find(|kind| kind.kind.name == *emitted)
                     .unwrap_or_else(|| {
                         panic!(
-                            "native source {} emits unregistered kind {}",
+                            "built-in source {} emits unregistered kind {}",
                             spec.name, emitted
                         )
                     });

@@ -168,9 +168,9 @@ async fn grouped_prefix_limit_keeps_its_selection_when_preparing_a_hidden_time(
             .unwrap()
             .clone()
     );
-    let projected=at(&mut conn,"runs where producer ^ calendar-prefix | group by producer | agg min(started) | limit 1 | fields min_started",&ctx).await;
+    let selected=at(&mut conn,"runs where producer ^ calendar-prefix | group by producer | agg min(started) | limit 1 | fields min_started",&ctx).await;
     assert!(
-        projected.rows[0]["min_started"]
+        selected.rows[0]["min_started"]
             .as_str()
             .unwrap()
             .starts_with("2030-01-01")

@@ -251,8 +251,8 @@ async fn sealed_and_empty_text_still_advance_search_position(db: devkit::pg::Tes
     );
     let wrong_key = sinex_sealing::new_key().unwrap();
     assert!(sinex_sealing::unseal_payload(&sealed_payload, &wrong_key.key).is_err());
-    // Rebuilding the read model starts empty, while canonical policy outputs
-    // retain the actual sealed class and payload with no searchable text.
+    // Rebuilding the read model starts empty, while stored policy outputs
+    // keep the sealed class and payload with no searchable text.
     sqlx::query("DELETE FROM core.search_text")
         .execute(&mut conn)
         .await

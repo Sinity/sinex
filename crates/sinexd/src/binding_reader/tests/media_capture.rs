@@ -1,5 +1,5 @@
-//! Positive raw capture through the real media spool reader and writer: screen
-//! and audio bytes are retained exactly and survive a restart.
+//! Raw capture through the real media spool reader and writer: screen and
+//! audio bytes are stored exactly and survive a restart.
 use super::*;
 use sinex_sources::sources::media_capture;
 
@@ -81,13 +81,13 @@ async fn media_capture_keeps_exact_screen_and_audio_materials_after_restart(
     assert_eq!(
         results.len(),
         2,
-        "one successful result for each actual media binding"
+        "one successful result for each media binding"
     );
     let rows=sqlx::query!(r#"SELECT e.id,e.payload,e.material_id,e.record_offset,e.output_index,m.blob,m.length
       FROM core.events e JOIN raw.materials m ON m.id=e.material_id JOIN core.live_locations l ON l.event_id=e.id
       WHERE e.event_type='media.segment' ORDER BY e.payload->>'kind'"#).fetch_all(&mut ctx.read_conn).await.unwrap();
     assert_eq!(rows.len(), 2);
-    let mut retained = Vec::new();
+    let mut stored = Vec::new();
     for row in rows {
         let kind = row.payload["kind"].as_str().unwrap();
         let original = if kind == "screen" { &frame } else { &audio };
@@ -97,12 +97,12 @@ async fn media_capture_keeps_exact_screen_and_audio_materials_after_restart(
         assert_eq!(row.length as usize, original.len());
         assert_eq!(ctx.blobs.read(&row.blob).unwrap(), *original);
         assert_eq!(row.payload["bytes"], original.len() as u64);
-        retained.push((row.id, row.blob, original.clone()));
+        stored.push((row.id, row.blob, original.clone()));
     }
     ctx.close().await.unwrap();
     drop(sink);
     let mut fresh = ReaderContext::open(&url, &store, settings).await.unwrap();
-    for (id, blob, bytes) in retained {
+    for (id, blob, bytes) in stored {
         assert_eq!(fresh.blobs.read(&blob).unwrap(), bytes);
         assert_eq!(
             sqlx::query_scalar!(

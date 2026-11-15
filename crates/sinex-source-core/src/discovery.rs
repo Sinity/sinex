@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum Owner {
+pub enum CapturedBy {
     System,
     Session,
 }
@@ -58,7 +58,7 @@ impl CaptureStream {
 
 #[derive(Clone, Copy, Debug, Serialize)]
 pub struct DiscoverySpec {
-    pub owner: Owner,
+    pub captured_by: CapturedBy,
     pub locations: &'static [Location],
     pub capabilities: &'static [&'static str],
     pub credentials: &'static [&'static str],
@@ -105,7 +105,7 @@ pub struct DiscoveryContext {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Cause {
-    /// The canonical input does not exist on this host.
+    /// The input does not exist on this host.
     NotPresent,
     /// The input exists and this account may not read it.
     PermissionDenied,

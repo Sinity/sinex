@@ -5,9 +5,9 @@
 //! and every admitted run records the rule-set position it was admitted under.
 //! Reads never apply a rule again; a new rule reaches old data by replay.
 //!
-//! Each source also has a class floor: the class its declaration gives, raised
+//! Each source also has a minimum class: the class its declaration gives, raised
 //! by the operator's per-source setting. No event is admitted below its
-//! source's floor, and a derived event is never below the highest class of its
+//! source's minimum class, and a derived event is never below the highest class of its
 //! parents.
 use crate::{Error, Result};
 use regex::Regex;
@@ -68,8 +68,8 @@ pub struct RuleSet {
     /// there are none); recorded on every admitted run.
     pub seq: i64,
     pub rules: Vec<Rule>,
-    /// Per-source class floors set by the operator.
-    pub floors: HashMap<String, Class>,
+    /// Per-source minimum classes set by the operator.
+    pub minimum_classes: HashMap<String, Class>,
     hash_key: [u8; 32],
 }
 
@@ -273,11 +273,15 @@ fn iban_valid(s: &str) -> bool {
 
 impl RuleSet {
     /// A rule set held in memory (tests, and proposed rules being audited).
-    pub fn new(rules: Vec<Rule>, floors: HashMap<String, Class>, hash_key: [u8; 32]) -> Self {
+    pub fn new(
+        rules: Vec<Rule>,
+        minimum_classes: HashMap<String, Class>,
+        hash_key: [u8; 32],
+    ) -> Self {
         Self {
             seq: 0,
             rules,
-            floors,
+            minimum_classes,
             hash_key,
         }
     }
@@ -289,11 +293,11 @@ impl RuleSet {
         )
     }
 
-    /// Apply the class floor and every matching rule to `event`.
+    /// Apply the minimum class and every matching rule to `event`.
     pub fn apply(&self, event: &mut Event) -> Result<Applied> {
         let mut applied = Applied::default();
-        if let Some(&floor) = self.floors.get(&event.source) {
-            event.class = event.class.max(floor);
+        if let Some(&minimum) = self.minimum_classes.get(&event.source) {
+            event.class = event.class.max(minimum);
         }
         // A sealed payload is unreadable here by design: rules ran where it
         // was sealed, or never could. An event whose class is sealed must
@@ -477,7 +481,7 @@ pub(crate) async fn hash_key(conn: &mut PgConnection) -> Result<[u8; 32]> {
         .map_err(|_| Error::Invalid("privacy.settings.hash_key is not 32 bytes".into()))
 }
 
-/// The rules and floors in force for `sources`.
+/// The rules and minimum classes in force for `sources`.
 pub async fn load<'a>(
     conn: &mut PgConnection,
     sources: impl Iterator<Item = &'a str>,
@@ -489,7 +493,7 @@ pub async fn load<'a>(
         .fetch_one(&mut *conn)
         .await?;
     let rules = active_rules(conn, &sources).await?;
-    let floors = sqlx::query!(
+    let minimum_classes = sqlx::query!(
         r#"SELECT DISTINCT ON (source) source, class FROM privacy.source_classes
            WHERE source = ANY($1) ORDER BY source, seq DESC"#,
         &sources
@@ -502,7 +506,7 @@ pub async fn load<'a>(
     Ok(RuleSet {
         seq,
         rules,
-        floors,
+        minimum_classes,
         hash_key: hash_key(conn).await?,
     })
 }
@@ -546,9 +550,9 @@ pub(crate) struct Cache {
 #[derive(PartialEq, Eq)]
 struct CacheVersion {
     rules: i64,
-    floors: i64,
+    minimum_classes: i64,
     rule_count: i64,
-    floor_count: i64,
+    minimum_class_count: i64,
 }
 
 impl Cache {
@@ -566,8 +570,8 @@ impl Cache {
 
     pub(crate) async fn load(&mut self, conn: &mut PgConnection) -> Result<&RuleSet> {
         let version = sqlx::query!(
-            r#"SELECT r.seq AS "rules!", f.seq AS "floors!",
-                      r.total AS "rule_count!", f.total AS "floor_count!"
+            r#"SELECT r.seq AS "rules!", f.seq AS "minimum_classes!",
+                      r.total AS "rule_count!", f.total AS "minimum_class_count!"
                FROM (SELECT coalesce(max(seq), 0) seq, count(*) total FROM privacy.rules) r
                CROSS JOIN (SELECT coalesce(max(seq), 0) seq, count(*) total FROM privacy.source_classes) f"#
         )
@@ -578,9 +582,9 @@ impl Cache {
         if self.version
             == Some(CacheVersion {
                 rules: version.rules,
-                floors: version.floors,
+                minimum_classes: version.minimum_classes,
                 rule_count: version.rule_count,
-                floor_count: version.floor_count,
+                minimum_class_count: version.minimum_class_count,
             })
         {
             return Ok(&self.rules);
@@ -588,15 +592,15 @@ impl Cache {
         // One statement's snapshot supplies both the versions and contents.
         // A change committed later is loaded at the next batch boundary.
         let snapshot = sqlx::query!(
-            r#"SELECT r.seq AS "rules_seq!", f.seq AS "floors_seq!",
-                      r.total AS "rule_count!", f.total AS "floor_count!",
+            r#"SELECT r.seq AS "rules_seq!", f.seq AS "minimum_classes_seq!",
+                      r.total AS "rule_count!", f.total AS "minimum_class_count!",
                       (SELECT coalesce(jsonb_agg(to_jsonb(r) ORDER BY r.name), '[]'::jsonb) FROM
                         (SELECT DISTINCT ON (name) id, name, source, event_type, field,
                           matcher, matcher_arg, class, action, ended
                          FROM privacy.rules ORDER BY name, seq DESC) r) AS "rules!",
                       (SELECT coalesce(jsonb_object_agg(source, class), '{}'::jsonb) FROM
                         (SELECT DISTINCT ON (source) source, class FROM privacy.source_classes
-                         ORDER BY source, seq DESC) classes) AS "floors!"
+                         ORDER BY source, seq DESC) classes) AS "minimum_classes!"
                FROM (SELECT coalesce(max(seq), 0) seq, count(*) total FROM privacy.rules) r
                CROSS JOIN (SELECT coalesce(max(seq), 0) seq, count(*) total FROM privacy.source_classes) f"#
         )
@@ -633,23 +637,24 @@ impl Cache {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
-        let floors: HashMap<String, String> = serde_json::from_value(snapshot.floors)
-            .map_err(|e| Error::Invalid(format!("privacy source classes: {e}")))?;
-        let floors = floors
+        let minimum_classes: HashMap<String, String> =
+            serde_json::from_value(snapshot.minimum_classes)
+                .map_err(|e| Error::Invalid(format!("privacy source classes: {e}")))?;
+        let minimum_classes = minimum_classes
             .into_iter()
             .map(|(source, class)| Ok((source, parse_class(&class)?)))
             .collect::<Result<HashMap<_, _>>>()?;
         self.rules = RuleSet {
             seq: snapshot.rules_seq,
             rules,
-            floors,
+            minimum_classes,
             hash_key: self.hash_key,
         };
         self.version = Some(CacheVersion {
             rules: snapshot.rules_seq,
-            floors: snapshot.floors_seq,
+            minimum_classes: snapshot.minimum_classes_seq,
             rule_count: snapshot.rule_count,
-            floor_count: snapshot.floor_count,
+            minimum_class_count: snapshot.minimum_class_count,
         });
         Ok(&self.rules)
     }
@@ -741,7 +746,7 @@ pub async fn end_rule(conn: &mut PgConnection, name: &str, author: &str) -> Resu
     .await?)
 }
 
-/// Set a source's class floor (a new row; the newest wins).
+/// Set a source's minimum class (a new row; the newest wins).
 pub async fn set_source_class(
     conn: &mut PgConnection,
     source: &str,
@@ -809,19 +814,19 @@ pub async fn list_rules(conn: &mut PgConnection, history: bool) -> Result<Vec<Ru
         .collect())
 }
 
-/// Events whose class is below what their source's floor or the rules in force
-/// now give them (admitted before a rule or floor changed): the class
+/// Events whose class is below what their source's minimum class or the rules in force
+/// now give them (admitted before a rule or minimum class changed): the class
 /// verification. A replay brings them up.
 #[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct Verification {
     pub checked: u64,
-    pub below_floor: u64,
+    pub below_minimum: u64,
     pub by_source: Vec<(String, u64)>,
 }
 
 pub async fn verify_classes(conn: &mut PgConnection) -> Result<Verification> {
     let rows = sqlx::query!(
-        r#"WITH floors AS (
+        r#"WITH minimum_classes AS (
              SELECT DISTINCT ON (source) source, class FROM privacy.source_classes
              ORDER BY source, seq DESC),
            rank(c, r) AS (VALUES ('open', 0), ('guarded', 1), ('sealed', 2))
@@ -829,7 +834,7 @@ pub async fn verify_classes(conn: &mut PgConnection) -> Result<Verification> {
            FROM core.events e
            JOIN (SELECT event_id FROM core.live_locations
                  UNION SELECT event_id FROM core.live_equivalence) lk ON lk.event_id = e.id
-           JOIN floors f ON f.source = e.source
+           JOIN minimum_classes f ON f.source = e.source
            JOIN rank re ON re.c = e.class JOIN rank rf ON rf.c = f.class
            WHERE re.r < rf.r
            GROUP BY e.source ORDER BY e.source"#
@@ -845,7 +850,7 @@ pub async fn verify_classes(conn: &mut PgConnection) -> Result<Verification> {
     let by_source: Vec<(String, u64)> = rows.into_iter().map(|r| (r.source, r.n as u64)).collect();
     Ok(Verification {
         checked: checked as u64,
-        below_floor: by_source.iter().map(|(_, n)| n).sum(),
+        below_minimum: by_source.iter().map(|(_, n)| n).sum(),
         by_source,
     })
 }

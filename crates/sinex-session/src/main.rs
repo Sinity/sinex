@@ -88,7 +88,7 @@ struct ReportCommand {
     /// `zsh`, `bash` or `fish`.
     #[arg(long)]
     shell: String,
-    /// The execution token the shell minted when the command started.
+    /// The execution token the shell made when the command started.
     #[arg(long)]
     execution: String,
     /// When the command started, in nanoseconds since the Unix epoch.
@@ -242,7 +242,7 @@ fn capture_source(
 }
 
 fn requested(run: &Run) -> Result<sinex_sources::discovery::CapturePlan, String> {
-    use sinex_sources::discovery::{self, Configuration, DiscoveryContext, Owner};
+    use sinex_sources::discovery::{self, CapturedBy, Configuration, DiscoveryContext};
     let configuration = run
         .sources
         .as_deref()
@@ -256,11 +256,11 @@ fn requested(run: &Run) -> Result<sinex_sources::discovery::CapturePlan, String>
     context.watch.extend(configuration.discovery.watch);
     if run.drain {
         return Ok(discovery::CapturePlan {
-            bindings: discovery::spools(&context, Owner::Session)?,
+            bindings: discovery::spools(&context, CapturedBy::Session)?,
             ..Default::default()
         });
     }
-    discovery::captures(&context, Owner::Session)
+    discovery::captures(&context, CapturedBy::Session)
 }
 
 /// Capture threads write spools; the shared loop produces what they wrote.

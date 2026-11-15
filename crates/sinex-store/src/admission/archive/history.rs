@@ -5,7 +5,7 @@ use sinex_model::{ArchiveReason, DbCheck};
 use sqlx::PgConnection;
 use uuid::Uuid;
 
-/// A non-event change receives an ordinary writer position, not an Event.
+/// A non-event change receives a writer position, not an Event.
 pub(crate) async fn position(conn: &mut PgConnection) -> Result<i64> {
     crate::commit_log::allocate_position(conn).await
 }

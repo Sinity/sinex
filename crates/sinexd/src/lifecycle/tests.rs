@@ -171,9 +171,7 @@ async fn operations_run_in_writer_batches_and_resume(db: devkit::pg::TestDatabas
 }
 
 #[devkit::test]
-async fn retired_source_resumes_identity_and_live_admission_while_read_waits(
-    db: devkit::pg::TestDatabase,
-) {
+async fn removed_source_archive_resumes_while_read_waits(db: devkit::pg::TestDatabase) {
     use futures::StreamExt;
     use sqlx::Connection;
     use tokio::sync::{Notify, oneshot};
@@ -226,23 +224,23 @@ async fn retired_source_resumes_identity_and_live_admission_while_read_waits(
     };
     assert_eq!(saved.batches, 1);
     // A stalled producer of selected identities owns no writer transaction.
-    let gate = Arc::new(Notify::new());
-    let release = gate.clone();
+    let pause = Arc::new(Notify::new());
+    let release = pause.clone();
     let (entered, waiting) = oneshot::channel();
     let worker = writer.clone();
     let operation = op.clone();
     let reader = tokio::spawn(async move {
         let mut conn = PgConnection::connect(&url).await.unwrap();
-        let native = lifecycle::source_roots(&mut conn, &operation, saved.after).unwrap();
+        let roots = lifecycle::source_roots(&mut conn, &operation, saved.after).unwrap();
         let mut entered = Some(entered);
-        let selected = native
+        let selected = roots
             .then(move |id| {
                 let first = entered.take();
-                let gate = gate.clone();
+                let pause = pause.clone();
                 async move {
                     if let Some(first) = first {
                         first.send(()).unwrap();
-                        gate.notified().await;
+                        pause.notified().await;
                     }
                     id
                 }
@@ -274,8 +272,8 @@ async fn retired_source_resumes_identity_and_live_admission_while_read_waits(
         .unwrap(),
         1
     );
-    // Retire a deliberately unfinished native operation through the actual
-    // startup helper. It must use the saved identity and original cut.
+    // Archive a deliberately unfinished operation through the
+    // startup helper. It must use the saved identity and original start position.
     let tail = reading(10000, 10000);
     let tail_id = tail.id.0;
     writer
@@ -307,11 +305,11 @@ async fn retired_source_resumes_identity_and_live_admission_while_read_waits(
         .await
         .unwrap();
     assert!(matches!(part.step, Step::Moved { done: false, .. }));
-    let Answer::Done(done) = retire_source(&mut read, &writer, "ops".into())
+    let Answer::Done(done) = archive_removed_source(&mut read, &writer, "ops".into())
         .await
         .unwrap()
     else {
-        panic!("retirement refused")
+        panic!("removed source archive refused")
     };
     assert_eq!(done["operation"], serde_json::to_value(op.id).unwrap());
     assert_eq!(

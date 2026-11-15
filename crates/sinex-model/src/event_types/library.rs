@@ -1,5 +1,5 @@
 //! The media library: what a library scan saw, and the records library requests
-//! write. Every library record is an ordinary typed event; current values
+//! write. Every library record is a typed event like any other; current values
 //! (which tag applies, which property value is shown, a collection's order) are
 //! read from them, never stored beside them.
 //!
@@ -11,8 +11,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-/// A file whose facts changed in a scan. Earlier visible changes remain
-/// evidence for the item and its original rendition.
+/// A file whose facts changed in a scan. Earlier visible changes still
+/// describe the item and its original rendition.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(version = 3,
     type = "library.copy",
@@ -92,7 +92,7 @@ pub struct Item {
     pub media_type: String,
     /// Copies that belong to the item, as `host:path`.
     pub copies: Vec<String>,
-    /// A human label; the file name at intake when nothing better is known.
+    /// A human label; the file name when the item was added, when nothing better is known.
     pub label: Option<String>,
     pub by: String,
     pub at: Timestamp,

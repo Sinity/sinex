@@ -1,4 +1,4 @@
-//! Normal material turns share the same native driver, admission and ACK path
+//! Normal material turns share the same source driver, admission and ack path
 //! as explicit EOF reads. The first source can keep producing indefinitely.
 use super::*;
 use sinex_source_core::drivers::DriverError;
@@ -92,7 +92,7 @@ impl Reader for AfterAck {
         assert_eq!(
             self.first_polls.load(Ordering::SeqCst),
             self.first_acked.load(Ordering::SeqCst),
-            "the next binding cannot precede the first poll's committed acknowledgement"
+            "the next binding cannot precede the first poll's committed acknowledgment"
         );
         self.polls.fetch_add(1, Ordering::SeqCst);
         self.inner.poll(cursor)
@@ -313,7 +313,7 @@ impl Reader for Parts {
     }
 }
 #[devkit::test]
-async fn normal_append_turn_settles_only_after_observing_eof(db: devkit::pg::TestDatabase) {
+async fn append_turn_finishes_only_after_seeing_eof(db: devkit::pg::TestDatabase) {
     use sinex_sources::sources::zsh;
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("history");
@@ -363,7 +363,7 @@ async fn normal_append_turn_settles_only_after_observing_eof(db: devkit::pg::Tes
             .0;
         assert_eq!(cursor["offset"], json!(wanted));
         assert!(
-            readers[0].settled.is_none(),
+            readers[0].facts_at_end.is_none(),
             "a material turn is not an EOF observation"
         );
     }

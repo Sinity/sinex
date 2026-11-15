@@ -98,7 +98,7 @@ pub(super) fn run(events: u64, parent: &Path) -> Result<(), String> {
         }
         let expected = counts(&cluster)?;
         let consumers = measurements::with_consumers(&binary, &cluster, &out, &[], expected, "6G")?;
-        retain_consumer_logs(&out, &phase)?;
+        keep_consumer_logs(&out, &phase)?;
         let after = measurements::snapshot(&cluster)?;
         save(&phase, "before.json", &before)?;
         save(&phase, "after.json", &after)?;
@@ -166,11 +166,11 @@ pub(super) fn run(events: u64, parent: &Path) -> Result<(), String> {
     if derived["events"].as_u64().unwrap_or(0) == 0
         || derived["missing_parents"].as_u64() != Some(0)
     {
-        return Err("derivation case did not retain valid parent links".into());
+        return Err("derivation case did not produce valid parent links".into());
     }
     let expected = counts(&cluster)?;
     let consumers = measurements::with_consumers(&binary, &cluster, &out, &[], expected, "6G")?;
-    retain_consumer_logs(&out, &phase)?;
+    keep_consumer_logs(&out, &phase)?;
     phases.push(json!({"name": "derived", "result": result, "parents": derived, "consumers": consumers, "stages": measurements::stage_summary(&phase)?}));
     let execution_s = started.elapsed().as_secs_f64();
     let load = load.finish()?;
@@ -216,7 +216,7 @@ fn counts(cluster: &Cluster) -> Result<ConsumerCounts, String> {
     })
 }
 
-fn retain_consumer_logs(out: &Path, phase: &Path) -> Result<(), String> {
+fn keep_consumer_logs(out: &Path, phase: &Path) -> Result<(), String> {
     for name in [
         "daemon.log",
         "nats.log",

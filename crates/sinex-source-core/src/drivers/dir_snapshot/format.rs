@@ -47,7 +47,8 @@ pub(crate) fn validate(manifest: &Manifest, records: &[(usize, usize)]) -> Resul
         let member = manifest
             .member_at(start)
             .ok_or_else(|| RecordError::new("directory record has no unambiguous member"))?;
-        let path = super::paths::native(member).map_err(|e| RecordError::new(e.to_string()))?;
+        let path =
+            super::paths::member_path(member).map_err(|e| RecordError::new(e.to_string()))?;
         if !paths.insert(path) {
             return Err(RecordError::new("directory capture repeats a member path"));
         }

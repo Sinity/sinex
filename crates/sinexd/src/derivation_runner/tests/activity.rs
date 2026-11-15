@@ -143,9 +143,7 @@ async fn changing_the_activity_break_profile_recomputes_existing_sessions(
 }
 
 #[devkit::test]
-async fn sessions_select_connected_windows_and_create_new_owners_after_removal(
-    db: devkit::pg::TestDatabase,
-) {
+async fn sessions_select_connected_windows_and_split_after_removal(db: devkit::pg::TestDatabase) {
     let w = World::new(db).await;
     let middle = physical(800);
     w.admit(vec![

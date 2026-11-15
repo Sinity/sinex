@@ -31,7 +31,7 @@ pub(super) async fn select(
         .map_err(|error| Check::Unavailable(error.to_string()))?;
     if unknown {
         return Err(Check::Refused(
-            "historical material family ownership requires an explicit mapping".into(),
+            "historical material from an unknown family requires an explicit mapping".into(),
         ));
     }
     let descriptors = sinex_store::producer_reads::material_extents(conn, &ids)
@@ -169,9 +169,7 @@ pub(crate) async fn check_scope(
         .await
         .map_err(|error| Check::Unavailable(error.to_string()))?
         .ok_or_else(|| {
-            Check::Configuration(
-                "replay source version is not in the immutable owner catalog".into(),
-            )
+            Check::Configuration("replay source version is not in the installed catalog".into())
         })?;
     if source.family != request.family {
         return Err(Check::Configuration(
@@ -192,7 +190,7 @@ pub(crate) async fn check_scope(
         })
     }) {
         return Err(Check::Configuration(
-            "replay cannot relabel a material source or invent historical source authority".into(),
+            "replay cannot relabel a material source or invent a historical material source".into(),
         ));
     }
     if sequence.parser_build.trim().is_empty() || sequence.parser_version.trim().is_empty() {
@@ -213,8 +211,7 @@ pub(crate) async fn check_scope(
         || selected[0].materials != sequence.materials
     {
         return Err(
-            "replacement must name the complete registered part sequence and its exact digests"
-                .into(),
+            "replacement must name the complete registered part sequence and its digests".into(),
         );
     }
     if selected[0].expected_live_hash != sequence.expected_live_hash {
@@ -233,7 +230,7 @@ pub(crate) async fn check_scope(
     for supplied in &sequence.declarations {
         if !source.allows(&supplied.kind, &supplied.hash) {
             return Err(Check::Configuration(
-                "replay kind is outside its exact owner source declaration".into(),
+                "replay kind is outside its source declaration".into(),
             ));
         }
         if !declarations
@@ -382,7 +379,7 @@ impl Ingest {
     ) -> Result<Acknowledgment> {
         self.built_in_declaration(producer, &sequence.source)
             .await?;
-        let write = authority::write(&self.grants, producer)?;
+        let write = write_access::write(&self.grants, producer)?;
         let request = CheckedReplay {
             content_hash,
             host: write.host.clone(),

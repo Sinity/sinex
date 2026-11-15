@@ -1,4 +1,4 @@
-//! Durable holds and their immutable operation boundary. Call mutations through the writer.
+//! Backup holds and their immutable operation boundary. Call mutations through the writer.
 use crate::{Error, Result};
 use sinex_model::backup::{Hold, Segment};
 use sinex_model::{OperationId, Timestamp};
@@ -38,7 +38,7 @@ pub async fn get(conn: &mut PgConnection, id: OperationId) -> Result<Option<Hold
     .transpose()
 }
 
-/// The caller holds the existing one-writer claim. `false` means an exact retry.
+/// The caller holds the existing one-writer claim. `false` means an identical retry.
 /// Snapshot staging must not attach a new snapshot to that older boundary.
 pub async fn hold(conn: &mut PgConnection, id: OperationId, actor: &str) -> Result<(Hold, bool)> {
     if let Some(existing) = get(conn, id).await? {
@@ -109,7 +109,7 @@ pub async fn segments(conn: &mut PgConnection, id: OperationId) -> Result<Vec<Se
         .collect()
 }
 
-/// A physical mutation is covered by any open prefix intersecting its start.
+/// A change to segment bytes is covered by any open prefix intersecting its start.
 /// Append-only allocation guarantees an extent never starts before an older prefix and ends beyond it.
 pub async fn covers(conn: &mut PgConnection, segment: &str, offset: u64) -> Result<bool> {
     let offset = i64::try_from(offset)
@@ -158,7 +158,7 @@ pub async fn list(
         out.push(
             get(conn, OperationId(id))
                 .await?
-                .expect("hold rows are retained"),
+                .expect("hold rows are kept"),
         );
     }
     Ok(out)
@@ -167,7 +167,7 @@ pub async fn list(
 #[cfg(test)]
 mod tests;
 
-/// One exported snapshot, established while the writer still owns the cut.
+/// One exported snapshot, taken while the writer still holds the hold's commit position.
 /// Dropping its connection invalidates the snapshot; an old hold cannot recreate it.
 pub struct Snapshot {
     connection: PgConnection,
@@ -240,8 +240,8 @@ impl Snapshot {
     }
 }
 
-/// Validate copied live descriptors in bounded pages against their actual encoded bytes.
-/// Deleting descriptors are not readable authority and may already be punched after a crash.
+/// Validate copied live descriptors in bounded pages against their encoded bytes.
+/// Descriptors being deleted are not readable and may already be punched after a crash.
 async fn validate_copy(
     conn: &mut PgConnection,
     id: OperationId,

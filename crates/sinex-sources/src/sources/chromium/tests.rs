@@ -127,7 +127,7 @@ fn an_unreadable_profile_roster_is_an_error_instead_of_empty_coverage() {
 #[devkit::test]
 fn an_explicit_history_copy_needs_no_special_filename() {
     let path = history();
-    let copied = path.with_file_name("retained-history.sqlite");
+    let copied = path.with_file_name("copied-history.sqlite");
     std::fs::copy(&path, &copied).unwrap();
     assert_eq!(profiles(&copied).unwrap()[0].1, copied);
     let (_, original) = rows(&visits_driver(path, "fixture-host".into()));

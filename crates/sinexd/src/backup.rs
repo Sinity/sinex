@@ -316,7 +316,7 @@ pub(crate) async fn prepare(
     record_boundary(output, &manifest.boundary)?;
     File::open(output).and_then(|f| f.sync_all())?;
     if !producers_complete {
-        // Preserve the refusal and cut without presenting an incomplete copy
+        // Keep the refusal and the fixed position without presenting an incomplete copy
         // as a manifest. Do this before either dump or any segment copying.
         record(&output.join("producer-snapshots.json"), &manifest)?;
         File::open(output).and_then(|f| f.sync_all())?;

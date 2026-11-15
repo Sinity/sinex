@@ -80,7 +80,7 @@ fn actor(operation: &str) {
                 });
             assert!(
                 private_copy,
-                "decoded reader retains a private receiver-owned encoded inode"
+                "decoded reader keeps a private encoded inode owned by the receiver"
             );
             discard(shared, "node", "frame").unwrap();
             let mut bytes = Vec::new();
@@ -164,7 +164,7 @@ fn main() {
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(permissions)).unwrap();
     }
     // Mirror the configured tmpfiles parents; leaf frame directories are
-    // created by the actual helper under the sender's restrictive umask.
+    // created by the production helper under the sender's restrictive umask.
     for relative in ["incoming", "incoming/producers"] {
         let path = root.path().join("shared").join(relative);
         std::fs::create_dir(&path).unwrap();

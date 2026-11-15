@@ -55,7 +55,7 @@ impl SupportingRecord {
 }
 
 /// Supporting records in one order whatever order the records came in: highest
-/// level first, then by record, so the stored projection and a fresh
+/// level first, then by record, so the stored read model and a fresh
 /// computation agree.
 fn sorted(mut supporting_records: Vec<SupportingRecord>) -> Vec<SupportingRecord> {
     supporting_records.sort_by(|a, b| (a.level, &a.record).cmp(&(b.level, &b.record)));

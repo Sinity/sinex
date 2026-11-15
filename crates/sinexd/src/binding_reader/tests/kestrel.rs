@@ -130,7 +130,7 @@ async fn kestrel_shell_and_books_keep_their_records_after_replay(db: devkit::pg:
     .await;
     assert_eq!(
         day.total, 5,
-        "the 01:30 command belongs to Sunday's logical day"
+        "the 01:30 command belongs to Sunday under the day setting"
     );
     let failed = ask(
         &mut ctx,

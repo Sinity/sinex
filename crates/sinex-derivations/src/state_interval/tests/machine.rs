@@ -1,5 +1,5 @@
 use super::*;
-fn native(kind: &str, seconds: i64, mut payload: Value) -> Event {
+fn journal_event(kind: &str, seconds: i64, mut payload: Value) -> Event {
     payload["host"] = json!("box");
     payload["cursor"] = json!(format!("{kind}/{seconds}"));
     payload["logged_at"] = json!(at(seconds));
@@ -21,7 +21,7 @@ fn native(kind: &str, seconds: i64, mut payload: Value) -> Event {
     .unwrap()
 }
 fn unit(kind: &str, seconds: i64, boot: &str, invocation: &str) -> Event {
-    native(
+    journal_event(
         kind,
         seconds,
         json!({"boot_id":boot,
@@ -47,7 +47,7 @@ fn machine(kind: &str, events: &[Event]) -> Vec<StateInterval> {
         .collect()
 }
 #[devkit::test]
-fn native_unit_pairing_keeps_boot_and_invocation_identity() {
+fn unit_pairing_keeps_boot_and_invocation_identity() {
     let start = unit("unit.started", 0, "boot-a", "run-a");
     let wrong = unit("unit.stopped", 5, "boot-a", "run-b");
     let other_boot = unit("unit.stopped", 6, "boot-b", "run-a");
@@ -61,7 +61,7 @@ fn native_unit_pairing_keeps_boot_and_invocation_identity() {
 #[devkit::test]
 fn boot_fences_unknown_unit_end_without_inventing_continuous_uptime() {
     let start = unit("unit.started", 0, "boot-a", "run-a");
-    let boot = native("boot.started", 3 * 86400, json!({"boot_id":"boot-b"}));
+    let boot = journal_event("boot.started", 3 * 86400, json!({"boot_id":"boot-b"}));
     let result = machine("machine.unit", &[start, boot]);
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].ended_at, None);
@@ -80,7 +80,7 @@ fn a_late_start_job_completion_does_not_reopen_an_already_stopped_oneshot() {
     assert!(result.is_empty());
 }
 #[devkit::test]
-fn separate_native_hosts_cannot_close_each_others_units() {
+fn separate_hosts_cannot_close_each_others_units() {
     let start = unit("unit.started", 0, "boot-a", "run-a");
     let mut other = unit("unit.stopped", 10, "boot-a", "run-a");
     other.payload["host"] = json!("other-box");

@@ -1,5 +1,5 @@
-//! The three clocks. `ts_orig` is when the thing happened by the source's own
-//! evidence, with a quality; unknown stays unknown ("never falsify a clock").
+//! The three clocks. `ts_orig` is when the thing happened as the source
+//! records it, with a quality; unknown stays unknown ("never falsify a clock").
 //! `ts_coided` comes from the event ID; `ts_persisted` is set by the database
 //! at commit.
 use serde::{Deserialize, Deserializer, Serialize, Serializer};

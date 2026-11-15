@@ -1,7 +1,6 @@
 //! Catalog sources Sinex has no parser for yet, with the canonical locations
-//! where their provider keeps its data. Discovery checks those locations so
-//! the dry run can say which unbuilt sources this host actually has: the
-//! catalog is a floor, and this census makes it measurable. An entry is
+//! where their provider keeps its data. Discovery checks those locations, and
+//! the dry run lists which unbuilt sources this host has. An entry is
 //! removed when its source is built.
 use crate::discovery::{DiscoveryContext, Location};
 use serde::Serialize;

@@ -1,16 +1,16 @@
 //! Rebuildable pgvector indexes over complete stored embedding events.
-//! Projection limits are coverage, never admission limits or vector truncation.
+//! Index limits are coverage, never admission limits or vector truncation.
 use crate::{Error, Result};
 use sinex_model::EventPayload;
 use sinex_model::event_types::embedding::TextEmbedding;
 use sqlx::{Connection, PgConnection};
 use uuid::Uuid;
 
-mod projection;
 mod rank;
-pub use projection::{apply, initialize, rebuild};
+mod read_model;
 pub use rank::cosine;
 pub(crate) use rank::rank_sql;
+pub use read_model::{apply, initialize, rebuild};
 
 pub const CONSUMER: &str = "read.embeddings";
 /// pgvector's vector type and vector HNSW opclass limits, respectively.
@@ -18,12 +18,12 @@ const VECTOR_DIMENSIONS: usize = 16_000;
 const INDEX_DIMENSIONS: usize = 2_000;
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Projection {
+pub struct IndexVector {
     pub values: Option<Vec<f32>>,
     pub coverage: &'static str,
     pub reason: Option<&'static str>,
 }
-impl Projection {
+impl IndexVector {
     fn fallback(reason: &'static str) -> Self {
         Self {
             values: None,
@@ -33,17 +33,17 @@ impl Projection {
     }
 }
 
-/// A normalized float32 projection preserves cosine direction where the
+/// A normalized float32 copy preserves cosine direction where the
 /// backend can represent it. The original f64 components remain untouched.
-pub fn project(vector: &[f64]) -> Projection {
+pub fn index_vector(vector: &[f64]) -> IndexVector {
     if vector.is_empty() {
-        return Projection::fallback("empty_vector");
+        return IndexVector::fallback("empty_vector");
     }
     if vector.len() > VECTOR_DIMENSIONS {
-        return Projection::fallback("vector_type_dimension_limit");
+        return IndexVector::fallback("vector_type_dimension_limit");
     }
     if vector.iter().any(|value| !value.is_finite()) {
-        return Projection {
+        return IndexVector {
             values: None,
             coverage: "unavailable",
             reason: Some("non_finite_vector"),
@@ -51,7 +51,7 @@ pub fn project(vector: &[f64]) -> Projection {
     }
     let scale = vector.iter().map(|value| value.abs()).fold(0.0, f64::max);
     if scale == 0.0 {
-        return Projection::fallback("zero_norm");
+        return IndexVector::fallback("zero_norm");
     }
     let norm = vector
         .iter()
@@ -65,11 +65,11 @@ pub fn project(vector: &[f64]) -> Projection {
     if vector
         .iter()
         .zip(&values)
-        .any(|(original, projected)| *original != 0.0 && *projected == 0.0)
+        .any(|(original, scaled)| *original != 0.0 && *scaled == 0.0)
     {
-        return Projection::fallback("projection_precision_range");
+        return IndexVector::fallback("projection_precision_range");
     }
-    Projection {
+    IndexVector {
         values: Some(values),
         coverage: if vector.len() <= INDEX_DIMENSIONS {
             "indexed"
@@ -81,7 +81,7 @@ pub fn project(vector: &[f64]) -> Projection {
 }
 
 /// Resolve a query reference under the caller's current grants and read
-/// position. A missing projection is an explicit lag, never an empty answer.
+/// position. A missing index vector is an explicit lag, never an empty answer.
 pub async fn validate_reference(
     conn: &mut PgConnection,
     reference: Uuid,
@@ -106,9 +106,9 @@ pub async fn validate_reference(
         return Err(Error::Invalid("embedding_query_direction_unknown".into()));
     }
     let coverage=sqlx::query_scalar!(r#"SELECT coverage AS "coverage!" FROM core.visible_embedding_vectors WHERE embedding_id=$1"#,reference)
-        .fetch_optional(conn).await?.ok_or_else(||Error::Invalid("embedding_projection_pending".into()))?;
+        .fetch_optional(conn).await?.ok_or_else(||Error::Invalid("embedding_index_vector_pending".into()))?;
     if coverage == "unavailable" {
-        return Err(Error::Invalid("embedding_projection_unavailable".into()));
+        return Err(Error::Invalid("embedding_index_vector_unavailable".into()));
     }
     Ok(())
 }

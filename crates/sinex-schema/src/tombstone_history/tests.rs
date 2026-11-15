@@ -52,7 +52,7 @@ async fn a_tombstone_without_its_history_is_refused(db: devkit::pg::TestDatabase
 /// Backups dump the table with PostgreSQL's own tools; a restore keeps the
 /// earlier incomplete rows and still refuses a new one.
 #[devkit::test]
-async fn native_dump_restore_keeps_earlier_incomplete_history(db: devkit::pg::TestDatabase) {
+async fn pg_dump_restore_keeps_earlier_incomplete_history(db: devkit::pg::TestDatabase) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     with_incomplete_history(&mut conn).await;
     crate::apply(&mut conn).await.unwrap();

@@ -1,4 +1,4 @@
-//! One forward archive traversal shared by compatible logical bindings.
+//! One forward archive traversal shared by compatible bindings.
 use super::{Container, DriverError, ExportArchive, Framing, file_name, is_tar};
 mod records;
 use crate::drivers::{Acquired, MaterialSink, NewMaterial, StoredBytes};

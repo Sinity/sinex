@@ -17,7 +17,7 @@ impl PolledReader {
         priority: crate::writer::Priority,
     ) -> Result<drivers::Acquired> {
         let reader = self.0.clone();
-        crate::intake::blocking::run(priority, move || {
+        crate::submit::blocking::run(priority, move || {
             reader
                 .lock()
                 .map_err(|_| Error::internal("the reader stopped in a panic"))?

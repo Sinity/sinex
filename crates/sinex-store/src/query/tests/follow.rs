@@ -1,7 +1,7 @@
 use super::*;
 
 #[devkit::test]
-async fn follow_watermark_waits_for_durable_search_projection(db: devkit::pg::TestDatabase) {
+async fn follow_position_waits_for_search_read_model(db: devkit::pg::TestDatabase) {
     let url = db.url(None);
     let mut conn = crate::AdmissionContext::connect(&url).await.unwrap();
     admit_commands(&mut conn, &[("cargo build", "/src/tide")]).await;

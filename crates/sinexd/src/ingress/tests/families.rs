@@ -8,7 +8,7 @@ fn grant(family: &str, publisher: bool) -> crate::ingress::fetch::Grants {
         public_context: false,
         kind_prefixes: vec![family.into()],
         classes: vec![Class::Open, Class::Guarded],
-        write: Some(crate::ingress::authority::WriteGrant {
+        write: Some(crate::ingress::write_access::WriteGrant {
             forward_signals: false,
             family: family.into(),
             host: Some("attested-host".into()),
@@ -85,7 +85,7 @@ async fn two_authenticated_hosts_share_family_definitions_and_preserve_raw_copie
     let mut capabilities = std::collections::BTreeMap::from([
         ("host-a".into(), grant("example", true)),
         ("host-b".into(), grant("example", false)),
-        ("foreign".into(), grant("foreign", false)),
+        ("other".into(), grant("other", false)),
     ]);
     capabilities.insert(
         "reader".into(),
@@ -184,7 +184,7 @@ async fn two_authenticated_hosts_share_family_definitions_and_preserve_raw_copie
         .refusal(),
         None
     );
-    assert!(h.send("foreign", &definitions).await.refusal().is_some());
+    assert!(h.send("other", &definitions).await.refusal().is_some());
     assert!(
         h.send("reader", &definitions)
             .await
@@ -192,7 +192,7 @@ async fn two_authenticated_hosts_share_family_definitions_and_preserve_raw_copie
             .unwrap()
             .1
             .contains("no configured write family"),
-        "read rights grant no registration authority"
+        "read rights do not allow registration"
     );
     let mut conflicting = raw.clone();
     conflicting.search = sinex_model::kinds::Search::None;
@@ -219,7 +219,7 @@ async fn two_authenticated_hosts_share_family_definitions_and_preserve_raw_copie
     let reply: FetchMaterialReply = serde_json::from_slice(&reply.payload).unwrap();
     assert!(
         matches!(reply, FetchMaterialReply::Material { .. }),
-        "family ownership comes from stored write provenance, not writer read grants"
+        "the material's family comes from the stored write provenance, not the writer's read grants"
     );
 }
 #[devkit::test]
@@ -270,7 +270,7 @@ async fn historical_material_family_is_unknown_until_explicitly_mapped(
             "host-a",
             &Ingress::Events {
                 source: Some(test_source("example")),
-                frame: "old-owner-unknown".into(),
+                frame: "old-family-unknown".into(),
                 events: vec![event(
                     &KindRef {
                         name: "example.raw".into(),
@@ -278,7 +278,7 @@ async fn historical_material_family_is_unknown_until_explicitly_mapped(
                     },
                     id,
                     "host-a",
-                    "retained"
+                    "stored"
                 )],
                 failures: vec![]
             }
@@ -287,6 +287,6 @@ async fn historical_material_family_is_unknown_until_explicitly_mapped(
         .refusal()
         .unwrap()
         .1
-        .contains("material family ownership")
+        .contains("family that wrote the material")
     );
 }

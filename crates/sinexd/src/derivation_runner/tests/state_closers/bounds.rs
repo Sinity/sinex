@@ -1,4 +1,4 @@
-//! The real range reader must supply the same evidence as the complete fold.
+//! The real range reader must supply the same records as the complete fold.
 use super::*;
 use sinex_derivations::state_interval::StateIntervals;
 
@@ -70,7 +70,7 @@ async fn compare_full(conn: &mut PgConnection, state: &str) -> Computed {
     assert_eq!(
         contents(&actual),
         contents(&expected),
-        "payloads, start identities and exact parents"
+        "payloads, start identities and parents"
     );
     assert_eq!(actual.waiting, expected.waiting);
     actual
@@ -147,9 +147,9 @@ async fn focus_bounds_keep_recorded_ties_cross_source_scope_and_literal_fallback
     );
 }
 
-/// Neutral legacy rows exercise preserved shapes that current typed sources no
+/// Neutral older-format rows exercise preserved shapes that current typed sources no
 /// longer emit. They are inserted, never patched through the immutable guard.
-async fn legacy(
+async fn older_format_row(
     conn: &mut PgConnection,
     template: &Event,
     seconds: Option<i64>,
@@ -168,9 +168,7 @@ async fn legacy(
 }
 
 #[devkit::test]
-async fn scope_and_workspace_scalar_bounds_keep_legacy_keys_unknown_times_and_afk(
-    db: devkit::pg::TestDatabase,
-) {
+async fn scalar_bounds_keep_older_keys_unknown_times_and_afk(db: devkit::pg::TestDatabase) {
     let w = World::with_keys(db, state_keys()).await;
     let template = focus("template", 0);
     w.admit(vec![template.clone()]).await;
@@ -209,8 +207,8 @@ async fn scope_and_workspace_scalar_bounds_keep_legacy_keys_unknown_times_and_af
     .unwrap();
     w.admit(vec![stop_template.clone()]).await;
     let mut conn = PgConnection::connect(&w.url).await.unwrap();
-    let base = json!({"window":"bucket-a","class":"app","title":"first","scope":false,"bucket":"legacy-bucket","received_at":at(0)});
-    let opened = legacy(
+    let base = json!({"window":"bucket-a","class":"app","title":"first","scope":false,"bucket":"older-bucket","received_at":at(0)});
+    let opened = older_format_row(
         &mut conn,
         &template,
         Some(0),
@@ -220,8 +218,8 @@ async fn scope_and_workspace_scalar_bounds_keep_legacy_keys_unknown_times_and_af
         None,
     )
     .await;
-    let mut stopped = json!({"bucket":"legacy-bucket","scope":42,"status":"afk","started_at":at(2*86400),"ended_at":at(2*86400+1),"row":2});
-    let afk = legacy(
+    let mut stopped = json!({"bucket":"older-bucket","scope":42,"status":"afk","started_at":at(2*86400),"ended_at":at(2*86400+1),"row":2});
+    let afk = older_format_row(
         &mut conn,
         &stop_template,
         Some(2 * 86400),
@@ -231,9 +229,9 @@ async fn scope_and_workspace_scalar_bounds_keep_legacy_keys_unknown_times_and_af
         None,
     )
     .await;
-    // Arrays do not satisfy the exact interruption predicate.
+    // Arrays do not satisfy the interruption predicate.
     stopped["status"] = json!(["afk"]);
-    legacy(
+    older_format_row(
         &mut conn,
         &stop_template,
         Some(19 * 3600),
@@ -245,7 +243,7 @@ async fn scope_and_workspace_scalar_bounds_keep_legacy_keys_unknown_times_and_af
     .await;
     let mut unknown = base.clone();
     unknown["window"] = json!("unknown-clock");
-    legacy(
+    older_format_row(
         &mut conn,
         &template,
         None,
@@ -255,31 +253,31 @@ async fn scope_and_workspace_scalar_bounds_keep_legacy_keys_unknown_times_and_af
         None,
     )
     .await;
-    let native = json!({"native_id":"captured","window":"native-a","class":"app","title":"first","received_at":at(0)});
-    legacy(
+    let identified = json!({"native_id":"captured","window":"identified-a","class":"app","title":"first","received_at":at(0)});
+    older_format_row(
         &mut conn,
         &template,
         Some(0),
         30,
-        native.clone(),
-        "fixture.native",
+        identified.clone(),
+        "fixture.identified",
         None,
     )
     .await;
-    let mut next = native;
-    next["window"] = json!("native-b");
-    let native_close = legacy(
+    let mut next = identified;
+    next["window"] = json!("identified-b");
+    let identified_close = older_format_row(
         &mut conn,
         &template,
         Some(3 * 86400),
         40,
         next,
-        "fixture.native",
+        "fixture.identified",
         None,
     )
     .await;
     let empty = json!({"scope":"","bucket":"first","window":"empty-a","class":"app","title":"first","received_at":at(0)});
-    legacy(
+    older_format_row(
         &mut conn,
         &template,
         Some(0),
@@ -292,7 +290,7 @@ async fn scope_and_workspace_scalar_bounds_keep_legacy_keys_unknown_times_and_af
     let mut empty_close = empty;
     empty_close["bucket"] = json!("second");
     empty_close["window"] = json!("empty-b");
-    let empty_close = legacy(
+    let empty_close = older_format_row(
         &mut conn,
         &template,
         Some(2 * 86400),
@@ -303,7 +301,7 @@ async fn scope_and_workspace_scalar_bounds_keep_legacy_keys_unknown_times_and_af
     )
     .await;
     let unknown = json!({"scope":"unknown-subject","window":null,"class":null,"title":"unknown","received_at":at(0)});
-    legacy(
+    older_format_row(
         &mut conn,
         &template,
         Some(0),
@@ -313,7 +311,7 @@ async fn scope_and_workspace_scalar_bounds_keep_legacy_keys_unknown_times_and_af
         None,
     )
     .await;
-    let unknown_close = legacy(
+    let unknown_close = older_format_row(
         &mut conn,
         &template,
         Some(19 * 3600),
@@ -325,7 +323,7 @@ async fn scope_and_workspace_scalar_bounds_keep_legacy_keys_unknown_times_and_af
     .await;
     let one =
         json!({"scope":"scalar","workspace_id":1,"workspace_name":"first","received_at":at(0)});
-    legacy(
+    older_format_row(
         &mut conn,
         &workspace,
         Some(0),
@@ -338,7 +336,7 @@ async fn scope_and_workspace_scalar_bounds_keep_legacy_keys_unknown_times_and_af
     let mut same = one.clone();
     same["workspace_id"] = json!("1");
     same["workspace_name"] = json!("refreshed");
-    let scalar_refresh = legacy(
+    let scalar_refresh = older_format_row(
         &mut conn,
         &workspace,
         Some(19 * 3600),
@@ -350,7 +348,7 @@ async fn scope_and_workspace_scalar_bounds_keep_legacy_keys_unknown_times_and_af
     .await;
     let mut two = one;
     two["workspace_id"] = json!(2);
-    let scalar_close = legacy(
+    let scalar_close = older_format_row(
         &mut conn,
         &workspace,
         Some(3 * 86400),
@@ -361,7 +359,7 @@ async fn scope_and_workspace_scalar_bounds_keep_legacy_keys_unknown_times_and_af
     )
     .await;
     let complex = json!({"scope":"complex","workspace_id":[1,{"aa":true}],"workspace_name":"first","received_at":at(0)});
-    legacy(
+    older_format_row(
         &mut conn,
         &workspace,
         Some(0),
@@ -374,7 +372,7 @@ async fn scope_and_workspace_scalar_bounds_keep_legacy_keys_unknown_times_and_af
     let mut literal = complex.clone();
     literal["workspace_id"] = Value::Null;
     literal["workspace_name"] = json!("[1,{\"aa\":true}]");
-    let complex_refresh = legacy(
+    let complex_refresh = older_format_row(
         &mut conn,
         &workspace,
         Some(19 * 3600),
@@ -386,7 +384,7 @@ async fn scope_and_workspace_scalar_bounds_keep_legacy_keys_unknown_times_and_af
     .await;
     let mut changed = complex;
     changed["workspace_id"] = json!(3);
-    let complex_close = legacy(
+    let complex_close = older_format_row(
         &mut conn,
         &workspace,
         Some(3 * 86400),
@@ -400,7 +398,10 @@ async fn scope_and_workspace_scalar_bounds_keep_legacy_keys_unknown_times_and_af
     let bucket = interval(&focus, "bucket-a");
     assert_eq!(bucket.payload["ended_at"], json!(at(2 * 86400)));
     assert!(has_parent(bucket, opened) && has_parent(bucket, afk));
-    assert!(has_parent(interval(&focus, "native-a"), native_close));
+    assert!(has_parent(
+        interval(&focus, "identified-a"),
+        identified_close
+    ));
     assert!(has_parent(interval(&focus, "empty-a"), empty_close));
     let unknown = focus
         .outputs
@@ -484,7 +485,7 @@ async fn explicit_key_recompute_preserves_version_three_history_and_other_keys(
             .unwrap()[0]
             .id,
         wrong[0].id,
-        "startup does not silently retire or repair closed historical keys"
+        "startup does not silently archive or repair closed historical keys"
     );
     w.handle
         .submit(
@@ -521,12 +522,12 @@ async fn explicit_key_recompute_preserves_version_three_history_and_other_keys(
             .await
             .unwrap();
     assert!(archived);
-    let retained: Value = sqlx::query_scalar("SELECT payload FROM core.events WHERE id=$1")
+    let kept_payload: Value = sqlx::query_scalar("SELECT payload FROM core.events WHERE id=$1")
         .bind(wrong[0].id.0)
         .fetch_one(&mut conn)
         .await
         .unwrap();
-    assert_eq!(retained, wrong[0].payload);
+    assert_eq!(kept_payload, wrong[0].payload);
     for input in [prior, current, closing] {
         let live: bool =
             sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM audit.archived WHERE event_id=$1)")

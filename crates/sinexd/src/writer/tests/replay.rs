@@ -24,7 +24,7 @@ async fn disconnected_queued_replay_never_admits_its_prepared_events(db: devkit:
             .replay(sequence(vec![batch("disconnected-replay")]))
             .await
     });
-    // Receive the exact queued job before disconnecting its caller. Put that
+    // Receive the queued job before disconnecting its caller. Put that
     // same job back, then run the real writer after cancellation is certain.
     let job = queues.derived.recv().await.unwrap();
     replaying.abort();

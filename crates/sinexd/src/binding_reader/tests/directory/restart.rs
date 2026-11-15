@@ -292,7 +292,7 @@ async fn a_restart_remembers_a_file_whose_record_produced_no_event(db: devkit::p
     )
     .await
     .unwrap();
-    // The synthetic parser is a real owner-installed version, with the same
+    // The synthetic parser is a real installed version, with the same
     // immutable emitted schemas and a distinct parser version.
     let mut declaration = crate::catalog::source_declarations()
         .into_iter()
@@ -410,9 +410,7 @@ async fn stopped_directory_restore_keeps_progress_and_can_be_retried(db: devkit:
 }
 
 #[devkit::test]
-async fn a_removed_guarded_member_keeps_its_class_after_the_source_floor_is_lowered(
-    db: devkit::pg::TestDatabase,
-) {
+async fn removed_guarded_member_keeps_class_when_minimum_drops(db: devkit::pg::TestDatabase) {
     let url = db.url(None);
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("vault");
@@ -688,7 +686,7 @@ async fn bundle_checkpoint_roundtrip(db: devkit::pg::TestDatabase, removed_at_so
         .fetch_one(&mut ctx.read_conn).await.unwrap();
     assert_eq!(
         observations, 1,
-        "the ordinary read records its own source observation"
+        "the read records its own source observation"
     );
     let after = positions::load(&mut ctx.read_conn, &readers[0].binding.name)
         .await

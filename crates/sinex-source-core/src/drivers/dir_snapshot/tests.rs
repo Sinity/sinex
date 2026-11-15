@@ -280,7 +280,7 @@ fn missing_directory_is_unavailable_and_accessible_empty_is_not() {
 }
 
 #[devkit::test]
-fn empty_and_nonempty_members_keep_exact_body_ranges_in_every_order() {
+fn empty_and_nonempty_members_keep_body_ranges_in_every_order() {
     use crate::test_parser as notes;
     use crate::{Limits, drain::drain};
     use sinex_model::{Class, ReadingOrder, RecordOutcome};
@@ -530,7 +530,7 @@ fn saved_memory_round_trips_and_newer_bundles_win() {
 }
 
 #[devkit::test]
-fn native_names_survive_capture_restart_changes_and_removal() {
+fn raw_names_survive_restart_changes_and_removal() {
     use std::ffi::OsString;
     use std::os::unix::ffi::OsStringExt;
     let dir = tempfile::tempdir().unwrap();
@@ -569,7 +569,7 @@ fn native_names_survive_capture_restart_changes_and_removal() {
     assert!(displays.contains("é.md"));
     assert!(displays.contains("e\u{301}.md"));
     for (index, member) in material.manifest.members.iter().enumerate() {
-        let name = paths::native(member).unwrap();
+        let name = paths::member_path(member).unwrap();
         let expected = names
             .iter()
             .position(|candidate| candidate == &name)
@@ -669,19 +669,19 @@ fn an_unreadable_entry_fails_only_its_record_and_is_retried() {
 }
 
 #[devkit::test]
-fn path_display_round_trips_every_native_byte() {
+fn path_display_round_trips_every_raw_byte() {
     use std::ffi::OsString;
     use std::os::unix::ffi::OsStringExt;
     let path = PathBuf::from(OsString::from_vec((1..=255).collect()));
     let mut member = json!({"path": paths::display(&path), "stream_offset": 1, "length": 0});
-    paths::add_native(&mut member, &path);
+    paths::add_path_bytes(&mut member, &path);
     let member = serde_json::from_value(member).unwrap();
-    assert_eq!(paths::native(&member).unwrap(), path);
+    assert_eq!(paths::member_path(&member).unwrap(), path);
     for text in ["%", "%X1", "%1", "%💡", "100% done.md", "foo%20bar.md"] {
         let member =
             serde_json::from_value(json!({"path": text, "stream_offset": 1, "length": 0})).unwrap();
         assert_eq!(paths::display(Path::new(text)), text);
-        assert_eq!(paths::native(&member).unwrap(), PathBuf::from(text));
+        assert_eq!(paths::member_path(&member).unwrap(), PathBuf::from(text));
     }
 }
 
@@ -899,10 +899,10 @@ fn a_part_cut_keeps_failures_of_files_not_yet_retried() {
         ),
         missing,
     ]);
-    let cut = poll_entries(&d, &cursor, &mut state, entries.clone());
-    assert_eq!(paths(&cut), vec!["a.md"]);
-    let cursor = final_cursor(&cut);
-    // The missing file is actually retried now, with the same read error.
+    let partial = poll_entries(&d, &cursor, &mut state, entries.clone());
+    assert_eq!(paths(&partial), vec!["a.md"]);
+    let cursor = final_cursor(&partial);
+    // The missing file is retried now, with the same read error.
     assert!(
         poll_entries(&d, &cursor, &mut state, entries)
             .material
@@ -967,7 +967,7 @@ fn failed_files_retry_even_when_their_facts_match_the_cache() {
 }
 
 #[devkit::test]
-fn an_unstable_file_with_unchanged_content_retains_its_new_metadata() {
+fn unstable_file_with_unchanged_content_keeps_new_metadata() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("a.md");
     std::fs::write(&path, "same").unwrap();

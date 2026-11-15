@@ -280,18 +280,18 @@ fn panel(
             };
         }
     }
-    let mut evidence: Vec<_> = inputs
+    let mut coverage_observations: Vec<_> = inputs
         .iter()
         .filter(|event| event.event_type == "source.coverage")
         .map(
             |event| json!({"citation":format!("sinex:ev/{}",event.id),"observation":event.payload}),
         )
         .collect();
-    evidence.sort_by(|a, b| a["citation"].as_str().cmp(&b["citation"].as_str()));
+    coverage_observations.sort_by(|a, b| a["citation"].as_str().cmp(&b["citation"].as_str()));
     Ok(Panel {
         citation: None,
         producer_versions: None,
-        evidence,
+        coverage_observations,
         units,
         cells,
         coverage,
@@ -361,8 +361,8 @@ fn compute(key: &Value, inputs: &[Event], env: &Env) -> Result<Vec<Event>> {
         parents.push(request_event);
     }
     let p = panel(&request, &settings, &selected, from, to)?;
-    let coverage_evidence = p.evidence.clone();
-    let evidence: Vec<String> = parents
+    let coverage_evidence = p.coverage_observations.clone();
+    let parent_citations: Vec<String> = parents
         .iter()
         .map(|event| format!("sinex:ev/{}", event.id))
         .collect::<std::collections::BTreeSet<_>>()
@@ -396,7 +396,7 @@ fn compute(key: &Value, inputs: &[Event], env: &Env) -> Result<Vec<Event>> {
         )?;
         for finding in &mut result.findings {
             if finding.evidence.is_empty() {
-                finding.evidence = evidence.clone();
+                finding.evidence = parent_citations.clone();
             }
         }
         outputs.push(derived(
@@ -444,7 +444,7 @@ fn compute(key: &Value, inputs: &[Event], env: &Env) -> Result<Vec<Event>> {
             .flat_map(|section| &mut section.findings)
         {
             if finding.evidence.is_empty() {
-                finding.evidence = evidence.clone();
+                finding.evidence = parent_citations.clone();
             }
         }
         for (index, finding) in sections

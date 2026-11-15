@@ -8,7 +8,7 @@ use crate::panel::PanelCell;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write as _;
 
-/// A typed caveat that travels with its claim.
+/// A typed caveat that travels with its finding.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Caveat {
@@ -25,7 +25,7 @@ pub enum Caveat {
         n: u64,
         min_detectable_r: Option<f64>,
     },
-    /// The day is not settled yet.
+    /// The day is still open: later inputs may change it.
     Provisional,
     /// Units excluded from the population, by reason.
     Excluded { units: u64 },

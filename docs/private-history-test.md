@@ -1,10 +1,10 @@
 # Private history acceptance test
 
-The ordinary suite uses synthetic inputs. The ignored test
+The regular suite uses synthetic inputs. The ignored test
 `an_external_history_survives_a_stopped_admission_and_remains_queryable` also
 accepts an explicitly prepared private Atuin snapshot. It interrupts the real
 binary during admission, restarts it, compares captured commands with
-independent answers, checks ordinary queries for the total and one
+independent answers, checks plain queries for the total and one
 independently chosen row, then reads the copy again.
 
 Keep the fixture outside the checkout in a private directory. Supply

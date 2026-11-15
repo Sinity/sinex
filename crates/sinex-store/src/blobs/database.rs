@@ -1,4 +1,4 @@
-//! SQL is the durable authority for extents and segment boundaries.
+//! SQL decides which extents and segment boundaries exist.
 use super::*;
 use sqlx::Connection;
 
@@ -8,7 +8,7 @@ pub struct Commit {
     chunk_lists: Vec<Hash>,
 }
 impl Blobs {
-    /// Load read authority without opening a writer or changing segment files.
+    /// Load the extent index without opening a writer or changing segment files.
     pub async fn load(&self, conn: &mut sqlx::PgConnection) -> Result<()> {
         let rows =
             sqlx::query!("SELECT hash,descriptor,deleting FROM core.blob_extents ORDER BY hash")
@@ -62,7 +62,7 @@ impl Blobs {
         state.committed_end = committed_end;
         Ok(())
     }
-    /// The caller holds the database writer claim. Ordinary startup truncates tails and replays punches.
+    /// The caller holds the database writer claim. Startup truncates tails and replays punches.
     pub async fn recover(&self, conn: &mut sqlx::PgConnection) -> Result<()> {
         self.load(conn).await?;
         let descriptors: Vec<Vec<u8>> =
@@ -141,8 +141,8 @@ impl Blobs {
             )
             .execute(&mut *conn)
             .await?;
-            // A newly held blob can reuse an extent whose direct catalog
-            // owner was already marked for removal.
+            // A newly held blob can reuse an extent whose own blob row
+            // was already marked for removal.
             sqlx::query!(
                 "UPDATE core.blob_extents SET deleting=false WHERE hash=ANY($1) AND deleting",
                 &chunks,
@@ -183,19 +183,19 @@ impl Blobs {
         Ok(())
     }
 }
-/// The deleting marker commits before punching. A crash resumes it on ordinary open.
+/// The deleting marker commits before punching. A crash resumes it on the next open.
 pub async fn delete_unreferenced_extents(
     conn: &mut sqlx::PgConnection,
     blobs: &Blobs,
 ) -> Result<Vec<String>> {
     // A fresh in-process store may already hold preparations made by a test or import.
-    let receipt = {
+    let extent_commit = {
         let mut tx = conn.begin().await?;
-        let receipt = blobs.commit_extents(&mut tx).await?;
+        let extent_commit = blobs.commit_extents(&mut tx).await?;
         tx.commit().await?;
-        receipt
+        extent_commit
     };
-    blobs.acknowledge(receipt)?;
+    blobs.acknowledge(extent_commit)?;
     // Chunk lists of bytes no row cites go with them.
     sqlx::query!("DELETE FROM core.blob_chunks c WHERE NOT EXISTS(SELECT 1 FROM core.blobs b WHERE b.hash=c.blob AND b.status<>'removed')").execute(&mut *conn).await?;
     let names:Vec<String>=sqlx::query_scalar!("SELECT x.hash FROM core.blob_extents x WHERE NOT EXISTS(SELECT 1 FROM core.blobs b WHERE b.hash=x.hash) AND NOT EXISTS(SELECT 1 FROM core.blob_chunks c WHERE c.chunk=x.hash)").fetch_all(&mut *conn).await?;
@@ -234,7 +234,7 @@ pub async fn finish_deleting_extents(
 /// Bytes already committed by admission need no separate filesystem marker ledger.
 pub async fn commit_pending_extents(conn: &mut sqlx::PgConnection, blobs: &Blobs) -> Result<()> {
     let mut tx = conn.begin().await?;
-    let receipt = blobs.commit_extents(&mut tx).await?;
+    let extent_commit = blobs.commit_extents(&mut tx).await?;
     tx.commit().await?;
-    blobs.acknowledge(receipt)
+    blobs.acknowledge(extent_commit)
 }

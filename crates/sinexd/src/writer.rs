@@ -413,7 +413,7 @@ impl WriterHandle {
             .await?
         {
             Done::Backup(hold, _) => Ok(hold),
-            _ => unreachable!("a backup release returns its retained boundary"),
+            _ => unreachable!("a backup release returns its stored boundary"),
         }
     }
 
@@ -563,8 +563,8 @@ pub(crate) async fn run_notifying(
             Some(job) = queues.bulk.recv() => job,
             else => return,
         };
-        // Release dirties deferred physical work. The next ordinary writer group
-        // attempts it; no reopen, timer, or second owner is needed.
+        // A release leaves deferred extent punching to do. The next writer group
+        // attempts it; no reopen, timer, or second task is needed.
         if released_punches && let Some(store) = store {
             if let Err(error) = lifecycle::remove_unreferenced(&mut connection, store).await {
                 tracing_punch_error(&error);
@@ -858,7 +858,7 @@ async fn admit_with_checkpoint(
 /// shown values, for the items whose curation records were admitted,
 /// archived or restored.
 async fn refresh_read_models(tx: &mut PgConnection, since: i64) -> Result<(), WriteError> {
-    sinex_library::projection::refresh_since(tx, since)
+    sinex_library::shown_view::refresh_since(tx, since)
         .await
         .map(drop)
         .map_err(|error| WriteError::Unavailable(format!("library shown values: {error}")))
@@ -1119,7 +1119,7 @@ async fn replay_sequence(
             &mut tx,
             ingress,
             &outcomes,
-            ack_number.expect("producer replay reserved a receipt"),
+            ack_number.expect("producer replay reserved an ack number"),
         )
         .await
         .map_err(crate::ingress::Check::write_error)?;
@@ -1282,7 +1282,7 @@ async fn lifecycle_end(
 #[cfg(test)]
 mod tests;
 
-// A failed punch remains marked in PostgreSQL and ordinary reopen retries it.
+// A failed punch stays marked in PostgreSQL and the next reopen retries it.
 fn tracing_punch_error(error: &sinex_store::Error) {
     eprintln!("deferred backup punch: {error}");
 }
@@ -1301,7 +1301,7 @@ async fn backup_hold(
                 "a fresh exported snapshot needs a fresh backup operation".into(),
             ));
         }
-        // This is still one writer job. No admission can advance the cut until
+        // This is still one writer job. No admission can move the backup's fixed position until
         // pg_export_snapshot has taken its first consistent read after the hold commit.
         let exporter = PgConnection::connect(url)
             .await

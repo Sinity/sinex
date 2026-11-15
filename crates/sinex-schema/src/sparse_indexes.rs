@@ -1,4 +1,4 @@
-//! Native batch metadata bounds commit-position and record-location reads of
+//! TimescaleDB's batch metadata bounds commit-position and record-location reads of
 //! compressed events: each chunk compressed after this configuration carries
 //! these sparse indexes.
 

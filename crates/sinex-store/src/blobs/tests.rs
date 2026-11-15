@@ -166,14 +166,14 @@ async fn grouped_extents_commit_with_rows_and_recovery_truncates_only_the_tail(
     let mut conn = sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
     let dir = tempfile::tempdir().unwrap();
     let blobs = Blobs::open(dir.path()).unwrap();
-    let first = blobs.put(b"first retained bytes").unwrap();
-    let second = blobs.put(b"second retained bytes").unwrap();
+    let first = blobs.put(b"first stored bytes").unwrap();
+    let second = blobs.put(b"second stored bytes").unwrap();
     assert!(
         !dir.path().join(SEGMENT).exists(),
         "preparation has no installed segment"
     );
     let mut tx = conn.begin().await.unwrap();
-    let receipt = blobs.commit_extents(&mut tx).await.unwrap();
+    let extent_commit = blobs.commit_extents(&mut tx).await.unwrap();
     sqlx::query(
         "INSERT INTO core.blobs(hash,size,status) VALUES($1,20,'present'),($2,21,'present')",
     )
@@ -189,7 +189,7 @@ async fn grouped_extents_commit_with_rows_and_recovery_truncates_only_the_tail(
         assert_eq!(state.groups[0].metrics.syncs, 1);
     }
     tx.commit().await.unwrap();
-    blobs.acknowledge(receipt).unwrap();
+    blobs.acknowledge(extent_commit).unwrap();
     let committed = std::fs::metadata(dir.path().join(SEGMENT)).unwrap().len();
     let orphan = blobs.put(b"synced but no database commit").unwrap();
     blobs.sync_pending().unwrap();
@@ -201,8 +201,8 @@ async fn grouped_extents_commit_with_rows_and_recovery_truncates_only_the_tail(
         std::fs::metadata(dir.path().join(SEGMENT)).unwrap().len(),
         committed
     );
-    assert_eq!(reopened.read(&first).unwrap(), b"first retained bytes");
-    assert_eq!(reopened.read(&second).unwrap(), b"second retained bytes");
+    assert_eq!(reopened.read(&first).unwrap(), b"first stored bytes");
+    assert_eq!(reopened.read(&second).unwrap(), b"second stored bytes");
     assert!(!reopened.contains(&orphan).unwrap());
 }
 
@@ -258,7 +258,7 @@ async fn recovery_refuses_an_extent_beyond_the_index_boundary_before_truncating(
     let mut conn = sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
     let root = tempfile::tempdir().unwrap();
     let blobs = Blobs::open(root.path()).unwrap();
-    let name = blobs.put(b"retained bytes").unwrap();
+    let name = blobs.put(b"stored bytes").unwrap();
     sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES($1,14,'present')")
         .bind(&name)
         .execute(&mut conn)
@@ -375,9 +375,9 @@ async fn readmitting_bytes_clears_a_failed_deletion_marker_in_the_same_commit(
         !deleting,
         "registration clears the marker before extent commit"
     );
-    let receipt = blobs.commit_extents(&mut tx).await.unwrap();
+    let extent_commit = blobs.commit_extents(&mut tx).await.unwrap();
     tx.commit().await.unwrap();
-    blobs.acknowledge(receipt).unwrap();
+    blobs.acknowledge(extent_commit).unwrap();
     drop(blobs);
     let reopened = Blobs::open(root.path()).unwrap();
     reopened.recover(&mut conn).await.unwrap();
@@ -388,7 +388,7 @@ async fn readmitting_bytes_clears_a_failed_deletion_marker_in_the_same_commit(
 }
 
 #[devkit::test]
-fn an_empty_material_has_one_physical_extent_and_no_decoded_bytes() {
+fn empty_material_has_one_extent_and_no_decoded_bytes() {
     let dir = tempfile::tempdir().unwrap();
     let blobs = Blobs::open(dir.path()).unwrap();
     let name = blobs.put(b"").unwrap();
@@ -417,7 +417,7 @@ async fn extent_commit_records_a_new_extent_among_unrelated_catalog_history(
         .bind(&name).execute(&mut conn).await.unwrap();
     let new = blobs.put(b"one new extent").unwrap();
     let mut tx = conn.begin().await.unwrap();
-    let receipt = blobs.commit_extents(&mut tx).await.unwrap();
+    let extent_commit = blobs.commit_extents(&mut tx).await.unwrap();
     let recorded: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM core.blob_extents WHERE hash=$1 AND NOT deleting)",
     )
@@ -430,7 +430,7 @@ async fn extent_commit_records_a_new_extent_among_unrelated_catalog_history(
         .fetch_one(&mut *tx).await.unwrap();
     assert!(!mismatched);
     tx.commit().await.unwrap();
-    blobs.acknowledge(receipt).unwrap();
+    blobs.acknowledge(extent_commit).unwrap();
 }
 
 #[devkit::test]

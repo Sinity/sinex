@@ -152,7 +152,7 @@ pub fn parse(text: &str, ctx: &Context) -> Result<query_language::ast::Query, Qu
     let input = text.trim_start();
     let first = input.split_whitespace().next().unwrap_or("");
     // Command routing belongs to the product. A quoted command word remains
-    // ordinary search text, and a declared relation wins an overlapping name.
+    // search text, and a declared relation wins an overlapping name.
     if catalog.unit(first).is_none()
         && super::tables::COMMAND_WORDS
             .iter()

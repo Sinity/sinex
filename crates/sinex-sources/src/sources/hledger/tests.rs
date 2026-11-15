@@ -1,6 +1,6 @@
 use super::*;
 use sinex_model::{EventPayload, Member};
-pub(crate) mod intake;
+pub(crate) mod shared_read;
 
 const TRANSACTION: &[u8] = b"2030-01-05=2030-01-06 * Example|sample ; header\n  Assets:Example\n  Expenses:Example  -40.00000000000000000001 TEST ; posting\n\n";
 
@@ -224,9 +224,9 @@ fn streaming_export_ranges_equal_slice_even_for_oversized_blocks() {
 }
 
 #[devkit::test]
-fn shared_intake_restart_and_replay_keep_duplicate_transactions_and_directives() {
+fn shared_read_restart_and_replay_keep_duplicate_transactions_and_directives() {
     let input = [TRANSACTION, TRANSACTION, b"include other.journal\n"].concat();
-    let events = intake::export_restart(
+    let events = shared_read::export_restart(
         &input,
         driver("example.journal".into(), "example-host".into()),
         &source("example-host".into(), "example.journal".into()),
@@ -259,7 +259,7 @@ fn archived_members_reset_counts_and_reordering_preserves_keys() {
     let parse = |names: &[&str]| {
         let mut driver = driver("example.tar".into(), "example-host".into());
         driver.part_bytes = 8;
-        intake::export_restart(
+        shared_read::export_restart(
             &archive(names),
             driver,
             &source("example-host".into(), "example.tar".into()),
@@ -365,7 +365,7 @@ fn default_year_affects_identity_only_when_used_by_the_date() {
         let raw = format!(
             "Y{year}\n03/01 Partial\n  Assets:Example\n\n2030-01-01 Complete\n  Assets:Example\n"
         );
-        intake::export_restart(
+        shared_read::export_restart(
             raw.as_bytes(),
             driver("example.journal".into(), "example-host".into()),
             &source("example-host".into(), "example.journal".into()),
@@ -445,7 +445,7 @@ fn ledger_prices_annotations_and_assertion_costs_keep_the_written_values() {
 }
 
 #[devkit::test]
-fn ignored_native_declarations_remain_records_and_prefixed_years_are_authored_context() {
+fn ignored_declarations_remain_records_and_prefixed_years_are_context() {
     for input in [
         "bucket Equity:Example\n",
         "A Equity:Example\n",

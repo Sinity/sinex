@@ -1,4 +1,4 @@
-//! Intake: scanning a library root and making or continuing items from what
+//! Adding items: scanning a library root and making or continuing items from what
 //! the scan saw.
 use super::{Library, R};
 use crate::Error;
@@ -67,8 +67,8 @@ impl Library<'_> {
         let root_text = binding.input.display().to_string();
         let before = reads::copies(conn, self.host, &root_text).await?;
         let reader = crate::binding_reader::BindingReader::new(format, binding)?;
-        crate::intake::request_class(conn, reader.source.as_ref()).await?;
-        // The scan and the derivation futures are boxed like the intake in
+        crate::submit::request_class(conn, reader.source.as_ref()).await?;
+        // The scan and the derivation futures are boxed like the request in
         // `Library::write_citing`, so `add` stays small in its callers.
         let counts = Box::pin(crate::binding_reader::once(
             conn,

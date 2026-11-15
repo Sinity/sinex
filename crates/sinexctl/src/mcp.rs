@@ -89,7 +89,7 @@ fn success_result(result: Value) -> CallToolResult {
     let text = serde_json::to_string_pretty(&result).unwrap_or_default();
     let mut reply =
         CallToolResult::success(vec![ContentBlock::text(format!("{DATA_NOTICE}\n{text}"))]);
-    // MCP structuredContent is an object; array/scalar answers retain their text form.
+    // MCP structuredContent is an object; array/scalar answers keep their text form.
     if result.is_object() {
         reply.structured_content = Some(result);
     }

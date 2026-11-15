@@ -1,4 +1,4 @@
-//! Native declarations and host attestations are exercised through real clients.
+//! Built-in source declarations and host attestations are exercised through real clients.
 use super::*;
 use serde_json::json;
 use std::{
@@ -10,12 +10,12 @@ use std::{
 use zbus::zvariant::OwnedValue;
 
 // A source name may have several parsers and declaration versions. These
-// real capture fixtures authorize the adapters they actually launch.
-fn native_spec(name: &str) -> &'static sinex_source_core::SourceSpec {
+// real capture fixtures authorize the adapters they launch.
+fn built_in_spec(name: &str) -> &'static sinex_source_core::SourceSpec {
     match name {
         "machine.file-watch" => &sinex_sources::sources::file_watch::SPEC,
         "desktop.notifications" => &sinex_sources::sources::notifications::SPEC,
-        _ => panic!("fixture has no native capture adapter for {name}"),
+        _ => panic!("fixture has no built-in capture adapter for {name}"),
     }
 }
 
@@ -25,18 +25,18 @@ pub(super) fn server(
     store: &Path,
     root: &Path,
     nats: &devkit::nats::TestNats,
-    owners: &[(&str, &str, &[&str])],
+    producers: &[(&str, &str, &[&str])],
 ) -> Process {
     let mut grants = serde_json::Map::new();
-    for (producer, host, names) in owners {
+    for (producer, host, names) in producers {
         let declarations:Vec<_>=names.iter().map(|name| {
-            let spec=native_spec(name);
+            let spec=built_in_spec(name);
             let kinds:Vec<_>=spec.event_types.iter().map(|expected| {
                 sinex_model::event_types::declarations().iter().find(|kind|kind.kind.name==*expected)
-                    .unwrap_or_else(||panic!("native source {} parser {} version {} emits missing bundled kind {}",spec.name,spec.parser,spec.parser_version,expected)).clone()
+                    .unwrap_or_else(||panic!("built-in source {} parser {} version {} emits missing bundled kind {}",spec.name,spec.parser,spec.parser_version,expected)).clone()
             }).collect();
             for expected in spec.event_types {
-                assert!(kinds.iter().any(|kind|kind.kind.name==*expected),"native source {} lacks exact emitted kind {}",spec.name,expected);
+                assert!(kinds.iter().any(|kind|kind.kind.name==*expected),"built-in source {} lacks emitted kind {}",spec.name,expected);
             }
             sinex_model::SourceDeclaration{
                 source:sinex_model::SourceRef{name:(*name).into(),version:spec.parser_version},family:"sinex".into(),
@@ -149,7 +149,7 @@ async fn notify(connection: &zbus::Connection, marker: &str) {
 }
 
 #[devkit::test]
-async fn two_native_sources_keep_exact_declarations_and_attested_hosts() {
+async fn two_built_in_sources_keep_declarations_and_hosts() {
     let db = devkit::pg::test_database().unwrap();
     let database = db.url(None);
     let nats = devkit::nats::test_nats().unwrap();
@@ -168,7 +168,7 @@ async fn two_native_sources_keep_exact_declarations_and_attested_hosts() {
         .build()
         .await
         .unwrap();
-    let native = ["machine.file-watch", "desktop.notifications"];
+    let built_in = ["machine.file-watch", "desktop.notifications"];
     let binary = Path::new(env!("CARGO_BIN_EXE_sinexd"));
     let mut server = server(
         binary,
@@ -177,8 +177,8 @@ async fn two_native_sources_keep_exact_declarations_and_attested_hosts() {
         root,
         &nats,
         &[
-            ("satellite-a", "host-a", &native),
-            ("satellite-b", "host-b", &native),
+            ("satellite-a", "host-a", &built_in),
+            ("satellite-b", "host-b", &built_in),
             ("files-only", "host-c", &["machine.file-watch"]),
         ],
     );
@@ -186,9 +186,9 @@ async fn two_native_sources_keep_exact_declarations_and_attested_hosts() {
     let b = root.join("b");
     for node in [&a, &b] {
         std::fs::create_dir_all(node.join("watched")).unwrap();
-        sources(&node.join("capture-sources.json"), &native);
+        sources(&node.join("capture-sources.json"), &built_in);
     }
-    // Identical, untrusted input host claims cannot replace owner attestations.
+    // Identical, untrusted input host claims cannot replace the hosts the daemon attests.
     let mut first = capture_node(
         &a,
         &nats,
@@ -206,7 +206,7 @@ async fn two_native_sources_keep_exact_declarations_and_attested_hosts() {
     watching(&mut first, &a.join("watched")).await;
     watching(&mut second, &b.join("watched")).await;
     for node in [&a, &b] {
-        std::fs::write(node.join("watched/synthetic-native-file"), b"synthetic").unwrap();
+        std::fs::write(node.join("watched/synthetic-watched-file"), b"synthetic").unwrap();
     }
     let mut conn = PgConnection::connect(&database).await.unwrap();
     let deadline = Instant::now() + Duration::from_secs(40);
@@ -214,14 +214,14 @@ async fn two_native_sources_keep_exact_declarations_and_attested_hosts() {
         first.running();
         second.running();
         server.running();
-        notify(&service, "native-source-fixture").await;
-        let count:i64=sqlx::query_scalar("SELECT count(*) FROM (SELECT DISTINCT producer_identity,source FROM core.events WHERE producer_identity IN ('satellite-a','satellite-b') AND ((source='machine.file-watch' AND payload->>'path' LIKE '%synthetic-native-file') OR (source='desktop.notifications' AND payload::text LIKE '%native-source-fixture%'))) selected").fetch_one(&mut conn).await.unwrap();
+        notify(&service, "built-in-source-fixture").await;
+        let count:i64=sqlx::query_scalar("SELECT count(*) FROM (SELECT DISTINCT producer_identity,source FROM core.events WHERE producer_identity IN ('satellite-a','satellite-b') AND ((source='machine.file-watch' AND payload->>'path' LIKE '%synthetic-watched-file') OR (source='desktop.notifications' AND payload::text LIKE '%built-in-source-fixture%'))) selected").fetch_one(&mut conn).await.unwrap();
         if count == 4 {
             break;
         }
         assert!(
             Instant::now() < deadline,
-            "native sources not admitted: {}\n{}\n{}",
+            "built-in sources not admitted: {}\n{}\n{}",
             first.log(),
             second.log(),
             server.log()
@@ -238,7 +238,7 @@ async fn two_native_sources_keep_exact_declarations_and_attested_hosts() {
                 "host-b"
             }
         );
-        let spec = native_spec(source);
+        let spec = built_in_spec(source);
         assert_eq!(*version, i64::from(spec.parser_version));
     }
     assert_eq!(identities.len(), 4);
@@ -249,7 +249,7 @@ async fn two_native_sources_keep_exact_declarations_and_attested_hosts() {
         inputs, 2,
         "identical raw input claims remain distinct per attested producer"
     );
-    // An otherwise real client cannot mint authority with its producer name.
+    // An otherwise real client cannot gain access through its producer name.
     let denied = root.join("denied");
     std::fs::create_dir_all(denied.join("watched")).unwrap();
     sources(
@@ -265,7 +265,7 @@ async fn two_native_sources_keep_exact_declarations_and_attested_hosts() {
     );
     watching(&mut unauthorized, &denied.join("watched")).await;
     std::fs::write(
-        denied.join("watched/denied-native-file"),
+        denied.join("watched/denied-watched-file"),
         b"synthetic unauthorized",
     )
     .unwrap();
@@ -297,7 +297,7 @@ async fn two_native_sources_keep_exact_declarations_and_attested_hosts() {
     unauthorized.stop().await;
     let restricted = root.join("restricted");
     std::fs::create_dir_all(restricted.join("watched")).unwrap();
-    sources(&restricted.join("capture-sources.json"), &native);
+    sources(&restricted.join("capture-sources.json"), &built_in);
     let mut unauthorized_source = capture_node(
         &restricted,
         &nats,
@@ -318,7 +318,7 @@ async fn two_native_sources_keep_exact_declarations_and_attested_hosts() {
         }
         assert!(
             Instant::now() < deadline,
-            "undelegated native source not refused: {}\n{}",
+            "undelegated built-in source not refused: {}\n{}",
             unauthorized_source.log(),
             server.log()
         );

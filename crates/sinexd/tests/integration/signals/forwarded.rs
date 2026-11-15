@@ -201,11 +201,11 @@ async fn forwarded_reports_share_the_host_budget_and_current_ones_wait_for_progr
     )
     .await;
     assert!(refused.refusal().is_some(), "{refused:?}");
-    let foreign = submit(
+    let other_product = submit(
         &polylogue,
         &subjects,
         "polylogue",
-        "foreign-product",
+        "other-product",
         vec![::signals::Report::Progress {
             product: "sinex".into(),
             at,
@@ -213,7 +213,7 @@ async fn forwarded_reports_share_the_host_budget_and_current_ones_wait_for_progr
         }],
     )
     .await;
-    assert!(foreign.refusal().is_some(), "{foreign:?}");
+    assert!(other_product.refusal().is_some(), "{other_product:?}");
 
     let first = submit(
         &polylogue,

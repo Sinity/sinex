@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn context_request_does_not_accept_a_claimed_identity() {
     assert!(
-        serde_json::from_value::<PublicContextRequest>(serde_json::json!({"producer":"foreign"}))
+        serde_json::from_value::<PublicContextRequest>(serde_json::json!({"producer":"other"}))
             .is_err()
     );
 }

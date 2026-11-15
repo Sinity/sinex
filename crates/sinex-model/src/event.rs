@@ -86,7 +86,7 @@ pub struct Event {
 }
 
 impl Event {
-    /// Build an event from a typed payload. The ID is minted here and never
+    /// Build an event from a typed payload. The ID is assigned here and never
     /// derived from content.
     pub fn build<P: EventPayload>(
         payload: &P,
@@ -132,7 +132,7 @@ impl Event {
         })
     }
 
-    /// An outside reading awaiting the writer's exact declaration checks.
+    /// An outside reading awaiting the writer's declaration checks.
     pub fn submitted(
         kind: crate::KindRef,
         payload: Value,

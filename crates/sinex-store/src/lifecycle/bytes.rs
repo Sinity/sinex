@@ -54,7 +54,7 @@ pub(super) async fn tombstone_events(
     )
     .execute(&mut *conn)
     .await?;
-    // The embedding projection takes the same lock and checks the event, so
+    // The embedding read model takes the same lock and checks the event, so
     // a page it already read cannot put a vector back.
     sqlx::query("LOCK TABLE core.embedding_vectors IN SHARE ROW EXCLUSIVE MODE")
         .execute(&mut *conn)

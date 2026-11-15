@@ -10,7 +10,7 @@ pub struct Gap {
     pub start: Option<Timestamp>,
     pub end: Option<Timestamp>,
     pub reason: String,
-    /// Present only when a numbered stream proves exact missing sequence bounds.
+    /// Present only when a numbered stream shows which sequence numbers are missing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sequence: Option<SequenceGap>,
 }

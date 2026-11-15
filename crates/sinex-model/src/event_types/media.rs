@@ -92,12 +92,12 @@ pub struct NoteDocument {
     /// The complete root path recorded with the captured file.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vault_path: Option<String>,
-    /// Native bytes of a non-UTF-8 vault root, encoded as base64.
+    /// Raw path bytes of a non-UTF-8 vault root, encoded as base64.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_vault_path_bytes: Option<String>,
     /// Relative to the vault root.
     pub path: String,
-    /// Native bytes of a non-UTF-8 relative path, encoded as base64.
+    /// Raw path bytes of a non-UTF-8 relative path, encoded as base64.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_path_bytes: Option<String>,
     /// The last captured text; `None` when unavailable.

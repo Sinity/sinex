@@ -43,7 +43,7 @@ pub(super) async fn assign(
                 ));
             }
         };
-        // Only this digest survives a tombstone; original record keys are not retained by the counter.
+        // Only this digest survives a tombstone; the counter does not keep original record keys.
         let key = (
             event.source.clone(),
             event.event_type.clone(),
@@ -86,8 +86,8 @@ pub(super) async fn assign(
         .collect::<Vec<_>>();
     let outputs = seeds.values().map(|seed| seed.output).collect::<Vec<_>>();
     // The session writer claim serializes this seed and upsert with every other admission.
-    // Seed all missing keys from one retained source/kind metadata pass. This
-    // includes archived and replaced readings, whose maxima remain authoritative.
+    // Seed all missing keys from one pass over stored source/kind metadata. This
+    // includes archived and replaced readings, whose maxima still count.
     let rows = sqlx::query_file!(
         "src/admission/orders/seed.sql",
         &sources,

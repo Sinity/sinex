@@ -1,5 +1,5 @@
 //! Presence uses the same elementary segmentation as activity, so the two
-//! cannot disagree about physical input or exact absence boundaries.
+//! cannot disagree about physical input or recorded absence boundaries.
 use crate::derived_event::derived;
 use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed};
 use serde_json::{Value, json};
@@ -48,9 +48,9 @@ impl Keyed for Presence {
                     let contradictions = span
                         .presence_claims
                         .iter()
-                        .filter(|claim| {
-                            (span.presence == "present" && claim.as_str() == "afk")
-                                || (span.presence == "absent" && claim.as_str() == "not-afk")
+                        .filter(|report| {
+                            (span.presence == "present" && report.as_str() == "afk")
+                                || (span.presence == "absent" && report.as_str() == "not-afk")
                         })
                         .cloned()
                         .collect();

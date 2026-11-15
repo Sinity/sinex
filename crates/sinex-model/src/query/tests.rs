@@ -19,7 +19,7 @@ fn parse_query(text: &str) -> Query {
         .unwrap_or_else(|e| panic!("{text}: {e}"))
 }
 
-fn native_err(text: &str) -> QueryError {
+fn template_err(text: &str) -> QueryError {
     template::parse(text, &ctx())
         .and_then(|template| template.bind(&ctx()))
         .expect_err(text)
@@ -117,7 +117,7 @@ fn projected_sets_require_matching_types_in_the_product_catalog() {
     for operator in ["union", "intersect", "except", "diff"] {
         let incompatible =
             format!("events | fields id | {operator} (events | fields text(id) as id)");
-        // Shared semantics: `intersect` and `except` over the same native row
+        // Shared semantics: `intersect` and `except` over the same row
         // domain compare row identities whatever each side projects; projected
         // `union` and `diff` operands need the same names and declared types.
         if matches!(operator, "intersect" | "except") {

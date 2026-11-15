@@ -20,7 +20,7 @@ Sinex is the substrate for everything the operator's life produces: shell histor
 
 **Nothing is deleted by default; deletion is a lifecycle.** Readings are live, then archived (reversible), then tombstoned (irreversible, archived only), and whole chains move together. There is no automatic retention: material is kept until the operator archives it. See [lifecycle.md](lifecycle.md).
 
-**Invariants by construction, not repair.** A crash leaves only states that the ordinary open path treats as normal (see [durability](#durability-order)). There is no repair, reconcile or verify-and-fix command and no scheduled check, because a state that needs repairing is a defect in the code that produced it.
+**Invariants by construction, not repair.** A crash leaves only states that the normal open path handles (see [durability](#durability-order)). There is no repair, reconcile or verify-and-fix command and no scheduled check, because a state that needs repairing is a defect in the code that produced it.
 
 **No arbitrary limits.** Batch, turn and page sizes schedule work; nothing truncates or refuses valid input, and paged answers continue. See [query.md](query.md) and [interfaces.md](interfaces.md).
 
@@ -32,7 +32,7 @@ Sinex is the substrate for everything the operator's life produces: shell histor
 
 **Sources read external formats.** A source reads data as an outside service or program produces it (an export archive, a database another program writes, a protocol stream), not a format the operator once invented to hold data; an exception is allowed but is the exception ([external formats](sources.md#external-formats)).
 
-**Window managers and terminals are ordinary sources.** Hyprland and Kitty are data sources like any other, captured behind interfaces that make adding another compositor or terminal a new source declaration rather than a change to the core ([sources](sources.md#window-managers-and-terminals)).
+**Window managers and terminals are sources like any other.** Hyprland and Kitty are data sources, captured behind interfaces that make adding another compositor or terminal a new source declaration rather than a change to the core ([sources](sources.md#window-managers-and-terminals)).
 
 **No part of Sinex depends on the operator's host.** No path, zone, day start, account name or host routing is written into the code or the repository: each is configuration, and vendor facts (the zone a service writes its timestamps in) are source declarations. Anyone with Nix builds, tests and deploys Sinex with plain commands. See [operations.md](operations.md#configuration).
 
@@ -52,7 +52,7 @@ source ──► stage ──► material (segment log) ──► parse ──�
 3. **Admission.** One function stores every event, in one transaction with the cursors, failures, dirty keys and the operation that cover it, run by one writer. Writes inside the daemon (its own sources, derivations, replay, lifecycle operations, API requests) go straight to it; writes from outside the daemon (Polylogue, `sinex-session`, `sinex-capture`, any program in any language) arrive through the [NATS ingress](producers.md). See [admission.md](admission.md).
 4. **Identity and liveness.** Admission classifies every reading against the live tables, so each record has exactly one live reading: a repeat is suppressed, a newer changed reading supersedes. See [events.md](events.md) and [admission.md](admission.md#liveness).
 5. **Commit order.** Every admitted event and lifecycle change takes a commit position. Readers in the daemon follow the commit log; every committed change is published in commit order on the [confirmed stream](producers.md) for consumers outside it.
-6. **Derivation.** Derivations inside the daemon read PostgreSQL in commit order and admit their outputs directly; derivations outside are durable subscribers of the confirmed stream and send their outputs back through the ingress. Derived events are the one store of derived results. See [derivations.md](derivations.md) and [higher-layer.md](higher-layer.md).
+6. **Derivation.** Derivations inside the daemon read PostgreSQL in commit order and admit their outputs directly; derivations outside are subscribers of the confirmed stream, each with its own durable consumer, and send their outputs back through the ingress. Derived events are the one store of derived results. See [derivations.md](derivations.md) and [higher-layer.md](higher-layer.md).
 7. **Reading.** Queries, recall, the CLI, MCP, HTTP and the reader web read the live set (or an as-of set) through the output rules of [privacy.md](privacy.md). See [query.md](query.md), [recall.md](recall.md), [interfaces.md](interfaces.md) and [web.md](web.md).
 8. **Lifecycle.** Archive, restore, replay, undo and tombstone are operations through the same admission path, moving whole chains. See [lifecycle.md](lifecycle.md).
 
@@ -68,7 +68,7 @@ source ──► stage ──► material (segment log) ──► parse ──�
 
 ## Durability order
 
-Every write follows one order, so a crash at any point leaves a state the ordinary code resumes from:
+Every write follows one order, so a crash at any point leaves a state the normal code resumes from:
 
 1. Bytes are appended to the segment log and synced.
 2. The extents and the rows that cite them commit in one transaction.
@@ -77,7 +77,7 @@ Every write follows one order, so a crash at any point leaves a state the ordina
 
 **The writer's use of the segment log.** The single writer appends a group's new blobs, issues one sync per group on a dedicated thread overlapped with the next group, and commits the extents in the same transaction as the rows that cite them. Deduplication checks the hash index plus the hashes appended in groups not yet committed. A segment opens at its last committed extent and truncates any tail; a tombstoned extent that is marked but not yet punched is punched on open. The container format (seekable zstd frames, plain or sealed, member access, hash checks) is [hashed-blobs](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/hashed-blobs/README.md).
 
-**Crash states.** A crash leaves at most one of the following, and ordinary code resumes each:
+**Crash states.** A crash leaves at most one of the following, and the normal code resumes each:
 
 | State left | Resumed by |
 |---|---|
@@ -130,6 +130,6 @@ Write-path targets (lifecycle operations on compressed chunks, segment throughpu
 
 **One logical day.** One type, `DaySetting` (a named zone and a start), with one implementation in [query-language](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/query-language/README.md), used by queries, SQL generation, derivations, analysis, recall and rendering. A zone travels with its name, so SQL never falls back to UTC. The setting and its default are in [operations.md](operations.md#logical-day).
 
-**Outputs record their settings.** Derived outputs and cursors record the settings they were made under, and a changed setting re-derives them through the ordinary version mechanism of [derivations.md](derivations.md).
+**Outputs record their settings.** Derived outputs and cursors record the settings they were made under, and a changed setting re-derives them through the version mechanism of [derivations.md](derivations.md).
 
 **One instant type, one clock, one error enum.** Sinex has one instant type, one `Clock` passed in (tests drive it), and one error enum whose kind names are stable on the wire; conversions happen only at the storage boundary.

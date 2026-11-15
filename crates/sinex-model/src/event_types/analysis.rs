@@ -1,4 +1,5 @@
-//! Canonical questions and the stored products maintained from their evidence.
+//! Analysis requests, keyed by the hash of their normalized form, and the stored
+//! products maintained from them.
 use crate::Timestamp;
 pub mod selection;
 use schemars::JsonSchema;

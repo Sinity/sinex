@@ -48,7 +48,7 @@ impl Provider {
         conn: &mut sqlx::PgConnection,
         at: Timestamp,
     ) -> Result<PublicContext> {
-        let projection = sinex_store::signals::public_host_policy(
+        let policy = sinex_store::signals::public_host_policy(
             conn,
             &self.host,
             self.settings_identity.is_some(),
@@ -56,7 +56,7 @@ impl Provider {
             at,
         )
         .await?;
-        Ok(match projection {
+        Ok(match policy {
             HostPolicyView::Available {
                 checkpoint_revision,
                 settings_identity,

@@ -36,7 +36,7 @@ fn absent_accessibility_uses_local_ocr_and_preserves_an_unavailable_engine() {
     );
 }
 #[devkit::test]
-fn accessible_text_is_derived_from_the_exact_guarded_frame_without_material_read() {
+fn accessible_text_is_derived_from_the_guarded_frame_without_material_read() {
     let frame = Event::build(
         &segment(Some("widget text")),
         "synthetic.screen",

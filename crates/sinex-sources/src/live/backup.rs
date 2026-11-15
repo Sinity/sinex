@@ -1,4 +1,4 @@
-//! Copy producer state while publication and spool retirement are paused.
+//! Copy producer state while publication and spool removal are paused.
 use super::*;
 use notify::{RecursiveMode, Watcher};
 use sinex_transport::backup::{Captured, capture_tree};
@@ -44,7 +44,7 @@ fn latch_media(
                 .to_owned();
             if let Some(name) = name.strip_suffix(".partial") {
                 // Audio's .<started>.wav/ogg.partial and screen's complete stem
-                // retain the same started identity through their final rename.
+                // keep the same started identity through their final rename.
                 generations.push(
                     name.trim_start_matches('.')
                         .split('.')
@@ -168,7 +168,7 @@ pub(super) fn capture(
         let pinned = tempfile::tempdir_in(&binding.input).map_err(|e| e.to_string())?;
         // The acquisition cursor precedes the append-only bytes it covers.
         // Pin it before enumerating segments, so concurrent rotation can only
-        // add a superset beyond this saved cursor. Publisher retirement is paused.
+        // add a superset beyond this saved cursor. Spool removal by the publisher is paused.
         let resume = binding.input.join("resume-cursor");
         match std::fs::hard_link(&resume, pinned.path().join("resume-cursor")) {
             Ok(()) => {}
@@ -209,7 +209,7 @@ pub(super) fn capture(
                     continue;
                 }
                 if !entry.file_type().map_err(|e| e.to_string())?.is_file() {
-                    return Err("unsupported native spool entry".into());
+                    return Err("unsupported spool entry".into());
                 }
                 std::fs::hard_link(entry.path(), pinned.path().join(name))
                     .map_err(|e| e.to_string())?;

@@ -1,5 +1,5 @@
 //! Evaluator reports forwarded by another product enter through the
-//! ordinary authenticated ingress journal.
+//! authenticated ingress journal as every other frame.
 use super::*;
 use crate::Result;
 use serde_json::json;
@@ -38,10 +38,10 @@ impl Ingest {
         let Ingress::Signals { class, .. } = frame else {
             return Err(Check::Malformed("not a signal frame".into()));
         };
-        let authority = authority::write(&self.grants, producer)
+        let write = write_access::write(&self.grants, producer)
             .map_err(|error| Check::Configuration(error.to_string()))?
             .clone();
-        if !authority.forward_signals || !authority.classes.contains(class) {
+        if !write.forward_signals || !write.classes.contains(class) {
             return Err(Check::Configuration(
                 "forwarding evaluator reports requires the signal forwarding grant and the frame's class"
                     .into(),
@@ -55,13 +55,9 @@ impl Ingest {
         let at = Timestamp::now();
         let value =
             serde_json::to_value(frame).map_err(|error| Check::Malformed(error.to_string()))?;
-        let records = sinex_sources::sources::signals::forwarded_reports(
-            &value,
-            producer,
-            &authority.family,
-            at,
-        )
-        .map_err(|error| Check::Refused(error.to_string()))?;
+        let records =
+            sinex_sources::sources::signals::forwarded_reports(&value, producer, &write.family, at)
+                .map_err(|error| Check::Refused(error.to_string()))?;
         let blobs = self.blobs.clone();
         let root = self.blobs.root().to_owned();
         let producer_owned = producer.to_owned();
@@ -118,7 +114,7 @@ impl Ingest {
                 parser: "signals".into(),
                 parser_version: 1,
                 manifest: sinex_model::Manifest::from_json(
-                    json!({"media_type":"application/x-sinex-signals-frame","authenticated_producer":producer,"authenticated_family":authority.family,"received_at":at}),
+                    json!({"media_type":"application/x-sinex-signals-frame","authenticated_producer":producer,"authenticated_family":write.family,"received_at":at}),
                 ),
             }),
             cursor: Value::Null,

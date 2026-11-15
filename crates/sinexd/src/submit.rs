@@ -15,7 +15,7 @@ pub(crate) struct Submission {
     pub material: Option<MaterialId>,
 }
 
-pub(crate) struct Intake<'a> {
+pub(crate) struct Submitter<'a> {
     pub writer: &'a WriterHandle,
     pub source: Arc<dyn Source>,
     pub binding: &'a str,
@@ -32,7 +32,7 @@ pub(crate) struct Intake<'a> {
     pub registered: Option<MaterialId>,
 }
 
-impl Intake<'_> {
+impl Submitter<'_> {
     pub(crate) async fn submit(
         &self,
         acquired: drivers::Acquired,
@@ -212,7 +212,7 @@ impl Intake<'_> {
     }
 }
 
-/// Record an authenticated API acquisition, then use the ordinary submit path.
+/// Record an authenticated API acquisition, then submit it as a binding's would be.
 pub(crate) async fn request(
     conn: &mut PgConnection,
     writer: &WriterHandle,
@@ -342,7 +342,7 @@ async fn request_inner(
             class,
             crate::material_access::Access::default(),
         )?;
-        let intake = Intake {
+        let submitter = Submitter {
             writer,
             source,
             binding,
@@ -356,9 +356,11 @@ async fn request_inner(
             registered: None,
         };
         match admission {
-            Admission::Signals(checkpoint) => intake.submit_checkpoint(acquired, checkpoint).await,
-            Admission::Curation => Ok(intake.submit_curation(acquired).await?),
-            Admission::Plain => Ok(intake
+            Admission::Signals(checkpoint) => {
+                submitter.submit_checkpoint(acquired, checkpoint).await
+            }
+            Admission::Curation => Ok(submitter.submit_curation(acquired).await?),
+            Admission::Plain => Ok(submitter
                 .submit(acquired, Value::Null, &mut Totals::default())
                 .await?),
         }
@@ -378,13 +380,13 @@ async fn request_inner(
 
 /// API requests refuse sealed storage.
 pub(crate) async fn request_class(conn: &mut PgConnection, source: &dyn Source) -> Result<Class> {
-    let floor = sinex_store::privacy::load(conn, std::iter::once(source.spec().name))
+    let minimum_class = sinex_store::privacy::load(conn, std::iter::once(source.spec().name))
         .await?
-        .floors
+        .minimum_classes
         .get(source.spec().name)
         .copied()
         .unwrap_or_default();
-    let class = source.spec().class.max(floor);
+    let class = source.spec().class.max(minimum_class);
     if class == Class::Sealed {
         return Err(Error::refused("request records cannot be stored sealed"));
     }

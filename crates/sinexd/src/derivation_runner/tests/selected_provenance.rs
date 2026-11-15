@@ -1,7 +1,7 @@
 use super::*;
 
 #[devkit::test]
-async fn stored_product_versions_follow_exact_output_parents(db: devkit::pg::TestDatabase) {
+async fn stored_product_versions_follow_output_parents(db: devkit::pg::TestDatabase) {
     let world = World::with_keys(db, vec![]).await;
     let selected = zsh("selected fixture", 0, 0);
     let mut unused = zsh("unused fixture", 1, 1);

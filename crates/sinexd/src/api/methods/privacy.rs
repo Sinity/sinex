@@ -56,13 +56,13 @@ impl Api {
                 if actor != "operator" {
                     let current = privacy::load(&mut conn, std::iter::once(source.as_str()))
                         .await?
-                        .floors
+                        .minimum_classes
                         .get(&source)
                         .copied()
                         .unwrap_or_default();
                     if class < current {
                         return Err(Error::refused(format!(
-                            "{source}'s floor is {}; lowering it weakens protection, which only the operator token may do",
+                            "{source}'s minimum class is {}; lowering it weakens protection, which only the operator token may do",
                             privacy::class_name(current)
                         )));
                     }

@@ -46,7 +46,7 @@ workspace lock, as described in the shared
 
 A host may queue these commands through its own job runner.
 
-`cargo xtask test -p PACKAGE` passes native package selection to Cargo.
+`cargo xtask test -p PACKAGE` passes package selection unchanged to Cargo.
 `-E` and test-name filters narrow execution after compilation; they do not
 remove unrelated build targets from a selected package. Target flags can
 limit that compilation too:
@@ -89,7 +89,7 @@ millisecond remain distinct, including at strict range endpoints.
 
 `nix build .#postgresql` builds the provider without building Rust packages.
 `nix build .#checks.x86_64-linux.postgresql-uuid-bounds` checks the provider
-against ordinary PostgreSQL UUID comparisons in a fresh isolated cluster.
+against plain PostgreSQL UUID comparisons in a fresh isolated cluster.
 The synthetic matrix covers strict and inclusive ranges, chunk boundaries,
 empty ranges, equality and commuted operands. It never connects to a deployed
 database. A custom `services.sinex.database.package` must preserve these
@@ -101,7 +101,7 @@ The `package` workflow builds `.#default` for every master commit and pushes
 its runtime closure and `.#sinex-dependencies` to `sinity.cachix.org`. The
 dependency artifact uses the exact production Cargo graph; the runtime
 builds `sinexd`, `sinexctl`, `sinex-session` and `sinex-capture` together and
-ships those four binaries. A separately built native schema tool prepares
+ships those four binaries. A separately built schema tool prepares
 the read-only PostgreSQL database used by compile-time query checks.
 Required CI owns workspace boundaries and tests; packaging does not repeat
 them or ship `xtask`. The development shell, package and VM checks use the

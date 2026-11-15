@@ -134,8 +134,8 @@ impl Binding {
 /// A material the binding stored, offered to a reader rebuilding what it
 /// remembers after a restart.
 pub struct StoredMaterial {
-    /// Admitted prefix, proven by the current cursor or the newer part's
-    /// immutable previous_through. None means no such evidence was retained.
+    /// Admitted prefix, shown by the current cursor or the newer part's
+    /// immutable previous_through. None when neither was stored.
     pub admitted: Option<u64>,
     pub reference: sinex_model::MaterialRef,
     /// Its bytes, read from the content store when asked for.
@@ -151,7 +151,7 @@ impl StoredMaterial {
             .filter(|through| *through <= self.reference.length)
             .ok_or_else(|| {
                 DriverError::Cursor(format!(
-                    "stored material {} has missing or contradictory admitted-prefix evidence",
+                    "stored material {} has a missing or contradictory admitted prefix",
                     self.reference.id
                 ))
             })
@@ -196,7 +196,7 @@ pub trait Reader: Send {
 
     fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError>;
 
-    /// Apply admission acknowledgement to cached reader state and retire spool
+    /// Apply the admission acknowledgment to cached reader state and delete spool
     /// files the committed cursor has passed.
     fn committed(&mut self, _committed: &Value) -> Result<usize, DriverError> {
         Ok(0)
@@ -359,7 +359,7 @@ impl Reader for Appended {
             return Ok(false);
         }
         let reference = &material.reference;
-        // Every restored part is bounded by its retained admission evidence.
+        // Every restored part is bounded by its stored admitted prefix.
         let admitted = material.admitted_through()?;
         let (records, complete) =
             crate::drivers::tail_ranges(material.bytes.as_ref(), self.driver.framer, admitted)
@@ -493,7 +493,7 @@ pub fn walked(driver: DirSnapshot) -> Reading {
     walked_excluding(driver, Vec::new())
 }
 
-/// Subtrees owned by another source are left out of this directory walk.
+/// Subtrees another source reads are left out of this directory walk.
 pub fn walked_excluding(driver: DirSnapshot, excluded: Vec<PathBuf>) -> Reading {
     Reading::Polled(Box::new(Walked {
         driver,

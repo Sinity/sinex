@@ -1,4 +1,4 @@
-//! Source counts and paged evidence use the same relations at the selected position.
+//! Source counts and paged rows use the same relations at the selected position.
 
 pub(super) const GAPS: &str =
     "(SELECT source, id AS run, prior_end AS start, started_at AS \"end\",
@@ -17,7 +17,7 @@ pub(super) const GAPS: &str =
 pub(super) const DRIFT: &str = "jsonb_typeof({t}.payload->'unknown_fields')='array'
     AND {t}.payload->'unknown_fields' <> '[]'::jsonb";
 
-/// A source's continuity evidence, over source row `{t}`.
+/// A source's continuity rows (gaps and coverage), over source row `{t}`.
 pub(super) fn continuity() -> String {
     "(CASE WHEN {t}.shapes=ARRAY['live-stream'] AND EXISTS (SELECT 1 FROM core.visible_events e JOIN core.runs r ON r.id=e.run_id WHERE e.source={t}.name AND e.commit_seq <= {seq}) THEN 'run_lifetimes' ELSE 'unknown' END)".into()
 }

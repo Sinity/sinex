@@ -15,7 +15,7 @@ fn record(host: &str, lane: &str, sequence: u64, boot: Option<&str>) -> Envelope
 }
 
 #[devkit::test]
-fn exact_gaps_survive_carry_restart_and_ignore_other_streams_and_generations() {
+fn gaps_survive_carry_restart_and_ignore_other_streams_and_generations() {
     let (_, carry) = observe(
         &Carry::default(),
         &record("a", "clipboard", 1, Some("boot-a")),
@@ -68,12 +68,12 @@ fn unqualified_resets_and_reordering_leave_continuity_unknown() {
         observe(&carry, &record("a", "clipboard", 100, None))
             .0
             .is_none(),
-        "legacy carry and a new rotated binding have no previous sequence"
+        "older-format carry and a new rotated binding have no previous sequence"
     );
 }
 
 #[devkit::test]
-fn reversed_source_clocks_keep_exact_sequence_bounds_and_unknown_gap_times() {
+fn reversed_source_clocks_keep_sequence_bounds_and_unknown_gap_times() {
     let (_, carry) = observe(
         &Carry::default(),
         &record("a", "clipboard", 1, Some("boot")),
@@ -136,7 +136,7 @@ fn an_unreadable_record_invalidates_continuity_through_the_real_drainer() {
     assert_eq!(
         kinds,
         ["lake.observed", "lake.observed"],
-        "a parse failure is not proof of lost capture bytes"
+        "a parse failure does not show lost capture bytes"
     );
     let carry: Carry = serde_json::from_value(output.last().unwrap().carry.clone()).unwrap();
     let gap = observe(&carry, &record("fixture", "clipboard", 8, None))

@@ -473,7 +473,7 @@ fn an_export_tar_member_can_hold_several_records() {
 }
 
 #[devkit::test]
-fn owned_json_records_decode_from_bounded_ranges_and_keep_canonical_volatile_hashes() {
+fn owned_json_records_decode_from_bounded_ranges_with_the_same_hash() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     struct Object;
     impl Parser for Object {

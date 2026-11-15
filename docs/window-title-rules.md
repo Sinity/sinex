@@ -48,10 +48,10 @@ quality. Unknown time stays unknown. Rule order has no effect. A changed
 rule list changes the producer version. New and dirty inputs use it; existing
 history stays selected until `recompute tag.applier --compare` is followed by
 `recompute tag.applier --switch COMPARISON_ID`. The switch archives the old
-assignments and their chains, then reprocesses inputs through the ordinary
+assignments and their chains, then reprocesses inputs through the usual
 per-event runner, including when no rule matches any more.
 Hiding or replacing an input removes its per-event outputs; unhiding it
-computes them again. Assignments use the ordinary query language.
+computes them again. Assignments use the query language.
 
 The input fields of a `window.span` are `bucket`, `span_id`, `started_at`,
 `ended_at`, `app`, `title`, `host` and `scope`; rules inspect the payload

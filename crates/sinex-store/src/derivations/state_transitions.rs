@@ -43,7 +43,7 @@ pub(super) async fn bounds(
     selected.extend_from_slice(interruptions);
     let mut scopes: HashMap<String, Scope> = HashMap::new();
     // The bounded first pass selects touched scopes. History is streamed once,
-    // retaining one boundary state per touched scope rather than every event.
+    // keeping one boundary state per touched scope rather than every event.
     for day_only in [true, false] {
         let (types, contains) = if day_only {
             kind_arrays(kinds)

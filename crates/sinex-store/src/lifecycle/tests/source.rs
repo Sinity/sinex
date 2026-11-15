@@ -60,7 +60,7 @@ async fn compressed_source_stream_resumes_and_observes_restored_roots(
 ) {
     let mut writer = context(&db).await;
     let roots: Vec<_> = (1..=96)
-        .map(|n| source_reading("retired-source", n, "01800000-0000-7000-8000-"))
+        .map(|n| source_reading("removed-source", n, "01800000-0000-7000-8000-"))
         .collect();
     let unrelated: Vec<_> = (1..=8192)
         .map(|n| source_reading("unrelated-source", n, "017f0000-0000-7000-8000-"))
@@ -84,7 +84,7 @@ async fn compressed_source_stream_resumes_and_observes_restored_roots(
         Act::Archive,
         "agent:test",
         Scope::Source {
-            source: "retired-source".into(),
+            source: "removed-source".into(),
             after: None,
             before: None,
         },
@@ -113,8 +113,8 @@ async fn compressed_source_stream_resumes_and_observes_restored_roots(
     assert_eq!(reopened.id, op.id);
     assert_eq!(reopened.start_seq, op.start_seq);
     assert_eq!(progress, saved);
-    // This same-source reading is newer than the operation's fixed cut.
-    let new = source_reading("retired-source", 100, "01800000-0000-7000-8000-");
+    // This same-source reading is newer than the operation's fixed position.
+    let new = source_reading("removed-source", 100, "01800000-0000-7000-8000-");
     let new_id = new.id.0;
     admit(&mut writer, &batch(vec![new])).await;
     let mut read_tx = read.begin().await.unwrap();
@@ -131,7 +131,7 @@ async fn compressed_source_stream_resumes_and_observes_restored_roots(
     );
     assert!(
         !prepared.contains(&new_id),
-        "admissions after the cut stay outside the operation"
+        "admissions after the fixed position stay outside the operation"
     );
     // Restore after the selection snapshot, before this root's writer batch.
     assert!(matches!(
@@ -156,7 +156,7 @@ async fn compressed_source_stream_resumes_and_observes_restored_roots(
         progress = next;
         assert_eq!(done, complete);
     }
-    assert_eq!(count(&mut writer,"SELECT count(*) FROM audit.archived WHERE event_id IN(SELECT id FROM core.events WHERE source='retired-source')").await,95);
+    assert_eq!(count(&mut writer,"SELECT count(*) FROM audit.archived WHERE event_id IN(SELECT id FROM core.events WHERE source='removed-source')").await,95);
     assert_eq!(
         count(
             &mut writer,
@@ -312,7 +312,7 @@ impl crate::admission::DirtyKeys for TextKeys {
 }
 
 #[devkit::test]
-async fn archive_reads_consumed_payloads_and_marks_unconsumed_ownership(
+async fn archive_reads_consumed_payloads_and_marks_unconsumed_output_keys(
     db: devkit::pg::TestDatabase,
 ) {
     let mut writer = context(&db).await;
@@ -324,7 +324,7 @@ async fn archive_reads_consumed_payloads_and_marks_unconsumed_ownership(
     admit(&mut writer, &batch(vec![root.clone()])).await;
     let child = derived("selected-output", 1, &[&root]);
     admit(&mut writer, &batch(vec![child.clone()])).await;
-    sqlx::query("INSERT INTO derivation.outputs(derivation,key,event_id) VALUES('retained-owner','{\"scope\":1}',$1)")
+    sqlx::query("INSERT INTO derivation.outputs(derivation,key,event_id) VALUES('unconsumed-derivation','{\"scope\":1}',$1)")
         .bind(child.id.0).execute(&mut *writer).await.unwrap();
     sqlx::query("SELECT compress_chunk(chunk) FROM show_chunks('core.events') chunks(chunk)")
         .execute(&mut *writer)
@@ -347,7 +347,7 @@ async fn archive_reads_consumed_payloads_and_marks_unconsumed_ownership(
     assert_eq!(
         dirty,
         vec![
-            ("retained-owner".into(), json!({"scope":1})),
+            ("unconsumed-derivation".into(), json!({"scope":1})),
             ("text-consumer".into(), json!({"text":"synthetic source 1"}))
         ]
     );

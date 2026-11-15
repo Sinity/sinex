@@ -62,7 +62,7 @@ function are common
 - **Health** is its own route: up or down, without internal error text, separate from
   capture health.
 - **Version.** The server reports its version; the client warns on a mismatch.
-- **The daemon is required.** Ordinary commands go through `sinexd`. Only the declared
+- **The daemon is required.** Commands go through `sinexd`. Only the declared
   offline diagnostics (`verify`, `status --offline`, `store verify --offline`) read the
   database directly through the reader role, and completion works from the published
   catalog file. (ruling 2026-09-14, cc:652ae14f-a036-496b-abfa-42e7574c9ec9:b8a68d64-772f-4d8c-8e95-435ce601d245).
@@ -134,7 +134,7 @@ The operator and agents hold the same command set; there are no ordered access t
   rules, which are the same for every caller ([privacy](privacy.md)); nothing is
   refused because the caller is an agent. Privacy rules may be written by any author;
   status lists those written by anyone but the operator as non-operator changes.
-- The credential gates grants; it is not an identity.
+- The credential carries grants; it is not an identity.
 - **An act reserved to the operator is an explicit configured rule with its reason**,
   listed in configuration and in `help`, never inferred from the token. The seeded
   reserved acts:
@@ -168,7 +168,7 @@ The operator and agents hold the same command set; there are no ordered access t
 - **`undo --session S [--dry-run]`** reverts every write one session made, listing it
   first and recording each reversal with its own author. It archives the session's
   notes, duplicate decisions, curation, saved queries, signal rules and `record` outputs; archives
-  what the session's stages admitted; and undoes the session's replays by the ordinary
+  what the session's stages admitted; and undoes the session's replays by the usual
   [replay undo](lifecycle.md#undo), possible at any later time. A tombstone confirmed in
   the session is listed as not revertible. A second undo restores what the first
   archived.
@@ -178,7 +178,7 @@ The operator and agents hold the same command set; there are no ordered access t
 `record KIND PAYLOAD --parent REF…` (a `sinex_write` row over MCP) writes an agent's derived
 conclusion: a registered kind, a payload matching its schema, at least one parent
 citation, the computed author, and the producer `agent:<session>` with its model as
-producer version. It passes ordinary admission and is withdrawn by its author's archive
+producer version. It passes the same admission and is withdrawn by its author's archive
 act or by session undo. Programs that derive continuously use the ingress as
 [outside handlers](producers.md#outside-consumers-and-handlers), not `record`.
 
@@ -426,8 +426,8 @@ holder through the reader role while the daemon is down.
   `expires_after` and the remaining margin, `coverage`, `behind`, `rate`,
   `refused_rate`, `shape_changed`, `days_with_data_30d`, `gaps_30d`, `last_success`,
   `last_error`.
-- **One source-evidence path** classifies sources for fill, panels, recall, status and
-  alerts: durable poll outcomes (success, unchanged, failure), cursor positions, gap
+- **One source-status path** classifies sources for fill, panels, recall, status and
+  alerts: recorded poll outcomes (success, unchanged, failure), cursor positions, gap
   records with their missing count, record failures and shape observations, read under
   the answer's read context. Never source-name prefixes, process liveness, run lifetime
   alone, or earliest and latest event alone.
@@ -501,7 +501,7 @@ its conformance cases run in Sinex. What Sinex supplies:
   nothing.
 - **Three deliveries, one mechanism:** a notice, a value, an action. An action names
   only a command already in configuration, runs outside `sinexd` with the triggering
-  citation as its last argument, and its result returns as ordinary events.
+  citation as its last argument, and its result returns as events.
 
 ### The host deliverer
 
@@ -532,9 +532,9 @@ because its configured outlet belongs to its own product. Polylogue shows only i
 - **A firing whose basis changed is withdrawn.** When a cited reading is archived (by a
   replay or a lifecycle step) or the privacy policy changes between selecting a row and
   handing its firing off, the handoff is withdrawn: no delivery is recorded and no
-  outlet runs, only an outcome `not_sent` with reason `basis_changed`. Its evidence was
-  read under a policy or from readings that no longer hold, so it is never certified
-  under the current ones. The evaluator retracts the firing and the rules are read
+  outlet runs, only an outcome `not_sent` with reason `basis_changed`. Its inputs were
+  read under a policy or from readings that no longer hold, so it is never shown as
+  valid under the current ones. The evaluator retracts the firing and the rules are read
   again: if the rule still finds the occurrence, it fires afresh under the same
   delivery identity, citing the readings selected now; a threshold, change or daily
   firing fires again only on a new crossing, change or day.
@@ -592,9 +592,9 @@ decides which prompts may be sent (default; open operator question).
 ### Stall alerts
 
 - The stall rule fires from the source's declared expectation (`silent_after` or `every`) and its
-  durable poll outcomes. It tells apart an unchanged successful poll, an event-driven
+  recorded poll outcomes. It tells apart an unchanged successful poll, an event-driven
   source with no recent events, an unavailable input, a parser rejection, an excluded
-  source, source lag, a host out of contact within its deadline, and an actual missed
+  source, source lag, a host out of contact within its deadline, and a missed
   expected read. It never fires from low counts alone.
 - An alert carries its evidence, the last success, the affected interval and a concrete
   next action, and stays visible in status and the day pack until recovery clears it.
@@ -606,9 +606,9 @@ decides which prompts may be sent (default; open operator question).
   default, `--for` and `--what` as in rules. Nothing is recorded.
 - The initial data notice follows initialization of the subscription's watch and
   commit cursor. A matching commit admitted after that notice is beyond the initial
-  cursor floor and is delivered once.
-- Event follows wait for the search read model's durable position, including queries
-  without an explicit text predicate. Projection lag delays delivery. An event whose
+  cursor position and is delivered once.
+- Event follows wait for the search read model's saved position, including queries
+  without an explicit text predicate. Read-model lag delays delivery. An event whose
   text the search index refuses (a full-text vector over PostgreSQL's size limit) is
   recorded in `core.search_refusals`, counted by `status` as `search_index.refused`,
   and passed; it never holds the position. Read-model
@@ -655,8 +655,8 @@ statement timer does not impose an upper bound on a caller's millisecond deadlin
 
 An expired read returns retryable `timeout` (CLI exit 7), releases its backend and
 suggests narrowing the question or lifting the deadline. Closing a caller also
-cancels its unowned read. Once a mutation takes durable request, writer or preparation
-ownership, its read timer ends and its actual terminal result is awaited; a lost HTTP
+cancels its unowned read. Once a mutation holds a saved request, the writer or a preparation,
+its read timer ends and its terminal result is awaited; a lost HTTP
 reader does not revoke that accepted work. Deadline changes do not alter producer
 backup custody or its own readiness protocol. Daemon database connections name their
 own task in `application_name`, including writer, publisher and API.

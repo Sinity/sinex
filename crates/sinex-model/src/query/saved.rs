@@ -391,7 +391,7 @@ fn expand(
             )?;
             if inner.operation.is_some() {
                 return Err(QueryError::new(
-                    "native commands cannot be nested as query relations",
+                    "product commands cannot be nested as query relations",
                 ));
             }
             **query = inner.relation;

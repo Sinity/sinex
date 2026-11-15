@@ -8,7 +8,7 @@ fn document(text: &str) -> Event {
             label: None,
             text: text.into(),
         },
-        "fixture.exact",
+        "fixture.listed",
         Origin::Record {
             location: RecordLocation {
                 material: MaterialId::new(),
@@ -23,7 +23,7 @@ fn document(text: &str) -> Event {
     .unwrap()
 }
 #[devkit::test]
-async fn exact_targets_are_paged_live_transformed_and_keep_unknown_times(
+async fn listed_targets_are_paged_live_transformed_and_keep_unknown_times(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = AdmissionContext::connect(&db.url(None)).await.unwrap();
@@ -48,8 +48,8 @@ async fn exact_targets_are_paged_live_transformed_and_keep_unknown_times(
     crate::privacy::add_rule(
         &mut conn,
         &crate::privacy::NewRule {
-            name: "configured exact field".into(),
-            source: "fixture.exact".into(),
+            name: "configured listed field".into(),
+            source: "fixture.listed".into(),
             event_type: Some("operator_log.entry".into()),
             field: Some("/text".into()),
             matcher: "pattern".into(),
@@ -72,7 +72,7 @@ async fn exact_targets_are_paged_live_transformed_and_keep_unknown_times(
     )
     .await;
     let mut reader =
-        ExactInputs::new(vec![ids[0], ids[1], ids[1], ids[2], EventId::new()], 1, 1).unwrap();
+        ListedInputs::new(vec![ids[0], ids[1], ids[1], ids[2], EventId::new()], 1, 1).unwrap();
     let first = reader.next(&mut conn).await.unwrap().unwrap();
     let second = reader.next(&mut conn).await.unwrap().unwrap();
     assert!(reader.next(&mut conn).await.unwrap().is_none());
@@ -90,7 +90,7 @@ async fn exact_targets_are_paged_live_transformed_and_keep_unknown_times(
 }
 
 #[devkit::test]
-async fn exact_targets_never_expand_to_unrequested_retained_position_siblings(
+async fn listed_targets_never_expand_to_unrequested_position_siblings(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = AdmissionContext::connect(&db.url(None)).await.unwrap();
@@ -101,7 +101,7 @@ async fn exact_targets_never_expand_to_unrequested_retained_position_siblings(
     ];
     let expected: std::collections::BTreeSet<_> = [events[0].id, events[2].id].into();
     // Normal admission assigns distinct positions. Insert an explicitly
-    // synthetic retained tie without changing any immutable event.
+    // synthetic stored tie without changing any immutable event.
     let mut tx = conn.begin().await.unwrap();
     for event in &events {
         let Origin::Record {
@@ -119,7 +119,7 @@ async fn exact_targets_never_expand_to_unrequested_retained_position_siblings(
         .await
         .unwrap();
     tx.commit().await.unwrap();
-    let mut reader = ExactInputs::new(expected.iter().copied().collect(), 1, 1).unwrap();
+    let mut reader = ListedInputs::new(expected.iter().copied().collect(), 1, 1).unwrap();
     let mut seen = std::collections::BTreeSet::new();
     let mut pages = 0;
     while let Some(page) = reader.next(&mut conn).await.unwrap() {

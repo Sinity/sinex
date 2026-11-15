@@ -673,7 +673,7 @@ pub fn options(pairs: &[String]) -> Result<Value, String> {
 #[cfg(test)]
 mod tests;
 
-/// Copy the retained source spools while the daemon's publication is paused.
+/// Copy the source spools while the daemon's publication is paused.
 /// Its checkpoint belongs to the exported core snapshot, rather than a producer file.
 pub fn capture_backup(
     bindings: &[Binding],

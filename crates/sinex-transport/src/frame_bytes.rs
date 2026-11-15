@@ -1,4 +1,4 @@
-//! Encoded custody for one authenticated producer frame. Logical names and
+//! Encoded custody for one authenticated producer frame. Blob names and
 //! lengths describe decoded bytes; custody files use the shared frame codec.
 mod permissions;
 
@@ -55,12 +55,12 @@ fn validate(descriptor: &EncodedBlob, blob: &str, length: Option<u64>) -> Result
         || length.is_some_and(|length| length != descriptor.decoded_len)
     {
         return Err(Error::Mismatch(
-            "encoded custody differs from the logical name or length".into(),
+            "encoded custody differs from the blob name or length".into(),
         ));
     }
     if descriptor.kind != Kind::Plain {
         return Err(Error::Invalid(
-            "outside producer encodings must be plain; the owner supplies sealing policy".into(),
+            "outside producer encodings must be plain; the daemon decides sealing".into(),
         ));
     }
     Ok(())
@@ -132,7 +132,8 @@ fn finish(
     sync_directory(&dir)
 }
 
-/// A raw-reader convenience: encoding is written directly into its durable custody inode.
+/// A raw-reader convenience: the encoding is written directly into its custody file
+/// and synced to disk.
 pub fn write(
     root: &Path,
     producer: &str,
@@ -153,7 +154,8 @@ pub fn write(
     drop(prepared);
     finish(root, producer, frame, temporary, &descriptor)
 }
-/// Copy only already encoded bytes, including from a pinned file whose source path retired.
+/// Copy only already encoded bytes, including from a pinned file whose source path
+/// was removed.
 pub fn write_prepared(
     root: &Path,
     producer: &str,
@@ -197,7 +199,7 @@ pub fn link_encoded(
     let source_file = std::fs::File::open(source).map_err(Error::Storage)?;
     link_file(root, producer, frame, descriptor, source, source_file)
 }
-/// Hand off a pinned immutable spool inode. If its name retired meanwhile,
+/// Hand off a pinned immutable spool inode. If its name was removed meanwhile,
 /// the pinned file still supplies the encoding without reopening that name.
 pub fn link_file(
     root: &Path,
@@ -336,7 +338,7 @@ fn copy_encoded(
 }
 
 /// Receive one ordered encoded unit. The final unit validates the encoded digest;
-/// authoritative admission also verifies the decoded identity before appending.
+/// admission also verifies the decoded identity before appending.
 pub fn receive(
     root: &Path,
     producer: &str,

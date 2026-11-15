@@ -1,5 +1,5 @@
 //! Recall reads its answer at one commit position and presents it from the
-//! rows of that read. An ordinary interactive recall stores nothing; its pages
+//! rows of that read. An interactive recall stores nothing; its pages
 //! are the query cursor's pages at the same position.
 use super::*;
 use crate::Result;

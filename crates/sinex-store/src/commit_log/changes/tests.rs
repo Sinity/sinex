@@ -15,11 +15,11 @@ async fn header_batches_preserve_order_duplicates_and_classes_on_compressed_hist
         .execute(&mut conn)
         .await
         .unwrap();
-    let logical_rows: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events")
+    let row_count: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events")
         .fetch_one(&mut conn)
         .await
         .unwrap();
-    assert_eq!(logical_rows, 8448);
+    assert_eq!(row_count, 8448);
     let mut ids: Vec<Uuid> = (8193..=8448)
         .rev()
         .map(|n| Uuid::parse_str(&format!("01800000-0000-7000-8000-{n:012x}")).unwrap())

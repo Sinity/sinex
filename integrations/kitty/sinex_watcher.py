@@ -5,7 +5,7 @@ In kitty.conf:
     watcher /path/to/sinex_watcher.py
 
 With Sinex's shell integration, a command's start and end carry the
-execution token the shell minted for it (`execution`), the same token the
+execution token the shell made for it (`execution`), the same token the
 shell's own report carries.
 
 Each event is one JSON line on the socket ($SINEX_SESSION_SOCKET, or
@@ -39,7 +39,7 @@ _timer = None
 _sent = {}
 # Windows whose scrollback was sent in full as kitty quit.
 _finished = set()
-# Window id -> the execution token Sinex's shell integration minted for the
+# Window id -> the execution token Sinex's shell integration made for the
 # command running there (the `sinex_execution` user variable).
 _execution = {}
 

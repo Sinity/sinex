@@ -1,7 +1,7 @@
 //! Explicit event targets, read in commit order in bounded pages.
 use super::*;
 
-pub struct ExactInputs {
+pub struct ListedInputs {
     ids: Vec<Uuid>,
     after: i64,
     after_id: Option<Uuid>,
@@ -9,11 +9,11 @@ pub struct ExactInputs {
     bytes: i64,
     finished: bool,
 }
-impl ExactInputs {
+impl ListedInputs {
     pub fn new(ids: Vec<EventId>, count: i64, bytes: i64) -> Result<Self> {
         if count <= 0 || bytes <= 0 {
             return Err(crate::Error::Invalid(
-                "exact input page budgets must be positive".into(),
+                "listed input page budgets must be positive".into(),
             ));
         }
         let mut ids: Vec<_> = ids.into_iter().map(|id| id.0).collect();
@@ -29,13 +29,13 @@ impl ExactInputs {
         })
     }
     /// The caller holds its input snapshot across pages. Missing or archived
-    /// targets are absent. The consumer compares the returned IDs with its exact required evidence.
+    /// targets are absent. The consumer compares the returned IDs with the IDs it requires.
     pub async fn next(&mut self, conn: &mut PgConnection) -> Result<Option<Vec<Committed>>> {
         if self.finished {
             return Ok(None);
         }
         let rows = sqlx::query_file!(
-            "src/derivations/sql/exact_page.sql",
+            "src/derivations/sql/listed_page.sql",
             &self.ids,
             self.after,
             self.count,

@@ -1,4 +1,4 @@
-//! Projection of Polylogue's atomic version-4 work snapshot. The full typed
+//! Decoder for Polylogue's atomic version-4 work snapshot. The full typed
 //! producer record stays in the sole parent; this decoder names only fields
 //! consumed by work attribution.
 use super::*;
@@ -38,10 +38,11 @@ struct Snapshot {
 #[derive(Deserialize)]
 struct Source {
     selected: bool,
-    projection: Option<Projection>,
+    projection: Option<BlockSelection>,
 }
+/// The blocks of a source the snapshot selected (Polylogue's `projection`).
 #[derive(Deserialize)]
-struct Projection {
+struct BlockSelection {
     block_count: u64,
     block_ordinals: Vec<u64>,
 }
@@ -116,9 +117,9 @@ struct Entry {
     kind: &'static str,
     id: String,
     at: Option<Timestamp>,
-    at_evidence: WorkTimeQuality,
+    at_quality: WorkTimeQuality,
     end: Option<Timestamp>,
-    end_evidence: Option<WorkTimeQuality>,
+    end_quality: Option<WorkTimeQuality>,
     agency: Agency,
     action: String,
     path: Option<String>,
@@ -142,7 +143,7 @@ fn coverage(
     derived(
         &WorkCoverage {
             session: session.into(),
-            snapshot: evidence(parent),
+            snapshot: cite(parent),
             reducer_version: reducer,
             state,
             eligible_entries: eligible,
@@ -185,7 +186,9 @@ pub(super) fn compute(key: &Value, inputs: &[Event]) -> Computed {
         return Computed::default();
     };
     // Older reducers remain raw and citable. The highest explicit reducer
-    // controls the session, including an unsupported or retired replacement.
+    // controls the session, including an unsupported replacement or one that
+    // marks the session removed (Polylogue's `retired` flag).
+
     let Some(highest) = snapshots
         .iter()
         .map(|event| event.payload["reducer_version"].as_u64())
@@ -288,18 +291,14 @@ pub(super) fn compute(key: &Value, inputs: &[Event]) -> Computed {
         .iter()
         .filter(|source| {
             source.selected
-                && source.projection.as_ref().is_some_and(|projection| {
-                    projection.block_ordinals.len() as u64 != projection.block_count
-                        || projection
+                && source.projection.as_ref().is_some_and(|blocks| {
+                    blocks.block_ordinals.len() as u64 != blocks.block_count
+                        || blocks
                             .block_ordinals
                             .iter()
-                            .any(|ordinal| *ordinal >= projection.block_count)
-                        || projection
-                            .block_ordinals
-                            .iter()
-                            .collect::<BTreeSet<_>>()
-                            .len()
-                            != projection.block_ordinals.len()
+                            .any(|ordinal| *ordinal >= blocks.block_count)
+                        || blocks.block_ordinals.iter().collect::<BTreeSet<_>>().len()
+                            != blocks.block_ordinals.len()
                 })
         })
         .count();
@@ -318,9 +317,9 @@ pub(super) fn compute(key: &Value, inputs: &[Event]) -> Computed {
                 kind: "message",
                 id: message.message,
                 at: message.at,
-                at_evidence: message.at_evidence,
+                at_quality: message.at_evidence,
                 end: None,
-                end_evidence: None,
+                end_quality: None,
                 agency: Agency::Operator,
                 action: "prompt".into(),
                 path: None,
@@ -362,9 +361,9 @@ pub(super) fn compute(key: &Value, inputs: &[Event]) -> Computed {
             kind: "call",
             id: call.entry_id,
             at: call.at,
-            at_evidence: call.at_evidence,
+            at_quality: call.at_evidence,
             end: call.result_at,
-            end_evidence: Some(call.result_at_evidence),
+            end_quality: Some(call.result_at_evidence),
             agency: Agency::Delegated,
             action: call.action,
             path: call.path,
@@ -396,9 +395,9 @@ pub(super) fn compute(key: &Value, inputs: &[Event]) -> Computed {
             kind: "turn",
             id: turn.turn,
             at: turn.start,
-            at_evidence: turn.start_evidence,
+            at_quality: turn.start_evidence,
             end: turn.end,
-            end_evidence: Some(turn.end_evidence),
+            end_quality: Some(turn.end_evidence),
             agency: Agency::Delegated,
             action: "turn".into(),
             path: None,
@@ -460,11 +459,11 @@ pub(super) fn compute(key: &Value, inputs: &[Event]) -> Computed {
         (left.at, left.kind, &left.id).cmp(&(right.at, right.kind, &right.id))
     });
     for entry in entries {
-        let Some(at) = entry.at_evidence.instant(entry.at) else {
+        let Some(at) = entry.at_quality.instant(entry.at) else {
             untimed += 1;
             let reason = if entry.at.is_none() {
                 "entry_time_unknown"
-            } else if entry.at_evidence.quality == sinex_model::TimeQuality::Unknown {
+            } else if entry.at_quality.quality == sinex_model::TimeQuality::Unknown {
                 "entry_time_quality_unknown"
             } else {
                 "entry_time_not_instant"
@@ -473,15 +472,15 @@ pub(super) fn compute(key: &Value, inputs: &[Event]) -> Computed {
             continue;
         };
         let ended_at = entry
-            .end_evidence
+            .end_quality
             .as_ref()
-            .and_then(|evidence| evidence.instant(entry.end))
+            .and_then(|quality| quality.instant(entry.end))
             .filter(|end| *end >= at);
         if entry.agency == Agency::Delegated && ended_at.is_none() {
             *reasons.entry("entry_duration_unknown".into()).or_default() += 1;
         }
         let identity = json!([session, entry.kind, entry.id]).to_string();
-        let mut citation = evidence(parent);
+        let mut citation = cite(parent);
         citation.record = format!(
             "{}#{}",
             citation.record,
@@ -496,12 +495,12 @@ pub(super) fn compute(key: &Value, inputs: &[Event]) -> Computed {
                 label: objective
                     .as_ref()
                     .map(|objective| objective.reference.clone()),
-                label_source: evidence(parent),
+                label_source: cite(parent),
                 machine: metadata["machine"].as_str().map(str::to_owned),
                 at,
-                at_evidence: entry.at_evidence,
+                at_evidence: entry.at_quality,
                 ended_at,
-                ended_at_evidence: entry.end_evidence,
+                ended_at_evidence: entry.end_quality,
                 evidence: citation,
                 agency: entry.agency,
                 action: entry.action,

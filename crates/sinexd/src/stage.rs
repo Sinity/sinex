@@ -753,15 +753,16 @@ pub(crate) async fn drive(
     let mut totals = Totals::committed(committed);
     let priority = mode.priority(source.as_ref());
     let started = Instant::now();
-    // The source's class: its declaration, raised by the operator's floor.
+    // The source's class: its declaration, raised by the operator's minimum class.
     // A sealed source seals each material and its events as they are read.
-    let floor = sinex_store::privacy::load(read_conn, std::iter::once(source.spec().name))
-        .await?
-        .floors
-        .get(source.spec().name)
-        .copied()
-        .unwrap_or_default();
-    let effective_class = source.spec().class.max(floor).max(minimum_class);
+    let operator_minimum =
+        sinex_store::privacy::load(read_conn, std::iter::once(source.spec().name))
+            .await?
+            .minimum_classes
+            .get(source.spec().name)
+            .copied()
+            .unwrap_or_default();
+    let effective_class = source.spec().class.max(operator_minimum).max(minimum_class);
     let material =
         crate::material_access::MaterialAccess::new(sink.0.clone(), effective_class, access)
             .map_err(|e| Error::bad_request(format!("{}: {e}", source.spec().name)))?;
@@ -799,7 +800,7 @@ pub(crate) async fn drive(
         let registered = material
             .reopen(read_conn, source.as_ref(), &mut acquired)
             .await?;
-        crate::intake::Intake {
+        crate::submit::Submitter {
             host: Some(host),
             writer: handle,
             source: source.clone(),

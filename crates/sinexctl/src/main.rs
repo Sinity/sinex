@@ -389,7 +389,7 @@ async fn main() -> ExitCode {
     let spec = sinex_protocol::command(&name).expect("subcommands come from the table");
     let mut args = arguments(spec, &sub);
     // `unlock` names the identity file; its key goes to the daemon over the
-    // owner-only socket and is held in memory for the session only.
+    // socket only its user can open, and is held in memory for the session only.
     if name == "unlock"
         && let Some(Value::String(path)) = args.get("identity").cloned()
     {
