@@ -132,10 +132,17 @@ pub(crate) fn plan(config: &Config, host: &str) -> Result<Vec<(&'static InputFor
 
 /// Native spool obligations at the exported core cut, plus configured spools
 /// whose acquired bytes have not yet produced a database checkpoint.
+///
+/// A saved binding that is no longer configured is a retained spool only when
+/// its input lies under the daemon's spool root (`spool`): the daemon's own
+/// capture writes and retires only there. Any other saved binding of a native
+/// format was staged, and staging stored its bytes whole as materials, so
+/// nothing in that input is pending.
 pub(crate) async fn backup_bindings(
     conn: &mut PgConnection,
     mut bindings: Vec<Binding>,
     host: &str,
+    spool: &std::path::Path,
 ) -> Result<Vec<Binding>> {
     use sinex_source_core::registry::{Origin, Shape};
     let specs = sources::specs();
@@ -168,6 +175,9 @@ pub(crate) async fn backup_bindings(
             continue;
         }
         let configured = bindings.iter().find(|binding| binding.name == row.binding);
+        if configured.is_none() && !std::path::Path::new(&row.input).starts_with(spool) {
+            continue;
+        }
         let cursor = sinex_store::positions::load(conn, &row.binding)
             .await?
             .map(|(cursor, _)| cursor);

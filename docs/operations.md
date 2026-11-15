@@ -149,16 +149,23 @@ Preparing a backup pauses publication and spool retirement, then takes the hold 
 
 Preparation copies the daemon's retained source spools and the state of every configured producer with write access. Each producer snapshot keeps its checkpoint, its pending frames and the bytes needed to resume from that checkpoint. Capture continues while publication is paused; media generations in progress finish before their files are copied. The manifest names the required producers and each copied file; `producers_complete` is true only when every required producer was copied. Preparation requires a known list of producers. The hold protects segment prefixes; producer state is described by the manifest.
 
-Input discovery finishes before producers are paused. Retained native bindings
-are selected by the parser at their committed material anchor; a source name
-shared with an imported file format does not turn that file into a spool.
+Input discovery finishes before producers are paused. A saved binding that
+is no longer configured is a retained spool only when its input lies under the
+daemon's spool root, where the daemon's own capture writes and retires; a
+directory staged with a native spool parser is an import whose bytes are
+already materials, and backup neither writes into it nor copies it. Retained
+native bindings are selected by the parser at their committed material anchor;
+a source name shared with an imported file format does not turn that file into
+a spool.
 Configured native inputs that have not stored material yet keep their declared
 format when their position is absent, null or the driver's typed empty cursor.
 Missing or contradictory format evidence stops preparation. A missing producer
 list or a failed pause is refused before taking the core snapshot. Failed
 producer capture records `producer-snapshots.json` alongside the retained
 `boundary.json` and stops before either database dump or segment copying.
-Only a complete producer set can produce a published backup manifest.
+Only a complete producer set can produce a published backup manifest. A
+preparation that fails after taking its hold releases that hold; the error
+names the hold and whether the release succeeded.
 
 ### Holds and the boundary
 

@@ -201,3 +201,168 @@ async fn backup_holds_require_operator_access_and_page_without_expiry(
     .await;
     assert_eq!(listed["result"]["holds"], json!([]));
 }
+
+/// Staging a directory in a native spool format stores its bytes as
+/// materials; the staged directory is not one of the daemon's spools, so a
+/// backup neither writes into it nor copies it. An unreadable spool under the
+/// daemon's spool root still refuses the backup, and the refused attempt
+/// releases its own hold.
+#[devkit::test]
+async fn backup_leaves_staged_native_directories_alone_and_refuses_unreadable_spools(
+    db: devkit::pg::TestDatabase,
+) {
+    use sinex_source_core::drivers::live_stream::{Rotation, SpoolWriter, capture_lines};
+    use std::os::unix::fs::PermissionsExt;
+    let broker = devkit::nats::test_nats().unwrap();
+    let client = async_nats::connect(broker.url()).await.unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let staged = root.path().join("staged/hyprland-copy");
+    let spool = root.path().join("spool");
+    std::fs::create_dir_all(&spool).unwrap();
+    let mut writer = SpoolWriter::open(&staged, Rotation::default()).unwrap();
+    capture_lines(
+        &b"activewindow>>kitty,synthetic\nworkspacev2>>1,one\n"[..],
+        &mut writer,
+        std::time::Duration::ZERO,
+    )
+    .unwrap();
+    drop(writer);
+    let config = serde_json::from_value(json!({"discovery": {"spool": spool}})).unwrap();
+    let w = world_with_api(
+        db,
+        config,
+        PgPoolOptions::new().max_connections(READ_CONNECTIONS),
+        |api| {
+            api.backup_producers = Some((client, sinex_protocol::Subjects::sinex(), vec![]));
+        },
+    )
+    .await;
+    let (_, stage) = call_unbounded(
+        &w,
+        Some(OPERATOR),
+        json!({"method": "stage", "path": [staged], "parser": ["hyprland-socket2"], "follow": true}),
+    )
+    .await;
+    assert_eq!(stage["result"]["result"], "ok", "{stage}");
+    let mut conn = w.reads.acquire().await.unwrap();
+    let saved: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM raw.bindings WHERE source = 'desktop.hyprland' AND input = $1",
+    )
+    .bind(staged.to_str().unwrap())
+    .fetch_one(&mut *conn)
+    .await
+    .unwrap();
+    assert_eq!(saved, 1, "the stage saved its binding");
+    let listing = |path: &std::path::Path| {
+        let mut names: Vec<_> = std::fs::read_dir(path)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        names.sort();
+        names
+    };
+    let before = listing(&staged);
+    // The daemon may not write into a staged directory.
+    std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let (_, prepared) = call_unbounded(
+        &w,
+        Some(OPERATOR),
+        json!({"method":"backup","action":"prepare","output":root.path().join("backup")}),
+    )
+    .await;
+    assert_eq!(prepared["outcome"], "ok", "{prepared}");
+    assert_eq!(listing(&staged), before);
+    let daemon = prepared["result"]["artifact"]["producer_snapshots"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|snapshot| snapshot["producer"] == "@daemon")
+        .unwrap()
+        .clone();
+    assert!(
+        daemon["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|file| !file["path"].as_str().unwrap().contains("/spool/")),
+        "{daemon}"
+    );
+    let hold = prepared["result"]["artifact"]["boundary"]["id"].clone();
+    let (_, released) = call_unbounded(
+        &w,
+        Some(OPERATOR),
+        json!({"method":"backup","action":"release","hold":hold}),
+    )
+    .await;
+    assert_eq!(released["outcome"], "ok", "{released}");
+
+    // A retained clipboard spool under the spool root that the daemon cannot
+    // read refuses the backup.
+    let clipboard = spool.join("clipboard");
+    let mut writer = SpoolWriter::open(&clipboard, Rotation::default()).unwrap();
+    capture_lines(
+        &b"synthetic clip\n"[..],
+        &mut writer,
+        std::time::Duration::ZERO,
+    )
+    .unwrap();
+    drop(writer);
+    let binding = format!("desktop.clipboard:{}@h", clipboard.display());
+    sqlx::query("INSERT INTO raw.bindings (binding, source, input, settings) VALUES ($1, 'desktop.clipboard', $2, $3)")
+        .bind(&binding)
+        .bind(clipboard.to_str().unwrap())
+        .bind(json!({"host": "h"}))
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    let input = uuid::Uuid::now_v7();
+    let material = uuid::Uuid::now_v7();
+    let blob = format!("blake3:{}", blake3::hash(material.as_bytes()).to_hex());
+    sqlx::query("INSERT INTO core.blobs (hash, size, status) VALUES ($1, 0, 'present')")
+        .bind(&blob)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO raw.inputs (id, binding, kind, locator, host) VALUES ($1, $2, 'file', $3, 'h')")
+        .bind(input)
+        .bind(&binding)
+        .bind(clipboard.to_str().unwrap())
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO raw.materials (id, input_id, blob, length, manifest, parser, parser_version) VALUES ($1, $2, $3, 0, '{}', $4, 1)")
+        .bind(material)
+        .bind(input)
+        .bind(&blob)
+        .bind(sinex_sources::sources::clipboard::SPEC.parser)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO raw.positions (binding, cursor, carry, committed_seq) VALUES ($1, $2, '{}', 0)")
+        .bind(&binding)
+        .bind(json!({"material": material, "through": 0}))
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    drop(conn);
+    std::fs::set_permissions(&clipboard, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let (_, refused) = call_unbounded(
+        &w,
+        Some(OPERATOR),
+        json!({"method":"backup","action":"prepare","output":root.path().join("refused")}),
+    )
+    .await;
+    std::fs::set_permissions(&clipboard, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(refused["outcome"], "failed", "{refused}");
+    let message = refused.to_string();
+    assert!(message.contains("@daemon"), "{refused}");
+    assert!(message.contains("released"), "{refused}");
+    let (_, holds) = call_unbounded(
+        &w,
+        Some(OPERATOR),
+        json!({"method":"backup","action":"list"}),
+    )
+    .await;
+    assert_eq!(holds["result"]["holds"], json!([]), "{holds}");
+}

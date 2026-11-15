@@ -78,6 +78,7 @@ impl Api {
                 // before starting the producers' paused publication lifetime.
                 let config = self.source_config.clone();
                 let host = self.host.clone();
+                let spool = config.context(&host).spool;
                 let configured = tokio::task::spawn_blocking(move || {
                     crate::binding_runner::plan(&config, &host)
                         .map(|bindings| bindings.into_iter().map(|(_, binding)| binding).collect())
@@ -148,11 +149,23 @@ impl Api {
                     "sinexd backup {hold}: core snapshot ready after {:?}; acquiring producer files",
                     paused_at.elapsed()
                 );
+                // A failed attempt releases its own hold: nothing it wrote is a
+                // usable copy, and an open hold keeps segment prefixes protected.
+                let release = |hold: OperationId| async move {
+                    match writer.backup_release(hold, caller.actor).await {
+                        Ok(_) => format!("backup hold {hold} released"),
+                        Err(error) => {
+                            format!("backup hold {hold} remains open; releasing it failed: {error}")
+                        }
+                    }
+                };
                 if let Err(error) = crate::backup::record_boundary(&output, &snapshot.hold) {
                     for producer in &paused {
                         let _ = producer.release().await;
                     }
-                    return Err(error.with_note(format!("backup hold {hold} remains open")));
+                    // The snapshot's transaction ends before the writer is asked.
+                    drop(snapshot);
+                    return Err(error.with_note(release(hold).await));
                 }
                 let boundary = snapshot.hold.clone();
                 let boundary = &boundary;
@@ -189,6 +202,7 @@ impl Api {
                         snapshot.connection(),
                         configured,
                         &self.host,
+                        &spool,
                     )
                     .await;
                     crate::backup::local_sources(local_bindings, output_root).await
@@ -216,7 +230,8 @@ impl Api {
                         result: json!({"artifact":artifact,"output":output,"hold_open":true}),
                     }),
                     Err(e) => Err(e.with_note(format!(
-                        "backup hold {hold} remains open; incomplete output {}",
+                        "{}; incomplete output {}",
+                        release(hold).await,
                         output.display()
                     ))),
                 }

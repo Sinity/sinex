@@ -84,18 +84,28 @@ async fn backup_keeps_configured_native_inputs_after_an_empty_poll(db: devkit::p
         .await
         .unwrap();
         assert!(
-            backup_bindings(&mut conn, vec![binding.clone()], "synthetic-host")
-                .await
-                .unwrap()
-                .contains(&binding)
+            backup_bindings(
+                &mut conn,
+                vec![binding.clone()],
+                "synthetic-host",
+                root.path()
+            )
+            .await
+            .unwrap()
+            .contains(&binding)
         );
         sqlx::query("INSERT INTO raw.positions(binding,cursor,carry,committed_seq) VALUES($1,'null','{}',0)")
             .bind(&binding.name).execute(&mut conn).await.unwrap();
         assert!(
-            backup_bindings(&mut conn, vec![binding.clone()], "synthetic-host")
-                .await
-                .unwrap()
-                .contains(&binding)
+            backup_bindings(
+                &mut conn,
+                vec![binding.clone()],
+                "synthetic-host",
+                root.path()
+            )
+            .await
+            .unwrap()
+            .contains(&binding)
         );
         for (valid, cursor) in [(true, empty), (false, malformed)] {
             sqlx::query("UPDATE raw.positions SET cursor=$2 WHERE binding=$1")
@@ -104,7 +114,13 @@ async fn backup_keeps_configured_native_inputs_after_an_empty_poll(db: devkit::p
                 .execute(&mut conn)
                 .await
                 .unwrap();
-            let result = backup_bindings(&mut conn, vec![binding.clone()], "synthetic-host").await;
+            let result = backup_bindings(
+                &mut conn,
+                vec![binding.clone()],
+                "synthetic-host",
+                root.path(),
+            )
+            .await;
             if !valid {
                 assert!(
                     result
@@ -159,6 +175,7 @@ async fn backup_keeps_same_named_native_spool_separate_from_historical_lake_file
         &mut conn,
         vec![native.clone(), old.clone()],
         "synthetic-host",
+        root.path(),
     )
     .await
     .unwrap();
@@ -169,7 +186,7 @@ async fn backup_keeps_same_named_native_spool_separate_from_historical_lake_file
     );
     // Retained native state remains an obligation even when no longer configured.
     assert_eq!(
-        backup_bindings(&mut conn, vec![], "synthetic-host")
+        backup_bindings(&mut conn, vec![], "synthetic-host", root.path())
             .await
             .unwrap(),
         vec![native]
@@ -196,11 +213,16 @@ async fn backup_refuses_unresolved_or_contradictory_retained_binding_identity(
             .is_none()
     );
     assert!(
-        backup_bindings(&mut conn, vec![binding.clone()], "synthetic-host")
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("disagrees")
+        backup_bindings(
+            &mut conn,
+            vec![binding.clone()],
+            "synthetic-host",
+            root.path()
+        )
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("disagrees")
     );
     sqlx::query("UPDATE raw.positions SET cursor='{}' WHERE binding=$1")
         .bind(&binding.name)
@@ -208,18 +230,23 @@ async fn backup_refuses_unresolved_or_contradictory_retained_binding_identity(
         .await
         .unwrap();
     assert!(
-        backup_bindings(&mut conn, vec![], "synthetic-host")
+        backup_bindings(&mut conn, vec![], "synthetic-host", root.path())
             .await
             .unwrap_err()
             .to_string()
             .contains("no material evidence")
     );
     assert!(
-        backup_bindings(&mut conn, vec![binding.clone()], "synthetic-host")
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("no material evidence")
+        backup_bindings(
+            &mut conn,
+            vec![binding.clone()],
+            "synthetic-host",
+            root.path()
+        )
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("no material evidence")
     );
     sqlx::query("UPDATE raw.positions SET cursor=$2 WHERE binding=$1")
         .bind(&binding.name)
@@ -228,7 +255,7 @@ async fn backup_refuses_unresolved_or_contradictory_retained_binding_identity(
         .await
         .unwrap();
     assert!(
-        backup_bindings(&mut conn, vec![], "synthetic-host")
+        backup_bindings(&mut conn, vec![], "synthetic-host", root.path())
             .await
             .unwrap_err()
             .to_string()
