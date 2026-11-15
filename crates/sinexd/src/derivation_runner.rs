@@ -198,7 +198,6 @@ impl DerivationRunner {
             }))
             .collect();
         let mut runs = BTreeMap::new();
-        let mut previous_orders = BTreeMap::new();
         for d in &catalog {
             let name = d.name.clone();
             let version = d.version.to_string();
@@ -212,13 +211,15 @@ impl DerivationRunner {
             };
             let run = runs::start(&mut read, &manifest, host).await?;
             runs.insert(name.clone(), run);
-            if d.kind == "per_event" {
-                previous_orders.insert(
-                    name.clone(),
-                    derivations::latest_reading_order(&mut read, &name).await?,
-                );
-            }
         }
+        let per_event_names = catalog
+            .iter()
+            .filter(|d| d.kind == "per_event")
+            .map(|d| d.name.clone())
+            .collect::<Vec<_>>();
+        let previous_orders =
+            derivations::latest_reading_orders(&mut read, &per_event_names).await?;
+
         let ranks = ranks(&catalog);
         let mut runner = Self {
             keyed,

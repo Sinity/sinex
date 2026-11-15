@@ -9,7 +9,7 @@ use sinex_model::{
     RecordState, ReplaceRule, TimeQuality, Timestamp, TsOrig,
 };
 use sqlx::PgConnection;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -912,17 +912,24 @@ pub(crate) async fn live_at(
     Ok(out)
 }
 
-/// The largest stored reading order of this producer, before a new run.
-pub async fn latest_reading_order(conn: &mut PgConnection, producer: &str) -> Result<i64> {
-    // Admission and tombstoning keep runs.events equal to stored event rows.
-    // Empty runs therefore cannot affect the maximum or require history reads.
-    Ok(sqlx::query_scalar!(
-        r#"SELECT coalesce(max(e.reading_order), 0) AS "order!"
-           FROM core.events e JOIN core.runs r ON r.id = e.run_id WHERE r.name = $1 AND r.events > 0"#,
-        producer,
+/// Historical reading-order maxima for the requested producers, before new runs.
+pub async fn latest_reading_orders(
+    conn: &mut PgConnection,
+    producers: &[String],
+) -> Result<BTreeMap<String, i64>> {
+    if producers.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    // Admission and tombstoning keep runs.events equal to retained event rows.
+    // Empty runs need no history; archived/replaced readings still own maxima.
+    Ok(
+        sqlx::query_file!("src/derivations/latest_reading_orders.sql", producers)
+            .fetch_all(conn)
+            .await?
+            .into_iter()
+            .map(|r| (r.name, r.order))
+            .collect(),
     )
-    .fetch_one(conn)
-    .await?)
 }
 
 /// The highest commit sequence so far.
