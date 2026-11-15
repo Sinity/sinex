@@ -1105,7 +1105,7 @@ async fn publisher_survives(between_pages: bool) {
     };
     config
         .metadata
-        .insert("sinex_confirmed_contract".into(), "4".into());
+        .insert("sinex_confirmed_contract".into(), "5".into());
     config.metadata.insert(
         "sinex_history_origin".into(),
         serde_json::to_string(&origin).unwrap(),
