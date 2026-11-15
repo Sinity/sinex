@@ -240,7 +240,7 @@ async fn backup_leaves_staged_native_directories_alone_and_refuses_unreadable_sp
     let (_, stage) = call_unbounded(
         &w,
         Some(OPERATOR),
-        json!({"method": "stage", "path": [staged], "parser": ["hyprland-socket2"], "follow": true}),
+        json!({"method": "stage", "path": [staged], "parser": ["hyprland"], "follow": true}),
     )
     .await;
     assert_eq!(stage["result"]["result"], "ok", "{stage}");
