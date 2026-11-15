@@ -85,7 +85,7 @@ fn removal_readers_require_original_locations_before_finishing_restore() {
             .restore_memory(
                 &facts,
                 None,
-                Some(crate::drivers::dir_snapshot::saved_through(&facts, None).unwrap())
+                Some(crate::drivers::dir_snapshot::saved_through(&facts).unwrap())
             )
             .unwrap()
     );
@@ -110,7 +110,7 @@ fn removal_readers_require_original_locations_before_finishing_restore() {
             .restore_memory(
                 &complete,
                 None,
-                Some(crate::drivers::dir_snapshot::saved_through(&complete, None).unwrap())
+                Some(crate::drivers::dir_snapshot::saved_through(&complete).unwrap())
             )
             .unwrap()
     );

@@ -28,8 +28,7 @@ impl DirState {
         admitted: Option<u64>,
         removed_at_source: bool,
     ) -> Result<bool, DriverError> {
-        let manifest = anchor.map(|anchor| &anchor.manifest);
-        let saved_through = crate::drivers::dir_snapshot::saved_through(memory, manifest)?;
+        let saved_through = crate::drivers::dir_snapshot::saved_through(memory)?;
         let admitted = admitted.ok_or_else(|| {
             DriverError::Cursor("directory memory has no admitted-prefix evidence".into())
         })?;
@@ -57,7 +56,7 @@ impl DirState {
                 )?;
             }
         }
-        self.remember_saved(memory, manifest, saved_through)?;
+        self.remember_saved(memory, saved_through)?;
         self.saved_memory = true;
         Ok(removed_at_source && self.check_locations().is_err())
     }
@@ -133,109 +132,43 @@ impl DirState {
     }
 
     /// Remember the files of a saved memory that no newer bundle decided.
-    pub fn remember_saved(
-        &mut self,
-        memory: &[u8],
-        anchor: Option<&sinex_model::Manifest>,
-        through: u64,
-    ) -> Result<(), DriverError> {
-        if saved_through(memory, anchor)? != through {
+    pub fn remember_saved(&mut self, memory: &[u8], through: u64) -> Result<(), DriverError> {
+        if saved_through(memory)? != through {
             return Err(damaged());
         }
-        let mut rest = memory;
-        let current = rest.starts_with(MEMORY_TAG);
-        let historical = if current {
-            rest = &rest[MEMORY_TAG.len() + 8..];
-            None
-        } else {
-            Some(anchor.and_then(format::stored_format).ok_or_else(|| {
-                DriverError::Cursor(
-                    "untagged directory memory needs its immutable directory material format"
-                        .into(),
-                )
-            })?)
-        };
+        let mut rest = &memory[MEMORY_TAG.len() + 8..];
         let mut files = HashMap::new();
         let mut locations = HashMap::new();
-        if current {
-            let count = u64::from_le_bytes(take(&mut rest)?);
-            for _ in 0..count {
-                let path = read_path(&mut rest)?;
-                let file = match take::<1>(&mut rest)? {
-                    [0] => None,
-                    [1] => Some(FileFacts {
-                        size: u64::from_le_bytes(take(&mut rest)?),
-                        hash: take(&mut rest)?,
-                        modified_ns: read_time(&mut rest)?,
-                        changed_ns: read_time(&mut rest)?,
-                    }),
-                    _ => return Err(damaged()),
-                };
-                if files.insert(path, file).is_some() {
-                    return Err(damaged());
-                }
-            }
-            let count = u64::from_le_bytes(take(&mut rest)?);
-            for _ in 0..count {
-                let path = read_path(&mut rest)?;
-                let location = RecordLocation {
-                    material: MaterialId(uuid::Uuid::from_bytes(take(&mut rest)?)),
-                    anchor: u64::from_le_bytes(take(&mut rest)?),
-                };
-                if locations.insert(path, location).is_some() {
-                    return Err(damaged());
-                }
-            }
-            if !rest.is_empty() {
+        let count = u64::from_le_bytes(take(&mut rest)?);
+        for _ in 0..count {
+            let path = read_path(&mut rest)?;
+            let file = match take::<1>(&mut rest)? {
+                [0] => None,
+                [1] => Some(FileFacts {
+                    size: u64::from_le_bytes(take(&mut rest)?),
+                    hash: take(&mut rest)?,
+                    modified_ns: read_time(&mut rest)?,
+                    changed_ns: read_time(&mut rest)?,
+                }),
+                _ => return Err(damaged()),
+            };
+            if files.insert(path, file).is_some() {
                 return Err(damaged());
             }
-        } else {
-            while !rest.is_empty() {
-                let length = u32::from_le_bytes(take(&mut rest)?);
-                if length == LOCATIONS {
-                    while !rest.is_empty() {
-                        let path = read_path(&mut rest)?;
-                        let location = RecordLocation {
-                            material: MaterialId(uuid::Uuid::from_bytes(take(&mut rest)?)),
-                            anchor: u64::from_le_bytes(take(&mut rest)?),
-                        };
-                        if locations.insert(path, location).is_some() {
-                            return Err(damaged());
-                        }
-                    }
-                    break;
-                }
-                let path = PathBuf::from(std::ffi::OsString::from_vec(
-                    take_slice(&mut rest, length as usize)?.to_vec(),
-                ));
-                let file = match take::<1>(&mut rest)? {
-                    [0] => None,
-                    [1] => {
-                        let size = u64::from_le_bytes(take(&mut rest)?);
-                        let time = i128::from_le_bytes(take(&mut rest)?);
-                        let hash = take(&mut rest)?;
-                        Some(match historical.expect("untagged context") {
-                            format::DirectoryFormat::Tar => FileFacts {
-                                size,
-                                hash,
-                                modified_ns: None,
-                                changed_ns: Some(time),
-                            },
-                            format::DirectoryFormat::FramedBundle => FileFacts {
-                                size,
-                                hash,
-                                modified_ns: Some(time),
-                                changed_ns: None,
-                            },
-                        })
-                    }
-                    _ => return Err(damaged()),
-                };
-                if files.insert(path, file).is_some() {
-                    return Err(damaged());
-                }
+        }
+        let count = u64::from_le_bytes(take(&mut rest)?);
+        for _ in 0..count {
+            let path = read_path(&mut rest)?;
+            let location = RecordLocation {
+                material: MaterialId(uuid::Uuid::from_bytes(take(&mut rest)?)),
+                anchor: u64::from_le_bytes(take(&mut rest)?),
+            };
+            if locations.insert(path, location).is_some() {
+                return Err(damaged());
             }
-            self.checkpoint_pending = true;
+        }
+        if !rest.is_empty() {
+            return Err(damaged());
         }
         for (path, file) in files {
             if self.remembered.insert(path.clone()) {
@@ -323,10 +256,6 @@ impl DirState {
     }
 }
 
-/// Where the saved file facts end and the saved locations begin: a path
-/// length no path has.
-const LOCATIONS: u32 = u32::MAX;
-
 fn damaged() -> DriverError {
     DriverError::Cursor("saved directory memory is damaged".into())
 }
@@ -344,25 +273,13 @@ fn take<const N: usize>(rest: &mut &[u8]) -> Result<[u8; N], DriverError> {
     Ok(take_slice(rest, N)?.try_into().expect("N bytes"))
 }
 
-/// One current cache encoding. Predecessor untagged tuples are read only
-/// with the immutable anchor material that gives their timestamps meaning.
+/// The saved memory's encoding: this tag, the admitted position it was saved
+/// through, then the file facts and the removal locations.
 const MEMORY_TAG: &[u8] = b"SXDIR\0\x01\0";
 
-pub(crate) fn saved_through(
-    memory: &[u8],
-    anchor: Option<&sinex_model::Manifest>,
-) -> Result<u64, DriverError> {
-    if let Some(mut rest) = memory.strip_prefix(MEMORY_TAG) {
-        return Ok(u64::from_le_bytes(take(&mut rest)?));
-    }
-    let anchor = anchor
-        .filter(|anchor| format::stored_format(anchor).is_some())
-        .ok_or_else(|| {
-            DriverError::Cursor(
-                "untagged directory memory needs its immutable directory material format".into(),
-            )
-        })?;
-    Ok(records(anchor)?.last().map_or(0, |(_, end)| *end as u64))
+pub(crate) fn saved_through(memory: &[u8]) -> Result<u64, DriverError> {
+    let mut rest = memory.strip_prefix(MEMORY_TAG).ok_or_else(damaged)?;
+    Ok(u64::from_le_bytes(take(&mut rest)?))
 }
 
 fn read_path(rest: &mut &[u8]) -> Result<PathBuf, DriverError> {

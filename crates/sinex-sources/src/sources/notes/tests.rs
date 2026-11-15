@@ -383,7 +383,7 @@ fn native_note_paths_stay_distinct_after_reader_memory_and_removal() {
     };
     let mut restarted = DirState::default();
     restarted
-        .remember_saved(&memory, None, cursor["through"].as_u64().unwrap())
+        .remember_saved(&memory, cursor["through"].as_u64().unwrap())
         .unwrap();
     restarted.finish_remembering();
     std::fs::remove_file(directory.path().join(raw_name)).unwrap();

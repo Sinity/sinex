@@ -512,7 +512,7 @@ fn saved_memory_round_trips_and_newer_bundles_win() {
     state
         .files
         .insert(PathBuf::from("a.md"), Some(known(9, 9, [9; 32])));
-    state.remember_saved(&memory, None, 0).unwrap();
+    state.remember_saved(&memory, 0).unwrap();
     assert_eq!(state.files[Path::new("a.md")], Some(known(9, 9, [9; 32])));
     assert_eq!(
         state.files[Path::new("sub/é.md")],
@@ -521,7 +521,7 @@ fn saved_memory_round_trips_and_newer_bundles_win() {
     assert_eq!(state.files[Path::new("unknown.md")], None);
     assert!(
         DirState::default()
-            .remember_saved(&memory[..memory.len() - 1], None, 0)
+            .remember_saved(&memory[..memory.len() - 1], 0)
             .is_err()
     );
 }
@@ -578,7 +578,7 @@ fn native_names_survive_capture_restart_changes_and_removal() {
         let mut state = DirState::default();
         if saved {
             state
-                .remember_saved(&memory, None, cursor["through"].as_u64().unwrap())
+                .remember_saved(&memory, cursor["through"].as_u64().unwrap())
                 .unwrap();
         } else {
             state
@@ -593,7 +593,7 @@ fn native_names_survive_capture_restart_changes_and_removal() {
     }
     let mut state = DirState::default();
     state
-        .remember_saved(&memory, None, cursor["through"].as_u64().unwrap())
+        .remember_saved(&memory, cursor["through"].as_u64().unwrap())
         .unwrap();
     state.finish_remembering();
     std::fs::write(dir.path().join(&names[0]), "changed bytes").unwrap();

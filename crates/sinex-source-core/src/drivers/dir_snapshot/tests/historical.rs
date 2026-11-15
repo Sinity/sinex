@@ -22,14 +22,24 @@ fn cursor(material: MaterialId, through: usize) -> Value {
         "changed_since_memory":4,"last_complete_scan_ns":1})
 }
 
-fn old_memory(path: &[u8], size: u64, time: i128, hash: [u8; 32]) -> Vec<u8> {
-    let mut bytes = (path.len() as u32).to_le_bytes().to_vec();
-    bytes.extend(path);
-    bytes.push(1);
-    bytes.extend(size.to_le_bytes());
-    bytes.extend(time.to_le_bytes());
-    bytes.extend(hash);
-    bytes
+/// Saved memory for files whose facts came from file-bundle members, which
+/// record modification time and no change time.
+fn bundle_memory(files: &[(&str, &[u8], i128)], through: u64) -> std::sync::Arc<[u8]> {
+    let files = files
+        .iter()
+        .map(|(path, bytes, modified)| {
+            (
+                PathBuf::from(path),
+                Some(FileFacts {
+                    size: bytes.len() as u64,
+                    hash: *blake3::hash(bytes).as_bytes(),
+                    modified_ns: Some(*modified),
+                    changed_ns: None,
+                }),
+            )
+        })
+        .collect();
+    restore::memory_of(&files, &HashMap::new(), through)
 }
 
 #[devkit::test]
@@ -45,38 +55,6 @@ fn predecessor_facts_preserve_mtime_and_exact_admitted_record_boundary() {
     assert!(!state.files.contains_key(Path::new("b.md")));
     assert!(state.checkpoint_pending);
     assert_eq!(manifest.records.unwrap(), [(1, 1), (2, 6)]);
-}
-
-#[devkit::test]
-fn untagged_cache_times_require_the_immutable_anchor_format() {
-    let hash = *blake3::hash(b"alpha").as_bytes();
-    let bytes = old_memory(b"a.md", 5, -17, hash);
-    let old = predecessor(&[("a.md", b"alpha", -17)]);
-    let mut modern = old.clone();
-    modern.media_type = Some("application/x-tar".into());
-    for (anchor, modified, changed) in [(&old, Some(-17), None), (&modern, None, Some(-17))] {
-        let mut state = DirState::default();
-        state.remember_saved(&bytes, Some(anchor), 6).unwrap();
-        let facts = state.files[Path::new("a.md")].unwrap();
-        assert_eq!((facts.modified_ns, facts.changed_ns), (modified, changed));
-        let current = restore::memory_of(&state.files, &state.locations, 6);
-        let mut restarted = DirState::default();
-        restarted.remember_saved(&current, None, 6).unwrap();
-        assert_eq!(restarted.files, state.files);
-        assert!(!restarted.checkpoint_pending);
-    }
-    assert!(
-        DirState::default()
-            .remember_saved(&bytes, None, 6)
-            .unwrap_err()
-            .to_string()
-            .contains("immutable")
-    );
-    assert!(
-        DirState::default()
-            .remember_saved(&bytes, Some(&sinex_model::Manifest::default()), 6)
-            .is_err()
-    );
 }
 
 #[devkit::test]
@@ -138,7 +116,7 @@ fn unchanged_predecessor_input_checkpoints_without_new_material_and_retries_unti
     // A restart after the database committed needs no second observation/material.
     let mut restarted = DirState::default();
     restarted
-        .remember_saved(&progress.memory.as_ref().unwrap().bytes, None, 6)
+        .remember_saved(&progress.memory.as_ref().unwrap().bytes, 6)
         .unwrap();
     restarted.finish_remembering();
     let quiet = d.poll(&progress.cursor, &mut restarted).unwrap();
@@ -234,23 +212,22 @@ fn malformed_predecessor_facts_and_ranges_are_refused() {
 }
 
 #[devkit::test]
-fn only_the_checkpoint_cursor_acknowledges_a_pending_cache_upgrade() {
+fn only_the_checkpoint_cursor_acknowledges_a_pending_memory_save() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("a.md"), b"alpha").unwrap();
     let old = predecessor(&[("a.md", b"alpha", -17)]);
-    let bytes = old_memory(b"a.md", 5, -17, *blake3::hash(b"alpha").as_bytes());
     let crate::Reading::Polled(mut reader) =
         crate::binding::walked(driver(dir.path().to_owned(), 4096))
     else {
         panic!("walked reader")
     };
     let material = MaterialId::new();
-    let anchor = stored_part(material, old, Some(6)).reference;
+    let prior = cursor(material, 6);
+    // Facts taken from a file-bundle part are saved again with change times.
     reader
-        .restore_memory(&bytes, Some(&anchor), Some(6))
+        .restore(&prior, stored_part(material, old, Some(6)))
         .unwrap();
     reader.restored().unwrap();
-    let prior = cursor(material, 6);
     let first = reader.poll(&prior).unwrap();
     assert!(first.material.is_none());
     assert!(first.memory.is_some());
@@ -258,7 +235,7 @@ fn only_the_checkpoint_cursor_acknowledges_a_pending_cache_upgrade() {
     let retry = reader.poll(&prior).unwrap();
     assert!(
         retry.memory.is_some(),
-        "an old or partial ACK cannot clear the upgrade"
+        "an old or partial ACK cannot clear the pending save"
     );
     reader.committed(&retry.cursor_without_material).unwrap();
     let quiet = reader.poll(&retry.cursor_without_material).unwrap();
@@ -308,13 +285,7 @@ fn older_metadata_fills_only_saved_file_locations_within_its_admitted_prefix() {
     let current = MaterialId::new();
     let older = MaterialId::new();
     let anchor = predecessor(&[("a.md", b"alpha", -17), ("b.md", b"beta", -18)]);
-    let mut memory = old_memory(b"a.md", 5, -17, *blake3::hash(b"alpha").as_bytes());
-    memory.extend(old_memory(
-        b"b.md",
-        4,
-        -18,
-        *blake3::hash(b"beta").as_bytes(),
-    ));
+    let memory = bundle_memory(&[("a.md", b"alpha", -17), ("b.md", b"beta", -18)], 6);
     let mut d = driver(dir.path().to_owned(), 4096);
     d.removed_at_source = true;
     let crate::Reading::Polled(mut reader) = crate::binding::walked(d) else {
