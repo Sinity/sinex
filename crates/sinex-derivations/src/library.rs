@@ -49,7 +49,7 @@ impl Keyed for LibraryItems {
                 copy.part_index,
                 event
                     .location()
-                    .map(|(location, index)| (location.anchor, index))
+                    .map(|(location, index)| (location.record_offset, index))
                     .unwrap_or_default(),
             )
         });

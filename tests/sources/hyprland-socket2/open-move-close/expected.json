@@ -1,6 +1,6 @@
 [
   {
-    "anchor": 0,
+    "record_offset": 0,
     "events": [
       {
         "type": "window.opened",
@@ -20,11 +20,11 @@
     ]
   },
   {
-    "anchor": 93,
+    "record_offset": 93,
     "events": []
   },
   {
-    "anchor": 168,
+    "record_offset": 168,
     "events": [
       {
         "type": "window.moved",
@@ -42,7 +42,7 @@
     ]
   },
   {
-    "anchor": 247,
+    "record_offset": 247,
     "events": [
       {
         "type": "window.closed",

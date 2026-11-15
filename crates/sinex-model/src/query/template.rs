@@ -161,7 +161,7 @@ impl Template {
                 Source::Recall { from, to }
             }
         };
-        super::parse::bind_native_syntax(self.relation.clone(), ctx, source, validating)
+        super::parse::bind_template(self.relation.clone(), ctx, source, validating)
     }
 
     /// Spans locate authored text, and do not identify a question.

@@ -62,7 +62,7 @@ fn command(text: &str, i: i64) -> Event {
         Origin::Record {
             location: RecordLocation {
                 material: MaterialId::new(),
-                anchor: 0,
+                record_offset: 0,
             },
             output_index: 0,
         },
@@ -174,7 +174,7 @@ async fn world_with_api(
     let store = std::env::temp_dir().join(format!("sinexd-api-{}", uuid::Uuid::now_v7()));
     let blobs = sinex_store::Blobs::open(&store).unwrap();
     let mut connection = writer::claim(connection).await.unwrap();
-    crate::catalog::install_native_sources(&mut connection)
+    crate::catalog::install_built_in_sources(&mut connection)
         .await
         .unwrap();
     let (handle, queues) = writer::channels();
@@ -872,7 +872,7 @@ async fn sealed_values_need_the_unlocked_operator_and_die_with_their_key(
     e.origin = Origin::Record {
         location: RecordLocation {
             material,
-            anchor: 0,
+            record_offset: 0,
         },
         output_index: 0,
     };

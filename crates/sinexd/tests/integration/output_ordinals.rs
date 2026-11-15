@@ -94,7 +94,7 @@ async fn one_record_keeps_more_than_65535_outputs_and_their_citations(
             Some((
                 RecordLocation {
                     material,
-                    anchor: 0
+                    record_offset: 0
                 },
                 u64::try_from(ordinal).unwrap()
             ))

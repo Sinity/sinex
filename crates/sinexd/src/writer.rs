@@ -1086,7 +1086,7 @@ async fn replay_sequence(
             .await
             .map_err(crate::ingress::Check::write_error)?;
     }
-    let receipt_number = if sequence.ingress.is_some() {
+    let ack_number = if sequence.ingress.is_some() {
         Some(sinex_store::commit_log::reserve_frame_number(&mut tx).await?)
     } else {
         None
@@ -1105,7 +1105,7 @@ async fn replay_sequence(
         if let sinex_model::BatchKind::Ingress(frame) = &mut batch.kind
             && frame.frame.is_empty()
         {
-            frame.receipt_number = receipt_number;
+            frame.ack_number = ack_number;
         }
         outcomes.push(tx.admit(&batch, keys).await?);
     }
@@ -1119,7 +1119,7 @@ async fn replay_sequence(
             &mut tx,
             ingress,
             &outcomes,
-            receipt_number.expect("producer replay reserved a receipt"),
+            ack_number.expect("producer replay reserved a receipt"),
         )
         .await
         .map_err(crate::ingress::Check::write_error)?;

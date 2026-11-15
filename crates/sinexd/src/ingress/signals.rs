@@ -137,7 +137,7 @@ impl Ingest {
                         Origin::Record {
                             location: RecordLocation {
                                 material,
-                                anchor: 0,
+                                record_offset: 0,
                             },
                             output_index: u64::try_from(index).map_err(|_| {
                                 Check::Unavailable("signal output index exceeds u64".into())
@@ -155,7 +155,7 @@ impl Ingest {
             vec![RecordOutcome::Events {
                 location: Some(RecordLocation {
                     material,
-                    anchor: 0,
+                    record_offset: 0,
                 }),
                 events,
             }],

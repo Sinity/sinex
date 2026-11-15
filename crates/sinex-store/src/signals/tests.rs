@@ -55,13 +55,13 @@ async fn public_policy_is_available_only_for_one_committed_config_and_exposes_co
         public_host_policy(&mut conn, "fixture", false, "configured-day-policy", at)
             .await
             .unwrap(),
-        HostPolicyProjection::Unavailable { .. }
+        HostPolicyView::Unavailable { .. }
     ));
     assert!(matches!(
         public_host_policy(&mut conn, "fixture", true, "configured-day-policy", at)
             .await
             .unwrap(),
-        HostPolicyProjection::Pending { .. }
+        HostPolicyView::Pending { .. }
     ));
     let state = checkpoint(at);
     let mut tx = conn.begin().await.unwrap();
@@ -72,14 +72,14 @@ async fn public_policy_is_available_only_for_one_committed_config_and_exposes_co
         .unwrap();
     assert_eq!(
         projection,
-        HostPolicyProjection::Available {
+        HostPolicyView::Available {
             checkpoint_revision: 1,
             settings_identity: "configured-day-policy".into(),
             quiet_hours: Some(::signals::QuietHours {
                 from: 1320,
                 to: 480
             }),
-            interrupt_budget: InterruptBudgetProjection {
+            interrupt_budget: InterruptBudgetView {
                 per_hour: 2,
                 used: 1,
                 remaining: 1,

@@ -1,7 +1,7 @@
 //! Stateless producer admission transport. Capture journals stay with the product that owns them.
 use async_nats::{Client, HeaderMap, Subscriber, jetstream};
 use futures::StreamExt;
-use sinex_protocol::{Acknowledgment, Ingress, ReceiptHint, RecordedPage, RecordedQuery, Subjects};
+use sinex_protocol::{AckHint, Acknowledgment, Ingress, RecordedPage, RecordedQuery, Subjects};
 use std::time::Duration;
 #[derive(Debug, thiserror::Error)]
 pub enum SubmitError {
@@ -10,7 +10,7 @@ pub enum SubmitError {
     #[error(transparent)]
     Reply(#[from] crate::replies::ReplyError),
     #[error("no durable receipt for frame {0}")]
-    NoReceipt(String),
+    NoAck(String),
     #[error("Sinex refused encoded custody frame {frame}: {reason}")]
     Refused {
         frame: String,
@@ -20,7 +20,7 @@ pub enum SubmitError {
     /// The authenticated owner recorded a different logical body under this
     /// producer's exact frame name. This evidence is not an ACK for the offer.
     #[error("Sinex recorded different bytes for frame {frame}")]
-    ReceiptConflict {
+    AckConflict {
         frame: String,
         offered_hash: String,
         receipt: Box<Acknowledgment>,
@@ -139,16 +139,13 @@ pub fn content_hash(frame: &Ingress) -> Result<String, SubmitError> {
 }
 /// Resolve an owned receipt fetched on this authenticated producer's RPC.
 /// A conflicting prior receipt is evidence only, never admission of the offer.
-pub fn check_receipt(
-    frame: &Ingress,
-    receipt: Acknowledgment,
-) -> Result<Acknowledgment, SubmitError> {
-    check_receipt_for(frame, receipt, content_hash(frame)?, None)
+pub fn check_ack(frame: &Ingress, receipt: Acknowledgment) -> Result<Acknowledgment, SubmitError> {
+    check_ack_for(frame, receipt, content_hash(frame)?, None)
 }
 
 // Only the submitter has the exact transmitted envelope digest. Recovered
 // receipts without that evidence must retain the offered frame identity.
-fn check_receipt_for(
+fn check_ack_for(
     frame: &Ingress,
     receipt: Acknowledgment,
     expected: String,
@@ -171,9 +168,9 @@ fn check_receipt_for(
     }
     if receipt.content_hash.as_deref() != Some(expected.as_str()) {
         if receipt.number <= 0 {
-            return Err(SubmitError::NoReceipt(frame.frame().into()));
+            return Err(SubmitError::NoAck(frame.frame().into()));
         }
-        return Err(SubmitError::ReceiptConflict {
+        return Err(SubmitError::AckConflict {
             frame: frame.frame().into(),
             offered_hash: expected,
             receipt: Box::new(receipt),
@@ -234,7 +231,7 @@ pub async fn submit_frame(
         .into_iter()
         .find(correlated)
         {
-            return check_receipt_for(frame, receipt, logical_hash, Some(&malformed));
+            return check_ack_for(frame, receipt, logical_hash, Some(&malformed));
         }
         // A duplicate may still be queued or awaiting admission. With no
         // owned receipt, retain the ordinary hint and final lookup path.
@@ -243,7 +240,7 @@ pub async fn submit_frame(
     let bad = blake3::hash(malformed.as_bytes()).to_hex().to_string();
     let hint = tokio::time::timeout(idle, async {
         while let Some(message) = acks.next().await {
-            if let Ok(hint) = serde_json::from_slice::<ReceiptHint>(&message.payload)
+            if let Ok(hint) = serde_json::from_slice::<AckHint>(&message.payload)
                 && (hint.frame_hash == expected || hint.frame_hash == bad)
             {
                 return Some(hint);
@@ -270,8 +267,8 @@ pub async fn submit_frame(
     let receipt = receipts
         .into_iter()
         .find(correlated)
-        .ok_or_else(|| SubmitError::NoReceipt(id.into()))?;
-    check_receipt_for(frame, receipt, logical_hash, Some(&malformed))
+        .ok_or_else(|| SubmitError::NoAck(id.into()))?;
+    check_ack_for(frame, receipt, logical_hash, Some(&malformed))
 }
 
 /// Transfer encoded custody under the original authenticated frame namespace.

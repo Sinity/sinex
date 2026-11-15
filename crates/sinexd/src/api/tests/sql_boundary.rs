@@ -34,7 +34,7 @@ async fn sql_cannot_change_grants_or_escape_its_role_through_nested_queries(
         "SELECT settings FROM raw.bindings",
         "SELECT examples FROM derivation.comparisons",
         "SELECT secret FROM core.query_cursor_key",
-        "SELECT secret FROM core.owner_protocol_key",
+        "SELECT secret FROM core.store_secret",
         "SELECT state FROM core.signal_checkpoints",
     ] {
         let (_, reply) =

@@ -5,7 +5,7 @@ use super::*;
 type NoteReadings = Vec<(String, Value, i64, Vec<u8>, i64)>;
 
 async fn current_notes(conn: &mut PgConnection) -> NoteReadings {
-    sqlx::query_as("SELECT e.payload->>'path', e.payload->'text', e.anchor, e.record_hash, e.reading_order FROM core.live_equivalence l JOIN core.events e ON e.id=l.event_id WHERE e.event_type='note.document' AND e.record_state='present' ORDER BY e.payload->>'path'")
+    sqlx::query_as("SELECT e.payload->>'path', e.payload->'text', e.record_offset, e.record_hash, e.reading_order FROM core.live_equivalence l JOIN core.events e ON e.id=l.event_id WHERE e.event_type='note.document' AND e.record_state='present' ORDER BY e.payload->>'path'")
         .fetch_all(conn).await.unwrap()
 }
 
@@ -122,10 +122,10 @@ async fn empty_directory_files_keep_distinct_paths_bytes_and_locations_through_r
     );
     assert_eq!(
         after, before,
-        "replay preserves paths, exact bodies, anchors and record hashes"
+        "replay preserves paths, exact bodies, record offsets and record hashes"
     );
-    let anchors: std::collections::BTreeSet<_> = before.iter().map(|r| r.2).collect();
-    assert_eq!(anchors.len(), 3);
+    let record_offsets: std::collections::BTreeSet<_> = before.iter().map(|r| r.2).collect();
+    assert_eq!(record_offsets.len(), 3);
     assert_ne!(
         before[0].3, before[1].3,
         "equal bytes at distinct paths are distinct readings"

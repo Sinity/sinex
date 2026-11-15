@@ -12,7 +12,7 @@ use serde_json::Value;
 pub struct RecordLocation {
     pub material: MaterialId,
     /// Byte offset of the record's first byte within the material.
-    pub anchor: u64,
+    pub record_offset: u64,
 }
 
 /// Which of two readings of one record is newer. Each source defines it so it

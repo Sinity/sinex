@@ -6,16 +6,16 @@ impl Compiler<'_> {
     /// The SQL of a field, and what kind of value it is.
     pub(super) fn field(&self, cols: &Cols, f: &FieldRef) -> Result<(SqlFragment, Kind)> {
         match (cols, f) {
-            (Cols::Base { .. }, FieldRef::Native(NativeField::Identity)) => {
+            (Cols::Base { .. }, FieldRef::Native(BuiltInField::Identity)) => {
                 let sql = self.positioned(cols, fields::tiebreak(Self::table_of(cols)));
                 Ok((sql, Kind::Typed(FieldType::Text)))
             }
             (Cols::Base { .. }, FieldRef::Native(field)) => {
                 let (start, end, _, known) = self.span_metadata(cols)?;
                 let value = match field {
-                    NativeField::SpanStart => start,
-                    NativeField::SpanEnd => end,
-                    NativeField::Snippet | NativeField::Identity => {
+                    BuiltInField::SpanStart => start,
+                    BuiltInField::SpanEnd => end,
+                    BuiltInField::Snippet | BuiltInField::Identity => {
                         return Err(invalid("snippet is generated with its search relation"));
                     }
                 };

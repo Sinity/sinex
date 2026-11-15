@@ -60,7 +60,7 @@ impl Keyed for ExactTargets {
 #[devkit::test]
 async fn exact_input_hook_runs_without_a_temporal_window(db: devkit::pg::TestDatabase) {
     use sinex_model::event_types::operator::LogEntry;
-    let make = |text: &str, anchor| {
+    let make = |text: &str, record_offset| {
         Event::build(
             &LogEntry {
                 written_at: None,
@@ -68,7 +68,7 @@ async fn exact_input_hook_runs_without_a_temporal_window(db: devkit::pg::TestDat
                 text: text.into(),
             },
             "fixture.exact",
-            location(anchor),
+            location(record_offset),
             ReadingOrder(1),
             *blake3::hash(text.as_bytes()).as_bytes(),
             Class::Open,

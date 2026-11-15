@@ -1,6 +1,6 @@
 [
   {
-    "anchor": 0,
+    "record_offset": 0,
     "events": [
       {
         "type": "browser.url",
@@ -23,7 +23,7 @@
     ]
   },
   {
-    "anchor": 135,
+    "record_offset": 135,
     "events": [
       {
         "type": "browser.url",

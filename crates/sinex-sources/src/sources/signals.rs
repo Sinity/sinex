@@ -26,7 +26,7 @@ pub const SPEC: SourceSpec = SourceSpec {
 };
 
 /// Host JSON lines and a producer's complete JSON frame share exact byte
-/// anchors, including pretty-printed frames and an unterminated final value.
+/// record offsets, including pretty-printed frames and an unterminated final value.
 fn frame_complete(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
     frame(bytes, true)
 }

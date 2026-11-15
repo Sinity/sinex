@@ -113,7 +113,7 @@ fn year_is_an_integer_and_native_commands_use_the_operation_boundary() {
         "trace sinex:ev/0190a0b0-0000-7000-8000-000000000001",
     ] {
         assert!(bind(command, &ctx()).is_err(), "{command}");
-        native_q(command);
+        parse_query(command);
     }
 }
 

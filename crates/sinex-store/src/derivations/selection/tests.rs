@@ -27,7 +27,7 @@ fn event(kind: &str, n: u32) -> Event {
         Origin::Record {
             location: RecordLocation {
                 material: MaterialId::new(),
-                anchor: 0,
+                record_offset: 0,
             },
             output_index: 0,
         },
@@ -251,9 +251,9 @@ async fn initial_input_state_reads_the_latest_input_commit_across_compressed_his
 ) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     // Matching records precede and interleave a long unrelated tail.
-    conn.execute("INSERT INTO core.events(id,event_type,source,run_id,material_id,anchor,ts_quality,commit_seq,payload,reading_order,record_hash,class)
+    conn.execute("INSERT INTO core.events(id,event_type,source,run_id,material_id,record_offset,ts_quality,commit_seq,payload,reading_order,record_hash,class)
       SELECT ('01700000-0000-7000-8000-'||lpad(to_hex(g),12,'0'))::uuid,CASE WHEN g<=16 THEN 'command.imported' ELSE 'command.executed' END,'synthetic',uuidv7(),uuidv7(),0,'unknown',g,jsonb_build_object('synthetic',repeat(md5(g::text),32)),1,decode(repeat('01',32),'hex'),'open' FROM generate_series(1,8208)g;
-      INSERT INTO core.events(id,event_type,source,run_id,material_id,anchor,ts_quality,commit_seq,payload,reading_order,record_hash,class)
+      INSERT INTO core.events(id,event_type,source,run_id,material_id,record_offset,ts_quality,commit_seq,payload,reading_order,record_hash,class)
       SELECT uuidv7(),CASE WHEN g<=256 THEN 'command.imported' ELSE 'command.executed' END,'synthetic',uuidv7(),uuidv7(),0,'unknown',8208+g,jsonb_build_object('synthetic',repeat(md5(g::text),32)),1,decode(repeat('01',32),'hex'),'open' FROM generate_series(1,8448)g;
       UPDATE core.counters SET value=16656 WHERE name='commit_seq'; ANALYZE core.events").await.unwrap();
     let cases: [(Vec<String>, i64); 4] = [
@@ -285,7 +285,7 @@ async fn initial_input_state_reads_the_latest_input_commit_across_compressed_his
     }
     let baseline = input_state(&mut conn, &kinds()).await.unwrap();
     // New unrelated rows and lifecycle changes leave the comparison current.
-    conn.execute("INSERT INTO core.events(id,event_type,source,run_id,material_id,anchor,ts_quality,commit_seq,payload,reading_order,record_hash,class)
+    conn.execute("INSERT INTO core.events(id,event_type,source,run_id,material_id,record_offset,ts_quality,commit_seq,payload,reading_order,record_hash,class)
       SELECT uuidv7(),'command.executed','synthetic',uuidv7(),uuidv7(),0,'unknown',16656+g,'{}',1,decode(repeat('02',32),'hex'),'open' FROM generate_series(1,128)g;
       INSERT INTO audit.archive_changes(change_seq,event_id,commit_seq,archived,reason)
       SELECT row_number() OVER(),id,16785,true,'archive' FROM core.events WHERE commit_seq>16656;

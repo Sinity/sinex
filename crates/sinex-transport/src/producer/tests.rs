@@ -35,12 +35,12 @@ fn conflict_keeps_the_prior_owned_receipt_distinct_from_the_offered_body() {
         failures: vec![],
     };
     let saved = receipt(&prior);
-    assert_eq!(check_receipt(&prior, saved.clone()).unwrap(), saved);
-    let SubmitError::ReceiptConflict {
+    assert_eq!(check_ack(&prior, saved.clone()).unwrap(), saved);
+    let SubmitError::AckConflict {
         frame,
         offered_hash,
         receipt: actual,
-    } = check_receipt(&offered, saved.clone()).unwrap_err()
+    } = check_ack(&offered, saved.clone()).unwrap_err()
     else {
         panic!("typed conflict evidence")
     };
@@ -58,7 +58,7 @@ fn foreign_frame_or_missing_durable_identity_never_exposes_a_prior_receipt_as_co
     };
     let mut foreign = receipt(&offered);
     foreign.frame = "foreign-frame".into();
-    let error = check_receipt(&offered, foreign).unwrap_err();
+    let error = check_ack(&offered, foreign).unwrap_err();
     assert!(matches!(
         error,
         SubmitError::Refused {
@@ -71,8 +71,8 @@ fn foreign_frame_or_missing_durable_identity_never_exposes_a_prior_receipt_as_co
     unknown.number = 0;
     unknown.content_hash = None;
     assert!(matches!(
-        check_receipt(&offered, unknown),
-        Err(SubmitError::NoReceipt(_))
+        check_ack(&offered, unknown),
+        Err(SubmitError::NoAck(_))
     ));
 }
 
@@ -95,7 +95,7 @@ fn malformed_receipt_requires_an_invalid_name_and_exact_transmitted_envelope() {
         saved.frame = malformed.clone();
         saved.result = refused(sinex_model::FrameRefusal::Malformed, "invalid frame name");
         let check = |receipt| {
-            check_receipt_for(
+            check_ack_for(
                 &frame,
                 receipt,
                 content_hash(&frame).unwrap(),
@@ -104,13 +104,13 @@ fn malformed_receipt_requires_an_invalid_name_and_exact_transmitted_envelope() {
         };
         assert_eq!(check(saved.clone()).unwrap(), saved);
         // The public recovery helper has no transmitted-envelope evidence.
-        assert!(check_receipt(&frame, saved.clone()).is_err());
+        assert!(check_ack(&frame, saved.clone()).is_err());
         let other_envelope = format!(
             "malformed/{}",
             blake3::hash(b"different transmitted bytes").to_hex()
         );
         assert!(
-            check_receipt_for(
+            check_ack_for(
                 &frame,
                 saved.clone(),
                 content_hash(&frame).unwrap(),
@@ -143,7 +143,7 @@ fn malformed_receipt_requires_an_invalid_name_and_exact_transmitted_envelope() {
     saved.frame = malformed.clone();
     saved.result = refused(sinex_model::FrameRefusal::Malformed, "invalid content");
     assert!(
-        check_receipt_for(
+        check_ack_for(
             &valid,
             saved,
             content_hash(&valid).unwrap(),
@@ -236,7 +236,7 @@ impl Duplicate {
             owner
                 .publish(
                     subjects.ack(PRODUCER),
-                    serde_json::to_vec(&ReceiptHint {
+                    serde_json::to_vec(&AckHint {
                         number: 1,
                         frame_hash: blake3::hash(frame.frame().as_bytes()).to_hex().to_string(),
                     })
@@ -371,7 +371,7 @@ async fn duplicate_without_owner_admission_still_waits_for_the_durable_receipt()
         owner
             .publish(
                 ack_subject,
-                serde_json::to_vec(&ReceiptHint {
+                serde_json::to_vec(&AckHint {
                     number: 1,
                     frame_hash: blake3::hash(name.as_bytes()).to_hex().to_string(),
                 })
@@ -411,7 +411,7 @@ async fn duplicate_receipt_with_different_bytes_remains_typed_conflict_evidence(
         events: vec![],
         failures: vec![],
     };
-    let SubmitError::ReceiptConflict {
+    let SubmitError::AckConflict {
         frame,
         offered_hash,
         receipt,

@@ -172,7 +172,7 @@ async fn signal_observations_do_not_feed_standing_event_queries(db: devkit::pg::
         Origin::Record {
             location: RecordLocation {
                 material: MaterialId::new(),
-                anchor: 0,
+                record_offset: 0,
             },
             output_index: 0,
         },
@@ -418,7 +418,7 @@ async fn keyless_native_coordinates_survive_rereading_and_distinguish_outputs(
             Origin::Record {
                 location: RecordLocation {
                     material,
-                    anchor: 17,
+                    record_offset: 17,
                 },
                 output_index: output,
             },

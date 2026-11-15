@@ -14,7 +14,7 @@ fn source_reading(source: &str, n: u64, prefix: &str) -> Event {
         Origin::Record {
             location: RecordLocation {
                 material: MaterialId::new(),
-                anchor: n,
+                record_offset: n,
             },
             output_index: 0,
         },

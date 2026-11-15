@@ -4,7 +4,10 @@ use crate::drivers::append_file::tests::SMALL;
 #[devkit::test]
 fn newest_first_tail_preserves_duplicate_locations() {
     let material = MaterialId::new();
-    let location = |anchor| RecordLocation { material, anchor };
+    let location = |record_offset| RecordLocation {
+        material,
+        record_offset,
+    };
     let mut tail = AppendTail::bounded(SMALL);
     assert!(tail.push_raw(location(8), b"same").unwrap());
     assert!(tail.push_raw(location(0), b"same").unwrap());
@@ -20,10 +23,16 @@ fn newest_first_tail_preserves_duplicate_locations() {
 fn completed_tail_obeys_live_record_and_byte_limits_without_keeping_raw_bodies() {
     let material = MaterialId::new();
     let mut tail = AppendTail::bounded(SMALL);
-    for anchor in (0..SMALL.records as u64).rev() {
+    for record_offset in (0..SMALL.records as u64).rev() {
         assert!(
-            tail.push_raw(RecordLocation { material, anchor }, b"x")
-                .unwrap()
+            tail.push_raw(
+                RecordLocation {
+                    material,
+                    record_offset
+                },
+                b"x"
+            )
+            .unwrap()
         );
     }
     assert!(
@@ -31,7 +40,7 @@ fn completed_tail_obeys_live_record_and_byte_limits_without_keeping_raw_bodies()
             .push_raw(
                 RecordLocation {
                     material,
-                    anchor: 1000
+                    record_offset: 1000
                 },
                 b"x"
             )
@@ -44,7 +53,7 @@ fn completed_tail_obeys_live_record_and_byte_limits_without_keeping_raw_bodies()
         tail.push_raw(
             RecordLocation {
                 material,
-                anchor: 1
+                record_offset: 1
             },
             &large
         )
@@ -55,7 +64,7 @@ fn completed_tail_obeys_live_record_and_byte_limits_without_keeping_raw_bodies()
             .push_raw(
                 RecordLocation {
                     material,
-                    anchor: 0
+                    record_offset: 0
                 },
                 b"x"
             )
@@ -69,7 +78,7 @@ fn completed_tail_obeys_live_record_and_byte_limits_without_keeping_raw_bodies()
         tail.push_raw(
             RecordLocation {
                 material,
-                anchor: 0
+                record_offset: 0
             },
             b""
         )
@@ -79,7 +88,7 @@ fn completed_tail_obeys_live_record_and_byte_limits_without_keeping_raw_bodies()
         tail.push_raw(
             RecordLocation {
                 material,
-                anchor: u64::MAX
+                record_offset: u64::MAX
             },
             b"x"
         )

@@ -12,7 +12,7 @@ struct Offers {
     hashes: Vec<Vec<u8>>,
     equivalence: Vec<Option<String>>,
     materials: Vec<Option<Uuid>>,
-    anchors: Vec<Option<i64>>,
+    record_offsets: Vec<Option<i64>>,
     outputs: Vec<Option<i64>>,
     expected: Bases,
 }
@@ -23,14 +23,14 @@ impl Offers {
     fn push(&mut self, n: usize, location: bool, expected: Option<i64>) {
         let eq = (!location).then(|| format!("synthetic-key-{n}"));
         let mat = location.then(|| material(n));
-        let anchor = location.then_some(n as i64);
+        let record_offset = location.then_some(n as i64);
         let output = location.then_some((n % 2) as i64);
         let record = match &eq {
             Some(key) => format!("key:{key}"),
             None => format!(
                 "record:{}:{}:{}",
                 mat.unwrap(),
-                anchor.unwrap(),
+                record_offset.unwrap(),
                 output.unwrap()
             ),
         };
@@ -40,7 +40,7 @@ impl Offers {
         self.hashes.push(hash.to_vec());
         self.equivalence.push(eq);
         self.materials.push(mat);
-        self.anchors.push(anchor);
+        self.record_offsets.push(record_offset);
         self.outputs.push(output);
         self.expected
             .insert((SOURCE.into(), KIND.into(), hash), expected);
@@ -55,7 +55,7 @@ async fn seed(conn: &mut PgConnection, offers: &Offers) -> Bases {
         &offers.hashes,
         &offers.equivalence as &[Option<String>],
         &offers.materials as &[Option<Uuid>],
-        &offers.anchors as &[Option<i64>],
+        &offers.record_offsets as &[Option<i64>],
         &offers.outputs as &[Option<i64>]
     )
     .fetch_all(conn)
@@ -76,7 +76,7 @@ async fn missing_order_seed_takes_maxima_from_history_and_retained_counters(
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     // Half the selected history uses equivalence keys, half record locations.
     // The oldest rows own maxima, including an archived and a removed reading.
-    conn.execute("INSERT INTO core.events(id,event_type,source,run_id,material_id,anchor,output_index,parents,ts_quality,commit_seq,payload,equivalence_key,reading_order,record_hash,class,record_state)
+    conn.execute("INSERT INTO core.events(id,event_type,source,run_id,material_id,record_offset,output_index,parents,ts_quality,commit_seq,payload,equivalence_key,reading_order,record_hash,class,record_state)
       SELECT ('01700000-0000-7000-8000-'||lpad(to_hex(g+1),12,'0'))::uuid,'synthetic.seed_record','synthetic.seed',uuidv7(),
         CASE WHEN g>=4096 THEN ('01900000-0000-7000-8000-'||lpad(to_hex(g%64),12,'0'))::uuid END,
         CASE WHEN g>=4096 THEN g%64 END,g%2,

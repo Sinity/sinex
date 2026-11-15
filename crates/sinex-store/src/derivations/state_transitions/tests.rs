@@ -44,7 +44,7 @@ fn focus(seconds: i64, scope: Option<&str>, subject: Option<&str>, class: Option
         Origin::Record {
             location: RecordLocation {
                 material: MaterialId::new(),
-                anchor: 0,
+                record_offset: 0,
             },
             output_index: 0,
         },
@@ -197,7 +197,7 @@ async fn set_bounds_keep_workspace_fallback_and_exclude_unknown_event_time(
                 Origin::Record {
                     location: RecordLocation {
                         material: MaterialId::new(),
-                        anchor: 0,
+                        record_offset: 0,
                     },
                     output_index: 0,
                 },
@@ -219,7 +219,7 @@ async fn set_bounds_keep_workspace_fallback_and_exclude_unknown_event_time(
             Origin::Record {
                 location: RecordLocation {
                     material: MaterialId::new(),
-                    anchor: 0,
+                    record_offset: 0,
                 },
                 output_index: 0,
             },

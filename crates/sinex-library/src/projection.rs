@@ -26,20 +26,26 @@ pub fn rows(values: &[Values]) -> Vec<Row> {
                 state: text(&tag.state),
                 level: text(&tag.level),
                 value: None,
-                supporters: json!({ "applied_by": tag.applied_by, "rejected_by": tag.rejected_by }),
+                supporting_records: json!({ "applied_by": tag.applied_by, "rejected_by": tag.rejected_by }),
             });
         }
         for (name, shown) in &v.properties {
-            let (state, level, value, supporters) = match shown {
+            let (state, level, value, supporting_records) = match shown {
                 Shown::Unknown => continue,
-                Shown::Empty { level, supporters } => {
-                    ("empty", text(level), None, json!(supporters))
-                }
+                Shown::Empty {
+                    level,
+                    supporting_records,
+                } => ("empty", text(level), None, json!(supporting_records)),
                 Shown::Value {
                     value,
                     level,
-                    supporters,
-                } => ("value", text(level), Some(value.clone()), json!(supporters)),
+                    supporting_records,
+                } => (
+                    "value",
+                    text(level),
+                    Some(value.clone()),
+                    json!(supporting_records),
+                ),
                 Shown::Conflict { level, values } => ("conflict", text(level), None, json!(values)),
             };
             out.push(Row {
@@ -50,7 +56,7 @@ pub fn rows(values: &[Values]) -> Vec<Row> {
                 state: state.into(),
                 level,
                 value,
-                supporters,
+                supporting_records,
             });
         }
     }

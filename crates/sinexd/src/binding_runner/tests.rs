@@ -5,7 +5,7 @@ fn config(json: Value) -> Config {
     serde_json::from_value(json).unwrap()
 }
 
-async fn backup_binding_anchor(
+async fn save_binding_with_material(
     conn: &mut PgConnection,
     binding: &Binding,
     parser: &str,
@@ -160,11 +160,11 @@ async fn backup_keeps_same_named_native_spool_separate_from_historical_lake_file
         .unwrap();
     let live = &sources::clipboard::SPEC;
     let old = Binding::of(lake, &historical, Settings::new("synthetic-host"));
-    backup_binding_anchor(&mut conn, &old, lake.parser).await;
+    save_binding_with_material(&mut conn, &old, lake.parser).await;
     let spool = root.path().join("native-spool");
     std::fs::create_dir(&spool).unwrap();
     let native = Binding::of(live, &spool, Settings::new("synthetic-host"));
-    let material = backup_binding_anchor(&mut conn, &native, live.parser).await;
+    let material = save_binding_with_material(&mut conn, &native, live.parser).await;
     sqlx::query("UPDATE raw.positions SET cursor=$2 WHERE binding=$1")
         .bind(&native.name)
         .bind(json!({"segment":0,"inner":{},"part_base":0,"last_material":material}))
@@ -205,7 +205,7 @@ async fn backup_refuses_unresolved_or_contradictory_retained_binding_identity(
         Settings::new("synthetic-host"),
     );
     let material =
-        backup_binding_anchor(&mut conn, &binding, "sinnix-lake:desktop.clipboard").await;
+        save_binding_with_material(&mut conn, &binding, "sinnix-lake:desktop.clipboard").await;
     assert!(
         sinex_store::bindings::material_parser(&mut conn, "another-binding", material)
             .await

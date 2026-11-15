@@ -244,7 +244,7 @@ async fn capture_only_binary_spools_before_daemon_and_resumes_over_nats_once() {
         first_ids,
         "restart must reuse committed frame outcomes"
     );
-    let duplicates: i64 = sqlx::query_scalar("SELECT count(*) FROM (SELECT material_id,anchor,output_index FROM core.events WHERE source='machine.file-watch' GROUP BY 1,2,3 HAVING count(*)<>1) duplicates").fetch_one(&mut conn).await.unwrap();
+    let duplicates: i64 = sqlx::query_scalar("SELECT count(*) FROM (SELECT material_id,record_offset,output_index FROM core.events WHERE source='machine.file-watch' GROUP BY 1,2,3 HAVING count(*)<>1) duplicates").fetch_one(&mut conn).await.unwrap();
     assert_eq!(duplicates, 0);
     server.stop().await;
     let answer = query(

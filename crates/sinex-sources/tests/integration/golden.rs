@@ -24,7 +24,7 @@ fn cases_root() -> PathBuf {
 fn render(outcome: &RecordOutcome) -> Value {
     match outcome {
         RecordOutcome::Events { location, events } => json!({
-            "anchor": location.map(|l| l.anchor),
+            "record_offset": location.map(|l| l.record_offset),
             "events": events.iter().map(|e| json!({
                 "type": e.event_type,
                 "ts": e.ts_orig.at,
@@ -35,7 +35,7 @@ fn render(outcome: &RecordOutcome) -> Value {
             })).collect::<Vec<_>>(),
         }),
         RecordOutcome::Failure { location, reason } => json!({
-            "anchor": location.anchor,
+            "record_offset": location.record_offset,
             "failure": reason,
         }),
     }
@@ -73,7 +73,7 @@ fn run_case(parser: &str, dir: &Path) -> Value {
         "reader framing: {parser}, {}",
         dir.display()
     );
-    let order = |anchor: usize| ReadingOrder(anchor as i64);
+    let order = |record_offset: usize| ReadingOrder(record_offset as i64);
     let chunks = source
         .drain(DrainInput {
             source: source.spec().name,
@@ -110,7 +110,7 @@ fn golden_cases() {
         for case in cases {
             ran += 1;
             let dir = case.path();
-            for check in [anchors_read_back, a_bad_record_fails_alone] {
+            for check in [record_offsets_read_back, a_bad_record_fails_alone] {
                 if let Err(e) = check(&name, &dir) {
                     failures.push(format!(
                         "{name}/{}: {e}",
@@ -195,18 +195,18 @@ fn variants(bytes: &[u8]) -> Vec<(&'static str, Vec<u8>)> {
     out
 }
 
-/// Anchors read back, for every variant of the case input: every event's
-/// anchor is where a framed record starts, its bytes frame alone as that
+/// Record offsets read back, for every variant of the case input: every event's
+/// record offset is where a framed record starts, its bytes frame alone as that
 /// record, and read alone with the state the parser carried into it (a CSV
 /// header, a span still being merged) they give the same events.
-fn anchors_read_back(parser: &str, dir: &Path) -> Result<(), String> {
+fn record_offsets_read_back(parser: &str, dir: &Path) -> Result<(), String> {
     let binding = sinex_sources::sources::binding_for_parser(parser, HOST)
         .ok_or_else(|| format!("no source reads with parser {parser}"))?;
     let source = sinex_sources::sources::source_for(&binding).expect("source");
     let manifest = manifest_of(dir);
     let stored = std::fs::read(dir.join("input")).expect("case input");
     let read = |bytes: &[u8], records: &[(usize, usize)], carry: Value| {
-        let order = |anchor: usize| ReadingOrder(anchor as i64);
+        let order = |record_offset: usize| ReadingOrder(record_offset as i64);
         source
             .drain(DrainInput {
                 source: source.spec().name,
@@ -241,17 +241,18 @@ fn anchors_read_back(parser: &str, dir: &Path) -> Result<(), String> {
             else {
                 continue;
             };
-            let anchor = usize::try_from(location.anchor).unwrap();
-            let Some(&(start, end)) = records.iter().find(|(start, _)| *start == anchor) else {
+            let record_offset = usize::try_from(location.record_offset).unwrap();
+            let Some(&(start, end)) = records.iter().find(|(start, _)| *start == record_offset)
+            else {
                 return Err(format!(
-                    "{variant}: anchor {anchor} is not where a record starts"
+                    "{variant}: record offset {record_offset} is not where a record starts"
                 ));
             };
             let alone = &bytes[start..end];
             let (again, _) = source.spec().framer.frame(alone);
             if again != [(0, alone.len())] {
                 return Err(format!(
-                    "{variant}: the record at {anchor} frames as {again:?} on its own"
+                    "{variant}: the record at {record_offset} frames as {again:?} on its own"
                 ));
             }
             // The state the parser carried into this record.
@@ -270,7 +271,7 @@ fn anchors_read_back(parser: &str, dir: &Path) -> Result<(), String> {
                 .collect();
             if reread != events(&outcome) {
                 return Err(format!(
-                    "{variant}: the record at {anchor} reads back as {reread:?}, not {:?}",
+                    "{variant}: the record at {record_offset} reads back as {reread:?}, not {:?}",
                     events(&outcome)
                 ));
             }
@@ -302,7 +303,7 @@ fn a_bad_record_fails_alone(parser: &str, dir: &Path) -> Result<(), String> {
         return Ok(());
     }
     let read = |bytes: &[u8], records: &[(usize, usize)]| {
-        let order = |anchor: usize| ReadingOrder(anchor as i64);
+        let order = |record_offset: usize| ReadingOrder(record_offset as i64);
         source
             .drain(DrainInput {
                 source: source.spec().name,
@@ -320,20 +321,22 @@ fn a_bad_record_fails_alone(parser: &str, dir: &Path) -> Result<(), String> {
             .flat_map(|c| c.outcomes)
             .map(|o| match o {
                 RecordOutcome::Events { location, events } => (
-                    location.map(|l| l.anchor),
+                    location.map(|l| l.record_offset),
                     Ok(events
                         .into_iter()
                         .map(|e| (e.event_type, e.payload))
                         .collect::<Vec<_>>()),
                 ),
-                RecordOutcome::Failure { location, reason } => (Some(location.anchor), Err(reason)),
+                RecordOutcome::Failure { location, reason } => {
+                    (Some(location.record_offset), Err(reason))
+                }
             })
             .collect::<Vec<_>>()
     };
     let before = read(&stored, &records);
     let after = read(&bytes, &with_bad);
-    let shift = |anchor: Option<u64>| {
-        anchor.map(|a| {
+    let shift = |record_offset: Option<u64>| {
+        record_offset.map(|a| {
             if a >= second as u64 {
                 a + bad.len() as u64
             } else {

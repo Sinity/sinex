@@ -54,7 +54,7 @@ fn json_payloads_build_through_the_rust_type() {
     let origin = || crate::Origin::Record {
         location: crate::RecordLocation {
             material: crate::MaterialId::new(),
-            anchor: 0,
+            record_offset: 0,
         },
         output_index: 0,
     };
@@ -104,7 +104,7 @@ fn decoder_errors_name_fields_without_echoing_payload_values() {
             crate::Origin::Record {
                 location: crate::RecordLocation {
                     material: crate::MaterialId::new(),
-                    anchor: 0,
+                    record_offset: 0,
                 },
                 output_index: 0,
             },

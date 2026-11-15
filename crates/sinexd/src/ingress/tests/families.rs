@@ -58,7 +58,7 @@ fn event(kind: &KindRef, material: MaterialId, copy: &str, text: &str) -> Produc
         payload: json!({"copy":copy,"id":"one","text":text}),
         location: Some(RecordLocation {
             material,
-            anchor: 0,
+            record_offset: 0,
         }),
         output_index: 0,
         parents: vec![],

@@ -125,7 +125,7 @@ fn time_citations_require_absolute_time_and_marks_have_positive_numbers() {
     ));
     assert!(parse_reference("sinex:window/2026-09-14T09:00:00Z/2026-09-14T08:00:00Z").is_err());
     assert!(matches!(
-        native_q("recall mark 2 ±5m").source,
+        parse_query("recall mark 2 ±5m").source,
         Source::RecallMark {
             number: 2,
             window: 300.0
@@ -170,7 +170,7 @@ fn parameters_do_not_stand_for_fields_and_text_parameters_stay_text() {
     }
     let mut enumeration = saved;
     enumeration.query = "events where class = $value".into();
-    enumeration.template = native::parse(&enumeration.query, &ctx()).unwrap();
+    enumeration.template = template::parse(&enumeration.query, &ctx()).unwrap();
     enumeration.validate(&ctx()).unwrap();
     let definitions = BTreeMap::from([("typed".into(), enumeration)]);
     assert!(bind_saved("query:typed(value=open)", &ctx(), &definitions).is_ok());
@@ -185,7 +185,7 @@ fn unrepresentable_time_ranges_are_errors_without_panicking() {
         "events where when in last -9223372036854775808 days",
     ] {
         assert!(
-            native::parse(text, &ctx())
+            template::parse(text, &ctx())
                 .and_then(|template| template.bind(&ctx()))
                 .is_err(),
             "{text}"
@@ -225,7 +225,7 @@ fn event_type_globs_select_the_schemas_used_for_payload_fields() {
 
 #[devkit::test]
 fn recall_last_payload_conditions_use_the_session_schema() {
-    let query = native_q("recall last where payload.host = synthetic");
+    let query = parse_query("recall last where payload.host = synthetic");
     assert!(matches!(
         query.source,
         Source::RecallLast {
@@ -308,7 +308,7 @@ fn saved_definition_errors_do_not_point_inside_unicode_arguments() {
 
 #[devkit::test]
 fn recall_fill_bounds_apply_only_to_when_and_intersect_row_time_bounds() {
-    let query = native_q(
+    let query = parse_query(
         "recall sinex:window/2026-09-13T04:00:00Z/2026-09-16T04:00:00Z where when >= 2026-09-14T04:00:00Z AND when < 2026-09-15T04:00:00Z | group by day(when) | count | fill",
     );
     let Stage::Group(group) = query.stages.last().unwrap() else {
@@ -514,7 +514,7 @@ fn saved_literal_arguments_are_checked_without_placeholder_values() {
     .unwrap();
     assert!(saved.validate_with(&ctx(), &definitions).is_err());
     saved.query = "query:base(value=guarded)".into();
-    saved.template = native::parse(&saved.query, &ctx()).unwrap();
+    saved.template = template::parse(&saved.query, &ctx()).unwrap();
     saved.validate_with(&ctx(), &definitions).unwrap();
 }
 

@@ -65,7 +65,7 @@ fn journal_from(secs: i64, priority: u8, from_sinex: bool) -> Event {
         Origin::Record {
             location: RecordLocation {
                 material: MaterialId::new(),
-                anchor: 0,
+                record_offset: 0,
             },
             output_index: 0,
         },
@@ -462,7 +462,7 @@ fn activity_seconds_use_supported_presence_and_keep_afk_claims_as_inputs_only() 
         Origin::Record {
             location: RecordLocation {
                 material: MaterialId::new(),
-                anchor: 0,
+                record_offset: 0,
             },
             output_index: 0,
         },

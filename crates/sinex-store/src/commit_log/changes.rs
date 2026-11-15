@@ -88,7 +88,7 @@ pub struct EventHeader {
     pub class: String,
 }
 
-trait EventProjection: Sized + Send {
+trait EventRows: Sized + Send {
     const PAYLOAD: bool;
     fn id(&self) -> Uuid;
     fn load(
@@ -96,7 +96,7 @@ trait EventProjection: Sized + Send {
         ids: &[Uuid],
     ) -> impl std::future::Future<Output = Result<Vec<Self>>> + Send;
 }
-impl EventProjection for Committed {
+impl EventRows for Committed {
     const PAYLOAD: bool = true;
     fn id(&self) -> Uuid {
         self.id
@@ -105,7 +105,7 @@ impl EventProjection for Committed {
         load_events(conn, ids).await
     }
 }
-impl EventProjection for EventHeader {
+impl EventRows for EventHeader {
     const PAYLOAD: bool = false;
     fn id(&self) -> Uuid {
         self.id
@@ -157,7 +157,7 @@ impl StreamEvent {
         }
     }
 }
-impl EventProjection for StreamEvent {
+impl EventRows for StreamEvent {
     const PAYLOAD: bool = true;
     fn id(&self) -> Uuid {
         StreamEvent::id(self)
@@ -208,7 +208,7 @@ pub async fn changes_page(
     changes_page_from(conn, after, limit, bytes, None).await
 }
 
-async fn changes_page_from<E: EventProjection>(
+async fn changes_page_from<E: EventRows>(
     conn: &mut PgConnection,
     after: ChangeCursor,
     limit: i64,
@@ -236,7 +236,7 @@ async fn changes_page_from<E: EventProjection>(
     tx.commit().await?;
     Ok(page)
 }
-async fn read_page<E: EventProjection>(
+async fn read_page<E: EventRows>(
     conn: &mut PgConnection,
     after: ChangeCursor,
     limit: i64,
@@ -367,7 +367,7 @@ async fn read_page<E: EventProjection>(
 }
 
 async fn load_events(conn: &mut PgConnection, ids: &[Uuid]) -> Result<Vec<Committed>> {
-    let rows=sqlx::query!(r#"SELECT e.commit_seq,e.id,e.event_type,e.kind_version,e.validation,e.source,e.run_id,e.material_id,e.anchor,
+    let rows=sqlx::query!(r#"SELECT e.commit_seq,e.id,e.event_type,e.kind_version,e.validation,e.source,e.run_id,e.material_id,e.record_offset,
       e.output_index,e.parents,e.ts_orig,e.ts_quality,e.ts_coided,e.ts_persisted AS "ts_persisted!",e.payload,
       e.equivalence_key,e.reading_order,e.record_hash,e.record_state,e.class FROM unnest($1::uuid[]) selected(id) CROSS JOIN LATERAL (
         SELECT e.* FROM core.events e WHERE e.id=selected.id OFFSET 0) e WHERE true
@@ -386,7 +386,7 @@ async fn load_events(conn: &mut PgConnection, ids: &[Uuid]) -> Result<Vec<Commit
             source: row.source,
             run_id: row.run_id,
             material_id: row.material_id,
-            anchor: row.anchor,
+            record_offset: row.record_offset,
             output_index: row.output_index,
             parents: row.parents,
             ts_orig: row.ts_orig,

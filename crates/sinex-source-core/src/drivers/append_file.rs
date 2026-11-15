@@ -126,12 +126,12 @@ impl AppendState {
         state
     }
 
-    fn insert(&mut self, record: &[u8], material: MaterialId, anchor: usize) {
+    fn insert(&mut self, record: &[u8], material: MaterialId, record_offset: usize) {
         self.insert_digest(
             *blake3::hash(record).as_bytes(),
             record.len(),
             material,
-            anchor,
+            record_offset,
         );
     }
 
@@ -140,11 +140,11 @@ impl AppendState {
         hash: [u8; 32],
         length: usize,
         material: MaterialId,
-        anchor: usize,
+        record_offset: usize,
     ) {
         let location = RecordLocation {
             material,
-            anchor: anchor as u64,
+            record_offset: record_offset as u64,
         };
         self.records.entry(hash).or_default().push_back(location);
         self.order.push_back((hash, location, length));
@@ -178,7 +178,7 @@ impl AppendState {
     /// the ones it dropped.
     fn remaining(self) -> Vec<RecordLocation> {
         let mut out: Vec<RecordLocation> = self.records.into_values().flatten().collect();
-        out.sort_by_key(|l| (l.material, l.anchor));
+        out.sort_by_key(|l| (l.material, l.record_offset));
         out
     }
 

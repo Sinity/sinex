@@ -1,5 +1,5 @@
 //! Objective-linked work and its chronological resumption trail.
-use super::activity::{ActivityEvidence, Agency};
+use super::activity::{Agency, CitedReading};
 use crate::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -49,7 +49,7 @@ pub enum WorkCoverageState {
 #[event(version = 2, type = "work.coverage", key = ["session"], replace = newer)]
 pub struct WorkCoverage {
     pub session: String,
-    pub snapshot: ActivityEvidence,
+    pub snapshot: CitedReading,
     pub reducer_version: Option<u32>,
     pub state: WorkCoverageState,
     pub eligible_entries: Option<u64>,
@@ -60,12 +60,12 @@ pub struct WorkCoverage {
 
 /// Source clock evidence stays separate from its timestamp.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct WorkTimeEvidence {
+pub struct WorkTimeQuality {
     pub quality: crate::TimeQuality,
     pub precision: Option<String>,
     pub until: Option<Timestamp>,
 }
-impl Default for WorkTimeEvidence {
+impl Default for WorkTimeQuality {
     fn default() -> Self {
         Self {
             quality: crate::TimeQuality::Unknown,
@@ -74,7 +74,7 @@ impl Default for WorkTimeEvidence {
         }
     }
 }
-impl WorkTimeEvidence {
+impl WorkTimeQuality {
     pub fn instant(&self, at: Option<Timestamp>) -> Option<Timestamp> {
         (self.quality != crate::TimeQuality::Unknown
             && self.precision.as_deref() == Some("instant")
@@ -91,15 +91,15 @@ pub struct WorkAct {
     pub episode: Option<String>,
     pub objective: Option<Objective>,
     pub label: Option<String>,
-    pub label_source: ActivityEvidence,
+    pub label_source: CitedReading,
     pub machine: Option<String>,
     pub at: Timestamp,
     #[serde(default)]
-    pub at_evidence: WorkTimeEvidence,
+    pub at_evidence: WorkTimeQuality,
     pub ended_at: Option<Timestamp>,
     #[serde(default)]
-    pub ended_at_evidence: Option<WorkTimeEvidence>,
-    pub evidence: ActivityEvidence,
+    pub ended_at_evidence: Option<WorkTimeQuality>,
+    pub evidence: CitedReading,
     pub agency: Agency,
     pub action: String,
     pub path: Option<String>,
@@ -163,7 +163,7 @@ pub struct WorkEpisode {
     pub episode: String,
     pub objective: Objective,
     pub label: String,
-    pub label_source: ActivityEvidence,
+    pub label_source: CitedReading,
     pub state: String,
     pub started_at: Timestamp,
     pub last_activity: Timestamp,
@@ -171,7 +171,7 @@ pub struct WorkEpisode {
     pub operator_s: Option<f64>,
     pub agent_s: Option<f64>,
     pub untimed_agent_acts: u64,
-    pub trail: Vec<ActivityEvidence>,
+    pub trail: Vec<CitedReading>,
     pub suspensions: Vec<String>,
     pub resumptions: Vec<String>,
     pub absorbed_excursions: u64,
@@ -200,7 +200,7 @@ pub struct WorkResumption {
     pub resumed_at: Timestamp,
     /// Unknown without a recorded return of focus to this exact objective.
     pub lag_s: Option<f64>,
-    pub act: ActivityEvidence,
+    pub act: CitedReading,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
@@ -220,11 +220,11 @@ pub struct ContextPack {
     pub pack: String,
     pub episode: String,
     pub at: Timestamp,
-    pub stated_goal: Option<ActivityEvidence>,
-    pub trail: Vec<ActivityEvidence>,
-    pub last_edit: Option<ActivityEvidence>,
+    pub stated_goal: Option<CitedReading>,
+    pub trail: Vec<CitedReading>,
+    pub last_edit: Option<CitedReading>,
     pub last_edit_path: Option<String>,
-    pub open_failures: Vec<ActivityEvidence>,
+    pub open_failures: Vec<CitedReading>,
     pub coverage: Vec<String>,
     pub profile: String,
 }
@@ -293,7 +293,7 @@ pub struct ProjectSpan {
     pub started_at: Timestamp,
     pub ended_at: Timestamp,
     pub agency: Agency,
-    pub activity_spans: Vec<ActivityEvidence>,
+    pub activity_spans: Vec<CitedReading>,
     pub shares: Vec<ProjectShare>,
     pub unallocated_numerator: u64,
     pub denominator: u64,

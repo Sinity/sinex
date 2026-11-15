@@ -438,7 +438,7 @@ fn physical_type(
                 .and_then(|alias| alias.field(field))
                 .or_else(|| table.field(field))
                 .map(|field| field.ty)
-                .or_else(|| NativeField::from_name(field).map(NativeField::field_type))
+                .or_else(|| BuiltInField::from_name(field).map(BuiltInField::field_type))
                 .ok_or_else(|| {
                     QueryError::new(format!(
                         "bound field {unit}.{field} has no physical adapter"

@@ -212,7 +212,7 @@ struct Reading {
 
 async fn live(conn: &mut PgConnection) -> BTreeMap<String, Reading> {
     let rows = sqlx::query(
-        r#"SELECT e.id, e.source || ' ' || e.event_type || ' ' || coalesce(e.equivalence_key, e.material_id::text || '@' || e.anchor || '#' || e.output_index) AS k,
+        r#"SELECT e.id, e.source || ' ' || e.event_type || ' ' || coalesce(e.equivalence_key, e.material_id::text || '@' || e.record_offset || '#' || e.output_index) AS k,
                   e.payload::text AS p, e.ts_orig::text AS t, encode(e.record_hash, 'hex') AS h
            FROM core.events e
            WHERE e.event_type <> 'source.coverage' AND e.id IN (SELECT event_id FROM core.live_equivalence UNION ALL SELECT event_id FROM core.live_locations)"#,
@@ -261,8 +261,8 @@ async fn consistent(conn: &mut PgConnection) {
     let disagree = scalar(
         conn,
         "SELECT count(*) FROM core.live_locations l JOIN core.events e ON e.id = l.event_id
-         WHERE (e.material_id, e.anchor, e.event_type, e.output_index, e.reading_order, e.record_hash)
-               IS DISTINCT FROM (l.material_id, l.anchor, l.event_type, l.output_index, l.reading_order, l.record_hash)",
+         WHERE (e.material_id, e.record_offset, e.event_type, e.output_index, e.reading_order, e.record_hash)
+               IS DISTINCT FROM (l.material_id, l.record_offset, l.event_type, l.output_index, l.reading_order, l.record_hash)",
     )
     .await
         + scalar(
@@ -295,7 +295,7 @@ async fn an_event_has_exactly_one_origin() {
         ("NULL", "ARRAY[]::uuid[]"),
     ] {
         let sql = format!(
-            "INSERT INTO core.events (id, event_type, source, run_id, material_id, anchor, parents, ts_quality, commit_seq, payload, reading_order, record_hash)
+            "INSERT INTO core.events (id, event_type, source, run_id, material_id, record_offset, parents, ts_quality, commit_seq, payload, reading_order, record_hash)
              SELECT uuidv7(), event_type, source, run_id, {material}, CASE WHEN {material} IS NULL THEN NULL ELSE 0 END, {parents}, ts_quality, commit_seq, payload, reading_order, record_hash FROM core.events LIMIT 1"
         );
         let err = sqlx::query(&sql).execute(&mut c).await.unwrap_err();
@@ -348,7 +348,7 @@ async fn replay_keeps_occurrences_and_one_live_reading() {
     let per_occurrence = scalar(
         &mut c,
         &format!(
-            "SELECT count(*) FROM (SELECT source, event_type, coalesce(equivalence_key, material_id::text || anchor || '#' || output_index) k, count(*) n
+            "SELECT count(*) FROM (SELECT source, event_type, coalesce(equivalence_key, material_id::text || record_offset || '#' || output_index) k, count(*) n
              FROM core.events WHERE event_type <> 'source.coverage' GROUP BY 1, 2, 3) g WHERE n <> {}",
             N + 1
         ),
@@ -1594,8 +1594,8 @@ async fn every_lake_line_is_read_once() {
     stage();
     let mut c = t.connect().await;
     let accounted = "SELECT count(*) FROM (
-        SELECT material_id, anchor FROM core.events WHERE material_id IS NOT NULL AND event_type <> 'source.coverage'
-        UNION SELECT material_id, anchor FROM raw.failures) a";
+        SELECT material_id, record_offset FROM core.events WHERE material_id IS NOT NULL AND event_type <> 'source.coverage'
+        UNION SELECT material_id, record_offset FROM raw.failures) a";
     assert_eq!(
         scalar(
             &mut c,
@@ -2121,12 +2121,12 @@ async fn sequence_gaps_are_public_events_and_restart_preserves_the_stream_head()
         "unchanged re-read adds no duplicate gap"
     );
     let mut conn = target.connect().await;
-    let rows: Vec<(String,i64)> = sqlx::query_as("SELECT m.blob,e.anchor FROM core.events e JOIN raw.materials m ON m.id=e.material_id WHERE e.event_type='capture.gap' ORDER BY e.commit_seq").fetch_all(&mut conn).await.unwrap();
+    let rows: Vec<(String,i64)> = sqlx::query_as("SELECT m.blob,e.record_offset FROM core.events e JOIN raw.materials m ON m.id=e.material_id WHERE e.event_type='capture.gap' ORDER BY e.commit_seq").fetch_all(&mut conn).await.unwrap();
     let blobs = sinex_store::Blobs::open(&target.store).unwrap();
     blobs.load(&mut conn).await.unwrap();
-    for ((blob, anchor), expected) in rows.iter().zip([3, 6]) {
+    for ((blob, record_offset), expected) in rows.iter().zip([3, 6]) {
         let bytes = blobs.read(blob).unwrap();
-        let line = bytes[*anchor as usize..]
+        let line = bytes[*record_offset as usize..]
             .split(|byte| *byte == b'\n')
             .next()
             .unwrap();

@@ -125,11 +125,12 @@ async fn request_commits_its_records_together_with_the_source_class(db: devkit::
     .await
     .unwrap();
     assert_eq!(submitted.outcome.admitted, 2);
-    let rows: Vec<(uuid::Uuid, String, serde_json::Value)> =
-        sqlx::query_as("SELECT material_id, class::text, payload FROM core.events ORDER BY anchor")
-            .fetch_all(&mut ctx.read_conn)
-            .await
-            .unwrap();
+    let rows: Vec<(uuid::Uuid, String, serde_json::Value)> = sqlx::query_as(
+        "SELECT material_id, class::text, payload FROM core.events ORDER BY record_offset",
+    )
+    .fetch_all(&mut ctx.read_conn)
+    .await
+    .unwrap();
     assert_eq!(rows.len(), 2);
     for (material, class, payload) in rows {
         assert_eq!(Some(MaterialId(material)), submitted.material);
@@ -314,7 +315,7 @@ async fn overlap(fail_first: bool) {
         registered: None,
     };
     let mut submitted = 0;
-    let mut anchors = Vec::new();
+    let mut record_offsets = Vec::new();
     let mut totals = Totals::default();
     let result = intake
         .submit_using(
@@ -330,7 +331,7 @@ async fn overlap(fail_first: bool) {
                     RecordOutcome::Events { location, .. } => location.unwrap(),
                     RecordOutcome::Failure { .. } => panic!("synthetic records must parse"),
                 };
-                anchors.push(location.anchor);
+                record_offsets.push(location.record_offset);
                 async move {
                     check()?;
                     if first {
@@ -363,7 +364,7 @@ async fn overlap(fail_first: bool) {
     } else {
         assert_eq!(result.unwrap().outcome.admitted, 3);
         assert_eq!(submitted, 3);
-        assert!(anchors.windows(2).all(|a| a[0] < a[1]));
+        assert!(record_offsets.windows(2).all(|a| a[0] < a[1]));
     }
 }
 
@@ -474,7 +475,7 @@ async fn queued_submission(db: devkit::pg::TestDatabase, cancel: bool, source_pu
     let blobs = Blobs::open(dir.path()).unwrap();
     let url = db.url(None);
     let mut connection = sinex_store::AdmissionContext::connect(&url).await.unwrap();
-    crate::catalog::install_native_sources(&mut connection)
+    crate::catalog::install_built_in_sources(&mut connection)
         .await
         .unwrap();
     let (writer, queues) = crate::writer::channels();

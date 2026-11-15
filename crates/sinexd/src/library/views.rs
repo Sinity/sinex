@@ -79,15 +79,15 @@ pub(crate) async fn item_view(conn: &mut PgConnection, item: &str) -> R<Value> {
                 "tag": row.key,
                 "state": row.state,
                 "level": row.level,
-                "applied_by": row.supporters["applied_by"],
-                "rejected_by": row.supporters["rejected_by"],
+                "applied_by": row.supporting_records["applied_by"],
+                "rejected_by": row.supporting_records["rejected_by"],
             })),
             _ => {
                 let mut shown = json!({ "state": row.state, "level": row.level });
                 if row.state == "conflict" {
-                    shown["values"] = row.supporters;
+                    shown["values"] = row.supporting_records;
                 } else {
-                    shown["supporters"] = row.supporters;
+                    shown["supporting_records"] = row.supporting_records;
                 }
                 if let Some(value) = row.value {
                     shown["value"] = value;

@@ -380,7 +380,8 @@ impl Ingest {
         sequence: ProducerReplay,
         content_hash: String,
     ) -> Result<Acknowledgment> {
-        self.native_declaration(producer, &sequence.source).await?;
+        self.built_in_declaration(producer, &sequence.source)
+            .await?;
         let write = authority::write(&self.grants, producer)?;
         let request = CheckedReplay {
             content_hash,
@@ -502,8 +503,8 @@ impl Ingest {
                 run,
                 kind: BatchKind::Ingress(Box::new(IngressFrame {
                     content_hash: None,
-                    receipt_number: None,
-                    native_source: Some(request.sequence.source.clone()),
+                    ack_number: None,
+                    built_in_source: Some(request.sequence.source.clone()),
                     source_fingerprint: None,
                     host: self
                         .grants

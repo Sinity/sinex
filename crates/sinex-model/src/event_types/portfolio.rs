@@ -1,5 +1,5 @@
 //! Stored non-model input, rhythm and mark products.
-use super::activity::ActivityEvidence;
+use super::activity::CitedReading;
 use crate::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -62,7 +62,7 @@ pub struct MarkLink {
     pub mark_record: String,
     pub target_record: String,
     pub at: Timestamp,
-    pub mark: ActivityEvidence,
-    pub target: ActivityEvidence,
+    pub mark: CitedReading,
+    pub target: CitedReading,
     pub method: String,
 }

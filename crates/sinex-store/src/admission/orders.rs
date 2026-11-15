@@ -6,7 +6,7 @@ type Key = (String, String, [u8; 32]);
 struct Seed {
     equivalence: Option<String>,
     material: Option<Uuid>,
-    anchor: Option<i64>,
+    record_offset: Option<i64>,
     output: Option<i64>,
 }
 
@@ -35,7 +35,7 @@ pub(super) async fn assign(
                 },
             ) => format!(
                 "record:{}:{}:{}",
-                location.material, location.anchor, output_index
+                location.material, location.record_offset, output_index
             ),
             _ => {
                 return Err(crate::Error::Invalid(
@@ -49,14 +49,14 @@ pub(super) async fn assign(
             event.event_type.clone(),
             *blake3::hash(record_key.as_bytes()).as_bytes(),
         );
-        let (material, anchor, output) = match &event.origin {
+        let (material, record_offset, output) = match &event.origin {
             Origin::Record {
                 location,
                 output_index,
             } => (
                 Some(location.material.0),
-                Some(i64::try_from(location.anchor).map_err(|_| {
-                    crate::Error::Invalid("record anchor exceeds stored range".into())
+                Some(i64::try_from(location.record_offset).map_err(|_| {
+                    crate::Error::Invalid("record offset exceeds stored range".into())
                 })?),
                 Some(i64::try_from(*output_index).map_err(|_| {
                     crate::Error::Invalid("record output exceeds stored range".into())
@@ -67,7 +67,7 @@ pub(super) async fn assign(
         seeds.entry(key.clone()).or_insert_with(|| Seed {
             equivalence: event.equivalence_key.as_ref().map(|key| key.0.clone()),
             material,
-            anchor,
+            record_offset,
             output,
         });
         offered.push(key);
@@ -80,7 +80,10 @@ pub(super) async fn assign(
         .map(|seed| seed.equivalence.clone())
         .collect::<Vec<_>>();
     let materials = seeds.values().map(|seed| seed.material).collect::<Vec<_>>();
-    let anchors = seeds.values().map(|seed| seed.anchor).collect::<Vec<_>>();
+    let record_offsets = seeds
+        .values()
+        .map(|seed| seed.record_offset)
+        .collect::<Vec<_>>();
     let outputs = seeds.values().map(|seed| seed.output).collect::<Vec<_>>();
     // The session writer claim serializes this seed and upsert with every other admission.
     // Seed all missing keys from one retained source/kind metadata pass. This
@@ -92,7 +95,7 @@ pub(super) async fn assign(
         &hashes,
         &equivalence as &[Option<String>],
         &materials as &[Option<Uuid>],
-        &anchors as &[Option<i64>],
+        &record_offsets as &[Option<i64>],
         &outputs as &[Option<i64>]
     )
     .fetch_all(&mut *conn)

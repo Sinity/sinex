@@ -5,7 +5,7 @@ use crate::{Error, Result, copy_text::CopyText};
 use sinex_model::{DbCheck, Event, Origin};
 use sqlx::PgConnection;
 
-pub(crate) const COLUMNS: &str = "ord, id, event_type, source, material_id, anchor, output_index, parents, ts_orig, ts_quality, payload, equivalence_key, replace_rule, reading_order, record_hash, record_state, class, kind_version, validation";
+pub(crate) const COLUMNS: &str = "ord, id, event_type, source, material_id, record_offset, output_index, parents, ts_orig, ts_quality, payload, equivalence_key, replace_rule, reading_order, record_hash, record_state, class, kind_version, validation";
 
 impl CopyText<'_> {
     async fn row(&mut self, ord: i64, e: &Event) -> Result<()> {
@@ -16,15 +16,15 @@ impl CopyText<'_> {
             Json(&'a serde_json::Value),
             Parents(&'a [sinex_model::EventId]),
         }
-        let (material, anchor, output, parents) = match &e.origin {
+        let (material, record_offset, output, parents) = match &e.origin {
             Origin::Record {
                 location,
                 output_index,
             } => (
                 Field::Small(location.material.0.to_string()),
                 Field::Small(
-                    i64::try_from(location.anchor)
-                        .map_err(|_| Error::Invalid("anchor beyond i64".into()))?
+                    i64::try_from(location.record_offset)
+                        .map_err(|_| Error::Invalid("record_offset beyond i64".into()))?
                         .to_string(),
                 ),
                 i64::try_from(*output_index)
@@ -51,7 +51,7 @@ impl CopyText<'_> {
             Field::Text(&e.event_type),
             Field::Text(&e.source),
             material,
-            anchor,
+            record_offset,
             Field::Small(output.to_string()),
             parents,
             timestamp,

@@ -2,13 +2,13 @@
 -- Keep payloads out of the classification snapshot and encode each logical
 -- key once, before any live-key comparison.
 WITH s AS MATERIALIZED (
-    SELECT st.ord, st.source, st.event_type, st.material_id, st.anchor,
+    SELECT st.ord, st.source, st.event_type, st.material_id, st.record_offset,
            st.output_index, st.equivalence_key IS NOT NULL AS keyed,
            core.encode_equivalence_key(st.equivalence_key) AS encoded_key,
            st.reading_order, st.record_hash, st.record_state, st.replace_rule,
            row_number() OVER (
                PARTITION BY st.source, st.event_type, st.equivalence_key IS NOT NULL,
-                   coalesce(st.equivalence_key, st.material_id::text || ':' || st.anchor || ':' || st.output_index)
+                   coalesce(st.equivalence_key, st.material_id::text || ':' || st.record_offset || ':' || st.output_index)
                -- Equal orders use content hash, then offered ordinal, just as
                -- the live comparison below: arrival cannot choose the content.
                ORDER BY st.reading_order DESC, st.record_hash DESC, st.ord DESC) AS rank
@@ -45,7 +45,7 @@ WITH s AS MATERIALIZED (
                SELECT event_id, reading_order, record_hash
                FROM core.live_locations lc
                WHERE s.rank = 1 AND NOT s.keyed AND s.material_id IS NOT NULL
-                 AND lc.material_id = s.material_id AND lc.anchor = s.anchor
+                 AND lc.material_id = s.material_id AND lc.record_offset = s.record_offset
                  AND lc.event_type = s.event_type AND lc.output_index = s.output_index
                OFFSET 0
            ) lc ON true

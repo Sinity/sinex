@@ -1,14 +1,14 @@
-//! A projected payload is identified by the hash of its canonical JSON
+//! A payload is identified by the hash of its canonical JSON
 //! (common's `canonical-json`), independently of its source record.
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ProjectionIdentity {
+pub struct PayloadIdentity {
     /// Lowercase hex BLAKE3 of the payload's canonical JSON.
     pub payload_hash: String,
 }
-impl ProjectionIdentity {
+impl PayloadIdentity {
     pub fn for_payload(payload: &Value) -> Self {
         Self {
             payload_hash: Self::hash(payload),

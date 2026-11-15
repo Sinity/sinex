@@ -71,7 +71,7 @@ fn commands(chunks: &[DrainOutput]) -> Vec<(u64, String)> {
         .flat_map(|c| &c.outcomes)
         .filter_map(|o| match o {
             RecordOutcome::Events { location, events } => Some((
-                location.unwrap().anchor,
+                location.unwrap().record_offset,
                 events[0].payload["command"].as_str().unwrap().to_owned(),
             )),
             RecordOutcome::Failure { .. } => None,
@@ -87,7 +87,9 @@ fn panics_and_errors_fail_only_their_record() {
         .outcomes
         .iter()
         .filter_map(|o| match o {
-            RecordOutcome::Failure { location, reason } => Some((location.anchor, reason.clone())),
+            RecordOutcome::Failure { location, reason } => {
+                Some((location.record_offset, reason.clone()))
+            }
             _ => None,
         })
         .collect();
@@ -294,7 +296,7 @@ fn invalid_staged_ranges_are_refused_before_record_allocation() {
 }
 
 #[devkit::test]
-fn directory_tar_members_keep_distinct_anchors_and_reject_overlaps() {
+fn directory_tar_members_keep_distinct_record_offsets_and_reject_overlaps() {
     use crate::test_parser::NotesParser;
     let mut archive = tar::Builder::new(Vec::new());
     let mut records = Vec::new();
@@ -341,7 +343,7 @@ fn directory_tar_members_keep_distinct_anchors_and_reject_overlaps() {
     };
     let chunks = run(&manifest, &records).unwrap();
     let outcomes: Vec<_> = chunks.into_iter().flat_map(|c| c.outcomes).collect();
-    for (index, (path, text, anchor)) in [
+    for (index, (path, text, record_offset)) in [
         ("a.md", "alpha", records[0].0 as u64),
         ("b.md", "", records[1].0 as u64),
     ]
@@ -351,7 +353,7 @@ fn directory_tar_members_keep_distinct_anchors_and_reject_overlaps() {
         let RecordOutcome::Events { location, events } = &outcomes[index] else {
             panic!()
         };
-        assert_eq!(location.unwrap().anchor, anchor);
+        assert_eq!(location.unwrap().record_offset, record_offset);
         assert_eq!(events[0].payload["path"], path);
         assert_eq!(events[0].payload["text"], text);
     }
@@ -461,7 +463,7 @@ fn an_export_tar_member_can_hold_several_records() {
             bytes: bytes.as_slice().into(),
             records: &records,
             carry: Value::Null,
-            reading_order: &|anchor| ReadingOrder(anchor as i64),
+            reading_order: &|record_offset| ReadingOrder(record_offset as i64),
             limits: Limits::default(),
             manifest: &manifest,
         },

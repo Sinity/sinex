@@ -12,7 +12,7 @@ fn document(text: &str) -> Event {
         Origin::Record {
             location: RecordLocation {
                 material: MaterialId::new(),
-                anchor: 0,
+                record_offset: 0,
             },
             output_index: 0,
         },
@@ -111,8 +111,8 @@ async fn exact_targets_never_expand_to_unrequested_retained_position_siblings(
         else {
             panic!("record fixture")
         };
-        sqlx::query("INSERT INTO core.events(id,event_type,source,run_id,material_id,anchor,output_index,ts_quality,commit_seq,payload,reading_order,record_hash,kind_version) VALUES($1,$2,$3,$4,$5,$6,$7,'unknown',3,$8,1,$9,$10)")
-            .bind(event.id.0).bind(&event.event_type).bind(&event.source).bind(RunId::new().0).bind(location.material.0).bind(location.anchor as i64).bind(*output_index as i64).bind(&event.payload).bind(event.record_hash.as_slice()).bind(event.kind_version as i64).execute(&mut *tx).await.unwrap();
+        sqlx::query("INSERT INTO core.events(id,event_type,source,run_id,material_id,record_offset,output_index,ts_quality,commit_seq,payload,reading_order,record_hash,kind_version) VALUES($1,$2,$3,$4,$5,$6,$7,'unknown',3,$8,1,$9,$10)")
+            .bind(event.id.0).bind(&event.event_type).bind(&event.source).bind(RunId::new().0).bind(location.material.0).bind(location.record_offset as i64).bind(*output_index as i64).bind(&event.payload).bind(event.record_hash.as_slice()).bind(event.kind_version as i64).execute(&mut *tx).await.unwrap();
     }
     sqlx::query("UPDATE core.counters SET value=3 WHERE name='commit_seq'")
         .execute(&mut *tx)

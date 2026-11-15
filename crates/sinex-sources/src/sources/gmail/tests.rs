@@ -66,7 +66,7 @@ fn history_keeps_each_ordered_provider_change() {
 }
 
 #[test]
-fn drain_anchors_both_message_events_to_stored_api_bytes_for_replay() {
+fn drain_places_both_message_events_on_stored_api_bytes_for_replay() {
     let bytes = serde_json::to_vec(&message_record()).unwrap();
     let manifest = sinex_model::Manifest::default();
     let material = sinex_model::MaterialId::new();
@@ -100,7 +100,7 @@ fn drain_anchors_both_message_events_to_stored_api_bytes_for_replay() {
     assert_eq!(events[1].payload, repeated[1].payload);
     let location = location.as_ref().unwrap();
     assert_eq!(location.material, material);
-    assert_eq!(location.anchor, 0);
+    assert_eq!(location.record_offset, 0);
     assert!(
         matches!(&events[0].origin, sinex_model::Origin::Record { location: actual, .. } if actual == location)
     );

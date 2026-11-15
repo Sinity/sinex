@@ -5,7 +5,7 @@ use serde_json::json;
 fn cursors_bind_only_to_their_own_question_and_refuse_tampering() {
     let ctx = Context::utc("2026-09-14T12:00:00Z".parse().unwrap());
     let text = "trace sinex:ev/00000000-0000-4000-8000-000000000001";
-    let question = sinex_model::query::native::parse(text, &ctx)
+    let question = sinex_model::query::template::parse(text, &ctx)
         .unwrap()
         .identity()
         .unwrap();
@@ -41,7 +41,7 @@ fn cursors_bind_only_to_their_own_question_and_refuse_tampering() {
         ),
         (text, "guarded"),
     ] {
-        let other = sinex_model::query::native::parse(text, &ctx)
+        let other = sinex_model::query::template::parse(text, &ctx)
             .unwrap()
             .identity()
             .unwrap();

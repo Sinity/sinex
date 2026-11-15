@@ -35,7 +35,7 @@ fn run(database: &str, store: &Path, args: &[&str]) -> Command {
 async fn source_rows(
     conn: &mut PgConnection,
 ) -> Vec<(uuid::Uuid, serde_json::Value, uuid::Uuid, i64)> {
-    sqlx::query_as("SELECT id,payload,material_id,anchor FROM core.events WHERE source='terminal.zsh-history' ORDER BY anchor")
+    sqlx::query_as("SELECT id,payload,material_id,record_offset FROM core.events WHERE source='terminal.zsh-history' ORDER BY record_offset")
         .fetch_all(conn).await.unwrap()
 }
 

@@ -79,7 +79,7 @@ pub(crate) fn field(id: FieldId) -> Option<String> {
                 "(CASE WHEN {t}.material_id IS NULL THEN 'derived' ELSE 'material' END)"
             }
             EventField::Material => "{t}.material_id",
-            EventField::Offset => "{t}.anchor",
+            EventField::Offset => "{t}.record_offset",
             EventField::Output => "{t}.output_index::bigint",
             EventField::Parents => "{t}.parents",
             EventField::Producer => "(SELECT r.name FROM core.runs r WHERE r.id = {t}.run_id)",
@@ -166,7 +166,7 @@ pub(crate) fn field(id: FieldId) -> Option<String> {
                 "(SELECT b.source FROM raw.bindings b WHERE b.binding={t}_i.binding)"
             }
             FailureField::Material => "{t}.material_id",
-            FailureField::Offset => "{t}.anchor",
+            FailureField::Offset => "{t}.record_offset",
             FailureField::Reason => "{t}.reason",
         },
         FieldId::Source(field) => {

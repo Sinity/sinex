@@ -46,7 +46,7 @@ fn commit(id: &str, hours: i64) -> Event {
         Origin::Record {
             location: RecordLocation {
                 material: MaterialId::new(),
-                anchor: 0,
+                record_offset: 0,
             },
             output_index: 0,
         },
@@ -84,7 +84,7 @@ impl World {
         let blobs = sinex_store::Blobs::open(store.path()).unwrap();
         let (handle, queues) = writer::channels();
         let mut connection = writer::claim(connection).await.unwrap();
-        crate::catalog::install_native_sources(&mut connection)
+        crate::catalog::install_built_in_sources(&mut connection)
             .await
             .unwrap();
         let task = tokio::spawn(writer::run(
@@ -386,7 +386,7 @@ fn observed_by(binding: &str, from: i64, to: i64) -> Event {
         Origin::Record {
             location: RecordLocation {
                 material: MaterialId::new(),
-                anchor: 0,
+                record_offset: 0,
             },
             output_index: 0,
         },

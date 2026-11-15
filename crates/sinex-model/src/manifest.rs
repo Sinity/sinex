@@ -123,23 +123,23 @@ impl Manifest {
         self.details.get(key).unwrap_or(&Value::Null)
     }
 
-    /// The member whose stream range holds byte `anchor`. Members are in
+    /// The member whose stream range holds byte `offset`. Members are in
     /// stream order and do not overlap.
-    pub fn member_at(&self, anchor: usize) -> Option<&Member> {
+    pub fn member_at(&self, offset: usize) -> Option<&Member> {
         let members = &self.members;
-        let i = members.partition_point(|m| m.stream_offset as usize <= anchor);
+        let i = members.partition_point(|m| m.stream_offset as usize <= offset);
         let member = members[..i].last()?;
         let start = member.stream_offset as usize;
-        if member.length == 0 && anchor == start {
+        if member.length == 0 && offset == start {
             // Equal zero-length members at one byte offset have no unique context.
             if members[..i - 1].last().is_some_and(|previous| {
-                previous.stream_offset as usize == anchor && previous.length == 0
+                previous.stream_offset as usize == offset && previous.length == 0
             }) {
                 return None;
             }
             return Some(member);
         }
-        (anchor < start + member.length as usize).then_some(member)
+        (offset < start + member.length as usize).then_some(member)
     }
 }
 

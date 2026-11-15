@@ -17,7 +17,7 @@ pub fn identity(event: &Event) -> String {
             output_index,
         } => Some((
             location.material.to_string(),
-            location.anchor,
+            location.record_offset,
             *output_index,
         )),
         Origin::Derived { .. } => None,
@@ -34,7 +34,7 @@ pub fn identity(event: &Event) -> String {
 
 /// [`identity`] from an event's parts, for callers that read events
 /// as rows: its type, source and payload, its record location (material,
-/// anchor, output) when captured, its equivalence key, and its ID.
+/// record offset, output) when captured, its equivalence key, and its ID.
 pub fn citation(
     event_type: &str,
     source: &str,
@@ -48,8 +48,8 @@ pub fn citation(
     }
     match (location, equivalence_key) {
         (Some(_), Some(key)) => format!("{source}:{event_type}:{key}"),
-        (Some((material, anchor, output_index)), None) => {
-            format!("{material}:{anchor}:{output_index}")
+        (Some((material, record_offset, output_index)), None) => {
+            format!("{material}:{record_offset}:{output_index}")
         }
         (None, Some(key)) => format!("{event_type}:{key}"),
         (None, None) => id.to_owned(),
@@ -64,7 +64,7 @@ pub fn stable(event: &Event) -> String {
             output_index,
         } => Some((
             location.material.to_string(),
-            location.anchor,
+            location.record_offset,
             *output_index,
         )),
         Origin::Derived { .. } => None,

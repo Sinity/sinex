@@ -1,5 +1,5 @@
 WITH live AS NOT MATERIALIZED (
-    SELECT e.id, e.event_type, e.source, e.material_id, e.anchor, e.output_index,
+    SELECT e.id, e.event_type, e.source, e.material_id, e.record_offset, e.output_index,
         e.ts_orig, e.reading_order, e.commit_seq, e.equivalence_key, e.payload
     FROM core.events e
     WHERE e.event_type = ANY($1) AND e.ts_orig IS NOT NULL
@@ -13,7 +13,7 @@ WITH live AS NOT MATERIALIZED (
                     WHERE k.event_type = e.event_type AND e.payload @> k.contains)
     LIMIT 1
 )
-SELECT e.id AS "id!", e.event_type AS "event_type!", e.source AS "source!", e.material_id, e.anchor, e.output_index AS "output_index!",
+SELECT e.id AS "id!", e.event_type AS "event_type!", e.source AS "source!", e.material_id, e.record_offset, e.output_index AS "output_index!",
     e.ts_orig AS "at!", e.reading_order AS "reading_order!", e.equivalence_key,
     coalesce((SELECT jsonb_object_agg(field, e.payload->field)
               FROM unnest($5::text[]) field WHERE e.payload ? field), '{}'::jsonb) AS "payload!"

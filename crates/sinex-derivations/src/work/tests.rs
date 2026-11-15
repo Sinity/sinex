@@ -4,11 +4,11 @@ use sinex_model::{Class, MaterialId, Origin, ReadingOrder, RecordLocation, Times
 fn at(seconds: i64) -> Timestamp {
     Timestamp::from_unix_secs(1_700_000_000 + seconds).unwrap()
 }
-fn record(kind: &str, payload: Value, anchor: u64) -> Event {
+fn record(kind: &str, payload: Value, record_offset: u64) -> Event {
     let origin = Origin::Record {
         location: RecordLocation {
             material: MaterialId::new(),
-            anchor,
+            record_offset,
         },
         output_index: 0,
     };
@@ -104,15 +104,15 @@ fn prompt(id: &str, seconds: i64) -> Event {
     qualify_fixture_times(&mut snapshot);
     snapshot
 }
-fn tool(payload: Value, anchor: u64) -> Event {
+fn tool(payload: Value, record_offset: u64) -> Event {
     let id = payload["session"].as_str().unwrap().to_owned();
     let mut snapshot = session(&id, None);
     let mut call = payload;
     if call.get("call").is_none() {
-        call["call"] = json!(format!("{id}/{anchor}"));
+        call["call"] = json!(format!("{id}/{record_offset}"));
     }
     if call.get("entry_id").is_none() {
-        call["entry_id"] = json!(format!("fixture-entry:{id}:{anchor}"));
+        call["entry_id"] = json!(format!("fixture-entry:{id}:{record_offset}"));
     }
     if call.get("physical_session").is_none() {
         call["physical_session"] = json!(id);
@@ -359,7 +359,7 @@ fn sleep(provider: &str, category: &str, start: i64, end: i64) -> Event {
         Origin::Record {
             location: RecordLocation {
                 material: MaterialId::new(),
-                anchor: start as u64,
+                record_offset: start as u64,
             },
             output_index: 0,
         },
@@ -667,7 +667,7 @@ fn a_recorded_absence_interrupts_work_before_any_return() {
 }
 
 #[devkit::test]
-fn explicit_task_then_pull_request_anchors_outrank_a_branch_without_reading_prose() {
+fn explicit_task_then_pull_request_objectives_outrank_a_branch_without_reading_prose() {
     let mut metadata = session("a", Some("branch"));
     metadata.payload["objectives"] = json!([
         {"kind":"pull_request","repository":"synthetic/repo","reference":"https://forge.example/synthetic/repo/pull/7"},

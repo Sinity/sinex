@@ -52,7 +52,7 @@ pub struct PublicInterruptBudget {
 pub enum PublicContext {
     Available {
         settings_identity: String,
-        owner_revision: u64,
+        settings_revision: u64,
         day: query_language::time::DaySettingWire,
         quiet_hours: Option<signals::QuietHours>,
         interrupt_budget: PublicInterruptBudget,

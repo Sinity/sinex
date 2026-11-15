@@ -193,7 +193,7 @@ fn every_bundled_declaration_matches_its_rust_methods() {
                 Origin::Record {
                     location: RecordLocation {
                         material: MaterialId::new(),
-                        anchor: 0,
+                        record_offset: 0,
                     },
                     output_index: 0,
                 },

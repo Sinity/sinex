@@ -20,7 +20,7 @@ fn batch(tag: &str) -> Batch {
         Origin::Record {
             location: RecordLocation {
                 material: MaterialId::new(),
-                anchor: 0,
+                record_offset: 0,
             },
             output_index: 0,
         },
@@ -352,16 +352,19 @@ async fn source_content_refusals_keep_material_failures_and_advance_the_cursor(
         carry: serde_json::Value::Null,
         memory: None,
     };
-    let source = |command: &str, anchor: u64, offset: usize| {
+    let source = |command: &str, record_offset: u64, offset: usize| {
         let mut offered = batch(command);
         let mut progress = progress.clone();
-        if anchor != 0 {
+        if record_offset != 0 {
             progress.material = None;
             progress.revision = RevisionChange::Same;
         }
         progress.cursor = serde_json::json!({"offset": offset});
         offered.kind = BatchKind::Source(Box::new(progress));
-        let location = RecordLocation { material, anchor };
+        let location = RecordLocation {
+            material,
+            record_offset,
+        };
         if let RecordOutcome::Events {
             location: record_location,
             events,
@@ -415,7 +418,7 @@ async fn source_content_refusals_keep_material_failures_and_advance_the_cursor(
         .unwrap();
     assert_eq!(outcome.admitted, 0);
     assert_eq!(outcome.failures, 1);
-    let failures: i64 = sqlx::query_scalar("SELECT count(*) FROM raw.failures WHERE material_id=$1 AND anchor=0 AND reason LIKE 'content refused:%'").bind(material.0).fetch_one(&mut reader).await.unwrap();
+    let failures: i64 = sqlx::query_scalar("SELECT count(*) FROM raw.failures WHERE material_id=$1 AND record_offset=0 AND reason LIKE 'content refused:%'").bind(material.0).fetch_one(&mut reader).await.unwrap();
     assert_eq!(failures, 1);
     let cursor: Value =
         sqlx::query_scalar("SELECT cursor FROM raw.positions WHERE binding='synthetic-refusal'")
@@ -433,12 +436,13 @@ async fn source_content_refusals_keep_material_failures_and_advance_the_cursor(
         .await
         .unwrap();
     assert_eq!(outcome.failures, 1);
-    let reason: String =
-        sqlx::query_scalar("SELECT reason FROM raw.failures WHERE material_id=$1 AND anchor=8")
-            .bind(material.0)
-            .fetch_one(&mut reader)
-            .await
-            .unwrap();
+    let reason: String = sqlx::query_scalar(
+        "SELECT reason FROM raw.failures WHERE material_id=$1 AND record_offset=8",
+    )
+    .bind(material.0)
+    .fetch_one(&mut reader)
+    .await
+    .unwrap();
     assert!(reason.contains("database refused invalid data"), "{reason}");
     assert!(!reason.contains("private"));
     assert!(blobs.contains(&blob).unwrap());

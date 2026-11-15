@@ -1,6 +1,6 @@
 [
   {
-    "anchor": 0,
+    "record_offset": 0,
     "events": [
       {
         "type": "presence.span",
@@ -19,7 +19,7 @@
     ]
   },
   {
-    "anchor": 161,
+    "record_offset": 161,
     "events": [
       {
         "type": "browser.tab_active",

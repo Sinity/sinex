@@ -1,6 +1,6 @@
 use super::*;
 #[devkit::test]
-fn signal_frame_replay_preserves_whole_original_json_and_host_line_anchors() {
+fn signal_frame_replay_preserves_whole_original_json_and_host_line_offsets() {
     let native=b"  {\n \"kind\": \"signals\",\n \"frame\": \"synthetic\",\n \"reports\": [],\n \"class\": \"open\"\n}\n  ";
     assert_eq!(frame(native, true), (vec![(0, native.len())], native.len()));
     for split in 0..native.len() {

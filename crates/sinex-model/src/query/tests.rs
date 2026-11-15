@@ -13,14 +13,14 @@ fn q(text: &str) -> Query {
     bind(text, &ctx()).unwrap_or_else(|e| panic!("{text}: {e:?}"))
 }
 
-fn native_q(text: &str) -> Query {
-    native::parse(text, &ctx())
+fn parse_query(text: &str) -> Query {
+    template::parse(text, &ctx())
         .and_then(|template| template.bind(&ctx()))
         .unwrap_or_else(|e| panic!("{text}: {e}"))
 }
 
 fn native_err(text: &str) -> QueryError {
-    native::parse(text, &ctx())
+    template::parse(text, &ctx())
         .and_then(|template| template.bind(&ctx()))
         .expect_err(text)
 }
@@ -444,7 +444,7 @@ fn as_of_takes_a_time_or_a_commit_position() {
 #[devkit::test]
 fn walks_and_references() {
     let id = "0190a0b0-0000-7000-8000-000000000001";
-    let query = native_q(&format!("trace sinex:ev/{id}"));
+    let query = parse_query(&format!("trace sinex:ev/{id}"));
     assert!(matches!(
         query.source,
         Source::Walk {
@@ -452,7 +452,7 @@ fn walks_and_references() {
             reference: Reference::Event(_)
         }
     ));
-    let query = native_q(&format!("descendants {id}"));
+    let query = parse_query(&format!("descendants {id}"));
     assert!(matches!(
         query.source,
         Source::Walk {
@@ -496,29 +496,29 @@ fn key_citations_escape_the_grammar_and_parse_back() {
 
 #[devkit::test]
 fn recall_windows() {
-    let query = native_q("recall 2026-03-02 14:05 ±20m");
+    let query = parse_query("recall 2026-03-02 14:05 ±20m");
     let Source::Recall { from, to } = query.source else {
         panic!()
     };
     assert_eq!(from, ts("2026-03-02T12:45:00Z"));
     assert_eq!(to, ts("2026-03-02T13:25:00Z"));
-    let query = native_q("recall yesterday");
+    let query = parse_query("recall yesterday");
     let Source::Recall { from, .. } = query.source else {
         panic!()
     };
     assert_eq!(from, ts("2026-09-13T02:00:00Z"));
     // docs/recall.md: a moment has a radius, "default ±15 min".
-    let query = native_q("recall");
+    let query = parse_query("recall");
     let Source::Recall { from, to } = query.source else {
         panic!()
     };
     assert_eq!(to.duration_since(from).as_secs(), 1800);
     assert!(matches!(
-        native_q("recall last").source,
+        parse_query("recall last").source,
         Source::RecallLast { filter: None }
     ));
     assert!(matches!(
-        native_q("recall mark").source,
+        parse_query("recall mark").source,
         Source::RecallMark { number: 1, .. }
     ));
 }

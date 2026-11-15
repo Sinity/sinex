@@ -33,7 +33,7 @@ pub(super) fn validate_syntax(input: syntax::Query, ctx: &Context) -> Result<Que
     super::fill::bind(&mut q, ctx)?;
     Ok(q)
 }
-pub(super) fn bind_native_syntax(
+pub(super) fn bind_template(
     input: syntax::Query,
     ctx: &Context,
     source: Source,
@@ -88,7 +88,7 @@ impl Binder<'_> {
                 .and_then(|alias| alias.field(field))
                 .or_else(|| table.field(field))
                 .map(FieldRef::Field)
-                .or_else(|| NativeField::from_name(field).map(FieldRef::Native))
+                .or_else(|| BuiltInField::from_name(field).map(FieldRef::Native))
                 .ok_or_else(|| {
                     QueryError::at(
                         at,

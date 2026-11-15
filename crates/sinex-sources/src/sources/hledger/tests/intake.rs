@@ -208,7 +208,7 @@ pub(crate) fn export_restart(
             .as_ref()
             .unwrap()
             .iter()
-            .find(|(start, _)| *start as u64 == location.anchor)
+            .find(|(start, _)| *start as u64 == location.record_offset)
             .unwrap();
         assert_eq!(
             event.record_hash,

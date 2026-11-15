@@ -447,9 +447,9 @@ const PARTS_PER_QUERY: i32 = 256;
 
 /// Offer `reader` the committed cursor's material and the parts before it,
 /// newest first, until it has what it needs or the walk reaches the part its
-/// saved memory was written at; then the saved memory. Pages end at that anchor
+/// saved memory was written at; then the saved memory. Pages end at that part
 /// before loading older manifests. A reader needing older original locations
-/// continues from the anchor's predecessor. Returns
+/// continues from the part before it. Returns
 /// the privacy floor of the restored history.
 pub(crate) async fn restore_reader(
     conn: &mut PgConnection,

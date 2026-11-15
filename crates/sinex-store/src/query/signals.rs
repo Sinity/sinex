@@ -42,7 +42,7 @@ pub async fn standing_query(
         let definitions = saved::saved_definitions(conn, &name).await?;
         sinex_model::query::saved::bind_saved(text, &ctx, &definitions)?
     } else {
-        sinex_model::query::native::parse(text, &ctx)?.bind(&ctx)?
+        sinex_model::query::template::parse(text, &ctx)?.bind(&ctx)?
     };
     ctx.catalog
         .as_ref()
@@ -183,8 +183,8 @@ pub async fn standing_query(
     } else {
         Class::Open
     };
-    let owner_key = crate::store_secret::key(conn).await?;
-    let identity_key = blake3::derive_key("sinex.owner_protocol.signal_occurrence.v1", &owner_key);
+    let secret = crate::store_secret::key(conn).await?;
+    let identity_key = blake3::derive_key("sinex.owner_protocol.signal_occurrence.v1", &secret);
     let mut rows = Vec::with_capacity(values.len());
     for mut value in values {
         let identity = value["identity"]
@@ -205,7 +205,7 @@ pub async fn standing_query(
                 .identity
                 .parse()
                 .map_err(|_| Error::Invalid("signal event row has no reading identity".into()))?;
-            let details=sqlx::query!(r#"SELECT jsonb_build_object('material',original.material_id,'anchor',original.anchor,'output',original.output_index,'source',original.source,'kind',original.event_type,'key',original.equivalence_key,'observed',visible.ts_coided,'start',visible.ts_orig,'payload',visible.payload) AS "details!",visible.class::text AS "class!" FROM core.visible_events visible JOIN core.events original ON original.id=visible.id WHERE visible.id=$1"#,id).fetch_optional(&mut *conn).await?;
+            let details=sqlx::query!(r#"SELECT jsonb_build_object('material',original.material_id,'record_offset',original.record_offset,'output',original.output_index,'source',original.source,'kind',original.event_type,'key',original.equivalence_key,'observed',visible.ts_coided,'start',visible.ts_orig,'payload',visible.payload) AS "details!",visible.class::text AS "class!" FROM core.visible_events visible JOIN core.events original ON original.id=visible.id WHERE visible.id=$1"#,id).fetch_optional(&mut *conn).await?;
             let Some(details) = details else {
                 return Err(Error::Invalid(
                     "signal query reading became unavailable".into(),
@@ -224,7 +224,7 @@ pub async fn standing_query(
                 serde_json::json!([
                     "record",
                     details["material"],
-                    details["anchor"],
+                    details["record_offset"],
                     details["output"]
                 ])
             } else {

@@ -128,7 +128,7 @@ fn event_from_row(
     replace_rule: Option<&str>,
     source: String,
     material_id: Option<Uuid>,
-    anchor: Option<i64>,
+    record_offset: Option<i64>,
     output_index: i64,
     parents: Option<Vec<Uuid>>,
     ts_orig: Option<OffsetDateTime>,
@@ -140,12 +140,12 @@ fn event_from_row(
     record_state: &str,
     class: &str,
 ) -> Result<Event> {
-    let origin = match (material_id, anchor, parents) {
-        (Some(material), Some(anchor), _) => Origin::Record {
+    let origin = match (material_id, record_offset, parents) {
+        (Some(material), Some(record_offset), _) => Origin::Record {
             location: RecordLocation {
                 material: MaterialId(material),
-                anchor: u64::try_from(anchor)
-                    .map_err(|_| crate::Error::Invalid("negative anchor".into()))?,
+                record_offset: u64::try_from(record_offset)
+                    .map_err(|_| crate::Error::Invalid("negative record offset".into()))?,
             },
             output_index: u64::try_from(output_index)
                 .map_err(|_| crate::Error::Invalid("negative output_index".into()))?,
@@ -192,7 +192,7 @@ macro_rules! committed {
                 $r.replace_rule.as_deref(),
                 $r.source,
                 $r.material_id,
-                $r.anchor,
+                $r.record_offset,
                 $r.output_index,
                 $r.parents,
                 $r.ts_orig,
@@ -339,7 +339,7 @@ pub async fn read_window(conn: &mut PgConnection, w: &Window) -> Result<Vec<Comm
         durations.push(duration);
     }
     let rows = sqlx::query!(
-        r#"SELECT e.id AS "id!", e.event_type AS "event_type!", e.source AS "source!", e.material_id, e.anchor, e.output_index AS "output_index!", e.parents,
+        r#"SELECT e.id AS "id!", e.event_type AS "event_type!", e.source AS "source!", e.material_id, e.record_offset, e.output_index AS "output_index!", e.parents,
              e.ts_orig, e.ts_quality AS "ts_quality!", e.payload AS "payload!", e.equivalence_key, e.reading_order AS "reading_order!", e.record_hash AS "record_hash!",
              e.record_state AS "record_state!", e.class AS "class!", e.commit_seq AS "commit_seq!", e.kind_version AS "kind_version!", e.validation AS "validation!",
              (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule
@@ -734,7 +734,7 @@ async fn nearest(
     match n.per {
         None => {
             let rows = sqlx::query!(
-                r#"SELECT e.id AS "id!", e.event_type AS "event_type!", e.source AS "source!", e.material_id, e.anchor, e.output_index AS "output_index!", e.parents,
+                r#"SELECT e.id AS "id!", e.event_type AS "event_type!", e.source AS "source!", e.material_id, e.record_offset, e.output_index AS "output_index!", e.parents,
                      e.ts_orig, e.ts_quality AS "ts_quality!", e.payload AS "payload!", e.equivalence_key, e.reading_order AS "reading_order!", e.record_hash AS "record_hash!",
                      e.record_state AS "record_state!", e.class AS "class!", e.commit_seq AS "commit_seq!", e.kind_version AS "kind_version!", e.validation AS "validation!",
              (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule
@@ -818,7 +818,7 @@ async fn nearest(
             }
             let rows = sqlx::query!(
                 r#"SELECT x.id AS "id!", x.event_type AS "event_type!", x.source AS "source!",
-                     x.material_id, x.anchor, x.output_index AS "output_index!", x.parents, x.ts_orig,
+                     x.material_id, x.record_offset, x.output_index AS "output_index!", x.parents, x.ts_orig,
                      x.ts_quality AS "ts_quality!", x.payload AS "payload!", x.equivalence_key,
                      x.reading_order AS "reading_order!", x.record_hash AS "record_hash!",
                      x.record_state AS "record_state!", x.class AS "class!",
@@ -886,22 +886,22 @@ pub(crate) async fn live_at(
     locations: &[RecordLocation],
 ) -> Result<Vec<Event>> {
     let materials: Vec<Uuid> = locations.iter().map(|l| l.material.0).collect();
-    let anchors: Vec<i64> = locations
+    let record_offsets: Vec<i64> = locations
         .iter()
-        .map(|l| i64::try_from(l.anchor).unwrap_or(i64::MAX))
+        .map(|l| i64::try_from(l.record_offset).unwrap_or(i64::MAX))
         .collect();
     let rows = sqlx::query!(
-        r#"SELECT e.id AS "id!", e.event_type AS "event_type!", e.source AS "source!", e.material_id, e.anchor, e.output_index AS "output_index!", e.parents,
+        r#"SELECT e.id AS "id!", e.event_type AS "event_type!", e.source AS "source!", e.material_id, e.record_offset, e.output_index AS "output_index!", e.parents,
              e.ts_orig, e.ts_quality AS "ts_quality!", e.payload AS "payload!", e.equivalence_key, e.reading_order AS "reading_order!", e.record_hash AS "record_hash!",
              e.record_state AS "record_state!", e.class AS "class!", e.commit_seq AS "commit_seq!", e.kind_version AS "kind_version!", e.validation AS "validation!",
              (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule
-           FROM unnest($1::uuid[], $2::bigint[]) AS l(material_id, anchor)
-           JOIN core.events e ON e.material_id = l.material_id AND e.anchor = l.anchor
+           FROM unnest($1::uuid[], $2::bigint[]) AS l(material_id, record_offset)
+           JOIN core.events e ON e.material_id = l.material_id AND e.record_offset = l.record_offset
            WHERE EXISTS (SELECT 1 FROM core.live_locations c WHERE c.event_id = e.id)
               OR EXISTS (SELECT 1 FROM core.live_equivalence q WHERE q.event_id = e.id)
            ORDER BY e.commit_seq"#,
         &materials,
-        &anchors,
+        &record_offsets,
     )
     .fetch_all(&mut *conn)
     .await?;
@@ -1000,7 +1000,7 @@ pub async fn output_keys(conn: &mut PgConnection, derivation: &str) -> Result<Ve
 /// The live outputs a key last produced.
 pub async fn outputs(conn: &mut PgConnection, derivation: &str, key: &Value) -> Result<Vec<Event>> {
     let rows = sqlx::query!(
-        r#"SELECT e.id AS "id!", e.event_type AS "event_type!", e.source AS "source!", e.material_id, e.anchor, e.output_index AS "output_index!", e.parents,
+        r#"SELECT e.id AS "id!", e.event_type AS "event_type!", e.source AS "source!", e.material_id, e.record_offset, e.output_index AS "output_index!", e.parents,
              e.ts_orig, e.ts_quality AS "ts_quality!", e.payload AS "payload!", e.equivalence_key, e.reading_order AS "reading_order!", e.record_hash AS "record_hash!",
              e.record_state AS "record_state!", e.class AS "class!", e.commit_seq AS "commit_seq!", e.kind_version AS "kind_version!", e.validation AS "validation!",
              (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule
@@ -1028,7 +1028,7 @@ pub async fn children_outputs(
     input: sinex_model::EventId,
 ) -> Result<Vec<Event>> {
     let rows = sqlx::query!(
-        r#"SELECT e.id AS "id!", e.event_type AS "event_type!", e.source AS "source!", e.material_id, e.anchor, e.output_index AS "output_index!", e.parents,
+        r#"SELECT e.id AS "id!", e.event_type AS "event_type!", e.source AS "source!", e.material_id, e.record_offset, e.output_index AS "output_index!", e.parents,
              e.ts_orig, e.ts_quality AS "ts_quality!", e.payload AS "payload!", e.equivalence_key, e.reading_order AS "reading_order!", e.record_hash AS "record_hash!",
              e.record_state AS "record_state!", e.class AS "class!", e.commit_seq AS "commit_seq!", e.kind_version AS "kind_version!", e.validation AS "validation!",
              (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule

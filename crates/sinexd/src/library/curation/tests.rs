@@ -239,15 +239,15 @@ async fn authorship_comes_from_the_caller_and_decides_precedence(db: devkit::pg:
     let v = view(&mut w, &a).await;
     assert_eq!(v["properties"]["medium"]["state"], "conflict");
     assert_eq!(v["properties"]["medium"]["level"], "agent");
-    let supporters: Vec<&str> = v["properties"]["medium"]["values"]
+    let supporting_records: Vec<&str> = v["properties"]["medium"]["values"]
         .as_array()
         .unwrap()
         .iter()
         .flat_map(|pair| pair[1].as_array().unwrap())
         .map(|s| s["author"].as_str().unwrap())
         .collect();
-    assert_eq!(supporters.len(), 2, "{v}");
-    assert!(supporters.contains(&"agent:one") && supporters.contains(&"agent:two"));
+    assert_eq!(supporting_records.len(), 2, "{v}");
+    assert!(supporting_records.contains(&"agent:one") && supporting_records.contains(&"agent:two"));
     // The operator's value ranks above every agent's.
     let operator = w.curate(set("operator value")).await;
     let v = view(&mut w, &a).await;

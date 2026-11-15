@@ -22,11 +22,20 @@ async fn stage(conn: &mut PgConnection, events: &[Event]) {
         .collect::<Vec<_>>();
     crate::stage::copy(conn, &numbered).await.unwrap();
 }
-fn input(key: Option<&str>, material: MaterialId, anchor: u64, hash: u8, order: i64) -> Event {
+fn input(
+    key: Option<&str>,
+    material: MaterialId,
+    record_offset: u64,
+    hash: u8,
+    order: i64,
+) -> Event {
     let mut e = keyed("synthetic-classifier", 1, hash, order);
     e.equivalence_key = key.map(|key| sinex_model::EquivalenceKey(key.to_owned()));
     e.origin = Origin::Record {
-        location: RecordLocation { material, anchor },
+        location: RecordLocation {
+            material,
+            record_offset,
+        },
         output_index: 0,
     };
     e.record_hash = [hash; 32];
@@ -62,8 +71,8 @@ async fn classification_exact_probes_preserve_rank_removal_and_location_semantic
         (None, 7, 2, 11, "newer"),
         (None, 8, 1, 10, "new"),
     ];
-    for (key, anchor, hash, order, state) in cases {
-        let event = input(key, material, anchor, hash, order);
+    for (key, record_offset, hash, order, state) in cases {
+        let event = input(key, material, record_offset, hash, order);
         stage(&mut conn, &[event]).await;
         let expected = vec![(
             0,

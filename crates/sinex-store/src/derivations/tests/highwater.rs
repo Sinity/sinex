@@ -13,7 +13,7 @@ async fn grouped_reading_orders_take_each_producers_history_maximum(db: devkit::
       FROM generate_series(1,10)n;
       INSERT INTO core.runs(id,name,host,events)
       SELECT ('01810000-0000-7000-8000-'||lpad(to_hex(n+11),12,'0'))::uuid,'synthetic.highwater.'||n::text,'synthetic',0 FROM generate_series(0,3)n;
-      INSERT INTO core.events(id,event_type,source,run_id,material_id,anchor,ts_quality,commit_seq,payload,reading_order,record_hash,class,record_state)
+      INSERT INTO core.events(id,event_type,source,run_id,material_id,record_offset,ts_quality,commit_seq,payload,reading_order,record_hash,class,record_state)
       SELECT ('01800000-0000-7000-8000-'||lpad(to_hex(n),12,'0'))::uuid,
         'synthetic.highwater','synthetic.shared',
         ('01810000-0000-7000-8000-'||lpad(to_hex(CASE WHEN n<=8192 THEN (n-1)/1024+1 ELSE 9 END),12,'0'))::uuid,

@@ -28,7 +28,7 @@ impl ReaderContext {
         let blobs = Blobs::open(store)?;
         let writer_conn = PgConnection::connect(database).await?;
         let mut writer_conn = writer::claim(writer_conn).await?;
-        crate::catalog::install_native_sources(&mut writer_conn).await?;
+        crate::catalog::install_built_in_sources(&mut writer_conn).await?;
         blobs.recover(&mut writer_conn).await?;
         // As at daemon start: finish removing tombstoned bytes, and no
         // operation holds keys while the writer starts.

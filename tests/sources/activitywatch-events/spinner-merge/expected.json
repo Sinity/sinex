@@ -1,6 +1,6 @@
 [
   {
-    "anchor": 0,
+    "record_offset": 0,
     "events": [
       {
         "type": "window.span",
@@ -21,7 +21,7 @@
     ]
   },
   {
-    "anchor": 191,
+    "record_offset": 191,
     "events": [
       {
         "type": "window.span",
@@ -42,7 +42,7 @@
     ]
   },
   {
-    "anchor": 382,
+    "record_offset": 382,
     "events": [
       {
         "type": "window.span",

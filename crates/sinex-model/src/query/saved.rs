@@ -27,7 +27,7 @@ pub enum ParameterType {
 pub struct SavedQuery {
     pub name: String,
     pub query: String,
-    pub template: native::Template,
+    pub template: template::Template,
     pub parameters: Vec<Parameter>,
 }
 
@@ -117,7 +117,7 @@ impl SavedQuery {
         parameters: Vec<Parameter>,
         ctx: &Context,
     ) -> Result<Self, QueryError> {
-        let template = native::parse(&query, ctx)?;
+        let template = template::parse(&query, ctx)?;
         Ok(Self {
             name,
             query,
@@ -148,7 +148,7 @@ impl SavedQuery {
     pub fn validate_parameters(&self) -> Result<(), QueryError> {
         self.validation_ast().map(|_| ())
     }
-    fn validation_ast(&self) -> Result<native::Template, QueryError> {
+    fn validation_ast(&self) -> Result<template::Template, QueryError> {
         if !valid_name(&self.name) {
             return Err(QueryError::new(
                 "saved query name uses letters, numbers, _ or -",
@@ -169,7 +169,7 @@ fn substitute(
     saved: &SavedQuery,
     args: &BTreeMap<String, syntax::Value>,
     validating: bool,
-) -> Result<native::Template, QueryError> {
+) -> Result<template::Template, QueryError> {
     for name in args.keys() {
         if !saved.parameters.iter().any(|p| p.name == *name) {
             return Err(QueryError::new(format!(
@@ -275,23 +275,23 @@ pub fn template_saved(
     text: &str,
     ctx: &Context,
     saved: &BTreeMap<String, SavedQuery>,
-) -> Result<native::Template, QueryError> {
-    resolve_template(native::parse(text, ctx)?, ctx, saved)
+) -> Result<template::Template, QueryError> {
+    resolve_template(template::parse(text, ctx)?, ctx, saved)
 }
 
 pub fn resolve_template(
-    input: native::Template,
+    input: template::Template,
     ctx: &Context,
     saved: &BTreeMap<String, SavedQuery>,
-) -> Result<native::Template, QueryError> {
+) -> Result<template::Template, QueryError> {
     with_resolved(input, ctx, saved, Ok)
 }
 
 fn with_resolved<T>(
-    input: native::Template,
+    input: template::Template,
     ctx: &Context,
     saved: &BTreeMap<String, SavedQuery>,
-    finish: impl FnOnce(native::Template) -> Result<T, QueryError>,
+    finish: impl FnOnce(template::Template) -> Result<T, QueryError>,
 ) -> Result<T, QueryError> {
     let mut expanded_definition = false;
     let result = expand(
@@ -316,19 +316,19 @@ pub fn bind_saved(
     ctx: &Context,
     saved: &BTreeMap<String, SavedQuery>,
 ) -> Result<Query, QueryError> {
-    with_resolved(native::parse(text, ctx)?, ctx, saved, |template| {
+    with_resolved(template::parse(text, ctx)?, ctx, saved, |template| {
         template.bind(ctx)
     })
 }
 
 fn expand(
-    mut input: native::Template,
+    mut input: template::Template,
     ctx: &Context,
     saved: &BTreeMap<String, SavedQuery>,
     seen: &mut BTreeSet<String>,
     expanded_definition: &mut bool,
     validating: bool,
-) -> Result<native::Template, QueryError> {
+) -> Result<template::Template, QueryError> {
     if let syntax::Source::Saved {
         name,
         arguments,
@@ -382,7 +382,7 @@ fn expand(
         | syntax::TransformKind::Diff { query, .. } = &mut transform.kind
         {
             let inner = expand(
-                native::Template::query((**query).clone()),
+                template::Template::query((**query).clone()),
                 ctx,
                 saved,
                 seen,

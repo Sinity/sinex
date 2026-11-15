@@ -215,13 +215,13 @@ pub(crate) async fn admit(
     // The existing receipt sequence is reserved only after exact retry lookup.
     // Its deferred FK lets immutable event rows cite the final receipt on first insert.
     let frame_number = match &batch.kind {
-        BatchKind::Ingress(frame) if frame.receipt_number.is_some() => {
+        BatchKind::Ingress(frame) if frame.ack_number.is_some() => {
             if !frame.frame.is_empty() {
                 return Err(crate::Error::Invalid(
                     "a named frame cannot choose a reserved receipt".into(),
                 ));
             }
-            frame.receipt_number
+            frame.ack_number
         }
         BatchKind::Ingress(frame) if !frame.frame.is_empty() => {
             Some(crate::commit_log::reserve_frame_number(conn).await?)
@@ -372,7 +372,7 @@ pub(crate) async fn admit(
 const PARENT_PAGE: usize = 256;
 
 #[derive(sqlx::FromRow)]
-struct ParentAuthority {
+struct ParentRow {
     id: Uuid,
     class: String,
     #[sqlx(rename = "live!")]
@@ -414,12 +414,11 @@ async fn apply_privacy(
     // replacement changes across these pages in this same transaction.
     let mut classes = std::collections::HashMap::new();
     for parents in parent_pages(events) {
-        for row in
-            sqlx::query_as::<_, ParentAuthority>(include_str!("admission/parent_authority.sql"))
-                .bind(&parents)
-                .persistent(false)
-                .fetch_all(&mut *conn)
-                .await?
+        for row in sqlx::query_as::<_, ParentRow>(include_str!("admission/parent_authority.sql"))
+            .bind(&parents)
+            .persistent(false)
+            .fetch_all(&mut *conn)
+            .await?
         {
             if !row.live {
                 return Err(crate::Error::Invalid(format!(

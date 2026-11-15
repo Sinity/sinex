@@ -336,7 +336,7 @@ async fn draining_after_moving_session_storage_keeps_names_and_positions() {
         events[0].location,
         Some(sinex_model::RecordLocation {
             material: material.id,
-            anchor: second_record as u64,
+            record_offset: second_record as u64,
         })
     );
     assert_eq!(

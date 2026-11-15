@@ -154,7 +154,7 @@ fn unknown_steering_shapes_are_accounted_without_losing_later_coordinates() {
     for (i, outcome) in outputs[0].outcomes.iter().enumerate() {
         let location = RecordLocation {
             material,
-            anchor: records[i].0 as u64,
+            record_offset: records[i].0 as u64,
         };
         match outcome {
             RecordOutcome::Failure {

@@ -70,7 +70,7 @@ fn repeated_provider_observations_share_a_key_only_within_the_account() {
             crate::Origin::Record {
                 location: crate::RecordLocation {
                     material: crate::MaterialId::new(),
-                    anchor: 0,
+                    record_offset: 0,
                 },
                 output_index: 0,
             },

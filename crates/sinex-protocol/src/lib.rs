@@ -12,9 +12,9 @@ pub use context::{
     DeliveredCompletion, PublicContext, PublicContextRequest, PublicInterruptBudget,
 };
 pub mod nats;
-mod projection;
+mod payload_identity;
 pub mod replies;
-pub use projection::ProjectionIdentity;
+pub use payload_identity::PayloadIdentity;
 pub mod replay;
 mod request;
 pub use replay::{
@@ -25,14 +25,15 @@ pub mod stage_report;
 
 pub use commands::{Access, Arg, ArgKind, COMMANDS, Command, command};
 pub use nats::{
-    Acknowledgment, Archived, Confirmed, ConfirmedConsumer, ConfirmedConsumerReply, ConfirmedEvent,
-    DeclarationHash, ErasedEvent, FetchEvent, FetchEventReply, FetchMaterial, FetchMaterialReply,
-    FetchRefusal, FetchRefusalKind, FrameResult, Ingress, Lifecycle, MaterialChunk, MaterialFrame,
-    Materials, MaterialsPage, PRODUCER_VERSION, ProducerEvent, ProducerFailure, ProducerHello,
-    ProducerMaterial, ProducerReplay, ProducerWelcome, ReceiptHint, RecordedContinuation,
-    RecordedContinuationRequest, RecordedHeaderUse, RecordedHeaders, RecordedMaterialBinding,
-    RecordedPage, RecordedQuery, ReplayBatch, ReplayMaterial, ReplayScopePage, ReplayScopeQuery,
-    ReplaySelection, Restored, Subjects, WithheldEvent, WithheldReason,
+    AckHint, Acknowledgment, Archived, Confirmed, ConfirmedConsumer, ConfirmedConsumerReply,
+    ConfirmedEvent, DeclarationHash, ErasedEvent, FetchEvent, FetchEventReply, FetchMaterial,
+    FetchMaterialReply, FetchRefusal, FetchRefusalKind, FrameResult, Ingress, Lifecycle,
+    MaterialChunk, MaterialFrame, Materials, MaterialsPage, PRODUCER_VERSION, ProducerEvent,
+    ProducerFailure, ProducerHello, ProducerMaterial, ProducerReplay, ProducerWelcome,
+    RecordedContinuation, RecordedContinuationRequest, RecordedHeaderUse, RecordedHeaders,
+    RecordedMaterialBinding, RecordedPage, RecordedQuery, ReplayBatch, ReplayMaterial,
+    ReplayScopePage, ReplayScopeQuery, ReplaySelection, Restored, Subjects, WithheldEvent,
+    WithheldReason,
 };
 pub use request::{Call, Reply, Request, deadline, stopped_early};
 pub use sinex_model::SourceRef;

@@ -43,7 +43,7 @@ fn accessible_text_is_derived_from_the_exact_guarded_frame_without_material_read
         Origin::Record {
             location: sinex_model::RecordLocation {
                 material: sinex_model::MaterialId::new(),
-                anchor: 0,
+                record_offset: 0,
             },
             output_index: 0,
         },

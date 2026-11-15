@@ -764,13 +764,13 @@ async fn plan_restore(
     // readings are of the same record.
     for r in sqlx::query!(
         r#"WITH members AS (
-             SELECT e.id, e.source, e.event_type, e.equivalence_key, e.material_id, e.anchor, e.output_index
+             SELECT e.id, e.source, e.event_type, e.equivalence_key, e.material_id, e.record_offset, e.output_index
              FROM core.events e WHERE e.id = ANY($1))
            SELECT m.id AS "id!", coalesce(k.event_id, l.event_id) AS "other!" FROM members m
            LEFT JOIN core.live_equivalence k ON m.equivalence_key IS NOT NULL AND k.source = m.source
              AND k.event_type = m.event_type AND k.equivalence_key = core.encode_equivalence_key(m.equivalence_key)
            LEFT JOIN core.live_locations l ON m.equivalence_key IS NULL AND l.material_id = m.material_id
-             AND l.anchor = m.anchor AND l.event_type = m.event_type AND l.output_index = m.output_index
+             AND l.record_offset = m.record_offset AND l.event_type = m.event_type AND l.output_index = m.output_index
            WHERE coalesce(k.event_id, l.event_id) IS NOT NULL AND coalesce(k.event_id, l.event_id) <> m.id
              AND NOT (coalesce(k.event_id, l.event_id) = ANY($2))
            UNION ALL
@@ -778,7 +778,7 @@ async fn plan_restore(
              AND a.source = b.source AND a.event_type = b.event_type
              AND ((a.equivalence_key IS NOT NULL AND a.equivalence_key = b.equivalence_key)
                OR (a.equivalence_key IS NULL AND b.equivalence_key IS NULL AND a.material_id = b.material_id
-                   AND a.anchor = b.anchor AND a.output_index = b.output_index))"#,
+                   AND a.record_offset = b.record_offset AND a.output_index = b.output_index))"#,
         &restoring,
         &leaving,
     )
@@ -883,8 +883,8 @@ async fn apply(
             .execute(&mut *conn)
             .await?;
             sqlx::query!(
-                r#"INSERT INTO core.live_locations(material_id,anchor,event_type,output_index,event_id,reading_order,record_hash)
-                   SELECT material_id,anchor,event_type,output_index,id,reading_order,record_hash
+                r#"INSERT INTO core.live_locations(material_id,record_offset,event_type,output_index,event_id,reading_order,record_hash)
+                   SELECT material_id,record_offset,event_type,output_index,id,reading_order,record_hash
                    FROM core.events WHERE id = ANY($1) AND equivalence_key IS NULL"#,
                 &members
             )

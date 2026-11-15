@@ -4,14 +4,14 @@ use super::*;
 use sinex_derivations::work::{ActivityDays, ContextPacks, WorkActs, WorkEpisodes};
 use sinex_model::event_types::work::{ContextPack, WorkAct, WorkEpisode};
 
-fn record(kind: &str, payload: Value, anchor: u64) -> Event {
+fn record(kind: &str, payload: Value, record_offset: u64) -> Event {
     if kind.starts_with("polylogue.") {
-        return external::record(kind, payload, location(anchor));
+        return external::record(kind, payload, location(record_offset));
     }
     (sinex_model::event_types::find(kind).unwrap().build)(
         &payload,
         "synthetic.work",
-        location(anchor),
+        location(record_offset),
         ReadingOrder(0),
         *blake3::hash(&serde_json::to_vec(&payload).unwrap()).as_bytes(),
         Class::Open,

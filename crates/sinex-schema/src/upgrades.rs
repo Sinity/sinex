@@ -18,4 +18,40 @@ pub(crate) struct Step {
 pub(crate) const LANDED_VERSION: i32 = 40;
 
 /// The steps after [`LANDED_VERSION`], in landing order.
-pub(crate) const STEPS: &[Step] = &[];
+pub(crate) const STEPS: &[Step] = &[Step {
+    name: "plain_names",
+    statements: plain_names,
+}];
+
+/// Renames to plain words: a record's byte offset in its material is its
+/// record offset, the database secret is the store secret, the records
+/// behind a shown library value are its supporting records, and the trigger
+/// that keeps kind prefixes fixed names what it keeps. No row changes.
+fn plain_names() -> Vec<String> {
+    let mut statements: Vec<String> = [
+        "core.events",
+        "core.event_tombstones",
+        "core.live_locations",
+        "raw.failures",
+        "core.admission_stage",
+    ]
+    .iter()
+    .map(|table| format!("ALTER TABLE {table} RENAME COLUMN anchor TO record_offset"))
+    .collect();
+    statements.extend(
+        [
+            "ALTER TABLE core.events RENAME CONSTRAINT anchor_in_range TO record_offset_in_range",
+            "ALTER TABLE core.owner_protocol_key RENAME TO store_secret",
+            "ALTER TABLE core.library_shown RENAME COLUMN supporters TO supporting_records",
+            "ALTER TRIGGER keep_owner ON registry.kind_prefixes RENAME TO keep_declaring_producer",
+        ]
+        .map(String::from),
+    );
+    let keep_definition = crate::tables::KIND_IMMUTABILITY
+        .split(";\n")
+        .next()
+        .expect("the trigger function comes first");
+    statements.push(keep_definition.replacen("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION", 1));
+    statements.push(crate::sparse_indexes::configuration());
+    statements
+}

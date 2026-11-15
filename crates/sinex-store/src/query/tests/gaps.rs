@@ -175,7 +175,7 @@ async fn source_gaps_merge_overlapping_runs_and_drift_keeps_recorded_changes(
         Origin::Record {
             location: RecordLocation {
                 material: MaterialId::new(),
-                anchor: 0,
+                record_offset: 0,
             },
             output_index: 0,
         },
@@ -421,7 +421,7 @@ async fn source_gaps_page_without_embedding_run_history(db: devkit::pg::TestData
             Origin::Record {
                 location: RecordLocation {
                     material: MaterialId::new(),
-                    anchor: 0,
+                    record_offset: 0,
                 },
                 output_index: 0,
             },

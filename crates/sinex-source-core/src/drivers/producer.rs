@@ -71,8 +71,8 @@ fn nats(e: impl std::fmt::Display) -> Error {
 
 fn submit_error(error: sinex_transport::producer::SubmitError) -> Error {
     match error {
-        sinex_transport::producer::SubmitError::NoReceipt(frame) => Error::NoAck(frame),
-        sinex_transport::producer::SubmitError::ReceiptConflict{frame,..}=>Error::Refused {
+        sinex_transport::producer::SubmitError::NoAck(frame) => Error::NoAck(frame),
+        sinex_transport::producer::SubmitError::AckConflict{frame,..}=>Error::Refused {
             frame,reason:"owner receipt belongs to different offered bytes; existing custody requires owner intervention".into(),kind:FrameRefusal::Conflict,recorded:true,
         },
         sinex_transport::producer::SubmitError::Refused {
@@ -414,7 +414,7 @@ impl Producer {
                         .await?
                         .into_iter()
                         .map(|receipt| {
-                            sinex_transport::producer::check_receipt(&prepared, receipt)
+                            sinex_transport::producer::check_ack(&prepared, receipt)
                                 .map_err(submit_error)
                         })
                         .collect::<Result<Vec<_>, _>>()?;
@@ -1038,7 +1038,7 @@ fn failed_events(frames: &[Ingress], reason: &str) -> Result<Ingress, Error> {
             kind: FrameRefusal::Malformed,
         });
     }
-    locations.sort_by_key(|location| (location.material.0, location.anchor));
+    locations.sort_by_key(|location| (location.material.0, location.record_offset));
     locations.dedup();
     Ok(Ingress::Events {
         source,

@@ -5,10 +5,10 @@ fn shell_sessions_are_explicit_and_recall_last_filters_the_session() {
     let query = q("shell-sessions where cwds ^ /src/tide | sort by start desc");
     assert_eq!(query.source.alias().unwrap().kinds, &["shell.session"]);
     assert!(matches!(
-        native_q("recall last").source,
+        parse_query("recall last").source,
         Source::RecallLast { filter: None }
     ));
-    let query = native_q(r#"recall last where cwds ^ "/src/tide (notes)""#);
+    let query = parse_query(r#"recall last where cwds ^ "/src/tide (notes)""#);
     assert!(matches!(
         query.source,
         Source::RecallLast { filter: Some(_) }
@@ -31,7 +31,7 @@ fn shell_sessions_are_explicit_and_recall_last_filters_the_session() {
     );
     assert!(q("shell-sessions where cwds != /src/tide").filter.is_some());
     assert!(matches!(
-        native_q("recall mark").source,
+        parse_query("recall mark").source,
         Source::RecallMark { number: 1, .. }
     ));
 }

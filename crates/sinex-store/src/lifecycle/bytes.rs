@@ -23,9 +23,9 @@ pub(super) async fn tombstone_events(
     }
     sqlx::query!(
         r#"INSERT INTO core.event_tombstones (event_id, source, event_type, ts_orig, ts_quality, operation_id,
-             commit_seq, original_commit_seq, class, reason, material_id, anchor, output_index, key_hash)
+             commit_seq, original_commit_seq, class, reason, material_id, record_offset, output_index, key_hash)
            SELECT e.id, e.source, e.event_type, e.ts_orig, e.ts_quality, $2, $3, e.commit_seq, e.class,
-             a.reason, e.material_id, e.anchor, e.output_index,
+             a.reason, e.material_id, e.record_offset, e.output_index,
              CASE WHEN e.equivalence_key IS NOT NULL
                THEN encode(sha256(convert_to(e.equivalence_key, 'UTF8')), 'hex') END
            FROM core.events e LEFT JOIN audit.archived a ON a.event_id = e.id

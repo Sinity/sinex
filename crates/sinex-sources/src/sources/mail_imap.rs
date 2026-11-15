@@ -464,7 +464,7 @@ impl ImapMail {
                 *uid,
                 sinex_model::RecordLocation {
                     material: id,
-                    anchor: *record_start as u64,
+                    record_offset: *record_start as u64,
                 },
             );
         }
@@ -559,13 +559,13 @@ fn search(c: &mut Connection, highest: u32) -> Result<HashSet<u32>, DriverError>
 
 /// What the reader remembers, to save: for each UID in order, the UID (four
 /// bytes, little-endian), its material's ID (sixteen) and the record's
-/// anchor (eight).
+/// record offset (eight).
 fn memory_of(known: &Known) -> Arc<[u8]> {
     let mut bytes = Vec::with_capacity(known.len() * 28);
     for (uid, location) in known {
         bytes.extend_from_slice(&uid.to_le_bytes());
         bytes.extend_from_slice(location.material.0.as_bytes());
-        bytes.extend_from_slice(&location.anchor.to_le_bytes());
+        bytes.extend_from_slice(&location.record_offset.to_le_bytes());
     }
     bytes.into()
 }
@@ -582,8 +582,14 @@ fn read_memory(mut rest: &[u8]) -> Result<Vec<(u32, sinex_model::RecordLocation)
         let material = MaterialId(uuid::Uuid::from_bytes(
             entry[4..20].try_into().expect("sixteen bytes"),
         ));
-        let anchor = u64::from_le_bytes(entry[20..].try_into().expect("eight bytes"));
-        out.push((uid, sinex_model::RecordLocation { material, anchor }));
+        let record_offset = u64::from_le_bytes(entry[20..].try_into().expect("eight bytes"));
+        out.push((
+            uid,
+            sinex_model::RecordLocation {
+                material,
+                record_offset,
+            },
+        ));
     }
     Ok(out)
 }
@@ -727,7 +733,7 @@ impl sinex_source_core::binding::Reader for ImapReader {
                     uid,
                     sinex_model::RecordLocation {
                         material: reference.id,
-                        anchor: start as u64,
+                        record_offset: start as u64,
                     },
                 );
             }
@@ -738,7 +744,7 @@ impl sinex_source_core::binding::Reader for ImapReader {
     fn restore_memory(
         &mut self,
         memory: &[u8],
-        _anchor: Option<&sinex_model::MaterialRef>,
+        _memory_part: Option<&sinex_model::MaterialRef>,
         _admitted: Option<u64>,
     ) -> Result<bool, DriverError> {
         for (uid, location) in read_memory(memory)? {

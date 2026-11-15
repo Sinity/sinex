@@ -18,32 +18,32 @@ use sinex_model::event_types::session::{ClipboardCopied, NotificationShown, Play
 use sinex_model::event_types::social::PostPublished;
 use sinex_model::{EventPayload, Origin};
 
-fn captured<P: EventPayload>(payload: &P, source: &str, anchor: u64) -> Event {
+fn captured<P: EventPayload>(payload: &P, source: &str, record_offset: u64) -> Event {
     Event::build(
         payload,
         source,
         Origin::Record {
             location: RecordLocation {
-                material: MaterialId(uuid::Uuid::from_u128(u128::from(anchor) + 1)),
-                anchor,
+                material: MaterialId(uuid::Uuid::from_u128(u128::from(record_offset) + 1)),
+                record_offset,
             },
             output_index: 0,
         },
         ReadingOrder(0),
-        *blake3::hash(&anchor.to_le_bytes()).as_bytes(),
+        *blake3::hash(&record_offset.to_le_bytes()).as_bytes(),
         Class::Open,
     )
     .unwrap()
 }
 
-fn polylogue(kind: &str, payload: Value, anchor: u64) -> Event {
+fn polylogue(kind: &str, payload: Value, record_offset: u64) -> Event {
     external::record(
         &format!("polylogue.{kind}"),
         payload,
         Origin::Record {
             location: RecordLocation {
-                material: MaterialId(uuid::Uuid::from_u128(u128::from(anchor) + 1)),
-                anchor,
+                material: MaterialId(uuid::Uuid::from_u128(u128::from(record_offset) + 1)),
+                record_offset,
             },
             output_index: 0,
         },
@@ -60,10 +60,10 @@ async fn declared_world(db: devkit::pg::TestDatabase) -> World {
 /// plans, moment marks, commits, the journal and a watch.
 fn world() -> Vec<Event> {
     let mut out = Vec::new();
-    let mut anchor = 0u64;
+    let mut record_offset = 0u64;
     let mut next = || {
-        anchor += 1;
-        anchor
+        record_offset += 1;
+        record_offset
     };
     for (seconds, event) in [(0, "start"), (2 * 86_400, "stop")] {
         out.push(captured(

@@ -154,7 +154,7 @@ pub struct NewMaterial {
     pub part_index: u32,
     pub previous_part: Option<MaterialId>,
     pub manifest: sinex_model::Manifest,
-    /// Which of two readings is newer, by the record's anchor.
+    /// Which of two readings is newer, by the record's offset.
     pub reading_order: Box<dyn Fn(usize) -> ReadingOrder + Send + Sync>,
     /// The cursor after this record. Failures reading the stored bytes refuse the
     /// batch before its progress or readings become visible.
@@ -494,20 +494,22 @@ impl Prepared<'_> {
 /// Which of two readings of a record is newer, as the material's manifest
 /// records it: a database snapshot's base order plus the row's position in it
 /// (`order_base`), the time a snapshot was read (`read_at_ns`), or the
-/// record's byte offset in its file (`file_offset` plus the anchor). The
+/// record's byte offset in its file (`file_offset` plus the record_offset). The
 /// driver and a replay both compute it here, so a replayed reading keeps the
 /// order of the reading it replaces.
 pub fn reading_order(
     manifest: &sinex_model::Manifest,
 ) -> Box<dyn Fn(usize) -> ReadingOrder + Send + Sync> {
     if let Some(base) = manifest.order_base {
-        return Box::new(move |anchor| ReadingOrder(base.saturating_add(anchor as i64)));
+        return Box::new(move |record_offset| {
+            ReadingOrder(base.saturating_add(record_offset as i64))
+        });
     }
     if let Some(at) = manifest.read_at_ns {
         return Box::new(move |_| ReadingOrder(at));
     }
     let offset = manifest.file_offset.unwrap_or(0);
-    Box::new(move |anchor| ReadingOrder(offset.saturating_add(anchor as u64) as i64))
+    Box::new(move |record_offset| ReadingOrder(offset.saturating_add(record_offset as u64) as i64))
 }
 
 /// The records of a stored material the driver read: every framed record,

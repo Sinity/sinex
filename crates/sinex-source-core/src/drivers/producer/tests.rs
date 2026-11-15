@@ -850,7 +850,7 @@ async fn a_stale_malformed_acknowledgment_does_not_refuse_another_frame() {
     .await
     .unwrap();
     let client = async_nats::connect(nats.url()).await.unwrap();
-    let stale = sinex_protocol::ReceiptHint {
+    let stale = sinex_protocol::AckHint {
         number: 999,
         frame_hash: blake3::hash(b"malformed/another-frame")
             .to_hex()
@@ -957,7 +957,7 @@ async fn byte_mismatch_count_survives_a_producer_restart() {
     for (index, event) in events.iter_mut().enumerate() {
         event.location = Some(sinex_model::RecordLocation {
             material,
-            anchor: index as u64,
+            record_offset: index as u64,
         });
     }
     UnacknowledgedFrames {
@@ -1223,7 +1223,7 @@ fn failed_native_readings_keep_exact_source_and_reject_mixed_sources() {
         let mut reading = event(1);
         reading.location = Some(sinex_model::RecordLocation {
             material: sinex_model::MaterialId::new(),
-            anchor: 0,
+            record_offset: 0,
         });
         Ingress::Events {
             source: Some(source),

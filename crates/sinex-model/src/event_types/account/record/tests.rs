@@ -64,7 +64,7 @@ fn registered_fallback_keeps_identity_time_and_rows_without_the_marker() {
     let origin = crate::Origin::Record {
         location: crate::RecordLocation {
             material: crate::MaterialId::new(),
-            anchor: 7,
+            record_offset: 7,
         },
         output_index: 0,
     };

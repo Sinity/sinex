@@ -57,7 +57,7 @@ struct Message {
     prompt_kind: Option<String>,
     at: Option<Timestamp>,
     #[serde(default)]
-    at_evidence: WorkTimeEvidence,
+    at_evidence: WorkTimeQuality,
 }
 #[derive(Deserialize)]
 struct Call {
@@ -74,10 +74,10 @@ struct Call {
     path: Option<String>,
     at: Option<Timestamp>,
     #[serde(default)]
-    at_evidence: WorkTimeEvidence,
+    at_evidence: WorkTimeQuality,
     result_at: Option<Timestamp>,
     #[serde(default)]
-    result_at_evidence: WorkTimeEvidence,
+    result_at_evidence: WorkTimeQuality,
     outcome: Option<Outcome>,
     revision: Option<String>,
     check_name: Option<String>,
@@ -103,10 +103,10 @@ struct Turn {
     session: String,
     start: Option<Timestamp>,
     #[serde(default)]
-    start_evidence: WorkTimeEvidence,
+    start_evidence: WorkTimeQuality,
     end: Option<Timestamp>,
     #[serde(default)]
-    end_evidence: WorkTimeEvidence,
+    end_evidence: WorkTimeQuality,
     errors: u64,
     #[serde(default)]
     unavailable: Vec<String>,
@@ -116,9 +116,9 @@ struct Entry {
     kind: &'static str,
     id: String,
     at: Option<Timestamp>,
-    at_evidence: WorkTimeEvidence,
+    at_evidence: WorkTimeQuality,
     end: Option<Timestamp>,
-    end_evidence: Option<WorkTimeEvidence>,
+    end_evidence: Option<WorkTimeQuality>,
     agency: Agency,
     action: String,
     path: Option<String>,

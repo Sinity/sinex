@@ -1,6 +1,6 @@
 [
   {
-    "anchor": 2,
+    "record_offset": 2,
     "events": [
       {
         "type": "music.played",
@@ -38,7 +38,7 @@
     ]
   },
   {
-    "anchor": 491,
+    "record_offset": 491,
     "events": [
       {
         "type": "music.played",

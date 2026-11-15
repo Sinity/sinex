@@ -65,7 +65,7 @@ impl Api {
                 let definition = SavedQuery {
                     name: name.clone(),
                     query: query.clone(),
-                    template: query::native::parse(&query, &self.context())
+                    template: query::template::parse(&query, &self.context())
                         .map_err(|error| error.failure(&query))?,
                     parameters: parameters.clone(),
                 };
@@ -113,7 +113,7 @@ impl Api {
             &mut conn,
             sinex_model::RecordLocation {
                 material,
-                anchor: 0,
+                record_offset: 0,
             },
             0,
         )

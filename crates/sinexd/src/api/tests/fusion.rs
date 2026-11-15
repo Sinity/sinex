@@ -2,19 +2,19 @@
 use super::*;
 use sinex_model::event_types::CommandImported;
 
-fn captured<P: sinex_model::EventPayload>(payload: &P, source: &str, anchor: u64) -> Event {
+fn captured<P: sinex_model::EventPayload>(payload: &P, source: &str, record_offset: u64) -> Event {
     Event::build(
         payload,
         source,
         Origin::Record {
             location: RecordLocation {
                 material: MaterialId::new(),
-                anchor,
+                record_offset,
             },
             output_index: 0,
         },
         ReadingOrder(1),
-        [anchor as u8 + 1; 32],
+        [record_offset as u8 + 1; 32],
         Class::Open,
     )
     .unwrap()
@@ -212,7 +212,7 @@ async fn library_items_share_duplicate_decisions_without_becoming_one_item(
 ) {
     use sinex_model::event_types::library::{Item, item_id};
     let w = world(db).await;
-    let item = |key: &str, seconds: i64, anchor| {
+    let item = |key: &str, seconds: i64, record_offset| {
         captured(
             &Item {
                 item: item_id(key),
@@ -226,7 +226,7 @@ async fn library_items_share_duplicate_decisions_without_becoming_one_item(
                 at: Timestamp::from_unix_secs(seconds).unwrap(),
             },
             "derive.library-items",
-            anchor,
+            record_offset,
         )
     };
     let a = item("first", 1, 10);

@@ -96,7 +96,7 @@ async fn prefix_search_selects_matches_among_unrelated_readings(db: devkit::pg::
     // The prefix matches three readings among many unrelated ones.
     sqlx::query(
         "WITH events AS (
-           INSERT INTO core.events(id,event_type,source,run_id,material_id,anchor,ts_quality,
+           INSERT INTO core.events(id,event_type,source,run_id,material_id,record_offset,ts_quality,
              commit_seq,payload,reading_order,record_hash,class)
            SELECT uuidv7(),'command.imported','synthetic-unrelated',uuidv7(),uuidv7(),n,'unknown',
              1,'{}',1,decode(repeat('01',32),'hex'),'open' FROM generate_series(1,5000)n
@@ -182,7 +182,7 @@ async fn indexed_words_find_matches_among_compressed_unrelated_history(
     let selected = admit_commands(&mut conn, &[("specificsearchneedle", "/")]).await;
     catch_up_search_text(&mut conn).await.unwrap();
     sqlx::query("WITH events AS (
-        INSERT INTO core.events(id,event_type,source,run_id,material_id,anchor,ts_quality,commit_seq,payload,reading_order,record_hash,class)
+        INSERT INTO core.events(id,event_type,source,run_id,material_id,record_offset,ts_quality,commit_seq,payload,reading_order,record_hash,class)
         SELECT ((CASE WHEN n<=4096 THEN '01800000-0000-7000-8000-' ELSE '01810000-0000-7000-8000-' END)||lpad(to_hex(n),12,'0'))::uuid,
           'command.imported','synthetic-search-history',uuidv7(),uuidv7(),n,'unknown',1,'{}',1,decode(repeat('01',32),'hex'),'open'
         FROM generate_series(1,8192)n RETURNING id
@@ -229,13 +229,13 @@ async fn matching_compressed_search_rows_page_with_grants_and_snippets(
         .await
         .unwrap();
     sqlx::query("WITH inserted AS (
-        INSERT INTO core.events(id,event_type,source,run_id,material_id,anchor,ts_quality,commit_seq,payload,reading_order,record_hash,class)
+        INSERT INTO core.events(id,event_type,source,run_id,material_id,record_offset,ts_quality,commit_seq,payload,reading_order,record_hash,class)
         SELECT ((CASE WHEN n<=128 THEN '01800000-0000-7000-8000-' ELSE '01810000-0000-7000-8000-' END)||lpad(to_hex(n),12,'0'))::uuid,
           'command.imported','synthetic-search-reuse',uuidv7(),uuidv7(),n,'unknown',1,'{}',1,decode(repeat('01',32),'hex'),
           CASE WHEN n<=128 AND n%4=0 THEN 'guarded' ELSE 'open' END
-        FROM generate_series(1,8320)n RETURNING id,anchor
+        FROM generate_series(1,8320)n RETURNING id,record_offset
       ) INSERT INTO core.search_text(event_id,text)
-        SELECT id,CASE WHEN anchor<=128 THEN 'matchingreuse common words' ELSE 'unrelated history' END FROM inserted")
+        SELECT id,CASE WHEN record_offset<=128 THEN 'matchingreuse common words' ELSE 'unrelated history' END FROM inserted")
         .execute(&mut conn).await.unwrap();
     sqlx::query("UPDATE core.counters SET value=greatest(value,1) WHERE name='commit_seq'")
         .execute(&mut conn)

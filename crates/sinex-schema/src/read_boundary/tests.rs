@@ -62,7 +62,7 @@ async fn applying_current_revokes_private_table_and_column_grants(db: devkit::pg
         ("raw.reader_memory", "memory"),
         ("derivation.comparisons", "examples"),
         ("core.query_cursor_key", "secret"),
-        ("core.owner_protocol_key", "secret"),
+        ("core.store_secret", "secret"),
         ("core.events", "payload"),
         ("core.search_text", "text"),
         ("core.search_trigram", "text"),

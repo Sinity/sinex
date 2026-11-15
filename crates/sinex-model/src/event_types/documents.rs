@@ -1,4 +1,4 @@
-//! Captured document observations anchored at their stored file records.
+//! Captured document observations located at their stored file records.
 use crate::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

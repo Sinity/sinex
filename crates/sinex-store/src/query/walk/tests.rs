@@ -23,7 +23,7 @@ fn source(class: Class) -> Event {
         Origin::Record {
             location: RecordLocation {
                 material: MaterialId::new(),
-                anchor: 0,
+                record_offset: 0,
             },
             output_index: 0,
         },
@@ -96,7 +96,7 @@ async fn insert(conn: &mut AdmissionContext, event: Event) {
 
 async fn page(conn: &mut PgConnection, text: &str, size: u64, cursor: Option<String>) -> Answer {
     let context = sinex_model::query::Context::utc("2026-09-15T00:00:00Z".parse().unwrap());
-    let operation = sinex_model::query::native::parse(text, &context).unwrap();
+    let operation = sinex_model::query::template::parse(text, &context).unwrap();
     crate::query::run_operation(
         conn,
         text,

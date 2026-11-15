@@ -43,10 +43,10 @@ pub(super) async fn insert_admitted(
         r#"WITH a AS (
              SELECT s.*, $1::bigint + row_number() OVER (ORDER BY s.ord) - 1 AS seq
              FROM core.admission_stage s)
-           INSERT INTO core.events (id, event_type, source, run_id, material_id, anchor, output_index,
+           INSERT INTO core.events (id, event_type, source, run_id, material_id, record_offset, output_index,
              parents, ts_orig, ts_quality, commit_seq, payload, equivalence_key, reading_order,
              record_hash, record_state, class, kind_version, validation, producer_family, producer_identity, producer_host, producer_frame, source_version, source_fingerprint)
-           SELECT id, event_type, source, $2, material_id, anchor, output_index, parents, ts_orig,
+           SELECT id, event_type, source, $2, material_id, record_offset, output_index, parents, ts_orig,
              ts_quality, seq, payload, equivalence_key, reading_order, record_hash, record_state,
              class, kind_version, validation, $3, $4, $5, $6, $7, $8
            FROM a"#,
@@ -115,12 +115,12 @@ pub(super) async fn insert_admitted(
 
     let started = std::time::Instant::now();
     sqlx::query!(
-        r#"INSERT INTO core.live_locations (material_id, anchor, event_type, output_index, event_id, reading_order, record_hash)
-           SELECT s.material_id, s.anchor, s.event_type, s.output_index, s.id, s.reading_order, s.record_hash
+        r#"INSERT INTO core.live_locations (material_id, record_offset, event_type, output_index, event_id, reading_order, record_hash)
+           SELECT s.material_id, s.record_offset, s.event_type, s.output_index, s.id, s.reading_order, s.record_hash
            FROM core.admission_stage s
            WHERE s.equivalence_key IS NULL AND s.material_id IS NOT NULL
-           ORDER BY s.material_id, s.anchor, s.event_type, s.output_index
-           ON CONFLICT (material_id, anchor, event_type, output_index) DO UPDATE
+           ORDER BY s.material_id, s.record_offset, s.event_type, s.output_index
+           ON CONFLICT (material_id, record_offset, event_type, output_index) DO UPDATE
            SET event_id = EXCLUDED.event_id, reading_order = EXCLUDED.reading_order,
                record_hash = EXCLUDED.record_hash"#,
     )
@@ -188,7 +188,7 @@ pub(super) async fn record_failures(conn: &mut PgConnection, batch: &Batch) -> R
         .filter_map(|r| match r {
             RecordOutcome::Failure { location, reason } => Some((
                 location.material.0,
-                i64::try_from(location.anchor).unwrap_or(i64::MAX),
+                i64::try_from(location.record_offset).unwrap_or(i64::MAX),
                 reason.as_str(),
             )),
             RecordOutcome::Events { .. } => None,
@@ -196,13 +196,13 @@ pub(super) async fn record_failures(conn: &mut PgConnection, batch: &Batch) -> R
         .collect();
     if !failures.is_empty() {
         let materials: Vec<Uuid> = failures.iter().map(|f| f.0).collect();
-        let anchors: Vec<i64> = failures.iter().map(|f| f.1).collect();
+        let record_offsets: Vec<i64> = failures.iter().map(|f| f.1).collect();
         let reasons: Vec<String> = failures.iter().map(|f| f.2.to_owned()).collect();
         sqlx::query!(
-            r#"INSERT INTO raw.failures (material_id, anchor, reason, run_id)
+            r#"INSERT INTO raw.failures (material_id, record_offset, reason, run_id)
                SELECT * , $4::uuid FROM unnest($1::uuid[], $2::bigint[], $3::text[])"#,
             &materials,
-            &anchors,
+            &record_offsets,
             &reasons,
             batch.run.0,
         )

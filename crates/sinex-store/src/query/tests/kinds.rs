@@ -34,7 +34,7 @@ async fn points(conn: &mut crate::AdmissionContext, d: &KindDeclaration) {
                 Origin::Record {
                     location: RecordLocation {
                         material: MaterialId::new(),
-                        anchor: 0,
+                        record_offset: 0,
                     },
                     output_index: 0,
                 },
@@ -102,7 +102,7 @@ async fn mixed_payloads(conn: &mut crate::AdmissionContext) -> [Uuid; 3] {
                 Origin::Record {
                     location: RecordLocation {
                         material: MaterialId::new(),
-                        anchor: 0,
+                        record_offset: 0,
                     },
                     output_index: 0,
                 },
@@ -343,7 +343,7 @@ async fn dynamic_json_uses_stored_row_types_without_losing_scalar_spelling(
                 Origin::Record {
                     location: RecordLocation {
                         material: MaterialId::new(),
-                        anchor: 0,
+                        record_offset: 0,
                     },
                     output_index: 0,
                 },
@@ -427,7 +427,7 @@ async fn dynamic_json_uses_stored_row_types_without_losing_scalar_spelling(
                 Origin::Record {
                     location: RecordLocation {
                         material: MaterialId::new(),
-                        anchor: 0,
+                        record_offset: 0,
                     },
                     output_index: 0,
                 },

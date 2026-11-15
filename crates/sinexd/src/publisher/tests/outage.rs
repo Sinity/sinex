@@ -162,7 +162,7 @@ fn imported(command: &str, n: i64) -> Event {
         Origin::Record {
             location: RecordLocation {
                 material: MaterialId(uuid::Uuid::from_u128(1_000 + n as u128)),
-                anchor: 0,
+                record_offset: 0,
             },
             output_index: 0,
         },

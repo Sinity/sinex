@@ -37,7 +37,7 @@ struct Part {
 #[derive(Clone)]
 struct Fact {
     material: Uuid,
-    anchor: u64,
+    record_offset: u64,
     hash: [u8; 32],
     payload: Value,
     order: i64,
@@ -203,7 +203,7 @@ pub(super) async fn positions(target: &Target, inputs: &Inputs) -> Vec<(String, 
                 "immutable fixture had an unavailable acquisition"
             );
         }
-        let events = sqlx::query("SELECT e.material_id,e.anchor,e.output_index,e.reading_order,e.producer_host,e.record_hash,e.payload,e.source,e.source_version,e.source_fingerprint,k.definition_hash,e.event_type,e.kind_version FROM core.events e JOIN raw.materials m ON m.id=e.material_id JOIN registry.event_types k ON k.name=e.event_type AND k.version=e.kind_version WHERE m.input_id=$1")
+        let events = sqlx::query("SELECT e.material_id,e.record_offset,e.output_index,e.reading_order,e.producer_host,e.record_hash,e.payload,e.source,e.source_version,e.source_fingerprint,k.definition_hash,e.event_type,e.kind_version FROM core.events e JOIN raw.materials m ON m.id=e.material_id JOIN registry.event_types k ON k.name=e.event_type AND k.version=e.kind_version WHERE m.input_id=$1")
             .bind(input).fetch_all(&mut conn).await.unwrap();
         let mut facts = Vec::new();
         for event in events {
@@ -233,13 +233,13 @@ pub(super) async fn positions(target: &Target, inputs: &Inputs) -> Vec<(String, 
             let hash: Vec<u8> = event.get("record_hash");
             facts.push(Fact {
                 material: event.get("material_id"),
-                anchor: u64::try_from(event.get::<i64, _>("anchor")).unwrap(),
+                record_offset: u64::try_from(event.get::<i64, _>("record_offset")).unwrap(),
                 hash: hash.try_into().unwrap(),
                 payload: event.get("payload"),
                 order: event.get("reading_order"),
             });
         }
-        let failures = sqlx::query_as::<_,(Uuid,i64)>("SELECT f.material_id,f.anchor FROM raw.failures f JOIN raw.materials m ON m.id=f.material_id WHERE m.input_id=$1")
+        let failures = sqlx::query_as::<_,(Uuid,i64)>("SELECT f.material_id,f.record_offset FROM raw.failures f JOIN raw.materials m ON m.id=f.material_id WHERE m.input_id=$1")
             .bind(input).fetch_all(&mut conn).await.unwrap().into_iter().map(|(m,a)|(m,u64::try_from(a).unwrap())).collect();
         let memory = sinex_store::positions::reader_memory(&mut conn, &binding)
             .await
@@ -344,7 +344,7 @@ impl<'a> Authorities<'a> {
         let mut repeated: HashMap<_, Vec<_>> = HashMap::new();
         for fact in &snapshot.facts {
             located
-                .entry((fact.material, fact.anchor, fact.hash))
+                .entry((fact.material, fact.record_offset, fact.hash))
                 .or_default()
                 .push(&fact.payload);
             repeated.entry(fact.hash).or_default().push(&fact.payload);
@@ -442,7 +442,7 @@ fn validate(snapshot: &Snapshot, fixture: &Fixture) -> Check<Value> {
         snapshot
             .facts
             .iter()
-            .all(|f| admitted.contains(&(f.material, f.anchor))),
+            .all(|f| admitted.contains(&(f.material, f.record_offset))),
         "event cites an unconsumed prefix record",
     )?;
     require(

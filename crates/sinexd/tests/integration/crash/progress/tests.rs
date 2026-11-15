@@ -51,14 +51,14 @@ fn zsh() -> (Snapshot, Fixture) {
         facts: vec![
             Fact {
                 material: first,
-                anchor: 0,
+                record_offset: 0,
                 hash: *blake3::hash(&a).as_bytes(),
                 payload: json!({"command":"printf '%s' \nline 0","hostname":HOST,"n":0}),
                 order: 0,
             },
             Fact {
                 material: second,
-                anchor: 0,
+                record_offset: 0,
                 hash: *blake3::hash(&b).as_bytes(),
                 payload: json!({"command":"cmd 1","hostname":HOST,"n":0}),
                 order: 0,
@@ -90,7 +90,7 @@ fn atuin() -> (Snapshot, Fixture) {
         memory.extend((i + 1).to_le_bytes());
         memory.extend(blake3::hash(&line).as_bytes());
         line.push(b'\n');
-        facts.push(Fact{material,anchor:bytes.len() as u64,hash:*blake3::hash(&line).as_bytes(),payload:json!({"native_id":format!("a{i:06}"),"command":format!("atuin {i}"),"duration_ns":1000,"exit_code":0}),order:1});
+        facts.push(Fact{material,record_offset:bytes.len() as u64,hash:*blake3::hash(&line).as_bytes(),payload:json!({"native_id":format!("a{i:06}"),"command":format!("atuin {i}"),"duration_ns":1000,"exit_code":0}),order:1});
         bytes.extend(line);
     }
     let snapshot = Snapshot {
@@ -139,7 +139,7 @@ fn valid_different_part_layouts_have_equal_proven_progress() {
     whole.cursor["part_index"] = json!(0);
     whole.cursor["through"] = json!(whole.parts[&first].bytes.len());
     whole.facts[1].material = first;
-    whole.facts[1].anchor = cut as u64;
+    whole.facts[1].record_offset = cut as u64;
     assert_eq!(
         validate(&split, &fixture).unwrap(),
         validate(&whole, &fixture).unwrap()
@@ -160,7 +160,7 @@ fn every_consumed_grain_requires_authority_even_with_a_valid_frontier() {
     snapshot.facts[0].hash = [0; 32];
     assert!(
         validate(&snapshot, &fixture).is_err(),
-        "anchor alone is insufficient"
+        "record_offset alone is insufficient"
     );
 }
 #[devkit::test]
@@ -222,7 +222,7 @@ fn same_maximum_does_not_hide_a_missing_native_row() {
     bytes.drain(..first);
     bad.cursor["through"] = json!(bytes.len());
     bad.facts.remove(0);
-    bad.facts[0].anchor = 0;
+    bad.facts[0].record_offset = 0;
     assert!(
         validate(&bad, &fixture)
             .unwrap_err()

@@ -9,7 +9,7 @@ fn origin() -> Origin {
     Origin::Record {
         location: RecordLocation {
             material: MaterialId::new(),
-            anchor: 7,
+            record_offset: 7,
         },
         output_index: 0,
     }

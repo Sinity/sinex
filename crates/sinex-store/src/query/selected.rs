@@ -23,7 +23,7 @@ pub struct SelectedAnswer {
 pub(super) async fn capture(
     conn: &mut PgConnection,
     text: &str,
-    template: &sinex_model::query::native::Template,
+    template: &sinex_model::query::template::Template,
     query: &Query,
     ctx: &Context,
     seq: i64,
@@ -59,7 +59,7 @@ pub(super) async fn capture(
         }
         rows.push(input["row"].clone());
     }
-    parents.extend(selection.anchor_ids());
+    parents.extend(selection.around_ids());
     let ids: Vec<_> = parents.into_iter().collect();
     let classes: Vec<String> = sqlx::query_scalar("SELECT class::text FROM core.visible_events WHERE id = ANY($1) AND commit_seq <= $2 AND NOT audit.is_archived_at(id, $2)")
         .bind(&ids).bind(seq).fetch_all(&mut *conn).await?;
@@ -131,7 +131,7 @@ pub async fn selected_page(
     let template = if sinex_model::query::saved::reference_name(text).is_some() {
         None
     } else {
-        Some(sinex_model::query::native::parse(text, ctx)?)
+        Some(sinex_model::query::template::parse(text, ctx)?)
     };
     let selected = run_inner(conn, text, None, ctx, page, true, false, template.as_ref()).await?;
     let signature = selected

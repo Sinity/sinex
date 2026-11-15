@@ -32,7 +32,7 @@ WITH head AS MATERIALIZED (
     AND EXISTS (SELECT 1 FROM page p WHERE p.event_id=e.id AND p.commit_seq=e.commit_seq)
 )
 SELECT page.head AS "head!", page.commit_seq AS "commit_seq?", e.id AS "id?", e.event_type AS "event_type?",
-             e.source AS "source?", e.run_id AS "run_id?", e.material_id, e.anchor,
+             e.source AS "source?", e.run_id AS "run_id?", e.material_id, e.record_offset,
              e.output_index AS "output_index?", e.parents, e.ts_orig, e.ts_quality AS "ts_quality?",
              e.ts_coided, e.ts_persisted AS "ts_persisted?", e.payload AS "payload?",
              e.equivalence_key, e.reading_order AS "reading_order?",

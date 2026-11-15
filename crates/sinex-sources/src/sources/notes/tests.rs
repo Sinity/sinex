@@ -59,7 +59,7 @@ fn notes_and_their_removal() {
         removed.material.unwrap().removed,
         vec![sinex_model::RecordLocation {
             material: m.id,
-            anchor: m.records[0].0 as u64,
+            record_offset: m.records[0].0 as u64,
         }]
     );
 }
@@ -379,7 +379,7 @@ fn native_note_paths_stay_distinct_after_reader_memory_and_removal() {
         .unwrap();
     let location = sinex_model::RecordLocation {
         material: material.id,
-        anchor: raw_member.stream_offset,
+        record_offset: raw_member.stream_offset,
     };
     let mut restarted = DirState::default();
     restarted

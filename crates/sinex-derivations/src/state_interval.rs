@@ -238,7 +238,7 @@ fn interval_id(state_kind: &str, open: &Open<'_>) -> String {
             output_index,
         } => format!(
             "{state_kind}:{subject}:{}:{}:{output_index}",
-            location.material, location.anchor
+            location.material, location.record_offset
         ),
         Origin::Derived { .. } => format!("{state_kind}:{subject}:ts:{}", open.at.unix_ns()),
     }

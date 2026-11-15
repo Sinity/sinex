@@ -81,8 +81,8 @@ pub struct IngressFrame {
     /// Digest of the frozen logical frame bytes.
     pub content_hash: Option<String>,
     /// Reserved by the atomic replay writer, not by a producer.
-    pub receipt_number: Option<i64>,
-    pub native_source: Option<SourceRef>,
+    pub ack_number: Option<i64>,
+    pub built_in_source: Option<SourceRef>,
     pub source_fingerprint: Option<String>,
     pub host: Option<String>,
     /// Transport-configured ownership captured with this frame; historical ownership stays unknown.

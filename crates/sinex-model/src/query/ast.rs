@@ -584,7 +584,7 @@ impl Operand {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum FieldRef {
-    Native(NativeField),
+    Native(BuiltInField),
     Field(&'static Field),
     /// `payload.a.b`: a path into the payload.
     Payload(Vec<String>),
@@ -601,13 +601,13 @@ pub enum FieldRef {
 
 /// Product-owned values generated from the source relation's reading context.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum NativeField {
+pub enum BuiltInField {
     Identity,
     Snippet,
     SpanStart,
     SpanEnd,
 }
-impl NativeField {
+impl BuiltInField {
     pub fn from_name(name: &str) -> Option<Self> {
         Some(match name {
             "id" => Self::Identity,
@@ -814,7 +814,7 @@ pub struct Join {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum JoinOn {
-    /// Current pair and semijoin predicates share the declared time anchors.
+    /// Current pair and semijoin predicates share the declared time fields.
     Order {
         relation: JoinKind,
         within_secs: Option<String>,

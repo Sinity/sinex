@@ -19,11 +19,11 @@ fn at(secs: i64) -> Timestamp {
     Timestamp::from_unix_secs(T + secs).unwrap()
 }
 
-fn location(anchor: u64) -> Origin {
+fn location(record_offset: u64) -> Origin {
     Origin::Record {
         location: RecordLocation {
             material: MaterialId::new(),
-            anchor,
+            record_offset,
         },
         output_index: 0,
     }
@@ -55,7 +55,7 @@ fn atuin(id: &str, command: &str, secs: i64, exit: i64, order: i64) -> Event {
     .unwrap()
 }
 
-fn zsh(command: &str, secs: i64, anchor: u64) -> Event {
+fn zsh(command: &str, secs: i64, record_offset: u64) -> Event {
     Event::build(
         &CommandImported {
             command: command.into(),
@@ -66,7 +66,7 @@ fn zsh(command: &str, secs: i64, anchor: u64) -> Event {
             n: 0,
         },
         "terminal.zsh-history",
-        location(anchor),
+        location(record_offset),
         ReadingOrder(0),
         *blake3::hash(command.as_bytes()).as_bytes(),
         Class::Open,

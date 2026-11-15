@@ -148,6 +148,6 @@ fn an_unreadable_record_invalidates_continuity_through_the_real_drainer() {
             first_missing: 5,
             last_missing: 7
         }),
-        "the valid record after a failure is a fresh positive anchor"
+        "the valid record after a failure is a fresh positive record offset"
     );
 }

@@ -79,7 +79,7 @@ async fn keyed_and_location_readings_stay_separate_when_the_text_matches(
     let mut keyed = keyed("s", 2, 2, 2);
     keyed.equivalence_key = Some(sinex_model::EquivalenceKey(format!(
         "{}:{}:{}",
-        location.material.0, location.anchor, output_index
+        location.material.0, location.record_offset, output_index
     )));
     let b = batch(vec![located.clone(), keyed.clone()]);
     let outcome = admit_one(&mut conn, &b).await;

@@ -4,16 +4,16 @@
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> std::process::ExitCode {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
-    let mut owners = sinex_schema::kinds::Owners::default();
-    while let Some(at) = args.iter().position(|a| a == "--kind-owner") {
+    let mut kind_prefixes = sinex_schema::kinds::KindPrefixes::default();
+    while let Some(at) = args.iter().position(|a| a == "--kind-prefix") {
         if at + 1 >= args.len() {
-            eprintln!("--kind-owner needs PREFIX=PRODUCER");
+            eprintln!("--kind-prefix needs PREFIX=PRODUCER");
             return std::process::ExitCode::from(2);
         }
         let mapping = args.remove(at + 1);
         args.remove(at);
         let Some((prefix, producer)) = mapping.split_once('=') else {
-            eprintln!("--kind-owner needs PREFIX=PRODUCER");
+            eprintln!("--kind-prefix needs PREFIX=PRODUCER");
             return std::process::ExitCode::from(2);
         };
         if prefix != "polylogue"
@@ -22,10 +22,12 @@ async fn main() -> std::process::ExitCode {
                 .chars()
                 .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
         {
-            eprintln!("invalid kind owner");
+            eprintln!("invalid kind prefix");
             return std::process::ExitCode::from(2);
         }
-        owners.prefixes.insert(prefix.into(), producer.into());
+        kind_prefixes
+            .prefixes
+            .insert(prefix.into(), producer.into());
     }
     let url = match args.as_slice() {
         [cmd, url] if cmd == "apply" => url.clone(),
@@ -48,7 +50,7 @@ async fn main() -> std::process::ExitCode {
     use sqlx::Connection;
     let result = async {
         let mut connection = sqlx::PgConnection::connect(&url).await?;
-        sinex_schema::apply_with_owners(&mut connection, &owners).await
+        sinex_schema::apply_with_kind_prefixes(&mut connection, &kind_prefixes).await
     }
     .await;
     match result {

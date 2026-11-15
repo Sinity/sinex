@@ -35,9 +35,9 @@ impl Description {
     pub(crate) async fn apply(
         &self,
         connection: &mut sqlx::PgConnection,
-        owners: &crate::kinds::Owners,
+        kind_prefixes: &crate::kinds::KindPrefixes,
     ) -> Result<(), crate::Error> {
-        crate::kinds::install(connection, owners, &self.kinds).await?;
+        crate::kinds::install(connection, kind_prefixes, &self.kinds).await?;
         crate::apply_views(connection, self).await
     }
 

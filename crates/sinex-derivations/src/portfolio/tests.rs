@@ -4,14 +4,14 @@ use crate::{Env, Keyed};
 use serde_json::{Value, json};
 use sinex_model::event_types::portfolio::{InputWorkload, RhythmDeviation};
 use sinex_model::{Class, Event, MaterialId, Origin, ReadingOrder, RecordLocation, Timestamp};
-fn record(kind: &str, payload: Value, anchor: u64) -> Event {
+fn record(kind: &str, payload: Value, record_offset: u64) -> Event {
     (sinex_model::event_types::find(kind).unwrap().build)(
         &payload,
         "synthetic.portfolio",
         Origin::Record {
             location: RecordLocation {
                 material: MaterialId::new(),
-                anchor,
+                record_offset,
             },
             output_index: 0,
         },

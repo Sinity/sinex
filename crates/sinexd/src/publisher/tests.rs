@@ -29,7 +29,7 @@ fn executed(native_id: &str, command: &str, order: i64, class: Class) -> Event {
             // Each record is alone in its material.
             location: RecordLocation {
                 material: MaterialId(uuid::Uuid::from_u128(order as u128)),
-                anchor: 0,
+                record_offset: 0,
             },
             output_index: 0,
         },
@@ -186,7 +186,7 @@ async fn publishes_open_events_whole_and_others_by_id_in_commit_order(
     assert_eq!(open.class, Class::Open);
     assert_eq!(
         open.projection,
-        sinex_protocol::ProjectionIdentity::for_payload(&open.payload)
+        sinex_protocol::PayloadIdentity::for_payload(&open.payload)
     );
     let Confirmed::Withheld(guarded) = &messages[1] else {
         panic!("a guarded event travels by ID")

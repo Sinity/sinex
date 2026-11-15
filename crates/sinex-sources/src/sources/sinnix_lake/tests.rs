@@ -215,7 +215,7 @@ fn every_lane_maps_to_its_sources_declared_event_types() {
                     sinex_model::Origin::Record {
                         location: sinex_model::RecordLocation {
                             material: sinex_model::MaterialId::new(),
-                            anchor: 0,
+                            record_offset: 0,
                         },
                         output_index: 0,
                     },

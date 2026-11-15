@@ -210,7 +210,7 @@ mod tests;
 
 /// The same current native source authority serves admission and optional
 /// retained-material header observations. Neither path registers old sources.
-pub(crate) async fn native_declaration(
+pub(crate) async fn built_in_declaration(
     conn: &mut PgConnection,
     grants: &fetch::ProducerGrants,
     producer: &str,

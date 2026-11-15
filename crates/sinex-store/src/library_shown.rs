@@ -16,7 +16,7 @@ pub struct Row {
     pub state: String,
     pub level: String,
     pub value: Option<Value>,
-    pub supporters: Value,
+    pub supporting_records: Value,
 }
 
 /// Replace every row of these items with `rows`.
@@ -29,9 +29,10 @@ pub async fn replace(conn: &mut PgConnection, items: &[String], rows: &[Row]) ->
     }
     let column = |f: fn(&Row) -> String| rows.iter().map(f).collect::<Vec<_>>();
     let values: Vec<Option<Value>> = rows.iter().map(|r| r.value.clone()).collect();
-    let supporters: Vec<Value> = rows.iter().map(|r| r.supporters.clone()).collect();
+    let supporting_records: Vec<Value> =
+        rows.iter().map(|r| r.supporting_records.clone()).collect();
     sqlx::query!(
-        "INSERT INTO core.library_shown (item, target, kind, key, state, level, value, supporters)
+        "INSERT INTO core.library_shown (item, target, kind, key, state, level, value, supporting_records)
          SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[],
                               $6::text[], $7::jsonb[], $8::jsonb[])",
         &column(|r| r.item.clone()),
@@ -41,7 +42,7 @@ pub async fn replace(conn: &mut PgConnection, items: &[String], rows: &[Row]) ->
         &column(|r| r.state.clone()),
         &column(|r| r.level.clone()),
         &values as &[Option<Value>],
-        &supporters,
+        &supporting_records,
     )
     .execute(&mut *conn)
     .await?;
@@ -52,7 +53,7 @@ pub async fn replace(conn: &mut PgConnection, items: &[String], rows: &[Row]) ->
 pub async fn of_item(conn: &mut PgConnection, item: &str) -> Result<Vec<Row>> {
     Ok(sqlx::query_as!(
         Row,
-        r#"SELECT item, target, kind, key, state, level, value, supporters
+        r#"SELECT item, target, kind, key, state, level, value, supporting_records
            FROM core.library_shown WHERE item = $1 ORDER BY target, kind, key"#,
         item
     )
@@ -64,7 +65,7 @@ pub async fn of_item(conn: &mut PgConnection, item: &str) -> Result<Vec<Row>> {
 pub async fn all(conn: &mut PgConnection) -> Result<Vec<Row>> {
     Ok(sqlx::query_as!(
         Row,
-        r#"SELECT item, target, kind, key, state, level, value, supporters
+        r#"SELECT item, target, kind, key, state, level, value, supporting_records
            FROM core.library_shown ORDER BY target, kind, key"#
     )
     .fetch_all(&mut *conn)

@@ -1,6 +1,6 @@
 [
   {
-    "anchor": 0,
+    "record_offset": 0,
     "events": [
       {
         "type": "mail.message",
@@ -35,7 +35,7 @@
     ]
   },
   {
-    "anchor": 224,
+    "record_offset": 224,
     "events": [
       {
         "type": "mail.message",

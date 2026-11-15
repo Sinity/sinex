@@ -183,7 +183,7 @@ pub trait Reader: Send {
     fn restore_memory(
         &mut self,
         _memory: &[u8],
-        _anchor: Option<&sinex_model::MaterialRef>,
+        _memory_part: Option<&sinex_model::MaterialRef>,
         _admitted: Option<u64>,
     ) -> Result<bool, DriverError> {
         Ok(false)
@@ -377,7 +377,7 @@ impl Reader for Appended {
                 .map_err(DriverError::from)?;
             let location = sinex_model::RecordLocation {
                 material: reference.id,
-                anchor: start as u64,
+                record_offset: start as u64,
             };
             if !tail.push_raw(location, &raw)? {
                 return Ok(false);
@@ -462,10 +462,10 @@ impl Reader for Rows {
     fn restore_memory(
         &mut self,
         memory: &[u8],
-        anchor: Option<&sinex_model::MaterialRef>,
+        memory_part: Option<&sinex_model::MaterialRef>,
         admitted: Option<u64>,
     ) -> Result<bool, DriverError> {
-        let _ = (anchor, admitted);
+        let _ = (memory_part, admitted);
         self.state.remember_saved(memory).map(|()| false)
     }
 
@@ -516,11 +516,11 @@ impl Reader for Walked {
     fn restore_memory(
         &mut self,
         memory: &[u8],
-        anchor: Option<&sinex_model::MaterialRef>,
+        memory_part: Option<&sinex_model::MaterialRef>,
         admitted: Option<u64>,
     ) -> Result<bool, DriverError> {
         self.state
-            .restore_checkpoint(memory, anchor, admitted, self.driver.removed_at_source)
+            .restore_checkpoint(memory, memory_part, admitted, self.driver.removed_at_source)
     }
 
     fn restored(&mut self) -> Result<(), DriverError> {

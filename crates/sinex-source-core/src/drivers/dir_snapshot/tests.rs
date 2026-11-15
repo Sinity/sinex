@@ -192,7 +192,7 @@ fn failed_storage_retries_the_same_unnamed_capture_before_new_source_changes() {
 }
 
 #[devkit::test]
-fn partial_admission_resumes_original_member_anchors_and_only_final_cursor_updates_cache() {
+fn partial_admission_resumes_original_member_offsets_and_only_final_cursor_updates_cache() {
     use super::super::prepare;
     use crate::Limits;
     use crate::test_parser as notes;
@@ -246,7 +246,10 @@ fn partial_admission_resumes_original_member_anchors_and_only_final_cursor_updat
     let RecordOutcome::Events { location, events } = &batch.records[0] else {
         panic!()
     };
-    assert_eq!(location.unwrap().anchor, original_records[1].0 as u64);
+    assert_eq!(
+        location.unwrap().record_offset,
+        original_records[1].0 as u64
+    );
     assert_eq!(events[0].payload["path"], "sub/b.md");
     assert_eq!(events[0].payload["text"], "beta");
     let BatchKind::Source(progress) = batch.kind else {
@@ -337,7 +340,7 @@ fn empty_and_nonempty_members_keep_exact_body_ranges_in_every_order() {
             let RecordOutcome::Events { location, events } = outcome else {
                 panic!("{outcome:?}")
             };
-            assert_eq!(location.unwrap().anchor, m.records[index].0 as u64);
+            assert_eq!(location.unwrap().record_offset, m.records[index].0 as u64);
             assert_eq!(events[0].payload["path"], format!("{index}.md"));
             assert_eq!(events[0].payload["text"], *body);
             assert_eq!(record(&m, index), body.as_bytes());

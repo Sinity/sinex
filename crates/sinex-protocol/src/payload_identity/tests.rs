@@ -7,7 +7,7 @@ fn record_hash_uses_common_canonical_bytes() {
         String::from_utf8(canonical_json::canonical_json(&value).unwrap()).unwrap(),
         golden
     );
-    let identity = ProjectionIdentity::for_payload(&value);
+    let identity = PayloadIdentity::for_payload(&value);
     assert_eq!(
         identity.payload_hash,
         blake3::hash(golden.as_bytes()).to_hex().to_string()

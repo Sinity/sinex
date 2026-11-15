@@ -18,16 +18,16 @@ pub(crate) enum Admin {
     Schema {
         #[arg(long)]
         database: String,
-        #[arg(long = "kind-owner")]
-        kind_owners: Vec<String>,
+        #[arg(long = "kind-prefix")]
+        kind_prefixes: Vec<String>,
     },
     /// Upgrade an older schema to this build's version in one transaction,
     /// with sinexd stopped; refuses while a writer holds the database.
     Upgrade {
         #[arg(long)]
         database: String,
-        #[arg(long = "kind-owner")]
-        kind_owners: Vec<String>,
+        #[arg(long = "kind-prefix")]
+        kind_prefixes: Vec<String>,
     },
     /// As the database superuser: create the extensions and roles the schema
     /// needs, and give `owner` the roles. The owner then applies the schema.
@@ -66,23 +66,25 @@ pub(crate) enum Admin {
     Table(Vec<String>),
 }
 
-async fn schema(database: &str, kind_owners: Vec<String>, upgrade: bool) -> Result<()> {
+async fn schema(database: &str, kind_prefixes: Vec<String>, upgrade: bool) -> Result<()> {
     use sqlx::Connection;
-    let mut owners = sinex_schema::kinds::Owners::default();
-    for mapping in kind_owners {
+    let mut kind_prefixes = sinex_schema::kinds::KindPrefixes::default();
+    for mapping in kind_prefixes {
         let (prefix, producer) = mapping
             .split_once('=')
-            .ok_or_else(|| Error::bad_request("--kind-owner needs polylogue=PRODUCER"))?;
+            .ok_or_else(|| Error::bad_request("--kind-prefix needs polylogue=PRODUCER"))?;
         if prefix != "polylogue" || !sinex_protocol::nats::valid_producer(producer) {
-            return Err(Error::bad_request("invalid kind owner"));
+            return Err(Error::bad_request("invalid kind prefix"));
         }
-        owners.prefixes.insert(prefix.into(), producer.into());
+        kind_prefixes
+            .prefixes
+            .insert(prefix.into(), producer.into());
     }
     let mut connection = sqlx::PgConnection::connect(database).await?;
     let applied = if upgrade {
-        sinex_schema::apply_with_owners(&mut connection, &owners).await
+        sinex_schema::apply_with_kind_prefixes(&mut connection, &kind_prefixes).await
     } else {
-        sinex_schema::start(&mut connection, &owners).await
+        sinex_schema::start(&mut connection, &kind_prefixes).await
     };
     applied
         .map(|applied| println!("{applied}"))
@@ -103,12 +105,12 @@ pub(crate) async fn run(command: Admin) -> Result<()> {
         Admin::Table(args) => admin_table(args).await,
         Admin::Schema {
             database,
-            kind_owners,
-        } => schema(&database, kind_owners, false).await,
+            kind_prefixes,
+        } => schema(&database, kind_prefixes, false).await,
         Admin::Upgrade {
             database,
-            kind_owners,
-        } => schema(&database, kind_owners, true).await,
+            kind_prefixes,
+        } => schema(&database, kind_prefixes, true).await,
         Admin::PrepareDatabase { database, owner } => {
             use sqlx::Connection;
             let mut connection = sqlx::PgConnection::connect(&database).await?;

@@ -2,7 +2,7 @@
 //! snapshot page and a fetch by ID alike.
 use crate::{Error, Result};
 use sinex_model::{Class, EventId, KindRef, MaterialId, RecordLocation, RunId, Timestamp};
-use sinex_protocol::{ConfirmedEvent, ProjectionIdentity, WithheldEvent, WithheldReason};
+use sinex_protocol::{ConfirmedEvent, PayloadIdentity, WithheldEvent, WithheldReason};
 use sinex_store::confirmed::Row;
 use std::collections::BTreeMap;
 
@@ -58,10 +58,10 @@ fn event(row: Row, kind_definition_hash: String) -> Result<ConfirmedEvent> {
             })
         })
         .transpose()?;
-    let location = match (row.material_id, row.anchor) {
-        (Some(material), Some(anchor)) => Some(RecordLocation {
+    let location = match (row.material_id, row.record_offset) {
+        (Some(material), Some(record_offset)) => Some(RecordLocation {
             material: MaterialId(material),
-            anchor: u64::try_from(anchor)?,
+            record_offset: u64::try_from(record_offset)?,
         }),
         _ => None,
     };
@@ -99,7 +99,7 @@ fn event(row: Row, kind_definition_hash: String) -> Result<ConfirmedEvent> {
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect(),
-        projection: ProjectionIdentity::for_payload(&row.payload),
+        payload_identity: PayloadIdentity::for_payload(&row.payload),
         payload: row.payload,
     })
 }

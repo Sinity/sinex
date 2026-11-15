@@ -50,16 +50,16 @@ pub async fn at(
     location: RecordLocation,
     output: u64,
 ) -> Result<Option<Uuid>> {
-    let anchor = i64::try_from(location.anchor)
+    let record_offset = i64::try_from(location.record_offset)
         .map_err(|_| crate::Error::Invalid("record offset beyond i64".into()))?;
     let output = i64::try_from(output)
         .map_err(|_| crate::Error::Invalid("output number beyond i64".into()))?;
     Ok(sqlx::query_scalar!(
         r#"SELECT e.id AS "id!" FROM core.visible_events e
-           WHERE e.material_id = $1 AND e.anchor = $2 AND e.output_index = $3
+           WHERE e.material_id = $1 AND e.record_offset = $2 AND e.output_index = $3
              AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)"#,
         location.material.0,
-        anchor,
+        record_offset,
         output
     )
     .fetch_optional(&mut *conn)

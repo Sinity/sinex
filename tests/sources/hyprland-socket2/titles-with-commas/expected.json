@@ -1,10 +1,10 @@
 [
   {
-    "anchor": 0,
+    "record_offset": 0,
     "events": []
   },
   {
-    "anchor": 69,
+    "record_offset": 69,
     "events": [
       {
         "type": "window.title_changed",
@@ -21,7 +21,7 @@
     ]
   },
   {
-    "anchor": 164,
+    "record_offset": 164,
     "events": [
       {
         "type": "window.opened",

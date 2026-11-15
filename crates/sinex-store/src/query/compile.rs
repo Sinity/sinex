@@ -8,7 +8,7 @@ use super::sql::{Param, SqlFragment};
 use crate::{Error, Result};
 use sinex_model::query::text::{like_escape, regex_escape};
 use sinex_model::query::{
-    AggFn, Alias, Context, Expr, FieldRef, FieldType, Join, JoinKind, JoinOn, NativeField, Op,
+    AggFn, Alias, BuiltInField, Context, Expr, FieldRef, FieldType, Join, JoinKind, JoinOn, Op,
     Operand, OrderingOp, Query, SortBy, Source, Stage, Table, TimeFn, TimePoint, Value, Words,
 };
 use std::collections::BTreeMap;
@@ -406,13 +406,13 @@ impl<'c> Compiler<'c> {
         }
         let snippet_requested = needed
             .iter()
-            .any(|field| matches!(field, FieldRef::Native(NativeField::Snippet)));
+            .any(|field| matches!(field, FieldRef::Native(BuiltInField::Snippet)));
         needed.retain(|f| {
             !matches!(
                 f,
                 FieldRef::Group(_)
                     | FieldRef::TypedGroup(_)
-                    | FieldRef::Native(NativeField::Snippet)
+                    | FieldRef::Native(BuiltInField::Snippet)
             )
         });
         let mut seen = std::collections::HashSet::new();

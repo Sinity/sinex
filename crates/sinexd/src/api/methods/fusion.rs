@@ -33,7 +33,9 @@ async fn side(conn: &mut sqlx::PgConnection, reference: &str) -> Result<Side> {
         shown["offset"].as_u64(),
         shown["output"].as_u64(),
     ) {
-        (Some(material), Some(anchor), Some(output)) => Some((material, anchor, output)),
+        (Some(material), Some(record_offset), Some(output)) => {
+            Some((material, record_offset, output))
+        }
         _ => None,
     };
     let source = text("source").ok_or_else(|| Error::not_configured("record has no source"))?;
@@ -288,7 +290,7 @@ impl Api {
             &mut conn,
             sinex_model::RecordLocation {
                 material,
-                anchor: 0,
+                record_offset: 0,
             },
             0,
         )

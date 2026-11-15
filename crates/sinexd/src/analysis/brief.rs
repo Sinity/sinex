@@ -74,9 +74,9 @@ fn compile_pack(pack: super::access::StoredPack, budget: usize) -> Result<(Prese
 }
 
 fn resume_sections(payload: &serde_json::Value) -> Result<Vec<Section>> {
-    use sinex_model::event_types::{activity::ActivityEvidence, work::ContextPack};
+    use sinex_model::event_types::{activity::CitedReading, work::ContextPack};
     let pack: ContextPack = serde_json::from_value(payload.clone())?;
-    let reference = |evidence: &ActivityEvidence, description: String| Finding {
+    let reference = |evidence: &CitedReading, description: String| Finding {
         template: Template::Observation {
             event_type: evidence.event_type.clone(),
             source: evidence.source.clone(),

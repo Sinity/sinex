@@ -350,7 +350,7 @@ impl sinex_source_core::binding::Reader for LibraryReader {
     fn restore_memory(
         &mut self,
         memory: &[u8],
-        _anchor: Option<&sinex_model::MaterialRef>,
+        _memory_part: Option<&sinex_model::MaterialRef>,
         _admitted: Option<u64>,
     ) -> Result<bool, DriverError> {
         self.state.remember_saved(memory).map(|()| false)

@@ -35,7 +35,7 @@ pub fn level(record: &Curation) -> Level {
 
 /// One current record supporting a shown value.
 #[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct Supporter {
+pub struct SupportingRecord {
     /// `<root>@<rev>`.
     pub record: String,
     pub author: String,
@@ -43,7 +43,7 @@ pub struct Supporter {
     pub cites: Option<String>,
 }
 
-impl Supporter {
+impl SupportingRecord {
     fn of(record: &Curation) -> Self {
         Self {
             record: format!("{}@{}", record.root, record.rev),
@@ -54,12 +54,12 @@ impl Supporter {
     }
 }
 
-/// Supporters in one order whatever order the records came in: highest
+/// Supporting records in one order whatever order the records came in: highest
 /// level first, then by record, so the stored projection and a fresh
 /// computation agree.
-fn sorted(mut supporters: Vec<Supporter>) -> Vec<Supporter> {
-    supporters.sort_by(|a, b| (a.level, &a.record).cmp(&(b.level, &b.record)));
-    supporters
+fn sorted(mut supporting_records: Vec<SupportingRecord>) -> Vec<SupportingRecord> {
+    supporting_records.sort_by(|a, b| (a.level, &a.record).cmp(&(b.level, &b.record)));
+    supporting_records
 }
 
 /// The shown value of one property of one target.
@@ -70,17 +70,17 @@ pub enum Shown {
     /// Set to empty at the deciding level.
     Empty {
         level: Level,
-        supporters: Vec<Supporter>,
+        supporting_records: Vec<SupportingRecord>,
     },
     Value {
         value: Value,
         level: Level,
-        supporters: Vec<Supporter>,
+        supporting_records: Vec<SupportingRecord>,
     },
-    /// Several values at the deciding level, each with its supporters.
+    /// Several values at the deciding level, each with its supporting records.
     Conflict {
         level: Level,
-        values: Vec<(Value, Vec<Supporter>)>,
+        values: Vec<(Value, Vec<SupportingRecord>)>,
     },
 }
 
@@ -89,36 +89,36 @@ pub fn property(records: &[&Curation]) -> Shown {
     let Some(deciding) = records.iter().map(|r| level(r)).min() else {
         return Shown::Unknown;
     };
-    let mut values: BTreeMap<String, (Value, Vec<Supporter>)> = BTreeMap::new();
+    let mut values: BTreeMap<String, (Value, Vec<SupportingRecord>)> = BTreeMap::new();
     for record in records.iter().filter(|r| level(r) == deciding) {
         let value = record.value.clone().unwrap_or(Value::Null);
         values
             .entry(value.to_string())
             .or_insert_with(|| (value, Vec::new()))
             .1
-            .push(Supporter::of(record));
+            .push(SupportingRecord::of(record));
     }
     if values.len() > 1 {
         return Shown::Conflict {
             level: deciding,
             values: values
                 .into_values()
-                .map(|(value, supporters)| (value, sorted(supporters)))
+                .map(|(value, supporting_records)| (value, sorted(supporting_records)))
                 .collect(),
         };
     }
-    let (value, supporters) = values.into_values().next().expect("one value");
-    let supporters = sorted(supporters);
+    let (value, supporting_records) = values.into_values().next().expect("one value");
+    let supporting_records = sorted(supporting_records);
     if value.is_null() {
         Shown::Empty {
             level: deciding,
-            supporters,
+            supporting_records,
         }
     } else {
         Shown::Value {
             value,
             level: deciding,
-            supporters,
+            supporting_records,
         }
     }
 }
@@ -141,9 +141,9 @@ pub struct Tag {
     pub state: TagState,
     pub level: Level,
     /// Every current record applying the tag.
-    pub applied_by: Vec<Supporter>,
+    pub applied_by: Vec<SupportingRecord>,
     /// Every current record rejecting it.
-    pub rejected_by: Vec<Supporter>,
+    pub rejected_by: Vec<SupportingRecord>,
 }
 
 fn rejects(record: &Curation) -> bool {
@@ -183,8 +183,8 @@ pub fn tags(records: &[&Curation]) -> Vec<Tag> {
                 tag: tag.to_owned(),
                 state,
                 level: deciding,
-                applied_by: sorted(applied_by.into_iter().map(Supporter::of).collect()),
-                rejected_by: sorted(rejected_by.into_iter().map(Supporter::of).collect()),
+                applied_by: sorted(applied_by.into_iter().map(SupportingRecord::of).collect()),
+                rejected_by: sorted(rejected_by.into_iter().map(SupportingRecord::of).collect()),
             }
         })
         .collect()
@@ -195,14 +195,14 @@ pub fn tags(records: &[&Curation]) -> Vec<Tag> {
 pub struct Rating {
     pub scale: String,
     pub value: Value,
-    pub supporter: Supporter,
+    pub supporting_record: SupportingRecord,
 }
 
 /// One current note.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Note {
     pub text: Value,
-    pub supporter: Supporter,
+    pub supporting_record: SupportingRecord,
 }
 
 /// Everything shown for one target.
@@ -258,14 +258,14 @@ pub fn values(current: &[Curation]) -> Vec<Values> {
                     .map(|r| Rating {
                         scale: r.key.clone().unwrap_or_default(),
                         value: r.value.clone().unwrap_or(Value::Null),
-                        supporter: Supporter::of(r),
+                        supporting_record: SupportingRecord::of(r),
                     })
                     .collect(),
                 notes: of(CurationKind::Note)
                     .into_iter()
                     .map(|r| Note {
                         text: r.value.clone().unwrap_or(Value::Null),
-                        supporter: Supporter::of(r),
+                        supporting_record: SupportingRecord::of(r),
                     })
                     .collect(),
             }

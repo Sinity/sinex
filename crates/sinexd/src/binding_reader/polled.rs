@@ -49,13 +49,13 @@ impl Reader for PolledReader {
     fn restore_memory(
         &mut self,
         memory: &[u8],
-        anchor: Option<&sinex_model::MaterialRef>,
+        memory_part: Option<&sinex_model::MaterialRef>,
         admitted: Option<u64>,
     ) -> Result<bool, drivers::DriverError> {
         self.0
             .lock()
             .expect("reader state")
-            .restore_memory(memory, anchor, admitted)
+            .restore_memory(memory, memory_part, admitted)
     }
     fn restored(&mut self) -> Result<(), drivers::DriverError> {
         self.0.lock().expect("reader state").restored()

@@ -329,7 +329,7 @@ fn join(j: &Join) -> String {
             at,
         } => (*relation, within_secs.as_deref(), *at),
     };
-    let anchor = match point {
+    let at_point = match point {
         TimePoint::When => "at their occurrence",
         TimePoint::Start => "at their span start",
         TimePoint::End => "at their end",
@@ -366,7 +366,7 @@ fn join(j: &Join) -> String {
         )
     };
     format!(
-        "paired {} [{inner}]{window}, {anchor}{choice}",
+        "paired {} [{inner}]{window}, {at_point}{choice}",
         relation.name()
     )
 }

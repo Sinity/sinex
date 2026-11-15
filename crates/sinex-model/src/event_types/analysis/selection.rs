@@ -9,7 +9,7 @@ use serde_json::Value;
 pub struct QuerySelection {
     pub query: String,
     /// Executable definition; authored query text remains unchanged evidence.
-    pub template: crate::query::native::Template,
+    pub template: crate::query::template::Template,
     /// The saved definitions the question used, as they were when it was asked.
     pub definitions: std::collections::BTreeMap<String, crate::query::saved::SavedQuery>,
     pub now: Timestamp,

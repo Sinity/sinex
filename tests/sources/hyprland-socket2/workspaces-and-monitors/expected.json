@@ -1,10 +1,10 @@
 [
   {
-    "anchor": 0,
+    "record_offset": 0,
     "events": []
   },
   {
-    "anchor": 60,
+    "record_offset": 60,
     "events": [
       {
         "type": "workspace.switched",
@@ -21,7 +21,7 @@
     ]
   },
   {
-    "anchor": 126,
+    "record_offset": 126,
     "events": [
       {
         "type": "workspace.switched",
@@ -38,7 +38,7 @@
     ]
   },
   {
-    "anchor": 206,
+    "record_offset": 206,
     "events": [
       {
         "type": "monitor.focused",
@@ -55,11 +55,11 @@
     ]
   },
   {
-    "anchor": 274,
+    "record_offset": 274,
     "events": []
   },
   {
-    "anchor": 342,
+    "record_offset": 342,
     "events": [
       {
         "type": "desktop.other",
@@ -76,7 +76,7 @@
     ]
   },
   {
-    "anchor": 406,
+    "record_offset": 406,
     "events": [
       {
         "type": "desktop.other",

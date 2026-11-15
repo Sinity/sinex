@@ -106,7 +106,7 @@ async fn recorded_material_continuation_conserves_source3_when_startup_artifact_
     };
     assert_eq!(binding.receipt, receipt);
     assert_eq!(
-        sinex_transport::producer::check_receipt(&frame, binding.receipt.clone()).unwrap(),
+        sinex_transport::producer::check_ack(&frame, binding.receipt.clone()).unwrap(),
         receipt
     );
     assert_eq!(

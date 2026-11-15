@@ -3,7 +3,7 @@ use sinex_derivations::{Input, PerEvent, Reads};
 use sinex_model::EventPayload;
 use sinex_model::event_types::library::{DocumentText, FileCopy};
 
-fn copy(path: &str, content: &str, size: u64, anchor: u64) -> Event {
+fn copy(path: &str, content: &str, size: u64, record_offset: u64) -> Event {
     let item_key = sinex_model::event_types::library::item_key("box", "/library", path);
     let copy = FileCopy {
         scan: "synthetic-scan".into(),
@@ -34,7 +34,7 @@ fn copy(path: &str, content: &str, size: u64, anchor: u64) -> Event {
     Event::build(
         &copy,
         "library.scan",
-        location(anchor),
+        location(record_offset),
         ReadingOrder(0),
         *blake3::hash(path.as_bytes()).as_bytes(),
         Class::Open,

@@ -33,7 +33,7 @@ pub async fn resolve(conn: &mut PgConnection, reference: &Reference) -> Result<U
                 .map_err(|_| Error::Invalid("output index beyond i64".into()))?;
             let live = sqlx::query!(
                 r#"SELECT e.id AS "event_id!", e.event_type AS "event_type!" FROM core.visible_events e
-                   WHERE e.material_id = $1 AND e.anchor = $2
+                   WHERE e.material_id = $1 AND e.record_offset = $2
                    AND ($3::text IS NULL OR e.event_type = $3)
                    AND ($4::bigint IS NULL OR e.output_index = $4)
                    AND (EXISTS (SELECT 1 FROM core.live_locations c WHERE c.event_id = e.id)
@@ -50,7 +50,7 @@ pub async fn resolve(conn: &mut PgConnection, reference: &Reference) -> Result<U
                 [] => {
                     let archived = sqlx::query_scalar!(
                         r#"SELECT e.id AS "id!" FROM core.visible_events e JOIN audit.archived a ON a.event_id = e.id
-                           WHERE e.material_id = $1 AND e.anchor = $2
+                           WHERE e.material_id = $1 AND e.record_offset = $2
                            AND ($3::text IS NULL OR e.event_type = $3)
                            AND ($4::bigint IS NULL OR e.output_index = $4)
                            ORDER BY a.archived_seq DESC"#,
@@ -122,11 +122,11 @@ pub async fn show(conn: &mut PgConnection, reference: &Reference) -> Result<Json
              'archived', a.archived_at, 'archive_reason', a.reason,
              'record_state', e.record_state, 'class', e.class, 'key', e.equivalence_key,
              'reading_order',e.reading_order,'record_hash',encode(e.record_hash,'hex'),
-             'material', e.material_id, 'offset', e.anchor, 'output', e.output_index,
+             'material', e.material_id, 'offset', e.record_offset, 'output', e.output_index,
              'parents', to_jsonb(e.parents), 'run', e.run_id, 'producer', r.name, 'host', r.host,
              'parser', m.parser, 'parser_version', m.parser_version, 'blob', m.blob,
              'citation', CASE WHEN e.material_id IS NOT NULL
-               THEN 'sinex:record/' || e.material_id || '/' || e.anchor || '/' || e.event_type || '/' || e.output_index
+               THEN 'sinex:record/' || e.material_id || '/' || e.record_offset || '/' || e.event_type || '/' || e.output_index
                ELSE 'sinex:ev/' || e.id END,
              'payload', e.payload) AS "row!"
            FROM core.visible_events e
@@ -186,7 +186,7 @@ pub(crate) async fn walk(
              'withheld', e.payload->'withheld', 'class', coalesce(e.class,t.class),
              'origin', CASE WHEN e.id IS NULL THEN NULL
                WHEN e.material_id IS NULL THEN 'derived' ELSE 'material' END,
-             'material', e.material_id, 'offset', e.anchor, 'output', e.output_index,
+             'material', e.material_id, 'offset', e.record_offset, 'output', e.output_index,
              'parents', coalesce(to_jsonb(e.parents),
                (SELECT jsonb_agg(c.parent ORDER BY c.parent) FROM core.event_parents_of(f.id) c)),
              'bytes', CASE WHEN e.material_id IS NULL THEN NULL

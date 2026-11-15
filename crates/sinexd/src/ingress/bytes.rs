@@ -110,7 +110,8 @@ impl Ingest {
         frame: &str,
         material: &MaterialFrame,
     ) -> Result<(), Check> {
-        self.native_declaration(producer, &material.source).await?;
+        self.built_in_declaration(producer, &material.source)
+            .await?;
         if self
             .blobs
             .contains(&material.blob)

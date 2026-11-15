@@ -110,7 +110,7 @@ async fn every_saved_bundled_rule_matches_the_typed_constructor(db: devkit::pg::
                 Origin::Record {
                     location: RecordLocation {
                         material: MaterialId::new(),
-                        anchor: 0,
+                        record_offset: 0,
                     },
                     output_index: 0,
                 },

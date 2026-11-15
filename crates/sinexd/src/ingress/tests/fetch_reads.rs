@@ -117,7 +117,7 @@ async fn authenticated_fetch_preserves_no_rules_payloads_under_kind_and_class_gr
         if producer == "replica" {
             let event = fetched_event(reply);
             assert_eq!(event.payload, expected);
-            assert!(event.projection.verifies(&event.payload));
+            assert!(event.payload_identity.verifies(&event.payload));
             let mut conn = PgConnection::connect(&h.url).await.unwrap();
             let reference = sinex_model::KindRef {
                 name: event.event_type.clone(),
@@ -302,7 +302,7 @@ async fn an_event_received_before_a_tombstone_fetches_exact_erasure_evidence_und
     .unwrap();
     let received = fetched_event(before);
     assert_eq!(received.payload, expected);
-    assert!(received.projection.verifies(&received.payload));
+    assert!(received.payload_identity.verifies(&received.payload));
     assert_eq!(Some(received.commit_seq), receipt.commit_seq());
     h.tombstone_materials(&[material]).await;
     let after: FetchEventReply = sinex_transport::replies::request_json(
@@ -496,7 +496,7 @@ async fn raw_material_fetch_follows_the_class_admission_stored(db: devkit::pg::T
     .unwrap();
     let fetched = fetched_event(fetched);
     assert!(fetched.payload.get("command").is_none());
-    assert!(fetched.projection.verifies(&fetched.payload));
+    assert!(fetched.payload_identity.verifies(&fetched.payload));
     sinex_store::privacy::end_rule(&mut conn, "synthetic-hidden-command", "synthetic-test")
         .await
         .unwrap();

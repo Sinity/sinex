@@ -32,7 +32,7 @@ fn input(event_type: &str, secs: i64, mut payload: Value) -> Event {
         Origin::Record {
             location: RecordLocation {
                 material: MaterialId::new(),
-                anchor: u64::try_from(secs.max(0)).unwrap(),
+                record_offset: u64::try_from(secs.max(0)).unwrap(),
             },
             output_index: 0,
         },

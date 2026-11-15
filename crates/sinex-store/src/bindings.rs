@@ -16,7 +16,7 @@ pub struct Stored {
     pub settings: Value,
 }
 
-/// Identify the format actually stored at this binding's committed anchor.
+/// Identify the format actually stored at this binding's committed record offset.
 /// A same-named source may have both a native spool and an imported file format.
 pub async fn material_parser(
     conn: &mut PgConnection,

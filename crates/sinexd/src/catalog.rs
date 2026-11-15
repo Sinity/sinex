@@ -9,7 +9,7 @@ use sqlx::{Connection, PgConnection};
 
 /// Install only the build's trusted native catalog while the owner holds the
 /// writer claim. Request payloads cannot register their own source authority.
-pub(crate) async fn install_native_sources(conn: &mut PgConnection) -> Result<()> {
+pub(crate) async fn install_built_in_sources(conn: &mut PgConnection) -> Result<()> {
     let mut tx = conn
         .begin()
         .await

@@ -247,7 +247,7 @@ fn registration_keeps_identity_time_and_validates_known_payloads() {
     let origin = crate::Origin::Record {
         location: crate::RecordLocation {
             material: crate::MaterialId::new(),
-            anchor: 7,
+            record_offset: 7,
         },
         output_index: 2,
     };

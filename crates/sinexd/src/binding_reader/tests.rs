@@ -102,7 +102,7 @@ type EventFields = (
 );
 
 async fn events(conn: &mut PgConnection) -> Vec<EventFields> {
-    sqlx::query_as("SELECT source, equivalence_key, payload, material_id, anchor FROM core.events WHERE event_type IN ('health.record', 'task.revised') ORDER BY source,equivalence_key,material_id,anchor")
+    sqlx::query_as("SELECT source, equivalence_key, payload, material_id, record_offset FROM core.events WHERE event_type IN ('health.record', 'task.revised') ORDER BY source,equivalence_key,material_id,record_offset")
         .fetch_all(conn).await.unwrap()
 }
 
@@ -682,7 +682,7 @@ async fn sealed_bindings_never_share_data_keys_or_original_blob_names(
 }
 
 async fn live_events(conn: &mut PgConnection) -> Vec<EventFields> {
-    sqlx::query_as("SELECT e.source,e.equivalence_key,e.payload,e.material_id,e.anchor FROM core.events e WHERE e.event_type <> 'source.coverage' AND e.id IN (SELECT event_id FROM core.live_equivalence UNION SELECT event_id FROM core.live_locations) ORDER BY source,equivalence_key,material_id,anchor").fetch_all(conn).await.unwrap()
+    sqlx::query_as("SELECT e.source,e.equivalence_key,e.payload,e.material_id,e.record_offset FROM core.events e WHERE e.event_type <> 'source.coverage' AND e.id IN (SELECT event_id FROM core.live_equivalence UNION SELECT event_id FROM core.live_locations) ORDER BY source,equivalence_key,material_id,record_offset").fetch_all(conn).await.unwrap()
 }
 
 mod directory;

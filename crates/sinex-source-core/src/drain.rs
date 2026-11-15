@@ -154,7 +154,7 @@ pub struct DrainInput<'a> {
     pub records: &'a [(usize, usize)],
     /// The carried state before the first record.
     pub carry: Value,
-    /// Which of two readings is newer, by the record's anchor.
+    /// Which of two readings is newer, by the record's offset.
     pub reading_order: &'a (dyn Fn(usize) -> ReadingOrder + Sync),
     pub limits: Limits,
     /// The material's manifest. Its members (archive member streams,
@@ -373,7 +373,7 @@ impl<'a, P: Parser> Drainer<'a, P> {
         let input = &self.input;
         let location = RecordLocation {
             material: input.material,
-            anchor: start as u64,
+            record_offset: start as u64,
         };
         match parsed {
             Ok((payloads, next)) => {

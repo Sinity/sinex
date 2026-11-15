@@ -216,7 +216,7 @@ $$"
 }
 
 const VISIBLE_EVENTS: &str = "CREATE VIEW core.visible_events AS SELECT
-  e.id, e.event_type, e.source, e.run_id, e.material_id, e.anchor, e.output_index, e.parents,
+  e.id, e.event_type, e.source, e.run_id, e.material_id, e.record_offset, e.output_index, e.parents,
   e.ts_orig, e.ts_quality, e.ts_coided, e.ts_persisted, e.commit_seq,
   CASE WHEN core.class_visible(e.class) THEN e.payload
        ELSE jsonb_build_object('withheld', e.class) END AS payload,
@@ -379,16 +379,16 @@ fn upgradable(found: i32) -> bool {
 /// or confirm that an existing one is at this version. Creation and an
 /// upgrade are each one transaction.
 pub async fn apply(connection: &mut PgConnection) -> Result<Applied, Error> {
-    apply_with_owners(connection, &kinds::Owners::default()).await
+    apply_with_kind_prefixes(connection, &kinds::KindPrefixes::default()).await
 }
 
-/// Upgrade or create the schema with these kind owners: the explicit
+/// Upgrade or create the schema with these kind prefixes: the explicit
 /// operation run while sinexd is stopped.
-pub async fn apply_with_owners(
+pub async fn apply_with_kind_prefixes(
     connection: &mut PgConnection,
-    owners: &kinds::Owners,
+    kind_prefixes: &kinds::KindPrefixes,
 ) -> Result<Applied, Error> {
-    apply_allowing(connection, owners, true).await
+    apply_allowing(connection, kind_prefixes, true).await
 }
 
 /// What daemon startup runs: create the schema in an empty database or keep
@@ -397,14 +397,14 @@ pub async fn apply_with_owners(
 /// upgrade is its own visible step.
 pub async fn start(
     connection: &mut PgConnection,
-    owners: &kinds::Owners,
+    kind_prefixes: &kinds::KindPrefixes,
 ) -> Result<Applied, Error> {
-    apply_allowing(connection, owners, false).await
+    apply_allowing(connection, kind_prefixes, false).await
 }
 
 async fn apply_allowing(
     connection: &mut PgConnection,
-    owners: &kinds::Owners,
+    kind_prefixes: &kinds::KindPrefixes,
     upgrade_allowed: bool,
 ) -> Result<Applied, Error> {
     let has_version_table: bool = sqlx::query_scalar(
@@ -419,10 +419,10 @@ async fn apply_allowing(
                 .fetch_one(&mut *connection)
                 .await?;
         return match found {
-            Some(VERSION) => apply_current(connection, owners).await,
+            Some(VERSION) => apply_current(connection, kind_prefixes).await,
             Some(found) if upgradable(found) => {
                 if upgrade_allowed {
-                    upgrade(connection, found, owners).await
+                    upgrade(connection, found, kind_prefixes).await
                 } else {
                     Err(Error::UpgradeNeeded { found })
                 }
@@ -447,7 +447,7 @@ async fn apply_allowing(
         tx.rollback().await?;
         return Err(Error::WriterRunning);
     }
-    match create_schema(&mut tx, owners).await {
+    match create_schema(&mut tx, kind_prefixes).await {
         Ok(()) => {
             tx.commit().await?;
             Ok(Applied::Created { version: VERSION })
@@ -467,10 +467,10 @@ async fn apply_allowing(
 async fn upgrade(
     connection: &mut PgConnection,
     from: i32,
-    owners: &kinds::Owners,
+    kind_prefixes: &kinds::KindPrefixes,
 ) -> Result<Applied, Error> {
     let mut tx = connection.begin().await?;
-    match run_upgrades(&mut tx, from, owners).await {
+    match run_upgrades(&mut tx, from, kind_prefixes).await {
         Ok(()) => {
             tx.commit().await?;
             Ok(Applied::Upgraded { from, to: VERSION })
@@ -485,7 +485,7 @@ async fn upgrade(
 async fn run_upgrades(
     connection: &mut PgConnection,
     from: i32,
-    owners: &kinds::Owners,
+    kind_prefixes: &kinds::KindPrefixes,
 ) -> Result<(), Error> {
     let free: bool = sqlx::query_scalar("SELECT pg_try_advisory_xact_lock($1)")
         .bind(WRITER_LOCK)
@@ -496,7 +496,7 @@ async fn run_upgrades(
     }
     run_steps(connection, from, upgrades::STEPS).await?;
     description::Description::current()
-        .apply(connection, owners)
+        .apply(connection, kind_prefixes)
         .await?;
     Ok(())
 }
@@ -526,7 +526,7 @@ async fn run_steps(
 
 async fn apply_current(
     connection: &mut PgConnection,
-    owners: &kinds::Owners,
+    kind_prefixes: &kinds::KindPrefixes,
 ) -> Result<Applied, Error> {
     let mut tx = connection.begin().await?;
     let free: bool = sqlx::query_scalar("SELECT pg_try_advisory_xact_lock($1)")
@@ -538,7 +538,7 @@ async fn apply_current(
         return Err(Error::WriterRunning);
     }
     let result = description::Description::current()
-        .apply(&mut tx, owners)
+        .apply(&mut tx, kind_prefixes)
         .await;
     match result {
         Ok(()) => {
@@ -634,7 +634,10 @@ async fn apply_views(
     Ok(())
 }
 
-async fn create_schema(connection: &mut PgConnection, owners: &kinds::Owners) -> Result<(), Error> {
+async fn create_schema(
+    connection: &mut PgConnection,
+    kind_prefixes: &kinds::KindPrefixes,
+) -> Result<(), Error> {
     let description = description::Description::current();
     let mut statements = privileged();
     statements.extend(
@@ -655,7 +658,7 @@ async fn create_schema(connection: &mut PgConnection, owners: &kinds::Owners) ->
         .bind(VERSION)
         .execute(&mut *connection)
         .await?;
-    description.apply(connection, owners).await?;
+    description.apply(connection, kind_prefixes).await?;
     Ok(())
 }
 

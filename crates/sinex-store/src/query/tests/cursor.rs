@@ -2,8 +2,8 @@ use super::*;
 
 async fn ask_at(conn: &mut PgConnection, text: &str, ctx: &Context, page: Page) -> Result<Answer> {
     let fixed = context_for_page(conn, ctx, &page, text).await?;
-    if sinex_model::query::native::is_command(text) {
-        let operation = sinex_model::query::native::parse(text, &fixed)
+    if sinex_model::query::template::is_command(text) {
+        let operation = sinex_model::query::template::parse(text, &fixed)
             .map_err(|error| crate::Error::Invalid(error.to_string()))?;
         run_operation(conn, text, &operation, &fixed, &page).await
     } else {
@@ -303,7 +303,7 @@ async fn page_count_and_rows_keep_one_snapshot_across_concurrent_run_completion(
         "CREATE FUNCTION public.cursor_wait(v jsonb) RETURNS jsonb LANGUAGE plpgsql VOLATILE AS $$
          BEGIN PERFORM pg_advisory_xact_lock(982451653); RETURN v; END $$;
          ALTER VIEW core.visible_events RENAME TO cursor_original_events;
-         CREATE VIEW core.visible_events AS SELECT id,event_type,source,run_id,material_id,anchor,output_index,parents,
+         CREATE VIEW core.visible_events AS SELECT id,event_type,source,run_id,material_id,record_offset,output_index,parents,
          ts_orig,ts_quality,ts_coided,ts_persisted,commit_seq,public.cursor_wait(payload) AS payload,
          equivalence_key,reading_order,record_hash,record_state,class,kind_version,validation FROM core.cursor_original_events;"
     ).execute(&mut conn).await.unwrap();

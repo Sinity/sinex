@@ -160,7 +160,7 @@ async fn legacy(
 ) -> sinex_model::EventId {
     let id = sinex_model::EventId::new();
     let hash = blake3::hash(payload.to_string().as_bytes());
-    sqlx::query("INSERT INTO core.events(id,event_type,source,run_id,material_id,anchor,output_index,ts_orig,ts_quality,commit_seq,payload,equivalence_key,reading_order,record_hash,kind_version,validation,class,record_state)
+    sqlx::query("INSERT INTO core.events(id,event_type,source,run_id,material_id,record_offset,output_index,ts_orig,ts_quality,commit_seq,payload,equivalence_key,reading_order,record_hash,kind_version,validation,class,record_state)
         SELECT $1,e.event_type,$2,e.run_id,$3,0,e.output_index,$4,CASE WHEN $4::timestamptz IS NULL THEN 'unknown' ELSE 'captured' END,e.commit_seq+$5,$6,$7,$5,$8,e.kind_version,e.validation,e.class,e.record_state FROM core.events e WHERE e.id=$9")
         .bind(id.0).bind(source).bind(MaterialId::new().0).bind(seconds.map(|s| at(s).0)).bind(order).bind(&payload).bind(key)
         .bind(hash.as_bytes().as_slice()).bind(template.id.0).execute(conn).await.unwrap();

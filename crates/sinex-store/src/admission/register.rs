@@ -234,8 +234,8 @@ pub(super) async fn frame(
         frame.family,
         &frame.write_kind_prefixes,
         number,
-        frame.native_source.as_ref().map(|source|source.name.as_str()),
-        frame.native_source.as_ref().map(|source|i64::from(source.version)),
+        frame.built_in_source.as_ref().map(|source|source.name.as_str()),
+        frame.built_in_source.as_ref().map(|source|i64::from(source.version)),
         frame.source_fingerprint,
         frame.host,
     )
@@ -313,7 +313,7 @@ pub(super) async fn provenance(
 ) -> Result<Provenance> {
     let (source, mut provenance) = match &batch.kind {
         BatchKind::Ingress(frame) => (
-            frame.native_source.as_ref(),
+            frame.built_in_source.as_ref(),
             Provenance {
                 family: frame.family.clone(),
                 identity: Some(frame.producer.clone()),
@@ -435,7 +435,7 @@ pub(crate) async fn native_inputs(
 ) -> Result<()> {
     let native = match &batch.kind {
         BatchKind::Source(progress) => progress.source.as_ref(),
-        BatchKind::Ingress(frame) => frame.native_source.as_ref(),
+        BatchKind::Ingress(frame) => frame.built_in_source.as_ref(),
         BatchKind::Replay { source, .. } => source.as_ref(),
         _ => None,
     };

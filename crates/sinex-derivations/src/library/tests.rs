@@ -47,7 +47,7 @@ fn copy_at(path: &str, content: &str, part_index: u32, seconds: i64, original: &
         Origin::Record {
             location: RecordLocation {
                 material,
-                anchor: 0,
+                record_offset: 0,
             },
             output_index: 0,
         },

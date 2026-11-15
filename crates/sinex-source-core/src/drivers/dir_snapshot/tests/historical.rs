@@ -145,7 +145,7 @@ fn newer_tar_facts_win_over_older_predecessor_members() {
 }
 
 #[devkit::test]
-fn changed_predecessor_bytes_use_current_tar_and_original_removal_anchors_survive() {
+fn changed_predecessor_bytes_use_current_tar_and_original_removal_offsets_survive() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("a.md"), b"newer").unwrap();
     let old = predecessor(&[("a.md", b"older", 11), ("b.md", b"beta", 12)]);
@@ -167,7 +167,7 @@ fn changed_predecessor_bytes_use_current_tar_and_original_removal_anchors_surviv
         next.removed,
         [RecordLocation {
             material,
-            anchor: 7
+            record_offset: 7
         }]
     );
 }
@@ -284,7 +284,7 @@ fn older_metadata_fills_only_saved_file_locations_within_its_admitted_prefix() {
     std::fs::write(dir.path().join("b.md"), b"beta").unwrap();
     let current = MaterialId::new();
     let older = MaterialId::new();
-    let anchor = predecessor(&[("a.md", b"alpha", -17), ("b.md", b"beta", -18)]);
+    let older_manifest = predecessor(&[("a.md", b"alpha", -17), ("b.md", b"beta", -18)]);
     let memory = bundle_memory(&[("a.md", b"alpha", -17), ("b.md", b"beta", -18)], 6);
     let mut d = driver(dir.path().to_owned(), 4096);
     d.removed_at_source = true;
@@ -294,7 +294,7 @@ fn older_metadata_fills_only_saved_file_locations_within_its_admitted_prefix() {
     let committed = cursor(current, 6);
     assert!(
         reader
-            .restore(&committed, stored_part(current, anchor, Some(6)))
+            .restore(&committed, stored_part(current, older_manifest, Some(6)))
             .unwrap()
     );
     let snapshot_id = MaterialId::new();
@@ -332,7 +332,7 @@ fn older_metadata_fills_only_saved_file_locations_within_its_admitted_prefix() {
         removed.removed,
         [RecordLocation {
             material: older,
-            anchor: 1
+            record_offset: 1
         }]
     );
 }
@@ -417,7 +417,7 @@ fn a_checkpoint_behind_the_admitted_prefix_keeps_the_newer_suffix_facts() {
                 .insert("removed_at_ns".into(), json!("1"));
         }
         let material = MaterialId::new();
-        let anchor = stored_part(material, manifest, Some(12)).reference;
+        let memory_part = stored_part(material, manifest, Some(12)).reference;
         let crate::Reading::Polled(mut reader) =
             crate::binding::walked(driver(dir.path().to_owned(), 4096))
         else {
@@ -425,7 +425,7 @@ fn a_checkpoint_behind_the_admitted_prefix_keeps_the_newer_suffix_facts() {
         };
         assert!(
             !reader
-                .restore_memory(&memory, Some(&anchor), Some(12))
+                .restore_memory(&memory, Some(&memory_part), Some(12))
                 .unwrap()
         );
         reader.restored().unwrap();
@@ -465,7 +465,7 @@ fn exact_checkpoint_prefix_does_not_apply_unadmitted_suffix_and_beyond_prefix_is
     ]);
     let memory = restore::memory_of(&files, &HashMap::new(), 6);
     let material = MaterialId::new();
-    let anchor = stored_part(
+    let memory_part = stored_part(
         material,
         predecessor(&[("a.md", b"alpha", -17), ("b.md", b"newer", -16)]),
         Some(6),
@@ -478,7 +478,7 @@ fn exact_checkpoint_prefix_does_not_apply_unadmitted_suffix_and_beyond_prefix_is
     };
     assert!(
         !reader
-            .restore_memory(&memory, Some(&anchor), Some(6))
+            .restore_memory(&memory, Some(&memory_part), Some(6))
             .unwrap()
     );
     reader.restored().unwrap();
@@ -496,7 +496,7 @@ fn exact_checkpoint_prefix_does_not_apply_unadmitted_suffix_and_beyond_prefix_is
     };
     assert!(
         reader
-            .restore_memory(&memory, Some(&anchor), Some(5))
+            .restore_memory(&memory, Some(&memory_part), Some(5))
             .unwrap_err()
             .to_string()
             .contains("beyond")

@@ -84,7 +84,7 @@ pub async fn scope_of(conn: &mut PgConnection, operation: OperationId) -> Result
 #[derive(Clone, Debug, PartialEq)]
 pub struct Change {
     pub event_type: String,
-    /// The equivalence key, or `material:anchor:output_index` for keyless types.
+    /// The equivalence key, or `material:record_offset:output_index` for keyless types.
     pub record: String,
     pub before: Option<Value>,
     pub after: Option<Value>,
@@ -112,13 +112,13 @@ pub async fn diff(
     let rows = sqlx::query!(
         r#"WITH old AS (
              SELECT e.source, e.event_type,
-               coalesce(e.equivalence_key, e.material_id::text || ':' || e.anchor || ':' || e.output_index) AS record,
+               coalesce(e.equivalence_key, e.material_id::text || ':' || e.record_offset || ':' || e.output_index) AS record,
                e.payload
              FROM audit.archived a JOIN core.events e ON e.id = a.event_id
              WHERE a.operation_id = $1 AND a.reason = 'replay'),
            new AS (
              SELECT e.source, e.event_type,
-               coalesce(e.equivalence_key, e.material_id::text || ':' || e.anchor || ':' || e.output_index) AS record,
+               coalesce(e.equivalence_key, e.material_id::text || ':' || e.record_offset || ':' || e.output_index) AS record,
                e.payload
              FROM core.events e
              WHERE e.id = ANY($2)

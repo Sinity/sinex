@@ -141,7 +141,7 @@ pub struct PresenceInterval {
     pub ended_at: Timestamp,
     pub state: String,
     pub method: String,
-    pub support: Vec<super::activity::ActivityEvidence>,
+    pub support: Vec<super::activity::CitedReading>,
     pub claims: Vec<String>,
     pub contradictions: Vec<String>,
     pub profile: String,

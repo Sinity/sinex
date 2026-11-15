@@ -33,7 +33,7 @@ fn known_rows_keep_the_existing_wire_identity_and_exact_values() {
         assert_eq!(again, record);
         let location = RecordLocation {
             material: MaterialId::new(),
-            anchor: 57,
+            record_offset: 57,
         };
         let event = crate::Event::build(
             &record,
@@ -157,7 +157,7 @@ fn registration_exposes_known_fields_and_builds_through_the_validated_type() {
     let origin = Origin::Record {
         location: RecordLocation {
             material: MaterialId::new(),
-            anchor: 0,
+            record_offset: 0,
         },
         output_index: 0,
     };

@@ -76,7 +76,7 @@ pub struct Committed {
     pub source: String,
     pub run_id: Uuid,
     pub material_id: Option<Uuid>,
-    pub anchor: Option<i64>,
+    pub record_offset: Option<i64>,
     pub output_index: i64,
     pub parents: Option<Vec<Uuid>>,
     pub ts_orig: Option<OffsetDateTime>,
@@ -141,7 +141,7 @@ pub async fn after(conn: &mut PgConnection, after: i64, limit: i64, bytes: i64) 
             source,
             run_id,
             material_id: row.material_id,
-            anchor: row.anchor,
+            record_offset: row.record_offset,
             output_index: row
                 .output_index
                 .ok_or_else(|| Error::Invalid("event has no output index".into()))?,
@@ -186,12 +186,13 @@ pub async fn after(conn: &mut PgConnection, after: i64, limit: i64, bytes: i64) 
 impl Committed {
     /// Reconstruct the exact stored reading, including outside kinds.
     pub fn to_event(&self) -> Result<Event> {
-        let origin = match (&self.material_id, self.anchor, &self.parents) {
-            (Some(material), Some(anchor), _) => Origin::Record {
+        let origin = match (&self.material_id, self.record_offset, &self.parents) {
+            (Some(material), Some(record_offset), _) => Origin::Record {
                 location: RecordLocation {
                     material: MaterialId(*material),
-                    anchor: u64::try_from(anchor)
-                        .map_err(|_| Error::Invalid(format!("negative anchor on {}", self.id)))?,
+                    record_offset: u64::try_from(record_offset).map_err(|_| {
+                        Error::Invalid(format!("negative record offset on {}", self.id))
+                    })?,
                 },
                 output_index: u64::try_from(self.output_index)
                     .map_err(|_| Error::Invalid(format!("negative output_index on {}", self.id)))?,

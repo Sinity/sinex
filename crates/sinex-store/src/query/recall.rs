@@ -54,7 +54,7 @@ pub(super) async fn select(
                 Error::Invalid("mark number is outside the archive's row range".into())
             })?;
             let mark = sqlx::query_scalar!(
-                r#"SELECT jsonb_build_object('id',id,'source',source,'event_type',event_type,'key',equivalence_key,'material',material_id,'offset',anchor,'output',output_index,'when',ts_orig,'payload',payload) AS "row!"
+                r#"SELECT jsonb_build_object('id',id,'source',source,'event_type',event_type,'key',equivalence_key,'material',material_id,'offset',record_offset,'output',output_index,'when',ts_orig,'payload',payload) AS "row!"
                 FROM core.visible_events WHERE event_type=$3 AND ts_orig IS NOT NULL
                 AND payload IS NOT NULL AND NOT payload ? 'withheld'
                 AND commit_seq <= $1 AND NOT audit.is_archived_at(id,$1)
@@ -377,15 +377,15 @@ impl Selection {
                         Source::RecallMark { window, .. } => *window,
                         _ => return Err(Error::Invalid("mark selection has no radius".into())),
                     };
-                    serde_json::json!({"kind":"mark","anchor":record_reference(mark)?,"radius_seconds":radius})
+                    serde_json::json!({"kind":"mark","around":record_reference(mark)?,"radius_seconds":radius})
                 } else {
-                    serde_json::json!({"kind":"session","anchor":record_reference(row)?})
+                    serde_json::json!({"kind":"session","around":record_reference(row)?})
                 }
             }
         })
     }
 
-    pub(super) fn anchor_ids(&self) -> Vec<uuid::Uuid> {
+    pub(super) fn around_ids(&self) -> Vec<uuid::Uuid> {
         let Self::Window {
             session: Some(row), ..
         } = self

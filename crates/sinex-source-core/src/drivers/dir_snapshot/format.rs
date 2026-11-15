@@ -33,7 +33,7 @@ pub(crate) fn validate(manifest: &Manifest, records: &[(usize, usize)]) -> Resul
     }
     if records.windows(2).any(|pair| pair[0].0 >= pair[1].0) {
         return Err(RecordError::new(
-            "directory record anchors are not distinct and increasing",
+            "directory record offsets are not distinct and increasing",
         ));
     }
     if records.windows(2).any(|pair| pair[0].1 > pair[1].0) {

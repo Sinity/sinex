@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 #[serde(deny_unknown_fields)]
 pub(crate) struct Grants {
     #[serde(default)]
-    pub indexed_catalog: Option<sinex_model::ProjectionCatalog>,
+    pub indexed_catalog: Option<sinex_model::SnapshotCatalog>,
     #[serde(default)]
     pub public_context: bool,
     #[serde(default)]

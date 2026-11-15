@@ -53,7 +53,7 @@ fn saved_query_records_parse_without_reading_referenced_definitions() {
     let record = QueryRecord::Saved(Saved {
         name: "indirect".into(),
         query: "query:shared@operator(source=$source)".into(),
-        template: sinex_model::query::native::parse(
+        template: sinex_model::query::template::parse(
             "query:shared@operator(source=$source)",
             &sinex_model::query::Context::utc(jiff::Timestamp::UNIX_EPOCH),
         )
@@ -100,7 +100,7 @@ fn saved_query_records_carry_their_parsed_template() {
         name: "remember".into(),
         query: query.into(),
         parameters: vec![],
-        template: sinex_model::query::native::parse(
+        template: sinex_model::query::template::parse(
             query,
             &sinex_model::query::Context::utc(jiff::Timestamp::UNIX_EPOCH),
         )

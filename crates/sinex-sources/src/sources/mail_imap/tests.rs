@@ -431,7 +431,7 @@ fn an_expunged_message_is_removed_where_it_was_read() {
         second.removed,
         vec![sinex_model::RecordLocation {
             material: first.id,
-            anchor: 0
+            record_offset: 0
         }]
     );
     let after: Cursor =
@@ -451,7 +451,7 @@ fn a_renumbered_mailbox_removes_nothing() {
         4,
         sinex_model::RecordLocation {
             material: MaterialId::new(),
-            anchor: 0,
+            record_offset: 0,
         },
     );
     let port = server(vec![(1, M2)], 100, false);
@@ -492,7 +492,7 @@ fn a_restart_remembers_from_saved_memory_and_later_materials() {
             uid,
             sinex_model::RecordLocation {
                 material: older,
-                anchor: u64::from(uid) * 100,
+                record_offset: u64::from(uid) * 100,
             },
         );
     }

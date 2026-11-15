@@ -119,7 +119,7 @@ fn a_rewrite_reads_only_records_the_previous_revision_did_not_hold() {
         n.removed,
         vec![RecordLocation {
             material: m.id,
-            anchor: 2
+            record_offset: 2
         }],
         "the dropped \"b\" is reported where it was read"
     );

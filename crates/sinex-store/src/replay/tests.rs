@@ -28,7 +28,7 @@ fn reading(material: MaterialId, key: &str, command: &str) -> Event {
         Origin::Record {
             location: RecordLocation {
                 material,
-                anchor: 0,
+                record_offset: 0,
             },
             output_index: 0,
         },

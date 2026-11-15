@@ -44,7 +44,7 @@ const TOMBSTONES: &str = "CREATE TABLE core.event_tombstones (
   ts_quality text,
   reason text,
   material_id uuid,
-  anchor bigint,
+  record_offset bigint,
   output_index bigint,
   key_hash text
 )";
@@ -161,14 +161,14 @@ const LIVE_EQUIVALENCE_EVENT: &str =
 /// Feed pages read events in commit order.
 const EVENTS_FEED: &str = "CREATE INDEX events_feed ON core.events (commit_seq,id)";
 
-/// Record locations follow physical order: materials are UUIDv7 and anchors
+/// Record locations follow physical order: materials are UUIDv7 and record offsets
 /// ascend within a material, so a block-range summary finds a record's rows
 /// without a B-tree entry per event. Small ranges keep a point lookup to a
 /// few pages. Per-source and all-kind time questions read the
 /// `(event_type, ts_orig)` ranges, chunk skipping on `ts_orig`, or the source
 /// and run counters, so events carry no `(source, ts_orig)`, `(ts_orig)` or
 /// per-run index.
-const EVENTS_RECORD_LOCATION: &str = "CREATE INDEX events_record_location ON core.events USING brin (material_id, anchor) WITH (pages_per_range = 32)";
+const EVENTS_RECORD_LOCATION: &str = "CREATE INDEX events_record_location ON core.events USING brin (material_id, record_offset) WITH (pages_per_range = 32)";
 
 /// A position taken by a transaction that admitted no event: lifecycle
 /// changes, tombstones and empty transactions. An event's position is on its
@@ -208,12 +208,13 @@ const SIGNAL_CHECKPOINTS: &str = "CREATE TABLE core.signal_checkpoints (
   state jsonb NOT NULL CHECK (jsonb_typeof(state) = 'object')
 )";
 
-/// Private signing material for owner-issued producer capabilities.
-const OWNER_PROTOCOL_KEY: &str = "CREATE TABLE core.owner_protocol_key (
+/// The database's secret, from which its store identity and signal
+/// occurrence identities are derived.
+const STORE_SECRET: &str = "CREATE TABLE core.store_secret (
   id boolean PRIMARY KEY CHECK (id),
   secret bytea NOT NULL CHECK (length(secret)=32)
 )";
-const OWNER_PROTOCOL_KEY_INIT: &str = "INSERT INTO core.owner_protocol_key(id,secret) VALUES(true,decode(replace(gen_random_uuid()::text || gen_random_uuid()::text,'-',''),'hex'))";
+const STORE_SECRET_INIT: &str = "INSERT INTO core.store_secret(id,secret) VALUES(true,decode(replace(gen_random_uuid()::text || gen_random_uuid()::text,'-',''),'hex'))";
 
 pub(crate) fn tables(c: &Checks) -> Vec<String> {
     let kind_columns = kind_columns();
@@ -223,7 +224,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   source text NOT NULL,
   run_id uuid NOT NULL,
   material_id uuid,
-  anchor bigint,
+  record_offset bigint,
   output_index bigint NOT NULL DEFAULT 0,
   parents uuid[],
   ts_orig timestamptz,
@@ -238,10 +239,10 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   record_state text NOT NULL DEFAULT 'present' {record_state},
   class text NOT NULL DEFAULT 'open' {class},
   {kind_columns},
-  CONSTRAINT one_origin CHECK ((material_id IS NOT NULL AND anchor IS NOT NULL AND parents IS NULL) OR (material_id IS NULL AND anchor IS NULL AND parents IS NOT NULL AND cardinality(parents) > 0)),
+  CONSTRAINT one_origin CHECK ((material_id IS NOT NULL AND record_offset IS NOT NULL AND parents IS NULL) OR (material_id IS NULL AND record_offset IS NULL AND parents IS NOT NULL AND cardinality(parents) > 0)),
   CONSTRAINT id_is_uuidv7 CHECK (uuid_extract_version(id) = 7),
   CONSTRAINT time_pair CHECK ((ts_orig IS NULL) = (ts_quality = 'unknown')),
-  CONSTRAINT anchor_in_range CHECK (anchor IS NULL OR anchor >= 0),
+  CONSTRAINT record_offset_in_range CHECK (record_offset IS NULL OR record_offset >= 0),
   CONSTRAINT output_index_in_range CHECK (output_index >= 0),
   CONSTRAINT payload_object CHECK (jsonb_typeof(payload) = 'object'),
   CONSTRAINT hash_length CHECK (length(record_hash) = 32)",
@@ -262,14 +263,14 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         // One live reading per record location, event type and output number.
         "CREATE TABLE core.live_locations (
   material_id uuid NOT NULL,
-  anchor bigint NOT NULL,
+  record_offset bigint NOT NULL,
   event_type text NOT NULL,
   output_index bigint NOT NULL,
   event_id uuid NOT NULL,
   reading_order bigint NOT NULL,
   record_hash bytea NOT NULL,
   CONSTRAINT output_index_in_range CHECK (output_index >= 0),
-  PRIMARY KEY (material_id, anchor, event_type, output_index)
+  PRIMARY KEY (material_id, record_offset, event_type, output_index)
 )".into(),
         LIVE_EQUIVALENCE.into(),
         // Found by event: removal of live readings, and readings at a location.
@@ -435,7 +436,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         "CREATE TABLE raw.failures (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   material_id uuid NOT NULL REFERENCES raw.materials(id),
-  anchor bigint NOT NULL,
+  record_offset bigint NOT NULL,
   reason text NOT NULL,
   run_id uuid NOT NULL,
   failed_at timestamptz NOT NULL DEFAULT now()
@@ -612,7 +613,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   event_type text NOT NULL,
   source text NOT NULL,
   material_id uuid,
-  anchor bigint,
+  record_offset bigint,
   output_index bigint NOT NULL CHECK (output_index >= 0),
   parents uuid[],
   ts_orig timestamptz,
@@ -635,7 +636,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
     tables.extend(crate::backups::tables());
     tables.extend(crate::blob_chunks::tables());
     tables.extend(crate::vectors::tables());
-    tables.extend([OWNER_PROTOCOL_KEY.into(), OWNER_PROTOCOL_KEY_INIT.into()]);
+    tables.extend([STORE_SECRET.into(), STORE_SECRET_INIT.into()]);
     tables
 }
 
@@ -759,9 +760,9 @@ const REPLAY_REFUSALS: &str = "CREATE TABLE core.replay_refusals (
   PRIMARY KEY (operation_id, material_id)
 )";
 
-const KIND_IMMUTABILITY: &str = "CREATE FUNCTION registry.keep_definition() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'kind definitions and owners are immutable'; END $$;
+pub(crate) const KIND_IMMUTABILITY: &str = "CREATE FUNCTION registry.keep_definition() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'kind definitions and declaring producers are immutable'; END $$;
 CREATE TRIGGER keep_definition BEFORE UPDATE OR DELETE ON registry.event_types FOR EACH ROW EXECUTE FUNCTION registry.keep_definition();
-CREATE TRIGGER keep_owner BEFORE UPDATE OR DELETE ON registry.kind_prefixes FOR EACH ROW EXECUTE FUNCTION registry.keep_definition()";
+CREATE TRIGGER keep_declaring_producer BEFORE UPDATE OR DELETE ON registry.kind_prefixes FOR EACH ROW EXECUTE FUNCTION registry.keep_definition()";
 
 fn kind_columns() -> String {
     format!(

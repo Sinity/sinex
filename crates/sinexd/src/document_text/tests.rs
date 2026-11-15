@@ -99,7 +99,7 @@ fn a_stored_document_requires_its_bytes_and_a_referenced_copy_gives_no_text() {
         Origin::Record {
             location: sinex_model::RecordLocation {
                 material: sinex_model::MaterialId::new(),
-                anchor: 0,
+                record_offset: 0,
             },
             output_index: 0,
         },
@@ -164,7 +164,7 @@ fn a_stored_document_requires_its_bytes_and_a_referenced_copy_gives_no_text() {
         Origin::Record {
             location: sinex_model::RecordLocation {
                 material: sinex_model::MaterialId::new(),
-                anchor: 0,
+                record_offset: 0,
             },
             output_index: 0,
         },

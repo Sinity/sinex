@@ -153,7 +153,7 @@ pub async fn save(
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct InterruptBudgetProjection {
+pub struct InterruptBudgetView {
     pub per_hour: u64,
     pub used: u64,
     pub remaining: u64,
@@ -164,12 +164,12 @@ pub struct InterruptBudgetProjection {
 /// identities, notification attempts, rule evidence or outlet commands.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
-pub enum HostPolicyProjection {
+pub enum HostPolicyView {
     Available {
         checkpoint_revision: u64,
         settings_identity: String,
         quiet_hours: Option<::signals::QuietHours>,
-        interrupt_budget: InterruptBudgetProjection,
+        interrupt_budget: InterruptBudgetView,
         observed_at: Timestamp,
     },
     Pending {
@@ -186,26 +186,26 @@ pub async fn public_host_policy(
     configured: bool,
     current_identity: &str,
     at: Timestamp,
-) -> Result<HostPolicyProjection> {
+) -> Result<HostPolicyView> {
     if !configured {
-        return Ok(HostPolicyProjection::Unavailable {
+        return Ok(HostPolicyView::Unavailable {
             reason: "signals_not_configured".into(),
         });
     }
     let Some(saved) = load(conn, host).await? else {
-        return Ok(HostPolicyProjection::Pending {
+        return Ok(HostPolicyView::Pending {
             reason: "host_policy_not_initialized".into(),
         });
     };
     if saved.checkpoint.settings_identity != current_identity {
-        return Ok(HostPolicyProjection::Pending {
+        return Ok(HostPolicyView::Pending {
             reason: "host_policy_settings_changed".into(),
         });
     }
     let now = i64::try_from(at.unix_ns() / 1_000_000)
         .map_err(|_| Error::Invalid("host policy observation clock exceeds milliseconds".into()))?;
     if now < saved.checkpoint.evaluator.now() {
-        return Ok(HostPolicyProjection::Pending {
+        return Ok(HostPolicyView::Pending {
             reason: "owner_clock_precedes_checkpoint".into(),
         });
     }
@@ -215,11 +215,11 @@ pub async fn public_host_policy(
         .map_err(|_| Error::Invalid("interrupt budget count exceeds u64".into()))?;
     let per_hour = u64::try_from(budget.per_hour)
         .map_err(|_| Error::Invalid("interrupt budget limit exceeds u64".into()))?;
-    Ok(HostPolicyProjection::Available {
+    Ok(HostPolicyView::Available {
         checkpoint_revision: saved.revision,
         settings_identity: saved.checkpoint.settings_identity,
         quiet_hours: saved.checkpoint.host.settings.quiet_hours,
-        interrupt_budget: InterruptBudgetProjection {
+        interrupt_budget: InterruptBudgetView {
             per_hour,
             used,
             remaining: per_hour.saturating_sub(used),

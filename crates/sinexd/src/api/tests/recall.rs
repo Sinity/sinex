@@ -169,7 +169,7 @@ async fn recall_last_pages_keep_the_selected_commit_and_equal_start_ties_are_sta
         &[(0, "/src/other", None), (1, "/src/other", None)],
         Class::Open,
     ));
-    let expected_anchor = events
+    let expected_session = events
         .iter()
         .filter(|e| e.event_type == "shell.session")
         .map(|e| e.id.to_string())
@@ -180,7 +180,7 @@ async fn recall_last_pages_keep_the_selected_commit_and_equal_start_ties_are_sta
         call_unbounded(&w, Some(READ), json!({"method":"recall","around":"last"})).await;
     assert_eq!(
         answer["result"]["recall"]["session"]["row"]["id"],
-        expected_anchor
+        expected_session
     );
     let expected = ids(&answer);
     let (_, first) = call_unbounded(
@@ -203,7 +203,7 @@ async fn recall_last_pages_keep_the_selected_commit_and_equal_start_ties_are_sta
         assert_eq!(page["result"]["resolved"]["commit_seq"], seq);
         assert_eq!(
             page["result"]["recall"]["session"]["row"]["id"],
-            expected_anchor
+            expected_session
         );
         collected.extend(ids(&page));
         cursor = page["result"]["page"]["cursor"].clone();
@@ -213,7 +213,7 @@ async fn recall_last_pages_keep_the_selected_commit_and_equal_start_ties_are_sta
         call_unbounded(&w, Some(READ), json!({"method":"recall","around":"last"})).await;
     assert_ne!(
         changed["result"]["recall"]["session"]["row"]["id"],
-        expected_anchor
+        expected_session
     );
 }
 
@@ -286,7 +286,7 @@ async fn recall_last_never_invents_a_span_from_untimed_or_withheld_evidence(
         Origin::Record {
             location: RecordLocation {
                 material: MaterialId::new(),
-                anchor: 0,
+                record_offset: 0,
             },
             output_index: 0,
         },
@@ -534,7 +534,7 @@ async fn recall_context_excludes_saved_definitions_but_inherits_selected_activit
         let definition = sinex_model::event_types::query::Saved {
             name: format!("synthetic-definition-{index}"),
             query: "events | fields id".into(),
-            template: sinex_model::query::native::parse(
+            template: sinex_model::query::template::parse(
                 "events | fields id",
                 &sinex_model::query::Context::utc(jiff::Timestamp::UNIX_EPOCH),
             )
@@ -550,7 +550,7 @@ async fn recall_context_excludes_saved_definitions_but_inherits_selected_activit
                 Origin::Record {
                     location: RecordLocation {
                         material: MaterialId::new(),
-                        anchor: 0,
+                        record_offset: 0,
                     },
                     output_index: 0,
                 },
@@ -715,11 +715,11 @@ async fn archived_parent_recall_is_an_explicit_historical_preview(db: devkit::pg
 async fn a_stored_work_resume_card_is_shared_by_brief_and_machine_without_recomputation(
     db: devkit::pg::TestDatabase,
 ) {
-    use sinex_model::event_types::{activity::ActivityEvidence, work::ContextPack};
+    use sinex_model::event_types::{activity::CitedReading, work::ContextPack};
     let w = world(db).await;
     let mut failed = command("synthetic failing check", 0);
     failed.payload["exit_code"] = json!(1);
-    let evidence = ActivityEvidence {
+    let evidence = CitedReading {
         event: failed.id,
         record: "synthetic-check".into(),
         event_type: failed.event_type.clone(),

@@ -86,7 +86,7 @@ fn shutdown_batch(tag: &str) -> sinex_model::Batch {
         Origin::Record {
             location: RecordLocation {
                 material: MaterialId::new(),
-                anchor: 0,
+                record_offset: 0,
             },
             output_index: 0,
         },
@@ -99,8 +99,8 @@ fn shutdown_batch(tag: &str) -> sinex_model::Batch {
         run: RunId::new(),
         kind: BatchKind::Ingress(Box::new(IngressFrame {
             content_hash: Some(blake3::hash(tag.as_bytes()).to_hex().to_string()),
-            receipt_number: None,
-            native_source: None,
+            ack_number: None,
+            built_in_source: None,
             source_fingerprint: None,
             host: None,
             family: None,
@@ -646,7 +646,7 @@ async fn source_copy_cancellation_keeps_pending_frame_and_progress_for_retry(
             .repeat(2 << 20);
         let mut origin = events[0].origin.clone();
         if let sinex_model::Origin::Record { location, .. } = &mut origin {
-            location.anchor = 1;
+            location.record_offset = 1;
         }
         sinex_model::Event::build(
             &payload,

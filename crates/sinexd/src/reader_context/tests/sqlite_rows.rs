@@ -128,7 +128,7 @@ async fn sqlite_rows_keep_failed_and_partial_snapshots_until_writer_commits(
     }
     drop(prepared);
     let payloads: Vec<Value> = sqlx::query_scalar(
-        "SELECT payload FROM core.events WHERE source='terminal.atuin-history' ORDER BY anchor",
+        "SELECT payload FROM core.events WHERE source='terminal.atuin-history' ORDER BY record_offset",
     )
     .fetch_all(&mut ctx.read_conn)
     .await

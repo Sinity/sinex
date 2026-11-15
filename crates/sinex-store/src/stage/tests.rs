@@ -20,7 +20,7 @@ fn event(n: i64, payload: serde_json::Value) -> Event {
         Origin::Record {
             location: RecordLocation {
                 material: MaterialId::new(),
-                anchor: n as u64,
+                record_offset: n as u64,
             },
             output_index: 3,
         },
@@ -99,7 +99,7 @@ async fn streaming_copy_round_trips_json_and_every_escaped_field(db: devkit::pg:
         }
         encoder.finish().await.unwrap();
     }
-    let rows=sqlx::query("SELECT ord,id,event_type,source,material_id,anchor,output_index,payload,equivalence_key,parents,reading_order,record_hash,class FROM copy_wire ORDER BY ord")
+    let rows=sqlx::query("SELECT ord,id,event_type,source,material_id,record_offset,output_index,payload,equivalence_key,parents,reading_order,record_hash,class FROM copy_wire ORDER BY ord")
         .fetch_all(&mut *tx).await.unwrap();
     for (i, (row, e)) in rows.iter().zip(&events).enumerate() {
         assert_eq!(row.get::<i64, _>("ord"), i as i64);
@@ -136,8 +136,8 @@ async fn streaming_copy_round_trips_json_and_every_escaped_field(db: devkit::pg:
                     Some(location.material.0)
                 );
                 assert_eq!(
-                    row.get::<Option<i64>, _>("anchor"),
-                    Some(location.anchor as i64)
+                    row.get::<Option<i64>, _>("record_offset"),
+                    Some(location.record_offset as i64)
                 );
                 assert_eq!(row.get::<i64, _>("output_index"), *output_index as i64);
             }

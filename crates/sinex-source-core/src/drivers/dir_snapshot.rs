@@ -365,7 +365,7 @@ impl DirSnapshot {
                     relative.clone(),
                     RecordLocation {
                         material: id,
-                        anchor: offset as u64,
+                        record_offset: offset as u64,
                     },
                 );
             }

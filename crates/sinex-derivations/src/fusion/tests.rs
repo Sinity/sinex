@@ -18,7 +18,7 @@ pub(crate) fn captured<P: EventPayload>(payload: &P, source: &str, class: Class)
         Origin::Record {
             location: RecordLocation {
                 material: MaterialId::new(),
-                anchor: 0,
+                record_offset: 0,
             },
             output_index: 0,
         },
@@ -1090,7 +1090,7 @@ fn a_decision_survives_replay_of_either_side() {
     reread.id = EventId::new();
     if let Origin::Record { location, .. } = &mut reread.origin {
         location.material = MaterialId::new();
-        location.anchor = 900;
+        location.record_offset = 900;
     }
     assert_eq!(record_identity(&reread), record_identity(&z));
     let mut replayed = a.clone();

@@ -10,7 +10,7 @@ use crate::observed::{FOCUS, PLAYS, REST};
 use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed};
 use serde_json::{Value, json};
 use sinex_model::clock::IntervalEnd;
-use sinex_model::event_types::activity::{ActivityCounts, ActivityEvidence};
+use sinex_model::event_types::activity::{ActivityCounts, CitedReading};
 use sinex_model::record::stable;
 use sinex_model::{Event, Timestamp};
 use std::collections::BTreeMap;
@@ -58,8 +58,8 @@ pub(crate) fn timestamp(ns: i128) -> Timestamp {
     Timestamp::from_unix_ns(ns).expect("an instant within a recorded interval")
 }
 
-pub(crate) fn evidence(event: &Event) -> ActivityEvidence {
-    ActivityEvidence {
+pub(crate) fn evidence(event: &Event) -> CitedReading {
+    CitedReading {
         event: event.id,
         record: stable(event),
         event_type: event.event_type.clone(),

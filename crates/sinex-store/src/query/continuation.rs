@@ -22,8 +22,8 @@ pub fn identity(surface: &str, question: &Json, grants: &str) -> Result<Question
     Ok(QuestionId(*blake3::hash(&bytes).as_bytes()))
 }
 pub fn query_identity(text: &str, ctx: &Context) -> Result<Json> {
-    if sinex_model::query::native::is_command(text) {
-        return sinex_model::query::native::parse(text, ctx)?
+    if sinex_model::query::template::is_command(text) {
+        return sinex_model::query::template::parse(text, ctx)?
             .identity()
             .map_err(Error::Query);
     }

@@ -1,10 +1,10 @@
 [
   {
-    "anchor": 0,
+    "record_offset": 0,
     "events": []
   },
   {
-    "anchor": 145,
+    "record_offset": 145,
     "failure": "Notify with 3 arguments, expected 8"
   }
 ]

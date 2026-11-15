@@ -57,7 +57,7 @@ async fn admit_commands_with_duration(
             Origin::Record {
                 location: RecordLocation {
                     material: MaterialId::new(),
-                    anchor: 0,
+                    record_offset: 0,
                 },
                 output_index: 0,
             },
@@ -139,8 +139,8 @@ async fn ask(conn: &mut PgConnection, text: &str) -> Answer {
 
 async fn ask_page(conn: &mut PgConnection, text: &str, page: Page) -> Answer {
     let ctx = ctx();
-    let result = if sinex_model::query::native::is_command(text) {
-        let operation = sinex_model::query::native::parse(text, &ctx).unwrap();
+    let result = if sinex_model::query::template::is_command(text) {
+        let operation = sinex_model::query::template::parse(text, &ctx).unwrap();
         run_operation(conn, text, &operation, &ctx, &page).await
     } else {
         run(conn, text, None, &ctx, &page).await
@@ -806,14 +806,14 @@ async fn commands_show_each_occurrence_once(db: devkit::pg::TestDatabase) {
         .await
         .unwrap();
     let at = |s: i64| Timestamp::from_unix_secs(BASE + s).unwrap();
-    let location = |anchor| Origin::Record {
+    let location = |record_offset| Origin::Record {
         location: RecordLocation {
             material: MaterialId::new(),
-            anchor,
+            record_offset,
         },
         output_index: 0,
     };
-    let zsh = |command: &str, secs: i64, anchor: u64| {
+    let zsh = |command: &str, secs: i64, record_offset: u64| {
         Event::build(
             &CommandImported {
                 command: command.into(),
@@ -824,7 +824,7 @@ async fn commands_show_each_occurrence_once(db: devkit::pg::TestDatabase) {
                 n: 0,
             },
             "terminal.zsh",
-            location(anchor),
+            location(record_offset),
             ReadingOrder(1),
             *blake3::hash(command.as_bytes()).as_bytes(),
             Class::Open,

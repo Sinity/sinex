@@ -1,6 +1,6 @@
 [
   {
-    "anchor": 0,
+    "record_offset": 0,
     "events": [
       {
         "type": "bookmark.saved",
@@ -44,7 +44,7 @@
     ]
   },
   {
-    "anchor": 383,
+    "record_offset": 383,
     "events": [
       {
         "type": "bookmark.saved",

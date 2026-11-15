@@ -90,7 +90,7 @@ async fn directory_resumes_from_admitted_cursor_with_original_bytes(db: devkit::
     }
     drop(prepared);
     let payloads: Vec<Value> = sqlx::query_scalar(
-        "SELECT payload FROM core.events WHERE event_type='note.document' ORDER BY anchor",
+        "SELECT payload FROM core.events WHERE event_type='note.document' ORDER BY record_offset",
     )
     .fetch_all(&mut ctx.read_conn)
     .await

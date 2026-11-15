@@ -653,7 +653,7 @@ pub enum FetchMaterialReply {
 }
 /// A broadcast is only a wakeup hint. Progress requires the complete verified receipt.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ReceiptHint {
+pub struct AckHint {
     pub number: i64,
     pub frame_hash: String,
 }
@@ -844,10 +844,10 @@ pub struct ConfirmedEvent {
     pub equivalence_key: Option<String>,
     /// Which of two readings of one record is newer.
     pub reading_order: i64,
-    /// Canonical source-reading hash, distinct from the current projected payload identity.
+    /// The hash of the record a reading was read from, distinct from the payload identity.
     pub record_hash: String,
     pub payload: Value,
-    pub projection: crate::ProjectionIdentity,
+    pub payload_identity: crate::PayloadIdentity,
 }
 
 /// A reading taken out of the live set.

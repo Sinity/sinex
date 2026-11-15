@@ -120,25 +120,20 @@ async fn compressed_parent_authority_reads_deduplicated_pages(db: devkit::pg::Te
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
-    sqlx::query("INSERT INTO core.events(id,event_type,source,run_id,material_id,anchor,ts_quality,commit_seq,payload,reading_order,record_hash,class)
+    sqlx::query("INSERT INTO core.events(id,event_type,source,run_id,material_id,record_offset,ts_quality,commit_seq,payload,reading_order,record_hash,class)
       SELECT ('01800000-0000-7000-8000-'||lpad(to_hex(n),12,'0'))::uuid,'command.imported','synthetic-parent-plan',uuidv7(),uuidv7(),n,'unknown',1,
       jsonb_build_object('command','synthetic'),1,decode(repeat('01',32),'hex'),'open' FROM generate_series(1,8192)n")
       .execute(&mut *conn).await.unwrap();
     conn.execute("SELECT compress_chunk(c) FROM show_chunks('core.events') c")
         .await
         .unwrap();
-    async fn authority(
-        conn: &mut PgConnection,
-        ids: &[Uuid],
-    ) -> Vec<crate::admission::ParentAuthority> {
-        sqlx::query_as::<_, crate::admission::ParentAuthority>(include_str!(
-            "../../parent_authority.sql"
-        ))
-        .bind(ids)
-        .persistent(false)
-        .fetch_all(conn)
-        .await
-        .unwrap()
+    async fn authority(conn: &mut PgConnection, ids: &[Uuid]) -> Vec<crate::admission::ParentRow> {
+        sqlx::query_as::<_, crate::admission::ParentRow>(include_str!("../../parent_authority.sql"))
+            .bind(ids)
+            .persistent(false)
+            .fetch_all(conn)
+            .await
+            .unwrap()
     }
     let unique = (1..=1024)
         .map(|n| Uuid::parse_str(&format!("01800000-0000-7000-8000-{n:012x}")).unwrap())

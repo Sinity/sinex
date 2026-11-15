@@ -98,7 +98,7 @@ impl Requests {
         uses: &[sinex_protocol::RecordedHeaderUse],
     ) -> Result<(), Check> {
         let native =
-            authority::native_declaration(conn, &self.read_grants, producer, &binding.source)
+            authority::built_in_declaration(conn, &self.read_grants, producer, &binding.source)
                 .await?;
         if native.family != binding.family || native.fingerprint() != binding.source_fingerprint {
             return Err(Check::Configuration(

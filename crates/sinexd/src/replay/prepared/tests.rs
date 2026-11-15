@@ -11,7 +11,7 @@ fn preparation_preserves_valid_deep_payloads_and_unknown_source_time() {
     let material = MaterialId::new();
     let location = RecordLocation {
         material,
-        anchor: 0,
+        record_offset: 0,
     };
     let state = serde_json::from_str(&format!("{}0{}", "[".repeat(125), "]".repeat(125))).unwrap();
     let event = Event::build(

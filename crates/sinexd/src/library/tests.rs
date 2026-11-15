@@ -43,7 +43,7 @@ pub(super) async fn world(db: devkit::pg::TestDatabase) -> World {
     let blobs = Blobs::open(&base.join("store")).unwrap();
     let (handle, queues) = writer::channels();
     let mut connection = writer::claim(connection).await.unwrap();
-    crate::catalog::install_native_sources(&mut connection)
+    crate::catalog::install_built_in_sources(&mut connection)
         .await
         .unwrap();
     tokio::spawn(writer::run(

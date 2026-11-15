@@ -522,7 +522,7 @@ async fn bundle_checkpoint_roundtrip(db: devkit::pg::TestDatabase, removed_at_so
         .await
         .unwrap();
     let first_id = MaterialId::new();
-    let anchor_id = MaterialId::new();
+    let memory_id = MaterialId::new();
     let last_id = MaterialId::new();
     // Memory saved at the end of the second part (five bytes), with the
     // modification times file-bundle members record and no change times or
@@ -546,7 +546,7 @@ async fn bundle_checkpoint_roundtrip(db: devkit::pg::TestDatabase, removed_at_so
     bundle_memory.extend(0u64.to_le_bytes());
     for (index, id, path, text) in [
         (0u32, first_id, "a.md", "alpha"),
-        (1, anchor_id, "b.md", "beta"),
+        (1, memory_id, "b.md", "beta"),
         (2, last_id, "c.md", "gamma"),
     ] {
         let mut bytes = vec![0];
@@ -578,7 +578,7 @@ async fn bundle_checkpoint_roundtrip(db: devkit::pg::TestDatabase, removed_at_so
                 previous_part: match index {
                     0 => None,
                     1 => Some(first_id),
-                    _ => Some(anchor_id),
+                    _ => Some(memory_id),
                 },
                 manifest: sinex_model::Manifest::from_json(
                     json!({"media_type":"application/x-sinex-file-bundle",
@@ -710,7 +710,7 @@ async fn bundle_checkpoint_roundtrip(db: devkit::pg::TestDatabase, removed_at_so
         ]
     );
     if removed_at_source {
-        let removed: (uuid::Uuid, i64) = sqlx::query_as("SELECT material_id,anchor FROM core.events WHERE event_type='note.document' AND record_state='removed'")
+        let removed: (uuid::Uuid, i64) = sqlx::query_as("SELECT material_id,record_offset FROM core.events WHERE event_type='note.document' AND record_state='removed'")
             .fetch_one(&mut ctx.read_conn).await.unwrap();
         assert_eq!(removed, (first_id.0, 1));
     }

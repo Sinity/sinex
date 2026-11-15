@@ -89,7 +89,7 @@ fn an_explicit_empty_stops_fallback_and_differs_from_an_empty_string() {
 }
 
 #[devkit::test]
-fn two_values_at_one_level_conflict_with_every_supporter() {
+fn two_values_at_one_level_conflict_with_every_supporting_record() {
     let shown = property(&[
         &prop("1", json!("x"), "operator", ValueOrigin::Imported),
         &prop("2", json!("y"), "operator", ValueOrigin::Imported),
@@ -100,7 +100,7 @@ fn two_values_at_one_level_conflict_with_every_supporter() {
     };
     assert_eq!(level, Level::Imported);
     assert_eq!(values.len(), 2);
-    assert_eq!(values[0].1.len(), 2, "x has two supporters");
+    assert_eq!(values[0].1.len(), 2, "x has two supporting records");
     // The same value twice is not a conflict.
     assert!(matches!(
         property(&[
@@ -130,7 +130,11 @@ fn a_tag_applies_while_its_deciding_level_applies_it() {
     assert_eq!(shown.len(), 1);
     assert_eq!(shown[0].state, TagState::Applies);
     assert_eq!(shown[0].level, Level::Operator);
-    assert_eq!(shown[0].applied_by.len(), 2, "every supporter is listed");
+    assert_eq!(
+        shown[0].applied_by.len(),
+        2,
+        "every supporting record is listed"
+    );
     // Without the operator's record the import still supports it.
     assert_eq!(tags(&[&imported])[0].state, TagState::Applies);
     // The operator's rejection outranks the import.

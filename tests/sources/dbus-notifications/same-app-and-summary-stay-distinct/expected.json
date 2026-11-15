@@ -1,6 +1,6 @@
 [
   {
-    "anchor": 0,
+    "record_offset": 0,
     "events": [
       {
         "type": "notification.shown",
@@ -28,7 +28,7 @@
     ]
   },
   {
-    "anchor": 350,
+    "record_offset": 350,
     "events": [
       {
         "type": "notification.shown",

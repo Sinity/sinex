@@ -77,7 +77,7 @@ async fn sparse_binary_document_is_admitted_guarded_and_replayed_without_the_roo
         before[0]["content"],
         format!("blake3:{}", blake3::hash(&bytes).to_hex())
     );
-    let row: (uuid::Uuid,i64,String,Value) = sqlx::query_as("SELECT e.material_id,e.anchor,e.class::text,e.payload FROM core.events e WHERE e.event_type='document.captured'")
+    let row: (uuid::Uuid,i64,String,Value) = sqlx::query_as("SELECT e.material_id,e.record_offset,e.class::text,e.payload FROM core.events e WHERE e.event_type='document.captured'")
         .fetch_one(&mut ctx.read_conn).await.unwrap();
     assert_eq!(row.2, "guarded");
     let (blob, manifest): (String, Value) =

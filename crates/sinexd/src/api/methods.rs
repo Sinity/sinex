@@ -638,8 +638,8 @@ impl Api {
                 return self.recall(caller, text, page).await;
             }
         }
-        let result = if query::native::is_command(text) {
-            let operation = query::native::parse(text, &ctx).map_err(placed)?;
+        let result = if query::template::is_command(text) {
+            let operation = query::template::parse(text, &ctx).map_err(placed)?;
             sinex_store::query::run_operation(&mut conn, text, &operation, &ctx, &page).await
         } else {
             sinex_store::query::run(&mut conn, text, None, &ctx, &page).await

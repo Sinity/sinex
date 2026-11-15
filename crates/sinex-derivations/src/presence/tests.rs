@@ -5,14 +5,14 @@ use sinex_model::{Class, MaterialId, Origin, ReadingOrder, RecordLocation, Times
 fn at(seconds: i64) -> Timestamp {
     Timestamp::from_unix_secs(1_718_438_400 + seconds).unwrap()
 }
-fn record(kind: &str, payload: Value, anchor: u64) -> Event {
+fn record(kind: &str, payload: Value, record_offset: u64) -> Event {
     (sinex_model::event_types::find(kind).unwrap().build)(
         &payload,
         "synthetic.presence",
         Origin::Record {
             location: RecordLocation {
                 material: MaterialId::new(),
-                anchor,
+                record_offset,
             },
             output_index: 0,
         },

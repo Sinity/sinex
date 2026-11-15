@@ -5,7 +5,7 @@
 // These are the current event lookup paths. Explicit sparse configuration
 // suppresses TimescaleDB's automatic blooms, so the objects TimescaleDB
 // configured on its own are kept beside them.
-const REQUIRED: &str = r#"[{"type":"bloom","column":["material_id","anchor"]},{"type":"bloom","column":"material_id"},{"type":"bloom","column":"anchor"},{"type":"minmax","column":"commit_seq"}]"#;
+const REQUIRED: &str = r#"[{"type":"bloom","column":["material_id","record_offset"]},{"type":"bloom","column":"material_id"},{"type":"bloom","column":"record_offset"},{"type":"minmax","column":"commit_seq"}]"#;
 
 pub(crate) fn configuration() -> String {
     format!(

@@ -63,7 +63,7 @@ async fn applied_version(conn: &mut PgConnection) -> Option<i32> {
 #[devkit::test]
 async fn a_version_without_steps_to_this_one_is_refused_unchanged(db: devkit::pg::TestDatabase) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
-    let owners = crate::kinds::Owners::default();
+    let kind_prefixes = crate::kinds::KindPrefixes::default();
     let fresh = catalog(&mut conn).await.unwrap();
     for found in [VERSION + 1, upgrades::LANDED_VERSION - 1] {
         sqlx::query("DELETE FROM sinex_schema.applied")
@@ -79,7 +79,7 @@ async fn a_version_without_steps_to_this_one_is_refused_unchanged(db: devkit::pg
             matches!(require_current(&mut conn).await, Err(Error::Version { found: f }) if f == found)
         );
         assert!(
-            matches!(start(&mut conn, &owners).await, Err(Error::Version { found: f }) if f == found)
+            matches!(start(&mut conn, &kind_prefixes).await, Err(Error::Version { found: f }) if f == found)
         );
         assert!(matches!(apply(&mut conn).await, Err(Error::Version { found: f }) if f == found));
         assert_eq!(applied_version(&mut conn).await, Some(found));
@@ -104,6 +104,60 @@ async fn a_forward_step_runs_from_its_version_and_records_the_next(db: devkit::p
         .execute(&mut conn)
         .await
         .unwrap();
+}
+
+/// The plain-names step takes a database at the landed version, holding a
+/// compressed chunk of events, to the schema a fresh database is created
+/// with, and keeps the rows.
+#[devkit::test]
+async fn plain_names_step_reaches_the_described_schema_and_keeps_compressed_rows(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let fresh = catalog(&mut conn).await.unwrap();
+    let id = sinex_model::MaterialId::new().0;
+    sqlx::query(
+        "INSERT INTO core.events (id, event_type, source, run_id, material_id, record_offset, ts_quality, commit_seq, payload, reading_order, record_hash)
+         VALUES ($1, 'test.step', 'test.source', $1, $1, 4096, 'unknown', 1, '{}', 0, decode(repeat('00', 32), 'hex'))",
+    )
+    .bind(id)
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    sqlx::query("SELECT compress_chunk(chunk) FROM show_chunks('core.events') chunk")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    for statement in [
+        "ALTER TABLE core.events RENAME COLUMN record_offset TO anchor",
+        "ALTER TABLE core.event_tombstones RENAME COLUMN record_offset TO anchor",
+        "ALTER TABLE core.live_locations RENAME COLUMN record_offset TO anchor",
+        "ALTER TABLE raw.failures RENAME COLUMN record_offset TO anchor",
+        "ALTER TABLE core.admission_stage RENAME COLUMN record_offset TO anchor",
+        "ALTER TABLE core.events RENAME CONSTRAINT record_offset_in_range TO anchor_in_range",
+        "ALTER TABLE core.store_secret RENAME TO owner_protocol_key",
+        "ALTER TABLE core.library_shown RENAME COLUMN supporting_records TO supporters",
+        "ALTER TRIGGER keep_declaring_producer ON registry.kind_prefixes RENAME TO keep_owner",
+        "CREATE OR REPLACE FUNCTION registry.keep_definition() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'kind definitions and owners are immutable'; END $$",
+        "DELETE FROM sinex_schema.applied WHERE version > 40",
+    ] {
+        sqlx::query(statement).execute(&mut conn).await.unwrap();
+    }
+    assert_eq!(upgrades::LANDED_VERSION, 40);
+    assert!(matches!(
+        apply(&mut conn).await,
+        Ok(Applied::Upgraded {
+            from: 40,
+            to: VERSION
+        })
+    ));
+    assert_eq!(catalog(&mut conn).await.unwrap(), fresh);
+    let offset: i64 = sqlx::query_scalar("SELECT record_offset FROM core.events WHERE id = $1")
+        .bind(id)
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(offset, 4096);
 }
 
 /// Decoding an encoded key returns it, and distinct keys encode distinctly,

@@ -4,7 +4,7 @@
 //! domain string; changing a domain string changes every stored identity.
 use crate::{Error, Result};
 pub async fn key(conn: &mut sqlx::PgConnection) -> Result<[u8; 32]> {
-    let bytes: Vec<u8> = sqlx::query_scalar("SELECT secret FROM core.owner_protocol_key WHERE id")
+    let bytes: Vec<u8> = sqlx::query_scalar("SELECT secret FROM core.store_secret WHERE id")
         .fetch_one(conn)
         .await?;
     bytes

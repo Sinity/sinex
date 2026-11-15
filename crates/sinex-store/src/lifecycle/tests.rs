@@ -18,7 +18,7 @@ use sinex_model::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
-fn reading(source: &str, key: u8, content: u8, material: MaterialId, anchor: u64) -> Event {
+fn reading(source: &str, key: u8, content: u8, material: MaterialId, record_offset: u64) -> Event {
     let command = format!("cmd-{content}");
     Event::build(
         &CommandExecuted {
@@ -38,7 +38,10 @@ fn reading(source: &str, key: u8, content: u8, material: MaterialId, anchor: u64
         },
         source,
         Origin::Record {
-            location: RecordLocation { material, anchor },
+            location: RecordLocation {
+                material,
+                record_offset,
+            },
             output_index: 0,
         },
         ReadingOrder(1),
@@ -284,7 +287,7 @@ async fn lifecycle_members_are_the_whole_chain_among_unrelated_history(
         Origin::Record {
             location: RecordLocation {
                 material: MaterialId::new(),
-                anchor: 0,
+                record_offset: 0,
             },
             output_index: 0,
         },
@@ -651,7 +654,7 @@ async fn tombstone_only_archived(db: devkit::pg::TestDatabase) {
     let skeleton: (String, String, bool, String, Option<uuid::Uuid>, Option<i64>, Option<i64>, Option<String>) =
         sqlx::query_as(
             "SELECT source, event_type, ts_quality IS NOT NULL AND key_hash IS NOT NULL, operation_id::text,
-               material_id, anchor, output_index, reason
+               material_id, record_offset, output_index, reason
              FROM core.event_tombstones WHERE event_id = $1",
         )
         .bind(e.id.0)

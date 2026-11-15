@@ -199,7 +199,7 @@ async fn serve(
             without_rows.len()
         );
     }
-    crate::catalog::install_native_sources(&mut writer_conn).await?;
+    crate::catalog::install_built_in_sources(&mut writer_conn).await?;
     for grant in o
         .producer_grants
         .values()

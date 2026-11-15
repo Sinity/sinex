@@ -72,11 +72,11 @@ pub(super) async fn bounds(
             if !state && !stop {
                 continue;
             }
-            let location = match (row.material_id, row.anchor) {
-                (Some(material), Some(anchor)) => Some((
+            let location = match (row.material_id, row.record_offset) {
+                (Some(material), Some(record_offset)) => Some((
                     material.to_string(),
-                    u64::try_from(anchor)
-                        .map_err(|_| crate::Error::Invalid("negative anchor".into()))?,
+                    u64::try_from(record_offset)
+                        .map_err(|_| crate::Error::Invalid("negative record offset".into()))?,
                     u64::try_from(row.output_index)
                         .map_err(|_| crate::Error::Invalid("negative output_index".into()))?,
                 )),

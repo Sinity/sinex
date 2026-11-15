@@ -1,6 +1,6 @@
 [
   {
-    "anchor": 0,
+    "record_offset": 0,
     "events": [
       {
         "type": "journal.entry",
@@ -28,11 +28,11 @@
     ]
   },
   {
-    "anchor": 140,
+    "record_offset": 140,
     "events": []
   },
   {
-    "anchor": 188,
+    "record_offset": 188,
     "events": [
       {
         "type": "journal.entry",

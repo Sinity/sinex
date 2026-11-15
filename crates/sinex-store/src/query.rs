@@ -202,7 +202,7 @@ pub async fn run(
 pub async fn run_operation(
     conn: &mut PgConnection,
     text: &str,
-    operation: &sinex_model::query::native::Template,
+    operation: &sinex_model::query::template::Template,
     ctx: &Context,
     page: &Page,
 ) -> Result<Answer> {
@@ -220,7 +220,7 @@ async fn run_inner(
     page: &Page,
     capture_selection: bool,
     in_snapshot: bool,
-    operation: Option<&sinex_model::query::native::Template>,
+    operation: Option<&sinex_model::query::template::Template>,
 ) -> Result<selected::SelectedPage> {
     if !in_snapshot {
         initialize_calendar(conn).await?;
@@ -300,7 +300,7 @@ async fn run_inner(
             saved_context = Some(definitions);
             Some(template)
         } else {
-            Some(sinex_model::query::native::Template::query(
+            Some(sinex_model::query::template::Template::query(
                 sinex_model::query::syntax::parse(text, &ctx)?,
             ))
         }

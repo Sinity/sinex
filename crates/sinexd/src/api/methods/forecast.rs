@@ -219,7 +219,7 @@ impl Api {
             &mut conn,
             sinex_model::RecordLocation {
                 material,
-                anchor: 0,
+                record_offset: 0,
             },
             0,
         )

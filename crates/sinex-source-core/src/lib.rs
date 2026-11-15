@@ -5,7 +5,7 @@
 //! A *driver* obtains bytes and frames them for one input shape, written once
 //! and shared by every source of that shape. A *parser* maps one framed record
 //! to its events and never reads files, networks or clocks. The *drain* owns
-//! everything around `parse`: anchors, output numbering, catching a panic as a
+//! everything around `parse`: record_offsets, output numbering, catching a panic as a
 //! failure for that record, record hashes, carried state, and building the
 //! batch with the new cursor. A parser cannot drop or mislabel a record,
 //! because it never sees the bookkeeping.

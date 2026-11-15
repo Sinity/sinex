@@ -83,7 +83,7 @@ async fn media_capture_keeps_exact_screen_and_audio_materials_after_restart(
         2,
         "one successful result for each actual media binding"
     );
-    let rows=sqlx::query!(r#"SELECT e.id,e.payload,e.material_id,e.anchor,e.output_index,m.blob,m.length
+    let rows=sqlx::query!(r#"SELECT e.id,e.payload,e.material_id,e.record_offset,e.output_index,m.blob,m.length
       FROM core.events e JOIN raw.materials m ON m.id=e.material_id JOIN core.live_locations l ON l.event_id=e.id
       WHERE e.event_type='media.segment' ORDER BY e.payload->>'kind'"#).fetch_all(&mut ctx.read_conn).await.unwrap();
     assert_eq!(rows.len(), 2);
@@ -92,7 +92,7 @@ async fn media_capture_keeps_exact_screen_and_audio_materials_after_restart(
         let kind = row.payload["kind"].as_str().unwrap();
         let original = if kind == "screen" { &frame } else { &audio };
         assert!(row.material_id.is_some());
-        assert_eq!(row.anchor, Some(0));
+        assert_eq!(row.record_offset, Some(0));
         assert_eq!(row.output_index, 0);
         assert_eq!(row.length as usize, original.len());
         assert_eq!(ctx.blobs.read(&row.blob).unwrap(), *original);

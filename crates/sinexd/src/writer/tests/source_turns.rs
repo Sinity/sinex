@@ -33,7 +33,7 @@ async fn native_live_stream_goes_before_derived_but_manual_stage_drains_in_bulk(
         let mut owner = claim(sqlx::PgConnection::connect(&url).await.unwrap())
             .await
             .unwrap();
-        crate::catalog::install_native_sources(&mut owner)
+        crate::catalog::install_built_in_sources(&mut owner)
             .await
             .unwrap();
         let blobs = sinex_store::Blobs::open(&dir.path().join("store")).unwrap();

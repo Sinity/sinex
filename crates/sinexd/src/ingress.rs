@@ -183,8 +183,8 @@ impl Ingest {
             Err(error) => Err(Check::Malformed(format!("not a frame: {error}"))),
         };
         let details = decoded.as_ref().ok().or(offered.as_ref());
-        let source_authority = if let Some(source) = native_source(details) {
-            self.native_declaration(producer, source).await.map(drop)
+        let registered_source = if let Some(source) = built_in_source(details) {
+            self.built_in_declaration(producer, source).await.map(drop)
         } else {
             Ok(())
         };
@@ -193,15 +193,15 @@ impl Ingest {
         } else {
             self.run(
                 producer,
-                if source_authority.is_ok() {
-                    native_source(details)
+                if registered_source.is_ok() {
+                    built_in_source(details)
                 } else {
                     None
                 },
             )
             .await?
         };
-        let checked = if let Err(check) = source_authority {
+        let checked = if let Err(check) = registered_source {
             Err(check)
         } else if let Some(reason) = configuration {
             Err(Check::Configuration(reason))
@@ -254,9 +254,9 @@ impl Ingest {
                 run,
                 kind: BatchKind::Ingress(Box::new(IngressFrame {
                     content_hash: Some(content_hash.clone()),
-                    receipt_number: None,
-                    native_source: native_source(details).cloned(),
-                    source_fingerprint: native_source(details).and_then(|source| {
+                    ack_number: None,
+                    built_in_source: built_in_source(details).cloned(),
+                    source_fingerprint: built_in_source(details).and_then(|source| {
                         self.grants
                             .get(producer)?
                             .write
@@ -417,7 +417,7 @@ impl Ingest {
             } else {
                 locations.retain(|location| known.contains(&location.material.0));
             }
-            locations.sort_by_key(|l| (l.material.0, l.anchor));
+            locations.sort_by_key(|l| (l.material.0, l.record_offset));
             locations.dedup();
             batch.records = locations
                 .into_iter()
@@ -600,12 +600,12 @@ impl Ingest {
         ))
     }
 
-    async fn native_declaration(
+    async fn built_in_declaration(
         &mut self,
         producer: &str,
         source: &sinex_model::SourceRef,
     ) -> Result<sinex_model::SourceDeclaration, Check> {
-        authority::native_declaration(&mut self.conn, &self.grants, producer, source).await
+        authority::built_in_declaration(&mut self.conn, &self.grants, producer, source).await
     }
 
     fn check_declarations(
@@ -687,7 +687,7 @@ impl Ingest {
             ));
         }
         let native = match source {
-            Some(source) => Some(self.native_declaration(producer, source).await?),
+            Some(source) => Some(self.built_in_declaration(producer, source).await?),
             None => None,
         };
         let write = authority::write(&self.grants, producer)
@@ -766,7 +766,8 @@ impl Ingest {
             .chain(failures.iter().map(|f| f.location))
         {
             if sizes.get(&location.material.0).is_none_or(|length| {
-                i64::try_from(location.anchor).map_or(true, |anchor| anchor > *length)
+                i64::try_from(location.record_offset)
+                    .map_or(true, |record_offset| record_offset > *length)
             }) {
                 return Err(Check::Refused(
                     "record location is outside its material".into(),
@@ -841,7 +842,7 @@ fn sealed(privacy: &sinex_store::privacy::RuleSet) -> bool {
             .any(|rule| rule.class == sinex_model::Class::Sealed)
 }
 
-fn native_source(frame: Option<&Ingress>) -> Option<&sinex_model::SourceRef> {
+fn built_in_source(frame: Option<&Ingress>) -> Option<&sinex_model::SourceRef> {
     match frame? {
         Ingress::Material { material, .. } => Some(&material.source),
         Ingress::Events { source, .. } => source.as_ref(),
@@ -853,7 +854,7 @@ fn frame_source(frame: Option<&Ingress>) -> Option<String> {
     if matches!(frame, Some(Ingress::Signals { .. })) {
         return Some(sinex_sources::sources::signals::SPEC.name.into());
     }
-    native_source(frame).map(|source| source.name.clone())
+    built_in_source(frame).map(|source| source.name.clone())
 }
 
 fn frame_event_types(frame: Option<&Ingress>) -> Vec<String> {
@@ -953,8 +954,8 @@ fn refusal(run: RunId, producer: &str, frame: &str, kind: FrameRefusal, reason: 
         run,
         kind: BatchKind::Ingress(Box::new(IngressFrame {
             content_hash: None,
-            receipt_number: None,
-            native_source: None,
+            ack_number: None,
+            built_in_source: None,
             source_fingerprint: None,
             host: None,
             family: None,
@@ -1450,7 +1451,7 @@ async fn consume(client: async_nats::Client, mut ingest: Ingest) -> Result<()> {
         };
         match ingest.handle(&producer, &message.payload).await {
             Ok(ack) => {
-                let hint = sinex_protocol::ReceiptHint {
+                let hint = sinex_protocol::AckHint {
                     number: ack.number,
                     frame_hash: blake3::hash(ack.frame.as_bytes()).to_hex().to_string(),
                 };

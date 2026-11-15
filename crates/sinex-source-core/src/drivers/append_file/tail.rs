@@ -29,7 +29,12 @@ impl AppendTail {
     }
     /// Call newest to oldest. A single large record is kept, as during poll.
     pub fn push_raw(&mut self, location: RecordLocation, raw: &[u8]) -> Result<bool, DriverError> {
-        if raw.is_empty() || location.anchor.checked_add(raw.len() as u64).is_none() {
+        if raw.is_empty()
+            || location
+                .record_offset
+                .checked_add(raw.len() as u64)
+                .is_none()
+        {
             return Err(DriverError::InvalidMaterial(
                 "invalid completed append coordinates".into(),
             ));
@@ -52,8 +57,10 @@ impl AppendTail {
                 member.digest,
                 member.length,
                 member.location.material,
-                usize::try_from(member.location.anchor).map_err(|_| {
-                    DriverError::InvalidMaterial("append anchor exceeds address space".into())
+                usize::try_from(member.location.record_offset).map_err(|_| {
+                    DriverError::InvalidMaterial(
+                        "append record offset exceeds address space".into(),
+                    )
                 })?,
             );
         }

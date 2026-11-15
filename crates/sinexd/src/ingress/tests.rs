@@ -387,8 +387,7 @@ impl Harness {
                 .await
                 .expect("receipt hint")
                 .unwrap();
-            let hint: sinex_protocol::ReceiptHint =
-                serde_json::from_slice(&message.payload).unwrap();
+            let hint: sinex_protocol::AckHint = serde_json::from_slice(&message.payload).unwrap();
             if hint.frame_hash == expected_hash {
                 break hint;
             }
@@ -501,7 +500,7 @@ impl Drop for Harness {
     }
 }
 
-fn imported(material: MaterialId, anchor: u64, command: &str) -> ProducerEvent {
+fn imported(material: MaterialId, record_offset: u64, command: &str) -> ProducerEvent {
     ProducerEvent {
         kind: sinex_model::KindRef {
             name: "command.imported".into(),
@@ -513,9 +512,12 @@ fn imported(material: MaterialId, anchor: u64, command: &str) -> ProducerEvent {
             "started_at": "2026-10-18T12:00:00Z",
             "header_elapsed": 0,
             // Distinct per place, so the tests' records stay distinct.
-            "n": anchor
+            "n": record_offset
         }),
-        location: Some(RecordLocation { material, anchor }),
+        location: Some(RecordLocation {
+            material,
+            record_offset,
+        }),
         output_index: 0,
         parents: vec![],
         reading_order: Some(0),
@@ -572,7 +574,7 @@ async fn materials_then_events_are_admitted_and_acknowledged_once(db: devkit::pg
 
 /// A synthetic Claude Code session as Polylogue sends it: the session file as
 /// a material of its real input, then the session, its message and tool call
-/// and the turn, keyed by Polylogue's IDs and anchored at their records. The
+/// and the turn, keyed by Polylogue's IDs and located at their records. The
 /// same reading sent again is a repeat; a newer parser's reading replaces the
 /// message; the session answers Sinex's own query language; and the
 /// materials request lists the file, as Polylogue reads it to rebuild.
@@ -663,20 +665,26 @@ async fn an_ai_session_from_polylogue_is_ordinary_events(db: devkit::pg::TestDat
     };
     assert_eq!(h.send("polylogue", &frame).await.refusal(), None);
     let second = file.find('\n').unwrap() as u64 + 1;
-    let at = |anchor: u64| Some(RecordLocation { material, anchor });
-    let event =
-        |event_type: &str, payload: serde_json::Value, anchor: u64, order: i64| ProducerEvent {
+    let at = |record_offset: u64| {
+        Some(RecordLocation {
+            material,
+            record_offset,
+        })
+    };
+    let event = |event_type: &str, payload: serde_json::Value, record_offset: u64, order: i64| {
+        ProducerEvent {
             kind: sinex_model::KindRef {
                 name: event_type.into(),
                 version: 2,
             },
             payload,
-            location: at(anchor),
+            location: at(record_offset),
             output_index: 0,
             parents: vec![],
             reading_order: Some(order),
             class: sinex_model::Class::Open,
-        };
+        }
+    };
     let session = json!({
         "session": "claude-code:s1", "origin": "claude-code", "kind": "main", "title": null,
         "cwd": ["/home/op/morrow"], "repo": null, "branch": null, "tool_version": null,
@@ -1137,7 +1145,7 @@ async fn bytes_sent_in_chunks_register_a_material_and_failures_are_recorded(
                 failures: vec![ProducerFailure {
                     location: RecordLocation {
                         material: id,
-                        anchor: 18,
+                        record_offset: 18,
                     },
                     reason: "unreadable".into(),
                 }],
@@ -1357,7 +1365,7 @@ async fn frames_flow_while_a_request_waits(db: devkit::pg::TestDatabase) {
         hint = tokio::time::timeout(Duration::from_secs(10), hints.next()) => hint.unwrap().unwrap(),
         receipt = &mut sending => panic!("full receipt resolved while its read connection was held: {receipt:?}"),
     };
-    let hint: sinex_protocol::ReceiptHint = serde_json::from_slice(&hint.payload).unwrap();
+    let hint: sinex_protocol::AckHint = serde_json::from_slice(&hint.payload).unwrap();
     assert_eq!(hint.frame_hash, blake3::hash(b"m1").to_hex().to_string());
     assert!(!request.is_finished());
 

@@ -76,7 +76,7 @@ enum ReplyBody {
     Welcome(sinex_protocol::ProducerWelcome),
     Recorded(sinex_protocol::RecordedPage),
 }
-struct EventReceiptGate {
+struct AckCheck {
     open: tokio::sync::watch::Receiver<bool>,
     waiting: Arc<std::sync::atomic::AtomicBool>,
 }
@@ -135,7 +135,7 @@ async fn fake_ingress_controlled(
     timeout: Arc<tokio::sync::Notify>,
     connections: Option<Arc<std::sync::atomic::AtomicUsize>>,
     mut controls: Option<tokio::sync::mpsc::Receiver<ReplyControl>>,
-    mut event_receipts: Option<EventReceiptGate>,
+    mut event_receipts: Option<AckCheck>,
 ) -> (ReceivedFrames, ReceivedOrder, tokio::task::JoinHandle<()>) {
     let client = async_nats::connect(url).await.unwrap();
     let mut declarations = client
@@ -368,7 +368,7 @@ async fn fake_ingress_controlled(
                     client
                         .publish(
                             ack_subject.clone(),
-                            serde_json::to_vec(&sinex_protocol::ReceiptHint {
+                            serde_json::to_vec(&sinex_protocol::AckHint {
                                 number: ack.number,
                                 frame_hash: blake3::hash(ack.frame.as_bytes()).to_hex().to_string(),
                             })
@@ -404,7 +404,7 @@ async fn wait_for(running: &mut Running, mut ready: impl FnMut() -> bool) {
     }
 }
 
-async fn owner_alive<T>(
+async fn daemon_alive<T>(
     owner: &mut tokio::task::JoinHandle<()>,
     future: impl std::future::Future<Output = T>,
 ) -> T {
@@ -414,12 +414,12 @@ async fn owner_alive<T>(
     }
 }
 
-async fn wait_for_owner(
+async fn wait_for_daemon(
     running: &mut Running,
     owner: &mut tokio::task::JoinHandle<()>,
     ready: impl FnMut() -> bool,
 ) {
-    owner_alive(owner, wait_for(running, ready)).await;
+    daemon_alive(owner, wait_for(running, ready)).await;
 }
 
 /// Receive a real framed page, acknowledging every data unit but its final marker.
@@ -943,7 +943,7 @@ async fn capture_recovers_when_nats_returns(initially_unavailable: bool) {
     let mut interrupted = None;
     let mut held_recipient = None;
     if let Some((frames, _, owner)) = &mut responder {
-        wait_for_owner(&mut running, owner, || {
+        wait_for_daemon(&mut running, owner, || {
             frames
                 .lock()
                 .unwrap()
@@ -953,7 +953,7 @@ async fn capture_recovers_when_nats_returns(initially_unavailable: bool) {
         .await;
         let names = frames.lock().unwrap().keys().cloned().collect::<Vec<_>>();
         let reader = async_nats::connect(nats.url()).await.unwrap();
-        saved_receipts = owner_alive(
+        saved_receipts = daemon_alive(
             owner,
             sinex_transport::producer::recorded(
                 &reader,
@@ -986,8 +986,8 @@ async fn capture_recovers_when_nats_returns(initially_unavailable: bool) {
             })
             .await
             .unwrap();
-        owner_alive(owner, quiescent).await.unwrap();
-        let (waiting, recipient) = owner_alive(
+        daemon_alive(owner, quiescent).await.unwrap();
+        let (waiting, recipient) = daemon_alive(
             owner,
             hold_final_ack(&reader, &subjects, inbox.clone(), names),
         )
@@ -1004,13 +1004,13 @@ async fn capture_recovers_when_nats_returns(initially_unavailable: bool) {
     let before = std::fs::metadata(&segment).unwrap().len();
     let offline_growth = || std::fs::metadata(&segment).unwrap().len() > before + 500;
     if let Some((_, _, owner)) = &mut responder {
-        wait_for_owner(&mut running, owner, offline_growth).await;
+        wait_for_daemon(&mut running, owner, offline_growth).await;
     } else {
         wait_for(&mut running, offline_growth).await;
     }
     std::fs::write(spool.join("finished"), b"").unwrap();
     if let Some((_, _, owner)) = &mut responder {
-        wait_for_owner(&mut running, owner, || spool.join("paused").exists()).await;
+        wait_for_daemon(&mut running, owner, || spool.join("paused").exists()).await;
     } else {
         wait_for(&mut running, || spool.join("paused").exists()).await;
     }
@@ -1034,7 +1034,7 @@ async fn capture_recovers_when_nats_returns(initially_unavailable: bool) {
             })
     };
     if let Some((_, _, owner)) = &mut responder {
-        wait_for_owner(&mut running, owner, backlogged).await;
+        wait_for_daemon(&mut running, owner, backlogged).await;
     } else {
         wait_for(&mut running, backlogged).await;
     }
@@ -1060,13 +1060,13 @@ async fn capture_recovers_when_nats_returns(initially_unavailable: bool) {
             .send(ReplyControl::Resume { ready })
             .await
             .unwrap();
-        owner_alive(&mut ingress, resumed).await.unwrap();
+        daemon_alive(&mut ingress, resumed).await.unwrap();
         let fresh = async_nats::connect(nats.url()).await.unwrap();
         let names = saved_receipts
             .iter()
             .map(|receipt| receipt.frame.clone())
             .collect::<Vec<_>>();
-        let mut recovered = owner_alive(
+        let mut recovered = daemon_alive(
             &mut ingress,
             sinex_transport::producer::recorded(
                 &fresh,
@@ -1086,10 +1086,10 @@ async fn capture_recovers_when_nats_returns(initially_unavailable: bool) {
             serde_json::to_value(saved_receipts).unwrap(),
             "a fresh post-restart request reaches the same owner receipts"
         );
-        let evidence = owner_alive(&mut ingress, observed).await.unwrap();
+        let evidence = daemon_alive(&mut ingress, observed).await.unwrap();
         assert_eq!(evidence.waiting.inbox, inbox);
     }
-    wait_for_owner(&mut running, &mut ingress, || {
+    wait_for_daemon(&mut running, &mut ingress, || {
         std::fs::read(&report)
             .ok()
             .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
@@ -1189,7 +1189,7 @@ async fn a_connect_refusal_is_reported_once_while_capture_continues() {
         .await
     }));
     let report = dir.path().join("health.json");
-    wait_for_owner(&mut running, &mut responder, || {
+    wait_for_daemon(&mut running, &mut responder, || {
         std::fs::read(&report)
             .ok()
             .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
@@ -1202,7 +1202,7 @@ async fn a_connect_refusal_is_reported_once_while_capture_continues() {
     })
     .await;
     std::fs::write(spool.join("finished"), b"").unwrap();
-    wait_for_owner(&mut running, &mut responder, || {
+    wait_for_daemon(&mut running, &mut responder, || {
         spool.join("paused").exists()
     })
     .await;
@@ -1210,7 +1210,7 @@ async fn a_connect_refusal_is_reported_once_while_capture_continues() {
     let captured = std::fs::read_to_string(&segment).unwrap().lines().count() as u64;
     let bytes = std::fs::metadata(&segment).unwrap().len();
     assert!(captured >= 10);
-    wait_for_owner(&mut running, &mut responder, || {
+    wait_for_daemon(&mut running, &mut responder, || {
         let health: Value = serde_json::from_slice(&std::fs::read(&report).unwrap()).unwrap();
         health["spools"][0]["unpublished"]["records"] == captured
             && health["spools"][0]["unpublished"]["bytes"] == bytes
@@ -1249,7 +1249,7 @@ async fn a_configuration_refusal_reconnects_and_recovers_the_saved_batch() {
         Arc::new(tokio::sync::Notify::new()),
         Some(connections.clone()),
         None,
-        Some(EventReceiptGate {
+        Some(AckCheck {
             open,
             waiting: waiting.clone(),
         }),
@@ -1280,7 +1280,7 @@ async fn a_configuration_refusal_reconnects_and_recovers_the_saved_batch() {
         )
         .await
     }));
-    wait_for_owner(&mut running, &mut ingress, || {
+    wait_for_daemon(&mut running, &mut ingress, || {
         waiting.load(std::sync::atomic::Ordering::Acquire)
     })
     .await;
@@ -1299,7 +1299,7 @@ async fn a_configuration_refusal_reconnects_and_recovers_the_saved_batch() {
             .any(|frame| matches!(frame, Ingress::Events { .. }))
     );
     release_events.send(true).unwrap();
-    wait_for_owner(&mut running, &mut ingress, || {
+    wait_for_daemon(&mut running, &mut ingress, || {
         !Position::load(&positions, &binding.name)
             .unwrap()
             .cursor
@@ -1307,21 +1307,21 @@ async fn a_configuration_refusal_reconnects_and_recovers_the_saved_batch() {
     })
     .await;
     std::fs::write(spool.join("finished"), b"").unwrap();
-    wait_for_owner(&mut running, &mut ingress, || spool.join("paused").exists()).await;
+    wait_for_daemon(&mut running, &mut ingress, || spool.join("paused").exists()).await;
     let segment = spool.join("000000000000.ndjson");
     let captured = std::fs::read_to_string(&segment).unwrap().lines().count();
     let captured_bytes = std::fs::metadata(&segment).unwrap().len();
     assert!(captured > 0);
     // A zero health sample can predate capture. First require the durable
     // reading cursor to cover the exact end of the paused source segment.
-    wait_for_owner(&mut running, &mut ingress, || {
+    wait_for_daemon(&mut running, &mut ingress, || {
         let cursor = Position::load(&positions, &binding.name).unwrap().cursor;
         cursor["segment"].as_u64() == Some(0)
             && cursor.pointer("/inner/offset").and_then(Value::as_u64) == Some(captured_bytes)
     })
     .await;
     let report = dir.path().join("health.json");
-    wait_for_owner(&mut running, &mut ingress, || {
+    wait_for_daemon(&mut running, &mut ingress, || {
         std::fs::read(&report)
             .ok()
             .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())

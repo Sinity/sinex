@@ -156,9 +156,9 @@ fn a_deleted_maildir_message_is_removed_where_it_was_read() {
     let (driver, mut state) = walked(root);
     let first = driver.poll(&serde_json::Value::Null, &mut state).unwrap();
     let first = first.material.unwrap();
-    let path_at = |m: &sinex_source_core::drivers::NewMaterial, anchor: u64| {
+    let path_at = |m: &sinex_source_core::drivers::NewMaterial, record_offset: u64| {
         m.manifest
-            .member_at(anchor as usize)
+            .member_at(record_offset as usize)
             .map(|member| member.path.clone())
     };
     let admitted = (first.cursor_at)(first.records.last().unwrap().1).unwrap();
@@ -175,7 +175,7 @@ fn a_deleted_maildir_message_is_removed_where_it_was_read() {
         .iter()
         .map(|location| {
             assert_eq!(location.material, first.id);
-            path_at(&first, location.anchor)
+            path_at(&first, location.record_offset)
         })
         .collect();
     removed.sort();

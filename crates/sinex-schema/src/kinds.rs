@@ -8,11 +8,11 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, Mutex, OnceLock};
 
 #[derive(Clone, Debug)]
-pub struct Owners {
+pub struct KindPrefixes {
     pub prefixes: BTreeMap<String, String>,
 }
 
-impl Default for Owners {
+impl Default for KindPrefixes {
     fn default() -> Self {
         Self {
             prefixes: BTreeMap::from([("polylogue".into(), "polylogue".into())]),
@@ -84,16 +84,16 @@ pub async fn all(conn: &mut PgConnection) -> Result<BTreeMap<KindRef, KindDeclar
     load(conn, &refs).await
 }
 
-async fn prefix(conn: &mut PgConnection, name: &str, owner: &str) -> Result<(), Error> {
+async fn prefix(conn: &mut PgConnection, name: &str, producer: &str) -> Result<(), Error> {
     let found: Option<String> =
         sqlx::query_scalar("SELECT declaring_producer FROM registry.kind_prefixes WHERE prefix=$1")
             .bind(name)
             .fetch_optional(&mut *conn)
             .await?;
     match found {
-        Some(found) if found != owner => {
+        Some(found) if found != producer => {
             return Err(invalid(format!(
-                "definition_conflict: prefix {name} belongs to {found}, requested {owner}"
+                "definition_conflict: prefix {name} belongs to {found}, requested {producer}"
             )));
         }
         Some(_) => {}
@@ -102,7 +102,7 @@ async fn prefix(conn: &mut PgConnection, name: &str, owner: &str) -> Result<(), 
                 "INSERT INTO registry.kind_prefixes (prefix, declaring_producer) VALUES ($1,$2)",
             )
             .bind(name)
-            .bind(owner)
+            .bind(producer)
             .execute(conn)
             .await?;
         }
@@ -130,14 +130,18 @@ pub async fn check_namespace(
     producer: &str,
 ) -> Result<(), Error> {
     let prefix_name = prefix_from_name(name).map_err(invalid)?;
-    let owner: Option<String> =
+    let declaring: Option<String> =
         sqlx::query_scalar("SELECT declaring_producer FROM registry.kind_prefixes WHERE prefix=$1")
             .bind(prefix_name)
             .fetch_optional(&mut *conn)
             .await?;
-    if (owner.as_deref() == Some("sinex") && prefix_name != producer && prefix_name != "polylogue")
-        || owner.as_deref().is_some_and(|owner| owner != producer)
-        || (owner.is_none() && prefix_name != producer)
+    if (declaring.as_deref() == Some("sinex")
+        && prefix_name != producer
+        && prefix_name != "polylogue")
+        || declaring
+            .as_deref()
+            .is_some_and(|declaring| declaring != producer)
+        || (declaring.is_none() && prefix_name != producer)
     {
         return Err(invalid(format!(
             "namespace_refused: {producer} cannot declare {name}"
@@ -204,13 +208,16 @@ async fn register_checked(
                 reference.name, reference.version
             )));
         }
-        let owner: Option<String> = sqlx::query_scalar(
+        let declaring: Option<String> = sqlx::query_scalar(
             "SELECT declaring_producer FROM registry.event_types WHERE name=$1 LIMIT 1",
         )
         .bind(&reference.name)
         .fetch_optional(&mut *conn)
         .await?;
-        if owner.as_deref().is_some_and(|owner| owner != producer) {
+        if declaring
+            .as_deref()
+            .is_some_and(|declaring| declaring != producer)
+        {
             return Err(invalid(format!(
                 "definition_conflict: {} declaring producer",
                 reference.name
@@ -247,7 +254,7 @@ async fn register_checked(
 
 pub(crate) async fn install(
     conn: &mut PgConnection,
-    owners: &Owners,
+    kind_prefixes: &KindPrefixes,
     declarations: &[KindDeclaration],
 ) -> Result<(), Error> {
     for declaration in declarations {
@@ -259,8 +266,8 @@ pub(crate) async fn install(
             .0;
         prefix(conn, p, "sinex").await?;
     }
-    for (p, owner) in &owners.prefixes {
-        prefix(conn, p, owner).await?;
+    for (p, producer) in &kind_prefixes.prefixes {
+        prefix(conn, p, producer).await?;
     }
     register_checked(conn, "sinex", declarations).await?;
     Ok(())
@@ -463,14 +470,6 @@ pub fn validator(d: &KindDeclaration) -> Result<Option<Arc<jsonschema::Validator
     );
     cache.insert(hash, v.clone());
     Ok(Some(v))
-}
-
-/// Saved outside owners used when a writer checks its bundled declarations.
-pub async fn owners(conn: &mut PgConnection) -> Result<Owners, Error> {
-    let prefixes:Vec<(String,String)>=sqlx::query_as("SELECT prefix,declaring_producer FROM registry.kind_prefixes WHERE declaring_producer<>'sinex'").fetch_all(conn).await?;
-    Ok(Owners {
-        prefixes: prefixes.into_iter().collect(),
-    })
 }
 
 /// Writer startup reads the installed description; only schema apply writes it.

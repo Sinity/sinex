@@ -18,7 +18,7 @@ async fn fixture(conn: &mut AdmissionContext) -> Vec<EventId> {
             Origin::Record {
                 location: RecordLocation {
                     material: MaterialId::new(),
-                    anchor: index,
+                    record_offset: index,
                 },
                 output_index: 0,
             },
@@ -185,7 +185,7 @@ async fn bounded_payload_fetches_return_selected_rows_beside_many_compressed_row
     let mut conn = AdmissionContext::connect(&db.url(None)).await.unwrap();
     let ids = fixture(&mut conn).await;
     sqlx::query(
-        "INSERT INTO core.events (id,event_type,source,run_id,material_id,anchor,ts_orig,ts_quality,commit_seq,payload,reading_order,record_hash,kind_version,validation)
+        "INSERT INTO core.events (id,event_type,source,run_id,material_id,record_offset,ts_orig,ts_quality,commit_seq,payload,reading_order,record_hash,kind_version,validation)
          SELECT overlay(e.id::text placing lpad(to_hex(1000+n),12,'0') from 25 for 12)::uuid,
            e.event_type,e.source,e.run_id,uuidv7(),0,e.ts_orig,e.ts_quality,1000+n,e.payload,1,e.record_hash,e.kind_version,e.validation
          FROM core.events e CROSS JOIN generate_series(1,12000) n WHERE e.id=$1",

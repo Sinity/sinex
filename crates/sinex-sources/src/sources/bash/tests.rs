@@ -16,7 +16,7 @@ fn parse(record: &[u8]) -> Result<Vec<CommandImported>, RecordError> {
         .map(|(events, _)| events)
 }
 
-/// Each record's anchor and payload (or failure), read from `bytes` placed at
+/// Each record's offset and payload (or failure), read from `bytes` placed at
 /// `base` with `carry`, and the carry after them.
 fn observations(
     bytes: &[u8],
@@ -45,16 +45,17 @@ fn observations(
             RecordOutcome::Events { location, events } => {
                 for event in events {
                     out.push(serde_json::json!([
-                        base + location.unwrap().anchor as usize,
+                        base + location.unwrap().record_offset as usize,
                         event.payload,
                         event.ts_orig.quality,
                         event.equivalence_key,
                     ]));
                 }
             }
-            RecordOutcome::Failure { location, reason } => {
-                out.push(serde_json::json!([base + location.anchor as usize, reason]))
-            }
+            RecordOutcome::Failure { location, reason } => out.push(serde_json::json!([
+                base + location.record_offset as usize,
+                reason
+            ])),
         }
     }
     let carry = chunks.last().map(|c| c.carry.clone()).unwrap_or(carry);

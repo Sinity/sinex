@@ -12,7 +12,7 @@ pub(crate) const SHOWN: &str = "CREATE TABLE core.library_shown (
   state text NOT NULL,
   level text NOT NULL,
   value jsonb,
-  supporters jsonb NOT NULL,
+  supporting_records jsonb NOT NULL,
   PRIMARY KEY (target, kind, key)
 )";
 

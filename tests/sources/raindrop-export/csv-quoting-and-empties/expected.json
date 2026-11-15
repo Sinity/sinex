@@ -1,10 +1,10 @@
 [
   {
-    "anchor": 0,
+    "record_offset": 0,
     "events": []
   },
   {
-    "anchor": 72,
+    "record_offset": 72,
     "events": [
       {
         "type": "bookmark.saved",
@@ -35,7 +35,7 @@
     ]
   },
   {
-    "anchor": 231,
+    "record_offset": 231,
     "events": [
       {
         "type": "bookmark.saved",
@@ -63,7 +63,7 @@
     ]
   },
   {
-    "anchor": 311,
+    "record_offset": 311,
     "events": [
       {
         "type": "bookmark.saved",
@@ -91,7 +91,7 @@
     ]
   },
   {
-    "anchor": 418,
+    "record_offset": 418,
     "failure": "invalid time \"not-a-date\": the 'year' component could not be parsed"
   }
 ]

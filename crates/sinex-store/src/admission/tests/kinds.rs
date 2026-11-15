@@ -230,7 +230,7 @@ async fn external_validation_and_rules_apply_on_every_writer_route(db: devkit::p
             Origin::Record {
                 location: RecordLocation {
                     material: MaterialId::new(),
-                    anchor: 0,
+                    record_offset: 0,
                 },
                 output_index: 0,
             },
@@ -256,7 +256,7 @@ async fn external_validation_and_rules_apply_on_every_writer_route(db: devkit::p
         Origin::Record {
             location: RecordLocation {
                 material: MaterialId::new(),
-                anchor: 0,
+                record_offset: 0,
             },
             output_index: 0,
         },
@@ -335,11 +335,11 @@ async fn current_apply_recreates_missing_views_and_preserves_outside_declaration
     let once = sinex_schema::catalog(&mut *conn).await.unwrap();
     sinex_schema::apply(&mut *conn).await.unwrap();
     assert_eq!(once, sinex_schema::catalog(&mut *conn).await.unwrap());
-    let owners = sinex_schema::kinds::Owners {
+    let kind_prefixes = sinex_schema::kinds::KindPrefixes {
         prefixes: BTreeMap::from([("polylogue".into(), "different".into())]),
     };
     assert!(
-        sinex_schema::apply_with_owners(&mut *conn, &owners)
+        sinex_schema::apply_with_kind_prefixes(&mut *conn, &kind_prefixes)
             .await
             .unwrap_err()
             .to_string()
@@ -377,7 +377,7 @@ async fn search_modes_apply_to_live_indexing_and_its_rebuild(db: devkit::pg::Tes
                 Origin::Record {
                     location: RecordLocation {
                         material: MaterialId::new(),
-                        anchor: 0,
+                        record_offset: 0,
                     },
                     output_index: 0,
                 },
@@ -491,7 +491,7 @@ async fn exact_versions_never_select_another_versions_schema(db: devkit::pg::Tes
                 Origin::Record {
                     location: RecordLocation {
                         material: MaterialId::new(),
-                        anchor: 0,
+                        record_offset: 0,
                     },
                     output_index: 0,
                 },
@@ -634,7 +634,7 @@ async fn field_hints_are_saved_without_setting_a_kind_wide_class(db: devkit::pg:
             Origin::Record {
                 location: RecordLocation {
                     material: MaterialId::new(),
-                    anchor: 0,
+                    record_offset: 0,
                 },
                 output_index: 0,
             },

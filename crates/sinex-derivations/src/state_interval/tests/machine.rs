@@ -10,7 +10,7 @@ fn native(kind: &str, seconds: i64, mut payload: Value) -> Event {
         Origin::Record {
             location: RecordLocation {
                 material: MaterialId::new(),
-                anchor: seconds.max(0) as u64,
+                record_offset: seconds.max(0) as u64,
             },
             output_index: 0,
         },

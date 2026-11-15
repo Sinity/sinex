@@ -27,7 +27,7 @@ fn event(d: &KindDeclaration, material: MaterialId, text: &str, order: i64) -> P
         payload: json!({"id":"one","text":text}),
         location: Some(RecordLocation {
             material,
-            anchor: 0,
+            record_offset: 0,
         }),
         output_index: 0,
         parents: vec![],

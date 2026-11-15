@@ -108,7 +108,7 @@ fn pause(
     let parser = reader.parsers.remove(0);
     reader.parsers.insert(
         0,
-        NativeReplaySource {
+        LocalReplaySource {
             host: parser.host,
             source: Box::new(PausedParser {
                 source: parser.source,

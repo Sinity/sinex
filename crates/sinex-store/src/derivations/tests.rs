@@ -62,7 +62,7 @@ async fn input_provenance_keeps_parser_versions_and_missing_manifests(
                 .unwrap();
         let observed=(sinex_model::event_types::find("command.executed").unwrap().build)(
             &serde_json::json!({"native_id":format!("provenance-{index}"),"command":command,"cwd":"/work","session":"synthetic","hostname":"synthetic-host","started_at":at,"duration_ns":null,"exit_code":null,"deleted_at":null,"author":null,"intent":null,"shell":null}),
-            "terminal.atuin",sinex_model::Origin::Record{location:sinex_model::RecordLocation{material,anchor:0},output_index:0},sinex_model::ReadingOrder(1),[1;32],sinex_model::Class::Open,
+            "terminal.atuin",sinex_model::Origin::Record{location:sinex_model::RecordLocation{material,record_offset:0},output_index:0},sinex_model::ReadingOrder(1),[1;32],sinex_model::Class::Open,
         ).unwrap();
         let fused=(sinex_model::event_types::find("command.fused").unwrap().build)(
             &serde_json::json!({"record":format!("command.executed:{}",observed.id),"command":command,"host":"synthetic-host","started_at":at,"cwd":"/work","session":"synthetic","duration_ns":null,"exit_code":null,"execution":null,"members":[{"record":"fixture:terminal.atuin","source":"terminal.atuin","event_type":"command.executed","joined":{"by":"lead"}}],"basis":"rule","ambiguous":1,"competitors":[],"rule_version":1}),
@@ -150,7 +150,7 @@ async fn empty_producer_orders_stay_zero_beside_other_producers(db: devkit::pg::
                     Origin::Record {
                         location: RecordLocation {
                             material: MaterialId::new(),
-                            anchor: 0,
+                            record_offset: 0,
                         },
                         output_index: 0,
                     },

@@ -10,7 +10,7 @@ use sinex_model::record::stable;
 use sinex_model::{Event, Timestamp};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Structured fields are authoritative. Prose and command strings never supply anchors.
+/// Structured fields are authoritative. Prose and command strings never supply objectives.
 fn objective(metadata: &Value) -> Option<Objective> {
     let repository = metadata["repo"]
         .as_str()

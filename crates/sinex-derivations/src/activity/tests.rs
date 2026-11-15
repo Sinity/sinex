@@ -15,14 +15,14 @@ fn env() -> Env {
             .expect("fixture day setting"),
     )
 }
-fn captured<P: EventPayload>(payload: &P, anchor: u64) -> Event {
+fn captured<P: EventPayload>(payload: &P, record_offset: u64) -> Event {
     Event::build(
         payload,
         "synthetic.activity",
         Origin::Record {
             location: RecordLocation {
                 material: MaterialId::new(),
-                anchor,
+                record_offset,
             },
             output_index: 0,
         },
@@ -792,7 +792,7 @@ fn external(kind: &str, payload: Value) -> Event {
         Origin::Record {
             location: RecordLocation {
                 material: MaterialId::new(),
-                anchor: 0,
+                record_offset: 0,
             },
             output_index: 0,
         },

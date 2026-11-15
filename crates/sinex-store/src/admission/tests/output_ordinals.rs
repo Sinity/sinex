@@ -57,7 +57,7 @@ async fn negative_sql_ordinals_are_refused_by_each_coordinate_table(db: devkit::
         Origin::Record {
             location: RecordLocation {
                 material: MaterialId::new(),
-                anchor: 0,
+                record_offset: 0,
             },
             output_index: 0,
         },
@@ -79,9 +79,9 @@ async fn negative_sql_ordinals_are_refused_by_each_coordinate_table(db: devkit::
         "the location-keyed seed must exercise coordinate rows"
     );
     let statements = [
-        "INSERT INTO core.live_locations SELECT material_id,anchor,event_type,-1,event_id,reading_order,record_hash FROM core.live_locations LIMIT 1",
-        "INSERT INTO core.admission_stage (ord,id,event_type,source,material_id,anchor,output_index,ts_quality,payload,replace_rule,reading_order,record_hash,record_state,class) SELECT 0,id,event_type,source,material_id,anchor,-1,ts_quality,payload,'suppress_repeat',reading_order,record_hash,record_state,class FROM core.events LIMIT 1",
-        "INSERT INTO core.admission_stage (ord,id,event_type,source,material_id,anchor,output_index,ts_quality,payload,replace_rule,reading_order,record_hash,record_state,class) SELECT -1,id,event_type,source,material_id,anchor,0,ts_quality,payload,'suppress_repeat',reading_order,record_hash,record_state,class FROM core.events LIMIT 1",
+        "INSERT INTO core.live_locations SELECT material_id,record_offset,event_type,-1,event_id,reading_order,record_hash FROM core.live_locations LIMIT 1",
+        "INSERT INTO core.admission_stage (ord,id,event_type,source,material_id,record_offset,output_index,ts_quality,payload,replace_rule,reading_order,record_hash,record_state,class) SELECT 0,id,event_type,source,material_id,record_offset,-1,ts_quality,payload,'suppress_repeat',reading_order,record_hash,record_state,class FROM core.events LIMIT 1",
+        "INSERT INTO core.admission_stage (ord,id,event_type,source,material_id,record_offset,output_index,ts_quality,payload,replace_rule,reading_order,record_hash,record_state,class) SELECT -1,id,event_type,source,material_id,record_offset,0,ts_quality,payload,'suppress_repeat',reading_order,record_hash,record_state,class FROM core.events LIMIT 1",
     ];
     let constraints = [
         "output_index_in_range",
@@ -114,7 +114,7 @@ async fn largest_stored_output_round_trips_through_live_lookup_and_show(
         .unwrap();
     let location = RecordLocation {
         material: MaterialId::new(),
-        anchor: 1,
+        record_offset: 1,
     };
     let output = u64::try_from(i64::MAX).unwrap();
     let event = Event::build(

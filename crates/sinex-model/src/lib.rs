@@ -43,7 +43,7 @@ pub use payload::{
 };
 pub use privacy::Class;
 pub use sinex_macros::{DbCheck, EventPayload};
-pub use source::{Expectation, ProjectionCatalog, SourceDeclaration};
+pub use source::{Expectation, SnapshotCatalog, SourceDeclaration};
 
 /// Re-exports the derives' generated code relies on.
 #[doc(hidden)]

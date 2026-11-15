@@ -133,7 +133,7 @@ pub(crate) async fn refusing(
                 acker
                     .publish(
                         ack_subject.clone(),
-                        serde_json::to_vec(&sinex_protocol::ReceiptHint {
+                        serde_json::to_vec(&sinex_protocol::AckHint {
                             number: ack.number,
                             frame_hash: blake3::hash(ack.frame.as_bytes()).to_hex().to_string(),
                         })
@@ -226,7 +226,7 @@ pub(crate) async fn refusing(
             acker
                 .publish(
                     ack_subject.clone(),
-                    serde_json::to_vec(&sinex_protocol::ReceiptHint {
+                    serde_json::to_vec(&sinex_protocol::AckHint {
                         number: ack.number,
                         frame_hash: blake3::hash(ack.frame.as_bytes()).to_hex().to_string(),
                     })

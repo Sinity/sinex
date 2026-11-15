@@ -96,12 +96,13 @@ fn commands(bytes: &[u8], base: usize) -> Vec<(usize, String)> {
         .flat_map(|c| &c.outcomes)
         .map(|o| match o {
             RecordOutcome::Events { location, events } => (
-                base + location.unwrap().anchor as usize,
+                base + location.unwrap().record_offset as usize,
                 events[0].payload["command"].as_str().unwrap().to_owned(),
             ),
-            RecordOutcome::Failure { location, reason } => {
-                (base + location.anchor as usize, format!("FAIL {reason}"))
-            }
+            RecordOutcome::Failure { location, reason } => (
+                base + location.record_offset as usize,
+                format!("FAIL {reason}"),
+            ),
         })
         .collect()
 }
@@ -123,16 +124,16 @@ proptest! {
         prop_assert_eq!(whole, pieces);
     }
 
-    /// An anchor reads back exactly its record.
+    /// A record offset reads back exactly its record.
     #[devkit::test]
-    fn anchors_read_back_records(cmds in prop::collection::vec("[a-z]{1,5}", 1..8)) {
+    fn record_offsets_read_back_records(cmds in prop::collection::vec("[a-z]{1,5}", 1..8)) {
         let mut file = Vec::new();
         for (i, c) in cmds.iter().enumerate() {
             file.extend_from_slice(format!(": {}:0;{}\n", i, c).as_bytes());
         }
-        for (anchor, command) in commands(&file, 0) {
-            let (r, _) = frame(&file[anchor..]);
-            prop_assert_eq!(parse(&file[anchor..anchor + r[0].1]).unwrap(), command);
+        for (record_offset, command) in commands(&file, 0) {
+            let (r, _) = frame(&file[record_offset..]);
+            prop_assert_eq!(parse(&file[record_offset..record_offset + r[0].1]).unwrap(), command);
         }
     }
 }
@@ -223,15 +224,15 @@ fn observations(
         for outcome in &chunk.outcomes {
             match outcome {
                 RecordOutcome::Events { location, events } => {
-                    let anchor = location.unwrap().anchor as usize;
-                    let end = records.iter().find(|r| r.0 == anchor).unwrap().1;
+                    let record_offset = location.unwrap().record_offset as usize;
+                    let end = records.iter().find(|r| r.0 == record_offset).unwrap().1;
                     for event in events {
                         assert_eq!(
                             event.record_hash,
-                            *blake3::hash(&bytes[anchor..end]).as_bytes()
+                            *blake3::hash(&bytes[record_offset..end]).as_bytes()
                         );
                         out.push(serde_json::json!([
-                            base + anchor,
+                            base + record_offset,
                             event.payload,
                             event.ts_orig.at,
                             event.ts_orig.quality,
@@ -240,12 +241,13 @@ fn observations(
                         ]));
                     }
                     if events.is_empty() {
-                        out.push(serde_json::json!([base + anchor, "empty"]));
+                        out.push(serde_json::json!([base + record_offset, "empty"]));
                     }
                 }
-                RecordOutcome::Failure { location, reason } => {
-                    out.push(serde_json::json!([base + location.anchor as usize, reason]))
-                }
+                RecordOutcome::Failure { location, reason } => out.push(serde_json::json!([
+                    base + location.record_offset as usize,
+                    reason
+                ])),
             }
         }
     }

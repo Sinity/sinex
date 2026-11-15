@@ -18,7 +18,7 @@ pub enum Agency {
 
 /// An exact reading and the stable record it read.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct ActivityEvidence {
+pub struct CitedReading {
     pub event: EventId,
     pub record: String,
     pub event_type: String,
@@ -102,7 +102,7 @@ pub struct ActivitySpan {
     pub agency: Agency,
     /// Delegated work can overlap any operator-channel class.
     pub delegated: bool,
-    pub agency_evidence: Vec<ActivityEvidence>,
+    pub agency_evidence: Vec<CitedReading>,
     pub presence: String,
     pub presence_method: String,
     pub presence_claims: Vec<String>,

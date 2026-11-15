@@ -31,7 +31,7 @@ async fn setup(
 ) -> (Harness, MaterialId, Vec<EventId>) {
     let kind = declaration();
     let grants = crate::ingress::fetch::Grants {
-        indexed_catalog: Some(sinex_model::ProjectionCatalog {
+        indexed_catalog: Some(sinex_model::SnapshotCatalog {
             name: "synthetic-catalog".into(),
             version: 1,
             kinds: vec![kind.clone()],
@@ -74,7 +74,7 @@ async fn setup(
             payload: json!({"id":format!("message-{index}"),"text":"synthetic"}),
             location: Some(RecordLocation {
                 material,
-                anchor: 0,
+                record_offset: 0,
             }),
             output_index: u64::try_from(index).unwrap(),
             parents: vec![],
@@ -154,7 +154,7 @@ async fn snapshot_pages_read_one_position_and_complete_with_their_stream_start(
         payload: json!({"id":"message-0","text":"later reading"}),
         location: Some(RecordLocation {
             material,
-            anchor: 0,
+            record_offset: 0,
         }),
         output_index: 0,
         parents: vec![],
