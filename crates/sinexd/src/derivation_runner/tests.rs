@@ -496,35 +496,150 @@ impl<const V: u32> Keyed for Count<V> {
         Some(InputQuery::window(Self::INPUTS, at(-86_400), at(86_400)))
     }
     fn compute(&self, _: &Value, inputs: &[Event], _: &Env) -> Computed {
-        let payload = CommandFused {
-            record: "all".into(),
-            command: format!("v{V}:{}", inputs.len()),
-            host: "box".into(),
-            started_at: at(0),
-            cwd: None,
-            session: None,
-            duration_ns: None,
-            exit_code: None,
-            execution: None,
-            members: vec![],
-            basis: sinex_model::event_types::fused::Basis::Rule,
-            ambiguous: 1,
-            competitors: vec![],
-            rule_version: 1,
-        };
-        Computed {
-            error: None,
-            outputs: vec![sinex_derivations::derived_event::derived(
-                &payload,
-                "test.count",
-                inputs,
-            )],
-            waiting: false,
-        }
+        counted(Self::NAME, format!("v{V}:{}", inputs.len()), inputs)
     }
     fn key_state(&self, _: &Value, _: &Env) -> KeyState {
         KeyState::Closed
     }
+}
+
+/// One output naming `command`, citing every input.
+fn counted(derivation: &str, command: String, inputs: &[Event]) -> Computed {
+    let payload = CommandFused {
+        record: "all".into(),
+        command,
+        host: "box".into(),
+        started_at: at(0),
+        cwd: None,
+        session: None,
+        duration_ns: None,
+        exit_code: None,
+        execution: None,
+        members: vec![],
+        basis: sinex_model::event_types::fused::Basis::Rule,
+        ambiguous: 1,
+        competitors: vec![],
+        rule_version: 1,
+    };
+    Computed {
+        error: None,
+        outputs: vec![sinex_derivations::derived_event::derived(
+            &payload, derivation, inputs,
+        )],
+        waiting: false,
+    }
+}
+
+/// A keyed derivation that calls `pause` while computing: after its inputs
+/// were read in the snapshot, before its outputs go to the writer.
+struct Paused {
+    pause: Option<Arc<dyn Fn() + Send + Sync>>,
+}
+
+impl Keyed for Paused {
+    const NAME: &'static str = "test.paused";
+    const VERSION: u32 = 1;
+    const INPUTS: &'static [&'static str] = &["command.imported"];
+    const OUTPUTS: &'static [&'static str] = &["command.fused"];
+
+    fn keys_for(&self, _: &KeyView<'_>, _: &Env) -> Vec<Value> {
+        vec![json!("all")]
+    }
+    fn inputs(&self, _: &Value, _: &Env) -> Option<InputQuery> {
+        Some(InputQuery::window(Self::INPUTS, at(-86_400), at(86_400)))
+    }
+    fn compute(&self, _: &Value, inputs: &[Event], _: &Env) -> Computed {
+        if let Some(pause) = &self.pause {
+            pause();
+        }
+        counted(Self::NAME, inputs.len().to_string(), inputs)
+    }
+    fn key_state(&self, _: &Value, _: &Env) -> KeyState {
+        KeyState::Closed
+    }
+}
+
+/// TimescaleDB's compression asks for an exclusive lock on a chunk, and
+/// every later lock request on that chunk queues behind it. A derivation that
+/// read the chunk and then waited on the writer while its snapshot was open
+/// would hold the compression back, and through it the writer: a wait cycle
+/// PostgreSQL does not see. The snapshot ends before the outputs are
+/// submitted, so the lock request is granted and admission proceeds.
+#[devkit::test(multi_thread)]
+async fn a_chunk_lock_queued_behind_a_derivation_read_does_not_stall_admission(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = World::with_keys(db, vec![Box::new(Paused { pause: None })]).await;
+    let input = zsh("make", 0, 1);
+    let input_id = input.id;
+    w.admit(vec![input]).await;
+    let mut conn = PgConnection::connect(&w.url).await.unwrap();
+    let chunk: String =
+        sqlx::query_scalar("SELECT tableoid::regclass::text FROM core.events WHERE id = $1")
+            .bind(input_id.0)
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    assert_ne!(chunk, "core.events", "events are stored in chunks");
+
+    // The first computation pauses until an exclusive lock request on the
+    // chunk its inputs came from is queued.
+    let (paused, mut pauses) =
+        tokio::sync::mpsc::unbounded_channel::<std::sync::mpsc::Sender<()>>();
+    let pause: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
+        let (resume, resumed) = std::sync::mpsc::channel();
+        if paused.send(resume).is_ok() {
+            resumed.recv().unwrap();
+        }
+    });
+    let url = w.url.clone();
+    let compression = tokio::spawn(async move {
+        let resume = pauses.recv().await.unwrap();
+        drop(pauses);
+        let mut locker = PgConnection::connect(&url).await.unwrap();
+        let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut locker)
+            .await
+            .unwrap();
+        let lock = tokio::spawn(async move {
+            let mut tx = locker.begin().await.unwrap();
+            sqlx::query(&format!("LOCK TABLE {chunk} IN ACCESS EXCLUSIVE MODE"))
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+            tx.commit().await.unwrap();
+        });
+        let mut observer = PgConnection::connect(&url).await.unwrap();
+        while !sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE pid = $1 AND NOT granted)",
+        )
+        .bind(pid)
+        .fetch_one(&mut observer)
+        .await
+        .unwrap()
+        {
+            tokio::task::yield_now().await;
+        }
+        resume.send(()).unwrap();
+        lock.await.unwrap();
+    });
+
+    let mut d = w
+        .driver_with(vec![Box::new(Paused { pause: Some(pause) })], vec![])
+        .await;
+    tokio::time::timeout(Duration::from_secs(120), d.catch_up())
+        .await
+        .expect("the writer admits the outputs while the lock request is queued")
+        .unwrap();
+    compression.await.unwrap();
+    let outputs: Vec<CommandFused> = w.live().await;
+    assert_eq!(
+        outputs
+            .iter()
+            .map(|o| o.command.as_str())
+            .collect::<Vec<_>>(),
+        ["1"]
+    );
 }
 
 #[devkit::test]

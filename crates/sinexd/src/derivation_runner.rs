@@ -1154,131 +1154,85 @@ struct KeyComputation<'a> {
     counts: &'a mut Counts,
 }
 
-impl KeyComputation<'_> {
-    async fn compute(&mut self, work: Vec<KeyWork>, env: &Env) -> Result<()> {
-        sinex_store::query::initialize_calendar(self.read).await?;
-        let mut snapshot = self.read.begin().await?;
-        sinex_store::query::read_one_snapshot(&mut snapshot).await?;
-        let result = KeyComputation {
-            read: &mut snapshot,
-            writer: self.writer,
-            derivation: self.derivation,
-            time_settings: self.time_settings.clone(),
-            run: self.run,
-            counts: &mut *self.counts,
-        }
-        .compute_snapshot(work, env)
-        .await;
-        match result {
-            Ok(()) => snapshot.commit().await.map_err(Error::from),
-            Err(error) => match snapshot.rollback().await {
-                Ok(()) => Err(error),
-                Err(rollback) => Err(Error::internal(format!(
-                    "{error}; rolling back the input snapshot: {rollback}"
-                ))),
-            },
-        }
-    }
+/// Keys computed in one input snapshot, submitted once that snapshot has
+/// ended.
+struct Segment {
+    /// Indices into the work of the keys computed.
+    computed: Vec<usize>,
+    scopes: Vec<ComputedKey>,
+    records: Vec<RecordOutcome>,
+    outputs: usize,
+    read: ReadMark,
+    /// The commit head the snapshot saw.
+    position: i64,
+}
 
-    async fn compute_snapshot(&mut self, work: Vec<KeyWork>, env: &Env) -> Result<()> {
-        let mut scopes: Vec<ComputedKey> = Vec::new();
-        let mut records: Vec<RecordOutcome> = Vec::new();
-        let mut outputs = 0usize;
+impl Segment {
+    fn full(&self) -> bool {
+        self.scopes.len() >= KEYS_PER_BATCH || self.outputs >= OUTPUTS_PER_BATCH
+    }
+}
+
+impl KeyComputation<'_> {
+    /// Compute `work` in segments of about one writer batch, each read in its
+    /// own snapshot that ends before the batch goes to the writer. A snapshot
+    /// held across a wait on the writer keeps its locks on event chunks; a
+    /// request for an exclusive chunk lock (compression) queues behind them,
+    /// and the writer's own chunk locks then queue behind that request, a
+    /// wait cycle PostgreSQL cannot see because one edge is inside the daemon.
+    async fn compute(&mut self, work: Vec<KeyWork>, env: &Env) -> Result<()> {
         let _lock = self.writer.lock_derivations().await;
-        let read = ReadMark::now(&mut *self.read).await?;
-        let input_position = derivations::head(self.read).await?;
-        // Keys without a query have no inputs; the rest are read page by
-        // page and computed as soon as their rows are complete.
-        let mut ready: Vec<(usize, Vec<Event>, bool)> = Vec::new();
-        let mut windows: Vec<Window> = Vec::new();
-        let mut window_keys: Vec<usize> = Vec::new();
-        for (i, (key, _)) in work.iter().enumerate() {
-            if let Some(ids) = self.derivation.exact_inputs(key, env) {
-                let inputs = exact_inputs(self.read, ids).await?;
-                ready.push((i, inputs, true));
-                continue;
-            }
-            match self.derivation.inputs(key, env) {
-                Some(q) => {
-                    windows.push(to_window(&q, env.now));
-                    window_keys.push(i);
+        sinex_store::query::initialize_calendar(self.read).await?;
+        let mut remaining: Vec<usize> = (0..work.len()).collect();
+        while !remaining.is_empty() {
+            let mut snapshot = self.read.begin().await?;
+            sinex_store::query::read_one_snapshot(&mut snapshot).await?;
+            let segment = compute_segment(
+                &mut snapshot,
+                self.derivation,
+                self.counts,
+                &work,
+                &remaining,
+                env,
+            )
+            .await;
+            let segment = match segment {
+                Ok(segment) => {
+                    snapshot.commit().await?;
+                    segment
                 }
-                None => ready.push((i, Vec::new(), false)),
-            }
-        }
-        let mut reader = derivations::Windows::new(windows, ROWS_PER_PAGE, sinex_store::PAGE_BYTES);
-        loop {
-            if ready.is_empty() {
-                let t = Instant::now();
-                let next = reader.next(&mut *self.read).await?;
-                self.counts.read += t.elapsed();
-                let Some(done) = next else { break };
-                ready.extend(done.into_iter().map(|(w, rows)| {
-                    (
-                        window_keys[w],
-                        rows.into_iter().map(|c| c.event).collect(),
-                        true,
-                    )
-                }));
-            }
-            for (i, input, queried) in std::mem::take(&mut ready) {
-                let (key, dirty_seq) = &work[i];
-                let t = Instant::now();
-                let mut computed = if queried {
-                    self.derivation.compute(key, &input, env)
-                } else {
-                    sinex_derivations::Computed::default()
-                };
-                provenance::stamp(
-                    &mut *self.read,
-                    self.derivation,
-                    key,
-                    input_position,
-                    &mut computed,
-                )
-                .await?;
-                if let Some(error) = &computed.error {
-                    return Err(Error::internal(error));
+                Err(error) => {
+                    return match snapshot.rollback().await {
+                        Ok(()) => Err(error),
+                        Err(rollback) => Err(Error::internal(format!(
+                            "{error}; rolling back the input snapshot: {rollback}"
+                        ))),
+                    };
                 }
-                let c = &mut *self.counts;
-                c.compute += t.elapsed();
-                c.inputs += input.len();
-                outputs += computed.outputs.len();
-                scopes.push(ComputedKey {
-                    key: key.clone(),
-                    dirty_seq: *dirty_seq,
-                    waiting: computed.waiting,
-                    refresh_at: self.derivation.refresh_at(&computed.outputs, env),
-                });
-                records.push(RecordOutcome::Events {
-                    location: None,
-                    events: computed.outputs,
-                });
-                if scopes.len() >= KEYS_PER_BATCH || outputs >= OUTPUTS_PER_BATCH {
-                    self.submit(
-                        std::mem::take(&mut scopes),
-                        std::mem::take(&mut records),
-                        read,
-                    )
-                    .await?;
-                    outputs = 0;
-                }
+            };
+            if segment.computed.is_empty() {
+                return Err(Error::internal(format!(
+                    "{}: a snapshot computed none of {} keys",
+                    self.derivation.name(),
+                    remaining.len()
+                )));
             }
-        }
-        if !scopes.is_empty() {
-            self.submit(scopes, records, read).await?;
+            let computed: HashSet<usize> = segment.computed.iter().copied().collect();
+            remaining.retain(|index| !computed.contains(index));
+            self.submit(segment).await?;
         }
         Ok(())
     }
 
-    async fn submit(
-        &mut self,
-        scopes: Vec<ComputedKey>,
-        mut records: Vec<RecordOutcome>,
-        read: ReadMark,
-    ) -> Result<()> {
+    async fn submit(&mut self, segment: Segment) -> Result<()> {
+        let Segment {
+            scopes,
+            mut records,
+            read,
+            position,
+            ..
+        } = segment;
         let name = self.derivation.name();
-        let head = derivations::head(&mut *self.read).await?;
         let mut n = 0;
         for record in &mut records {
             if let RecordOutcome::Events { events, .. } = record {
@@ -1286,7 +1240,7 @@ impl KeyComputation<'_> {
                 for e in events {
                     // A recompute is a newer reading than any before it.
                     hash_version(e, name, self.derivation.version_for(&self.time_settings));
-                    e.reading_order = ReadingOrder(head);
+                    e.reading_order = ReadingOrder(position);
                 }
             }
         }
@@ -1316,6 +1270,124 @@ impl KeyComputation<'_> {
         c.superseded_input += out.superseded_input;
         Ok(())
     }
+}
+
+/// Read and compute the `remaining` keys of `work` in the snapshot `conn` is
+/// in, until about one writer batch is ready. Keys whose rows are complete are
+/// computed as their pages arrive; reading stops after the key that fills the
+/// batch, and keys not computed are read again in the next snapshot.
+async fn compute_segment(
+    conn: &mut PgConnection,
+    derivation: &dyn AnyKeyed,
+    counts: &mut Counts,
+    work: &[KeyWork],
+    remaining: &[usize],
+    env: &Env,
+) -> Result<Segment> {
+    let mut segment = Segment {
+        computed: Vec::new(),
+        scopes: Vec::new(),
+        records: Vec::new(),
+        outputs: 0,
+        read: ReadMark::now(&mut *conn).await?,
+        position: derivations::head(&mut *conn).await?,
+    };
+    // Keys with exact inputs or no query first; the rest are read page by
+    // page.
+    let mut windows: Vec<Window> = Vec::new();
+    let mut window_keys: Vec<usize> = Vec::new();
+    for &index in remaining {
+        let key = &work[index].0;
+        let inputs = if let Some(ids) = derivation.exact_inputs(key, env) {
+            Some(exact_inputs(&mut *conn, ids).await?)
+        } else if let Some(q) = derivation.inputs(key, env) {
+            windows.push(to_window(&q, env.now));
+            window_keys.push(index);
+            continue;
+        } else {
+            None
+        };
+        compute_one(
+            conn,
+            derivation,
+            counts,
+            &mut segment,
+            work,
+            index,
+            inputs,
+            env,
+        )
+        .await?;
+        if segment.full() {
+            return Ok(segment);
+        }
+    }
+    let mut reader = derivations::Windows::new(windows, ROWS_PER_PAGE, sinex_store::PAGE_BYTES);
+    loop {
+        let t = Instant::now();
+        let next = reader.next(&mut *conn).await?;
+        counts.read += t.elapsed();
+        let Some(done) = next else { break };
+        for (window, rows) in done {
+            let inputs = rows.into_iter().map(|c| c.event).collect();
+            compute_one(
+                conn,
+                derivation,
+                counts,
+                &mut segment,
+                work,
+                window_keys[window],
+                Some(inputs),
+                env,
+            )
+            .await?;
+            if segment.full() {
+                return Ok(segment);
+            }
+        }
+    }
+    Ok(segment)
+}
+
+/// Compute one key from its inputs (`None` when it has no query) and add it
+/// to the segment.
+#[allow(clippy::too_many_arguments)]
+async fn compute_one(
+    conn: &mut PgConnection,
+    derivation: &dyn AnyKeyed,
+    counts: &mut Counts,
+    segment: &mut Segment,
+    work: &[KeyWork],
+    index: usize,
+    inputs: Option<Vec<Event>>,
+    env: &Env,
+) -> Result<()> {
+    let (key, dirty_seq) = &work[index];
+    let t = Instant::now();
+    let input_count = inputs.as_ref().map_or(0, Vec::len);
+    let mut computed = match &inputs {
+        Some(inputs) => derivation.compute(key, inputs, env),
+        None => sinex_derivations::Computed::default(),
+    };
+    provenance::stamp(&mut *conn, derivation, key, segment.position, &mut computed).await?;
+    if let Some(error) = &computed.error {
+        return Err(Error::internal(error));
+    }
+    counts.compute += t.elapsed();
+    counts.inputs += input_count;
+    segment.outputs += computed.outputs.len();
+    segment.computed.push(index);
+    segment.scopes.push(ComputedKey {
+        key: key.clone(),
+        dirty_seq: *dirty_seq,
+        waiting: computed.waiting,
+        refresh_at: derivation.refresh_at(&computed.outputs, env),
+    });
+    segment.records.push(RecordOutcome::Events {
+        location: None,
+        events: computed.outputs,
+    });
+    Ok(())
 }
 
 /// Compute requested keys with the background runner's batching and ordering.
