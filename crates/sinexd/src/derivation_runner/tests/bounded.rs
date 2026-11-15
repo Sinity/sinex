@@ -32,11 +32,20 @@ fn a_running_computation_leaves_the_writer_admitting(db: devkit::pg::TestDatabas
         let resume = pauses.recv().await.unwrap();
         // Only the first computation pauses.
         drop(pauses);
-        let admitted =
-            tokio::time::timeout(Duration::from_secs(60), w.admit(vec![zsh("ls", 10, 2)])).await;
+        // The deadline is a plain thread: with the only worker held, the
+        // runtime's own timer would not fire either.
+        let (expire, expired) = tokio::sync::oneshot::channel::<()>();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(30));
+            let _ = expire.send(());
+        });
+        let admitted = tokio::select! {
+            () = w.admit(vec![zsh("ls", 10, 2)]) => true,
+            _ = expired => false,
+        };
         resume.send(()).unwrap();
         assert!(
-            admitted.is_ok(),
+            admitted,
             "the writer admits a live batch while a derivation computes"
         );
         runner.await.unwrap().unwrap();
