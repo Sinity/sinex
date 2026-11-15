@@ -393,17 +393,12 @@ impl Reader for Appended {
         Ok(())
     }
 
-    fn committed(&mut self, cursor: &Value) -> Result<usize, DriverError> {
-        if self.held.as_ref().is_some_and(|held| held.admitted(cursor)) {
-            self.held = None;
-        }
-        Ok(0)
-    }
-
     fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
-        self.committed(cursor)?;
         if let Some(held) = &self.held {
-            return held.acquired(cursor);
+            if !held.admitted(cursor) {
+                return held.acquired(cursor);
+            }
+            self.held = None;
         }
         let acquired = self.driver.poll(cursor, &mut self.state)?;
         if acquired.material.is_none() {
@@ -467,11 +462,6 @@ impl Reader for Rows {
     ) -> Result<bool, DriverError> {
         let _ = (memory_part, admitted);
         self.state.remember_saved(memory).map(|()| false)
-    }
-
-    fn committed(&mut self, cursor: &Value) -> Result<usize, DriverError> {
-        self.state.release_admitted(cursor);
-        Ok(0)
     }
 
     fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
