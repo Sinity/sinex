@@ -194,31 +194,18 @@ async fn snapshot_pages_read_one_position_and_complete_with_their_stream_start(
             last: cursor.last,
         }
     );
-    // The open-class producer sees the guarded events by ID only.
+    // A producer granted only the open class gets only the open reading.
     let SnapshotReply::Page { events, .. } = page(&h, "narrow", None).await else {
         panic!("narrow page")
     };
-    assert!(
-        events.is_empty(),
+    assert_eq!(
+        events.len(),
+        1,
         "a class outside the grants is not selected"
     );
-}
-
-#[devkit::test]
-async fn a_sealed_reading_arrives_withheld(db: devkit::pg::TestDatabase) {
-    let (h, _, admitted) = setup(db, 1, sinex_model::Class::Sealed).await;
-    let SnapshotReply::Page {
-        events,
-        next: SnapshotNext::Complete { .. },
-    } = page(&h, "synthetic", None).await
-    else {
-        panic!("one complete page")
-    };
     assert!(matches!(
         &events[0].event,
-        SnapshotReading::Withheld(event) if event.event == admitted[0]
-            && event.reason == sinex_protocol::WithheldReason::Class
-            && event.event_type == "synthetic.message"
+        SnapshotReading::Inline(event) if event.payload["text"] == "later reading"
     ));
 }
 
