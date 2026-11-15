@@ -18,10 +18,9 @@ working rules that apply here.
 
 - [`docs/`](docs/README.md) is the design of record: each area page owns its
   behaviour, model and formats, and [docs/architecture.md](docs/architecture.md)
-  is the orientation across them. Relevant design constraints bind changes
-  to that behaviour. The selected Bead bounds the current delivery;
-  unrelated future capabilities and other design gaps do not become its
-  scope or release blockers.
+  is the orientation across them. The docs describe Sinex as designed, not
+  as built; when code and design differ, the design is the target and
+  closing the difference is the work.
 - CLI help, MCP tool schemas, the generated catalog and each module's `//!`
   documentation describe the current build.
 - Plans, open questions, decisions and acceptance criteria live in Beads, the
@@ -128,10 +127,10 @@ one machine; host tuning belongs in deployment configuration.
 ## How work is done here
 
 **Design first.** Before writing code, read the owning page in `docs/`, the
-relevant linked pages, the current code of the area, and the
+pages it links to, the current code of the area, and the
 predecessor's implementation and tests for what you are building (the
 earlier Sinex is in this repository's Git history, and its old Beads are its
-plans). Implement the selected behaviour completely, built on
+plans). Write the whole change from the design: complete features, built on
 the architecture's abstractions, with the predecessor's behaviour and test
 cases ported.
 
@@ -141,10 +140,17 @@ sites in one pass. Type-check after each layer you write
 workspace); it reports every type error at once. Run the wider tests once the
 change is coherent.
 
-**Review before verification.** Read the coherent diff against the selected
-acceptance, owning design and predecessor behaviour. Fix unmet requirements,
-duplicated mechanisms, unconverted callers, invalid refusals and weak tests
-in one pass, then revisit the affected invariants.
+**Review your own work before verifying it.** Read the whole diff once
+against the task, the owning page, the architecture and the predecessor's
+behaviour, and list everything wrong in that one pass: a requirement not met,
+a mechanism duplicated, a predecessor left in place, a caller not converted, a
+limit that refuses valid input, a test that cannot fail, a name that does not
+say what the thing is, a case the design covers and the code does not. Fix
+the whole list, then read only what the fixes changed. Then verify. The
+author makes the work good; a separate reviewer is not the mechanism for
+that. "Review should not look for a single wrong thing, it should strive to
+list everything wrong. so that there is no forever loop of fixing and finding
+new issue" (operator, 2026-09-29, `cc:9ec284a7-6a6a-486b-949f-d8bbdb22ae1e:16cb3a25-318f-455b-82b5-bf0f6f732e30`).
 
 **Verify scoped to the change.** Commit first, so a result belongs to a
 commit. Run formatting, clippy for the crates you touched and the focused
@@ -156,16 +162,16 @@ yours, compare with the same test on current master (`gh run list -b
 master`). Note that in Sinex `-p` bounds what is compiled, unlike Polylogue,
 where selectors choose tests and never what is built.
 
-**Finish the selected delivery.** The Bead owns its outcome, acceptance and
-actual prerequisites. Fix findings that invalidate that acceptance in the
-same work. Independent findings do not enlarge it: use an existing task, or
-file a concrete outcome with a finite completion condition when useful.
-Unselected designs and globally ready tasks are not implicit prerequisites.
-Source acceptance requires the tested change on master; runtime acceptance
-requires its named deployment, data and client observations. Keep one concise
-current-state note with evidence pointers; native task, Git, CI and job
-history retain the chronology. Leave unmet criteria open and name the next
-observation or external blocker that decides them.
+**Finish what the task names.** A task states its done condition before work
+starts, as behaviour on master and the tests that prove it. The selected Bead
+bounds what a delivery must finish; it does not license leaving a wrong
+design or a known defect in the code being changed. A defect inside the area
+that stops that condition from holding is fixed in the same work. Anything
+else found goes on a Bead with what was found, and the current work lands
+without it. Source acceptance requires the tested change on master; runtime
+acceptance requires its named deployment, data and client observations. Leave
+unmet criteria open and name the next observation or external blocker that
+decides them.
 
 **Git and pull requests.** Work on a branch from `origin/master`; every pull
 request targets `master`, and stacked pull requests are not used. Commit with
@@ -251,6 +257,8 @@ rather than a bare-bones version to be replaced later. "Why build some sort of
 bare-bones features which will need to be replaced by actual full-fledged
 ones anyway?" (2026-10-27,
 `cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:3c3dd59f-4560-4fee-95d4-5c43b6c94ca5`).
+When an area you are changing works but its design is wrong, redesign it as
+part of the task; an area you are not changing gets a Bead.
 
 **Use the predecessor's knowledge, not its mechanisms.** The earlier Sinex
 built much of the operator's design (the lifecycle, field-level privacy,
