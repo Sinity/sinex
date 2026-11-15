@@ -267,12 +267,17 @@ impl<T: api::Transport> GmailReader<T> {
 }
 
 impl<T: api::Transport + 'static> Reader for GmailReader<T> {
-    fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
-        if let Some(held) = &self.held {
-            if !held.admitted(cursor) {
-                return held.acquired(cursor);
-            }
+    fn committed(&mut self, cursor: &Value) -> Result<usize, DriverError> {
+        if self.held.as_ref().is_some_and(|held| held.admitted(cursor)) {
             self.held = None;
+        }
+        Ok(0)
+    }
+
+    fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
+        self.committed(cursor)?;
+        if let Some(held) = &self.held {
+            return held.acquired(cursor);
         }
         let mut acquired = self.driver.poll(cursor)?;
         let Some(material) = acquired.material.as_mut() else {

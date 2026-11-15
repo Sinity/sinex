@@ -66,6 +66,21 @@ impl DirState {
             self.checkpoint_pending = false;
             self.checkpoint_cursor = None;
         }
+        self.release_admitted(cursor);
+    }
+
+    /// Once `cursor` admits the held bundle, take the file facts it records
+    /// and drop its bytes.
+    pub(crate) fn release_admitted(&mut self, cursor: &Value) {
+        if let Some(held) = &self.held
+            && held.material.admitted(cursor)
+        {
+            let held = self.held.take().expect("checked");
+            self.files = held.files;
+            self.failures = held.failures;
+            self.retries = held.retries;
+            self.locations = held.locations;
+        }
     }
 
     /// Remember the files whose records in the bundle `manifest` end at or
