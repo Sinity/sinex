@@ -324,7 +324,7 @@ async fn archive_reads_consumed_payloads_and_marks_unconsumed_output_keys(
     admit(&mut writer, &batch(vec![root.clone()])).await;
     let child = derived("selected-output", 1, &[&root]);
     admit(&mut writer, &batch(vec![child.clone()])).await;
-    sqlx::query("INSERT INTO derivation.outputs(derivation,key,event_id) VALUES('unconsumed-derivation','{\"scope\":1}',$1)")
+    sqlx::query("INSERT INTO derivation.outputs(derivation,key,event_id) VALUES('idle-derivation','{\"scope\":1}',$1)")
         .bind(child.id.0).execute(&mut *writer).await.unwrap();
     sqlx::query("SELECT compress_chunk(chunk) FROM show_chunks('core.events') chunks(chunk)")
         .execute(&mut *writer)
@@ -347,7 +347,7 @@ async fn archive_reads_consumed_payloads_and_marks_unconsumed_output_keys(
     assert_eq!(
         dirty,
         vec![
-            ("unconsumed-derivation".into(), json!({"scope":1})),
+            ("idle-derivation".into(), json!({"scope":1})),
             ("text-consumer".into(), json!({"text":"synthetic source 1"}))
         ]
     );

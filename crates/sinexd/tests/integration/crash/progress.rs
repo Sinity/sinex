@@ -514,7 +514,7 @@ fn validate(snapshot: &Snapshot, fixture: &Fixture) -> Check<Value> {
             }
             require(
                 hashes.keys().copied().eq(1..=*rows as i64),
-                "captured rows are missing below the maximum rowid",
+                "missing rows below the captured maximum rowid",
             )?;
             require(
                 number(&snapshot.cursor, "max_rowid")? == *rows as u64,

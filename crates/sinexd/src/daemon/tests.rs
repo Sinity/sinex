@@ -290,7 +290,7 @@ async fn interrupted_writer_rolls_back_before_shutdown_and_exact_frame_retry(
 }
 
 #[devkit::test]
-async fn shutdown_cannot_succeed_when_native_writer_cleanup_fails(db: devkit::pg::TestDatabase) {
+async fn shutdown_fails_when_writer_backend_cleanup_fails(db: devkit::pg::TestDatabase) {
     let url = db.url(None);
     let dir = tempfile::tempdir().unwrap();
     let blobs = Blobs::open(dir.path()).unwrap();

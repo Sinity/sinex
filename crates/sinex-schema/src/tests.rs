@@ -139,18 +139,23 @@ async fn plain_names_step_reaches_the_described_schema_and_keeps_compressed_rows
         "ALTER TABLE core.library_shown RENAME COLUMN supporting_records TO supporters",
         "ALTER TRIGGER keep_declaring_producer ON registry.kind_prefixes RENAME TO keep_owner",
         "CREATE OR REPLACE FUNCTION registry.keep_definition() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'kind definitions and owners are immutable'; END $$",
-        "DELETE FROM sinex_schema.applied WHERE version > 40",
+        "DELETE FROM sinex_schema.applied",
+        "INSERT INTO sinex_schema.applied (version) VALUES (40)",
     ] {
         sqlx::query(statement).execute(&mut conn).await.unwrap();
     }
     assert_eq!(upgrades::LANDED_VERSION, 40);
-    assert!(matches!(
-        apply(&mut conn).await,
-        Ok(Applied::Upgraded {
-            from: 40,
-            to: VERSION
-        })
-    ));
+    let applied = apply(&mut conn).await.unwrap();
+    assert!(
+        matches!(
+            applied,
+            Applied::Upgraded {
+                from: 40,
+                to: VERSION
+            }
+        ),
+        "{applied}"
+    );
     assert_eq!(catalog(&mut conn).await.unwrap(), fresh);
     let offset: i64 = sqlx::query_scalar("SELECT record_offset FROM core.events WHERE id = $1")
         .bind(id)

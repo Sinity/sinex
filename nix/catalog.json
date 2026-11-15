@@ -650,6 +650,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -665,7 +666,6 @@
                 "root": "declared"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "hledger"
@@ -698,6 +698,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -705,7 +706,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "text-history"
@@ -736,6 +736,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -747,7 +748,6 @@
                 "root": "declared"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "documents"
@@ -778,6 +778,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -785,7 +786,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "transcript-json"
@@ -794,6 +794,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -801,7 +802,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "whisper-json"
@@ -810,6 +810,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -817,7 +818,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "transcript-text"
@@ -826,6 +826,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -833,7 +834,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "webvtt"
@@ -842,6 +842,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -849,7 +850,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "srt"
@@ -884,6 +884,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -891,7 +892,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "ocr-json"
@@ -900,6 +900,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -907,7 +908,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "ocr-tsv"
@@ -916,6 +916,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -923,7 +924,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "ocr-text"
@@ -958,6 +958,7 @@
             "capabilities": [
               "udevadm"
             ],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -965,7 +966,6 @@
                 "root": "spool"
               }
             ],
-            "owner": "system",
             "streams": [
               {
                 "capabilities": [],
@@ -1002,6 +1002,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -1009,7 +1010,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "taskwarrior"
@@ -1040,6 +1040,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -1051,7 +1052,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "router"
@@ -1085,6 +1085,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -1092,7 +1093,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "reddit-archive"
@@ -1123,6 +1123,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -1130,7 +1131,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "messenger-sqlite"
@@ -1161,6 +1161,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -1172,7 +1173,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "machine-telemetry"
@@ -1205,6 +1205,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -1216,7 +1217,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "machine-records"
@@ -1247,6 +1247,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -1258,7 +1259,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "machine-records"
@@ -1289,6 +1289,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -1300,7 +1301,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "machine-records"
@@ -1331,6 +1331,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -1342,7 +1343,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "machine-records"
@@ -1373,6 +1373,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -1384,7 +1385,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "machine-records"
@@ -1415,6 +1415,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -1426,7 +1427,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "machine-records"
@@ -1458,6 +1458,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -1469,7 +1470,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "machine-records"
@@ -1500,6 +1500,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -1511,7 +1512,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "machine-records"
@@ -1543,6 +1543,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [
               "token_file"
             ],
@@ -1552,7 +1553,6 @@
                 "root": "projects"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "github"
@@ -1587,6 +1587,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -1594,7 +1595,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "freedom"
@@ -1625,6 +1625,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -1632,7 +1633,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "beads"
@@ -1663,6 +1663,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -1670,7 +1671,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "agentctl"
@@ -1701,6 +1701,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -1708,7 +1709,6 @@
                 "root": "data"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "atuin"
@@ -1739,6 +1739,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -1746,7 +1747,6 @@
                 "root": "environment"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "zsh"
@@ -1777,6 +1777,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -1784,7 +1785,6 @@
                 "root": "environment"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "bash"
@@ -1815,6 +1815,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -1822,7 +1823,6 @@
                 "root": "data"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "fish"
@@ -1855,9 +1855,9 @@
             "capabilities": [
               "hyprland"
             ],
+            "captured_by": "session",
             "credentials": [],
             "locations": [],
-            "owner": "session",
             "streams": [
               {
                 "capabilities": [],
@@ -1903,6 +1903,7 @@
             "capabilities": [
               "journalctl"
             ],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -1910,7 +1911,6 @@
                 "root": "spool"
               }
             ],
-            "owner": "system",
             "streams": [
               {
                 "capabilities": [],
@@ -1959,9 +1959,9 @@
           "capture": true,
           "description": {
             "capabilities": [],
+            "captured_by": "session",
             "credentials": [],
             "locations": [],
-            "owner": "session",
             "streams": [
               {
                 "capabilities": [
@@ -2000,6 +2000,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -2007,7 +2008,6 @@
                 "root": "data"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "activitywatch"
@@ -2041,6 +2041,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -2048,7 +2049,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "journal-json"
@@ -2086,6 +2086,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -2093,7 +2094,6 @@
                 "root": "projects"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "repository"
@@ -2125,6 +2125,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -2148,7 +2149,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "chromium"
@@ -2179,6 +2179,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -2202,7 +2203,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "chromium"
@@ -2233,6 +2233,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -2240,7 +2241,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "takeout-chrome"
@@ -2271,6 +2271,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -2278,7 +2279,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "spotify"
@@ -2309,6 +2309,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -2316,7 +2317,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "raindrop"
@@ -2347,6 +2347,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -2354,7 +2355,6 @@
                 "root": "declared"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "notes"
@@ -2385,6 +2385,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -2392,7 +2393,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "mbox"
@@ -2423,6 +2423,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -2430,7 +2431,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "maildir"
@@ -2461,6 +2461,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [
               "token_file or password_file"
             ],
@@ -2470,7 +2471,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "imap"
@@ -2501,6 +2501,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [
               "client_id_file",
               "client_secret_file",
@@ -2512,7 +2513,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "gmail"
@@ -2547,6 +2547,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -2554,7 +2555,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "outlook"
@@ -2585,6 +2585,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -2592,7 +2593,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "outlook-csv"
@@ -2623,6 +2623,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -2630,7 +2631,6 @@
                 "root": "data"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "weechat"
@@ -2661,6 +2661,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -2672,7 +2673,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "calendar"
@@ -2703,6 +2703,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -2710,7 +2711,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "takeout"
@@ -2741,6 +2741,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -2748,7 +2749,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "takeout"
@@ -2780,6 +2780,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -2787,7 +2788,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "takeout"
@@ -2818,6 +2818,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -2825,7 +2826,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "takeout"
@@ -2856,6 +2856,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -2863,7 +2864,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "takeout"
@@ -2894,6 +2894,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -2901,7 +2902,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "takeout"
@@ -2932,6 +2932,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -2939,7 +2940,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "takeout"
@@ -2970,6 +2970,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -2977,7 +2978,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "takeout"
@@ -3008,6 +3008,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -3015,7 +3016,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "takeout"
@@ -3046,6 +3046,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -3053,7 +3054,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "goodreads"
@@ -3084,6 +3084,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -3091,7 +3092,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "messenger"
@@ -3122,6 +3122,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -3129,7 +3130,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "sleep-as-android"
@@ -3160,6 +3160,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -3167,7 +3168,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "wykop"
@@ -3202,6 +3202,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -3209,7 +3210,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "reddit"
@@ -3243,6 +3243,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -3250,7 +3251,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "samsung-health"
@@ -3281,6 +3281,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -3288,7 +3289,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "samsung-sms"
@@ -3319,6 +3319,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -3326,7 +3327,6 @@
                 "root": "input"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "samsung-account"
@@ -3360,6 +3360,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -3367,7 +3368,6 @@
                 "root": "home"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "arbtt"
@@ -3398,6 +3398,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -3405,7 +3406,6 @@
                 "root": "capture"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "asciinema"
@@ -3437,6 +3437,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -3444,7 +3445,6 @@
                 "root": "capture"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "asciinema"
@@ -3475,6 +3475,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -3482,7 +3483,6 @@
                 "root": "capture"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "kitty-scrollback"
@@ -3514,6 +3514,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -3521,7 +3522,6 @@
                 "root": "capture"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "input-log"
@@ -3557,6 +3557,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -3564,7 +3565,6 @@
                 "root": "declared"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "raw-log"
@@ -3595,6 +3595,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -3602,7 +3603,6 @@
                 "root": "declared"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "steering"
@@ -3633,6 +3633,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -3640,7 +3641,6 @@
                 "root": "declared"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "sinnix-lake"
@@ -3652,9 +3652,9 @@
               "wayland",
               "wl-paste"
             ],
+            "captured_by": "session",
             "credentials": [],
             "locations": [],
-            "owner": "session",
             "streams": [
               {
                 "capabilities": [],
@@ -3710,6 +3710,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -3717,7 +3718,6 @@
                 "root": "declared"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "sinnix-lake"
@@ -3729,9 +3729,9 @@
               "session_bus",
               "busctl"
             ],
+            "captured_by": "session",
             "credentials": [],
             "locations": [],
-            "owner": "session",
             "streams": [
               {
                 "capabilities": [],
@@ -3774,6 +3774,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -3781,7 +3782,6 @@
                 "root": "declared"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "sinnix-lake"
@@ -3813,6 +3813,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -3820,7 +3821,6 @@
                 "root": "declared"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "sinnix-lake"
@@ -3852,6 +3852,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -3859,7 +3860,6 @@
                 "root": "declared"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "sinnix-lake"
@@ -3879,7 +3879,7 @@
         "sinnix-lake"
       ],
       "name": "desktop.idle-inhibitor",
-      "purpose": "presence and AFK evidence",
+      "purpose": "presence and AFK state",
       "shapes": [
         "append-file"
       ]
@@ -3891,6 +3891,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -3898,7 +3899,6 @@
                 "root": "declared"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "sinnix-lake"
@@ -3930,6 +3930,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -3937,7 +3938,6 @@
                 "root": "declared"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "sinnix-lake"
@@ -3969,6 +3969,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -3976,7 +3977,6 @@
                 "root": "declared"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "sinnix-lake"
@@ -4008,6 +4008,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -4015,7 +4016,6 @@
                 "root": "declared"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "sinnix-lake"
@@ -4047,6 +4047,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -4054,7 +4055,6 @@
                 "root": "declared"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "sinnix-lake"
@@ -4086,6 +4086,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -4093,7 +4094,6 @@
                 "root": "declared"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "sinnix-lake"
@@ -4125,6 +4125,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -4132,7 +4133,6 @@
                 "root": "declared"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "sinnix-lake"
@@ -4165,6 +4165,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -4172,7 +4173,6 @@
                 "root": "declared"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "sinnix-lake"
@@ -4207,9 +4207,9 @@
               "session_bus",
               "busctl"
             ],
+            "captured_by": "session",
             "credentials": [],
             "locations": [],
-            "owner": "session",
             "streams": [
               {
                 "capabilities": [],
@@ -4248,9 +4248,9 @@
             "capabilities": [
               "runtime"
             ],
+            "captured_by": "session",
             "credentials": [],
             "locations": [],
-            "owner": "session",
             "streams": [
               {
                 "capabilities": [],
@@ -4290,9 +4290,9 @@
           "capture": true,
           "description": {
             "capabilities": [],
+            "captured_by": "session",
             "credentials": [],
             "locations": [],
-            "owner": "session",
             "streams": [
               {
                 "capabilities": [
@@ -4350,6 +4350,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -4357,7 +4358,6 @@
                 "root": "declared"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "library"
@@ -4388,6 +4388,7 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [
               {
@@ -4395,7 +4396,6 @@
                 "root": "declared"
               }
             ],
-            "owner": "system",
             "streams": []
           },
           "format": "library"
@@ -4426,9 +4426,9 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [],
-            "owner": "system",
             "streams": []
           },
           "format": "source-observation"
@@ -4447,7 +4447,7 @@
         "source-observation"
       ],
       "name": "source.observation",
-      "purpose": "source read outcomes and coverage evidence",
+      "purpose": "source read outcomes and coverage observations",
       "shapes": []
     },
     {
@@ -4457,9 +4457,9 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [],
-            "owner": "system",
             "streams": []
           },
           "format": "forecast"
@@ -4489,9 +4489,9 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [],
-            "owner": "system",
             "streams": []
           },
           "format": "duplicate"
@@ -4520,9 +4520,9 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [],
-            "owner": "system",
             "streams": []
           },
           "format": "query"
@@ -4552,9 +4552,9 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [],
-            "owner": "system",
             "streams": []
           },
           "format": "analysis"
@@ -4573,7 +4573,7 @@
         "analysis"
       ],
       "name": "analysis.request",
-      "purpose": "canonical analysis questions",
+      "purpose": "authored analysis questions",
       "shapes": []
     },
     {
@@ -4583,9 +4583,9 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [],
-            "owner": "system",
             "streams": []
           },
           "format": "signals"
@@ -4616,9 +4616,9 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [],
-            "owner": "system",
             "streams": []
           },
           "format": "page-crawl"
@@ -4649,9 +4649,9 @@
           "capture": false,
           "description": {
             "capabilities": [],
+            "captured_by": "system",
             "credentials": [],
             "locations": [],
-            "owner": "system",
             "streams": [
               {
                 "capabilities": [],
