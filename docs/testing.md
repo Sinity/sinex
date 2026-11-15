@@ -146,7 +146,7 @@ one changes:
 - Read models rebuilt from events equal the ones maintained incrementally (`search_modes_apply_to_live_indexing_and_its_rebuild`).
 - Lifecycle state order holds after every operation: no live event has a non-live parent (`assert_state_order` in `sinex-store/src/lifecycle/tests.rs`).
 - Archive moves whole chains; restore is refused while another reading is live; replay archives the readings it replaces and a failed replay keeps the old one (`archive_moves_whole_chains`, `restore_refused_while_other_reading_live`, `replay_archives_replaced_readings_of_a_material`, `a_later_material_read_failure_rolls_back_the_entire_replay_sequence`).
-- Online schema work resumes in order after interruption, and a failing upgrade rolls back whole (`work_after_start_resumes_in_order_and_walks_answer_as_filled`, `whole_chain_rolls_back_when_its_last_upgrade_fails`).
+- A schema version this build has no steps from is refused unchanged, and a forward step records the version it reaches (`a_version_without_steps_to_this_one_is_refused_unchanged`, `a_forward_step_runs_from_its_version_and_records_the_next`).
 
 The lifecycle suite is the core one: whole chains move together, restore is
 refused on a collision, a replay is undone by archiving its chain and
