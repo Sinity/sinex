@@ -78,7 +78,7 @@ A parser fix re-reads old bytes into a new reading without making them a newer s
 
 How queries use these clocks is in [query](query.md); the clocks themselves and the logical day are in [architecture](architecture.md#configuration-and-clocks).
 
-Time from other hosts carries its clock details (clock identity, measured offset and monotonic anchors), labelled and never rewritten ([time across hosts](hosts.md#time-across-hosts)).
+Time from other hosts carries its clock details (clock identity, measured offset and clock samples), labelled and never rewritten ([time across hosts](hosts.md#time-across-hosts)).
 
 ## Identity
 

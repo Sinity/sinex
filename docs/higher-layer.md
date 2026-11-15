@@ -112,17 +112,17 @@ No bare confidence number admits an inferred tier. Each inferred method carries 
 
 ## Work episodes
 
-### Episodes anchored on objectives
+### Episodes keyed by objective
 
-Anchors are structured objectives only, in order: an explicit task reference named in a structured field (a commit trailer, a branch name, a pull request, a session's task link recorded by Polylogue); a pull request; a branch in a repository. No anchor is recognised from command names or prose.
+Objectives are structured only, in order: an explicit task reference named in a structured field (a commit trailer, a branch name, a pull request, a session's task link recorded by Polylogue); a pull request; a branch in a repository. No objective is recognised from command names or prose.
 
-1. Each attributed span, act, commit, check and agent session joins the anchors its exact links name.
-2. A span with only a project joins that project's open episode within its activity session only if exactly one is open; otherwise it becomes an unanchored project segment, never a guess between objectives.
-3. **An episode persists across days** until its anchor closes (task closed, pull request merged, branch merged or deleted) or until there has been no activity for the dormancy period (profile default 14 days), when it becomes `dormant`, never `closed`.
-4. Conflicting exact anchors or a new objective split an episode; late evidence linking two segments to one anchor merges them, keeping old and new membership.
+1. Each attributed span, act, commit, check and agent session joins the objectives its links name.
+2. A span with only a project joins that project's open episode within its activity session only if exactly one is open; otherwise it becomes a project segment without an objective, never a guess between objectives.
+3. **An episode persists across days** until its objective closes (task closed, pull request merged, branch merged or deleted) or until there has been no activity for the dormancy period (profile default 14 days), when it becomes `dormant`, never `closed`.
+4. Conflicting objectives or a new objective split an episode; later records linking two segments to one objective merge them, keeping old and new membership.
 5. A commit-only gap or a shared title never defines human work.
 
-`work.episode` carries the anchor kind and reference; project; scope, supported start and end; `state` (`open`, `dormant`, or `closed` with its closing evidence); `operator_s` and `agent_s`; member references; suspension and resumption references; the last acts as references; open items (a failing check with no later pass on the same commit, unanswered agent questions or permission waits, unchecked todos, open child tasks, uncommitted changes when captured); the coverage snapshot; and split and merge membership links.
+`work.episode` carries the objective kind and reference; project; scope, supported start and end; `state` (`open`, `dormant`, or `closed` with its closing evidence); `operator_s` and `agent_s`; member references; suspension and resumption references; the last acts as references; open items (a failing check with no later pass on the same commit, unanswered agent questions or permission waits, unchecked todos, open child tasks, uncommitted changes when captured); the coverage snapshot; and split and merge membership links.
 
 **Labels are extractive and name their source**: the task title, pull-request title, branch name, the first human prompt's derived title, or the top commit subjects. An abstractive label written by a model is a [model feature](derivations.md#model-features).
 
@@ -141,7 +141,7 @@ Anchors are structured objectives only, in order: an explicit task reference nam
 
 The resume card is the boxed rendering of an episode's resume pack, an activity trail: a stored [`context.pack`](#packs-and-narratives) for one episode, with these sections in order:
 
-1. **Where**: the episode label and its source, anchor, project, state; when last worked on and for how long, operator and agent time apart.
+1. **Where**: the episode label and its source, objective, project, state; when last worked on and for how long, operator and agent time apart.
 2. **Goal**: the objective as recorded, cited; unknown if none.
 3. **Trail**: the last operator and agent acts in time order (edits with file and line where captured, commands with exit status, prompts and the agent's last answer heading, commits, pages), with the last-edit location first, because it is the resumption cue with measured support.
 4. **Open**: failing checks with no later pass on the same commit, unanswered agent questions, unchecked todos, a closed task without verification, uncommitted changes.

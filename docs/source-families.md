@@ -164,7 +164,7 @@ Family F07.
 - Xiaomi cloud acquisition keeps the original server responses. A failed vendor request is an acquisition failure and a gap, not an empty health record.
 - Gadgetbridge's database is a row source; its exported GPX and XML members are files in their original formats.
 
-**Live wearables.** BLE capture records the wearable's available GATT notifications and reads and protocol packets with device, service and characteristic UUID, exact payload bytes, sequence, device time and receipt and monotonic clock anchors.
+**Live wearables.** BLE capture records the wearable's available GATT notifications and reads and protocol packets with device, service and characteristic UUID, exact payload bytes, sequence, device time and receipt and monotonic clock samples.
 - Standards are decoded where they apply; unknown proprietary payloads stay bytes with untyped status, never invented measures.
 - Authentication uses existing credentials at acquisition and never appears in records.
 - Sync history and live measurements carry device and provider IDs, and their overlap is accounted for.
@@ -183,7 +183,7 @@ Family F08.
 **The phone application** is a primary source: its event logs and binary sensor files, media and sidecars, Android logcat, call, SMS and contact data, app usage, notifications, power and ambient state, instrument answers and Health Connect records, in their original format.
 - The phone hub forwards the original bytes through the producer protocol ([producers](producers.md)) and acknowledges an upload only after Sinex acknowledges it. File acquisition still reads existing phone packages; there is no second, converted phone format.
 - Device identity survives reconnects and path changes. Upload identity, content digest and offset make resends safe.
-- Sensor arrays yield one event per sample. Compressed chunks keep clock anchors and sample addressability.
+- Sensor arrays yield one event per sample. Compressed chunks keep clock samples and sample addressability.
 - Logcat is one event per logcat record, including continuation fields, at every priority.
 - Every app event category and every new unknown kind is captured.
 - Sensor and location sampling uses the producer's real cadence and reports losses rather than claiming continuous observation.

@@ -18,7 +18,7 @@ On example hosts `kestrel` (a workstation that runs `sinexd`), `server` (always 
 - **Monday evening, a flaky network.** The phone reconnects. Discrete records go first (transfer class `immediate`); audio and sensor chunks wait for an unmetered network. Its Sources rows switch from `held` to `capturing`.
 - **Wednesday, `kestrel`'s database is down for an upgrade.** `server` and the phone keep spooling; nothing is lost and the coverage grid shows no gap, because nothing was missed: the records were held and arrived late.
 - **Thursday, no signal for 30 hours.** On reconnection the producer's `hello` measures the phone's clock offset (+2.3 s, round trip 40 ms). Readings with instant precision carry `clock offset +2.3 s (measured)`; cross-host views align on the corrected time and say so; the stored `ts_orig` stays what the phone's clock read.
-- **Saturday, a reboot loop.** The phone's wall clock starts years in the past until the network sets it. Records framed then carry monotonic anchors; a later good anchor on the same boot re-anchors them on replay, labelled `captured (re-anchored from monotonic clock)`.
+- **Saturday, a reboot loop.** The phone's wall clock starts years in the past until the network sets it. Records framed then carry monotonic clock samples; a later good clock sample on the same boot re-times them on replay, labelled `captured (re-timed from monotonic clock)`.
 - **Back home.** The Day view for Wednesday has one lane per host plus an operator lane, and a query over Wednesday's notifications answers completely, its coverage facet saying the rows arrived 31 hours late. Day packs were provisional while data was held and recomputed when it landed. No interrupting notice fired for the late notifications, and no "phone stalled" notice fired during the flight, because the phone's out-of-contact deadline is 48 hours; one fired only when the phone's last report said its capture service had died.
 
 ## Host
@@ -70,7 +70,7 @@ The time rules stand ([time](events.md#time)): time is decided once, at framing;
 - **Offset samples.** Each `hello` and `progress` round trip gives `(at, offset, rtt)` for the producer's host, kept as append-only self-observation. The host's offset estimate at an instant is the minimum-round-trip sample in the surrounding window (the NTP clock filter); its uncertainty is half that round trip plus the drift since.
 - **Labels, never rewrites.** A reading whose kind declares instant or second precision gets `clock offset ±x (measured)` in its time quality when its host's estimated offset exceeds that precision. `ts_orig` keeps the host's wall time, which lines up with the host's own logs.
 - **Aligned time at read.** Cross-host views and queries (`group by host`, the operator lane, time joins across hosts) order on `ts_orig − offset` and print the correction. Single-host views use `ts_orig`.
-- **Steps and anchors.** Producers that can record `(monotonic, wall)` anchor pairs record one at least once per material part and at every observed wall-clock step. A record framed while the wall clock was implausible (before the host's first contact, or behind a later anchor on the same boot) has time quality `unknown`; replay with a later good anchor on the same boot re-frames it from its monotonic time with quality `captured`. Clock records are append-only, so this is replay, not repair.
+- **Steps and clock samples.** Producers that can record `(monotonic, wall)` clock samples record one at least once per material part and at every observed wall-clock step. A record framed while the wall clock was implausible (before the host's first contact, or behind a later clock sample on the same boot) has time quality `unknown`; replay with a later good clock sample on the same boot re-frames it from its monotonic time with quality `captured`. Clock records are append-only, so this is replay, not repair.
 - **The commit-time check stays local.** The bound on a captured time ahead of commit applies to Sinex's own clock; a remote reading far in the future is kept and labelled `suspect: ahead of commit by …`.
 
 ## Contact, held data and coverage
@@ -114,7 +114,7 @@ Every phone source is captured in the form the phone writes it, one record per s
 | location | fixes with accuracy, speed, bearing and provider; raw GNSS measurements while moving | location APIs | no |
 | health records | all granted record types, change tokens and deletions | the platform's health API (root cannot substitute for its grants) | no |
 | ambient audio and voice notes | audio chunks with sidecars | microphone foreground service | no |
-| sensors | sensor chunks with monotonic and wall anchors | sensor API | no |
+| sensors | sensor chunks with monotonic and wall clock samples | sensor API | no |
 | device events | the app's own log: network, Bluetooth, power, thermal, unlocks, do-not-disturb, package changes | the app | no |
 | system log | every log record, all buffers, continuously | `READ_LOGS`, granted once over adb | no |
 | touch and buttons | the same `input.evdev` declaration as the desktop | `/dev/input` | yes |
