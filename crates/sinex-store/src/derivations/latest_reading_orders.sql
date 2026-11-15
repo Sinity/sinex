@@ -1,6 +1,6 @@
 WITH selected_runs AS MATERIALIZED (
   SELECT id,name FROM core.runs WHERE name=ANY($1::text[]) AND events>0
-), maxima AS (
+), maxima AS MATERIALIZED (
   SELECT r.name,max(e.reading_order) AS reading_order
   FROM core.events e JOIN selected_runs r ON r.id=e.run_id GROUP BY r.name
 )
