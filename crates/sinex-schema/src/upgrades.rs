@@ -14,7 +14,7 @@ pub(crate) struct Step {
 }
 
 /// The oldest version this build upgrades from: the version of every
-/// deployed database when the steps before it were retired.
+/// deployed database when the steps before it were removed.
 pub(crate) const LANDED_VERSION: i32 = 40;
 
 /// The steps after [`LANDED_VERSION`], in landing order.
