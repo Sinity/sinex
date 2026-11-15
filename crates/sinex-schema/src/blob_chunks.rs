@@ -29,11 +29,3 @@ pub(crate) fn hooks() -> Vec<String> {
         "GRANT EXECUTE ON FUNCTION core.blob_descriptors(text) TO sinex_writer".into(),
     ]
 }
-pub(crate) fn statements() -> Vec<String> {
-    let mut out = tables();
-    out.extend(hooks());
-    out
-}
-pub(crate) fn before(statement: &str) -> bool {
-    !statement.contains("core.blob_chunks") && !statement.contains("core.blob_descriptors")
-}

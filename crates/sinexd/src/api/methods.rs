@@ -670,7 +670,6 @@ impl Api {
         let open_backup_holds = sinex_store::backup::open_summary(&mut conn).await?;
         let telemetry =
             sinex_store::telemetry::latest(&mut conn, SinexTelemetry::EVENT_TYPE).await?;
-        let upgrade_work = sinex_store::diagnostics::upgrade_work(&mut conn).await?;
         let refusals = sinex_store::diagnostics::ingress_refusals(&mut conn).await?;
         let producer_errors = sinex_store::diagnostics::producer_errors(&mut conn).await?;
         let selected = sinex_store::registry::selected_derivations(&mut conn).await?;
@@ -772,8 +771,6 @@ impl Api {
                 "refused": row.search_refusals,
             },
             "schema_version": row.schema_version,
-            // Upgrade tasks the daemon still runs after start; empty when done.
-            "upgrade_work_after_start": upgrade_work,
             "failures_24h": row.failures_24h,
             // Inputs that cannot be read admit no records, so no record failure
             // counts them; each binding failing now is listed here instead.

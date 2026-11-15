@@ -22,11 +22,3 @@ pub(crate) const LOOKUP: &str =
 pub(crate) fn tables() -> Vec<String> {
     vec![SPACES.into(), VECTORS.into(), LOOKUP.into()]
 }
-pub(crate) fn statements() -> Vec<String> {
-    let mut out = tables();
-    out.extend([
-        "GRANT SELECT,INSERT,UPDATE,DELETE ON core.embedding_spaces,core.embedding_vectors TO sinex_writer".into(),
-        "REVOKE ALL ON core.embedding_spaces,core.embedding_vectors FROM sinex_reader".into(),
-    ]);
-    out
-}

@@ -51,244 +51,63 @@ fn declarations_are_deterministic_and_named() {
     assert!(all.contains("CREATE VIEW event_types.\"command_executed\""));
 }
 
-#[devkit::test]
-fn each_version_after_0_has_its_upgrade() {
-    assert_eq!(i32::try_from(upgrades::upgrades().len()).unwrap(), VERSION);
+async fn applied_version(conn: &mut PgConnection) -> Option<i32> {
+    sqlx::query_scalar("SELECT max(version) FROM sinex_schema.applied")
+        .fetch_one(conn)
+        .await
+        .unwrap()
 }
 
-async fn search_version_two(conn: &mut PgConnection) {
-    sqlx::raw_sql(include_str!("tests/version_four.sql"))
-        .execute(&mut *conn)
-        .await
-        .unwrap();
-    sqlx::raw_sql(include_str!("tests/version_two.sql"))
-        .execute(conn)
-        .await
-        .unwrap();
-}
-
-/// Startup never upgrades: it refuses an older version, names the upgrade
-/// command and leaves the store as it was; the explicit apply then upgrades.
+/// A database at a version this build has no steps from, newer or older, is
+/// refused by every entry point and left as it was.
 #[devkit::test]
-async fn startup_refuses_an_older_version_and_leaves_it_unchanged(db: devkit::pg::TestDatabase) {
+async fn a_version_without_steps_to_this_one_is_refused_unchanged(db: devkit::pg::TestDatabase) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
-    search_version_two(&mut conn).await;
     let owners = crate::kinds::Owners::default();
-    let error = start(&mut conn, &owners).await.unwrap_err();
-    assert!(matches!(error, Error::UpgradeNeeded { found: 2 }));
-    assert!(error.to_string().contains("sinexd admin upgrade"));
-    assert!(matches!(
-        require_current(&mut conn).await,
-        Err(Error::UpgradeNeeded { found: 2 })
-    ));
-    let version: Option<i32> = sqlx::query_scalar("SELECT max(version) FROM sinex_schema.applied")
-        .fetch_one(&mut conn)
-        .await
-        .unwrap();
-    assert_eq!(version, Some(2));
-    assert_eq!(
-        apply(&mut conn).await.unwrap(),
-        Applied::Upgraded {
-            from: 2,
-            to: VERSION
-        }
-    );
-    assert_eq!(
-        start(&mut conn, &owners).await.unwrap(),
-        Applied::Current { version: VERSION }
-    );
-}
-
-#[devkit::test]
-async fn search_upgrade_preserves_populated_text_and_other_rows(db: devkit::pg::TestDatabase) {
-    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     let fresh = catalog(&mut conn).await.unwrap();
-    search_version_two(&mut conn).await;
-    for (position, kind, class) in [
-        (1, "command.imported", "open"),
-        (2, "journal.entry", "guarded"),
-        (3, "lake.observed", "open"),
-    ] {
-        let id: String = sqlx::query_scalar("INSERT INTO core.events (id,event_type,source,run_id,material_id,anchor,ts_quality,commit_seq,payload,reading_order,record_hash,class) VALUES (uuidv7(),$1,'test',uuidv7(),uuidv7(),0,'unknown',$2,'{}',1,decode(repeat('01',32),'hex'),$3) RETURNING id::text")
-            .bind(kind).bind(i64::from(position)).bind(class).fetch_one(&mut conn).await.unwrap();
-        sqlx::query("INSERT INTO core.search_text (event_id,text) VALUES ($1::text::uuid,'strasse café café cargo test')")
-            .bind(id).execute(&mut conn).await.unwrap();
-    }
-    conn.execute("INSERT INTO core.search_text (event_id,text) VALUES (uuidv7(),'orphan stays searchable'); INSERT INTO core.consumer_positions (consumer,commit_seq,change_seq) VALUES ('read.search_text',33,4); INSERT INTO raw.positions (binding,cursor,carry,committed_seq) VALUES ('test','{\"offset\":42}','{}',33)").await.unwrap();
-    let before: Vec<serde_json::Value> =
-        sqlx::query_scalar("SELECT to_jsonb(s) FROM core.search_text s ORDER BY event_id")
-            .fetch_all(&mut conn)
-            .await
-            .unwrap();
-    let events: Vec<serde_json::Value> = sqlx::query_scalar(
-        "SELECT to_jsonb(e)-'kind_version'-'validation'-'producer_family'-'producer_identity'-'producer_host'-'producer_frame'-'source_version'-'source_fingerprint' FROM core.events e ORDER BY id",
-    )
-    .fetch_all(&mut conn)
-    .await
-    .unwrap();
-    assert_eq!(
-        apply(&mut conn).await.unwrap(),
-        Applied::Upgraded {
-            from: 2,
-            to: VERSION
-        }
-    );
-    let after: Vec<serde_json::Value> =
-        sqlx::query_scalar("SELECT to_jsonb(s) FROM core.search_text s ORDER BY event_id")
-            .fetch_all(&mut conn)
-            .await
-            .unwrap();
-    assert_eq!(after, before);
-    let copied: i64 = sqlx::query_scalar("SELECT count(*) FROM core.search_trigram")
-        .fetch_one(&mut conn)
-        .await
-        .unwrap();
-    assert_eq!(copied, 1);
-    crate::online::finish(&mut conn).await.unwrap();
-    assert_eq!(
-        sqlx::query_scalar::<_, serde_json::Value>(
-            "SELECT to_jsonb(e)-'kind_version'-'validation'-'producer_family'-'producer_identity'-'producer_host'-'producer_frame'-'source_version'-'source_fingerprint' FROM core.events e ORDER BY id"
-        )
-        .fetch_all(&mut conn)
-        .await
-        .unwrap(),
-        events
-    );
-    let policy: Vec<(String,bool)> = sqlx::query_as("SELECT e.event_type,(t.event_id IS NOT NULL) FROM core.search_text s JOIN core.events e ON e.id=s.event_id LEFT JOIN core.search_trigram t ON t.event_id=s.event_id ORDER BY e.event_type").fetch_all(&mut conn).await.unwrap();
-    assert_eq!(
-        policy,
-        [
-            ("command.imported".into(), true),
-            ("journal.entry".into(), false),
-            ("lake.observed".into(), false)
-        ]
-    );
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT commit_seq FROM core.search_position")
-            .fetch_one(&mut conn)
-            .await
-            .unwrap(),
-        33
-    );
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>(
-            "SELECT committed_seq FROM raw.positions WHERE binding='test'"
-        )
-        .fetch_one(&mut conn)
-        .await
-        .unwrap(),
-        33
-    );
-    assert_eq!(catalog(&mut conn).await.unwrap(), fresh);
-    conn.execute("SET ROLE sinex_reader").await.unwrap();
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM core.visible_search_text")
-            .fetch_one(&mut conn)
-            .await
-            .unwrap(),
-        2
-    );
-    assert!(
-        sqlx::query("SELECT text FROM core.search_text")
-            .execute(&mut conn)
-            .await
-            .is_err()
-    );
-}
-
-#[devkit::test]
-async fn search_upgrade_refuses_writer_and_rolls_back_failed_index_build(
-    db: devkit::pg::TestDatabase,
-) {
-    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
-    search_version_two(&mut conn).await;
-    let before = catalog(&mut conn).await.unwrap();
-    let mut writer = PgConnection::connect(&db.url(None)).await.unwrap();
-    sqlx::query("SELECT pg_advisory_lock($1)")
-        .bind(WRITER_LOCK)
-        .execute(&mut writer)
-        .await
-        .unwrap();
-    assert!(matches!(apply(&mut conn).await, Err(Error::WriterRunning)));
-    sqlx::query("SELECT pg_advisory_unlock($1)")
-        .bind(WRITER_LOCK)
-        .execute(&mut writer)
-        .await
-        .unwrap();
-    // A later step's mark already exists, so the upgrade fails after the
-    // search step and every earlier statement.
-    conn.execute("CREATE TABLE sinex_schema.events_feed_pending ()")
-        .await
-        .unwrap();
-    assert!(apply(&mut conn).await.is_err());
-    conn.execute("DROP TABLE sinex_schema.events_feed_pending")
-        .await
-        .unwrap();
-    assert_eq!(catalog(&mut conn).await.unwrap(), before);
-    assert_eq!(
-        sqlx::query_scalar::<_, i32>("SELECT max(version) FROM sinex_schema.applied")
-            .fetch_one(&mut conn)
-            .await
-            .unwrap(),
-        2
-    );
-    assert_eq!(
-        apply(&mut conn).await.unwrap(),
-        Applied::Upgraded {
-            from: 2,
-            to: VERSION
-        }
-    );
-}
-
-/// The upgrade's transaction
-/// rewrites no event chunk. It writes only the event rows whose output number
-/// is not the default.
-#[devkit::test]
-async fn upgrade_keeps_event_storage(db: devkit::pg::TestDatabase) {
-    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
-    search_version_two(&mut conn).await;
-    for (position, output_index) in [(1, 0), (2, 3), (3, 0), (4, i32::from(i16::MAX))] {
-        sqlx::query("WITH event AS (INSERT INTO core.events (id,event_type,source,run_id,material_id,anchor,output_index,ts_quality,commit_seq,payload,reading_order,record_hash) VALUES (uuidv7(),'command.imported','test',uuidv7(),uuidv7(),0,$2,'unknown',$1,'{}',1,decode(repeat('01',32),'hex')) RETURNING id) INSERT INTO core.search_text (event_id,text) SELECT id,'cargo test' FROM event")
-            .bind(i64::from(position))
-            .bind(i16::try_from(output_index).unwrap())
+    for found in [VERSION + 1, upgrades::LANDED_VERSION - 1] {
+        sqlx::query("DELETE FROM sinex_schema.applied")
             .execute(&mut conn)
             .await
             .unwrap();
-    }
-    conn.execute("INSERT INTO core.search_text (event_id,text) VALUES (uuidv7(),'no reading')")
-        .await
-        .unwrap();
-    let storage = "SELECT array_agg(pg_relation_filenode(relation)::bigint ORDER BY relation::text) FROM show_chunks('core.events') relation";
-    let before: Vec<i64> = sqlx::query_scalar(storage)
-        .fetch_one(&mut conn)
-        .await
-        .unwrap();
-    assert!(!before.is_empty());
-    apply(&mut conn).await.unwrap();
-    let after: Vec<i64> = sqlx::query_scalar(storage)
-        .fetch_one(&mut conn)
-        .await
-        .unwrap();
-    assert_eq!(after, before, "no event chunk is rewritten");
-    let written: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM core.events, (SELECT xmin::text AS transaction FROM sinex_schema.applied WHERE version=$1) upgrade WHERE xmin::text=transaction",
-    )
-    .bind(VERSION)
-    .fetch_one(&mut conn)
-    .await
-    .unwrap();
-    assert_eq!(written, 2);
-    let ordinals: Vec<i64> =
-        sqlx::query_scalar("SELECT output_index FROM core.events ORDER BY commit_seq")
-            .fetch_all(&mut conn)
+        sqlx::query("INSERT INTO sinex_schema.applied (version) VALUES ($1)")
+            .bind(found)
+            .execute(&mut conn)
             .await
             .unwrap();
-    assert_eq!(ordinals, [0, 3, 0, i64::from(i16::MAX)]);
+        assert!(
+            matches!(require_current(&mut conn).await, Err(Error::Version { found: f }) if f == found)
+        );
+        assert!(
+            matches!(start(&mut conn, &owners).await, Err(Error::Version { found: f }) if f == found)
+        );
+        assert!(matches!(apply(&mut conn).await, Err(Error::Version { found: f }) if f == found));
+        assert_eq!(applied_version(&mut conn).await, Some(found));
+        assert_eq!(catalog(&mut conn).await.unwrap(), fresh);
+    }
+}
+
+/// A forward step runs from its own version and records the next one.
+#[devkit::test]
+async fn a_forward_step_runs_from_its_version_and_records_the_next(db: devkit::pg::TestDatabase) {
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut steps = upgrades::STEPS.to_vec();
+    steps.push(upgrades::Step {
+        name: "synthetic",
+        statements: || vec!["CREATE TABLE core.synthetic_step (value integer NOT NULL)".into()],
+    });
+    let mut tx = conn.begin().await.unwrap();
+    run_steps(&mut tx, VERSION, &steps).await.unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(applied_version(&mut conn).await, Some(VERSION + 1));
+    sqlx::query("INSERT INTO core.synthetic_step VALUES (1)")
+        .execute(&mut conn)
+        .await
+        .unwrap();
 }
 
 /// Decoding an encoded key returns it, and distinct keys encode distinctly,
-/// so the upgrade's key conversion needs no comparison against a copy.
+/// so the compact stored form keeps every key and never merges two.
 #[devkit::test]
 async fn equivalence_key_encoding_round_trips_and_keeps_keys_distinct(
     db: devkit::pg::TestDatabase,
@@ -314,9 +133,6 @@ async fn equivalence_key_encoding_round_trips_and_keeps_keys_distinct(
     .unwrap();
     assert_eq!((changed, merged), (0, 0));
 }
-
-mod frame_outcomes;
-mod preservation;
 
 #[devkit::test]
 async fn query_kinds_keep_their_definitions_when_apply_recreates_a_view(
@@ -344,18 +160,3 @@ async fn query_kinds_keep_their_definitions_when_apply_recreates_a_view(
 }
 
 mod kinds;
-
-/// A synthetic downgrade leaves unused column slots; names and definitions remain the contract.
-pub(crate) async fn catalog(conn: &mut PgConnection) -> Result<Vec<String>, Error> {
-    Ok(super::catalog(conn)
-        .await?
-        .into_iter()
-        .map(|row| match row.split_once(' ') {
-            Some((name, rest)) if name.matches('.').count() == 2 => {
-                let rest = rest.split_once(' ').map_or(rest, |(_, after)| after);
-                format!("{name} {rest}")
-            }
-            _ => row,
-        })
-        .collect())
-}

@@ -3,7 +3,7 @@ use sinex_model::{Class, EventId, MaterialId, RunId};
 use sqlx::{Connection, Executor};
 
 /// Exact current declarations separated from unversioned historical version one.
-pub(crate) const CURRENT_KINDS: &[(&str, u64)] = &[
+const CURRENT_KINDS: &[(&str, u64)] = &[
     ("activity.window", 2),
     ("activity.session", 2),
     ("activity.span", 2),
@@ -49,32 +49,6 @@ fn current_kind_map_separates_known_versions_from_unknown_version_one() {
         assert!(historical.payload_schema.is_none());
         assert!(historical.key_rule.is_none());
         assert!(historical.time_rule.is_none());
-    }
-}
-
-pub(crate) async fn assert_historical_and_current(conn: &mut PgConnection) {
-    let references: Vec<_> = CURRENT_KINDS
-        .iter()
-        .flat_map(|&(name, current_version)| {
-            [1, current_version].map(|version| KindRef {
-                name: name.into(),
-                version,
-            })
-        })
-        .collect();
-    let saved = load(conn, &references).await.unwrap();
-    assert_eq!(saved.len(), references.len());
-    for &(name, _) in CURRENT_KINDS {
-        let historical = KindDeclaration::historical(name.into());
-        assert_eq!(
-            saved[&historical.kind], historical,
-            "{name} historical metadata stays unknown"
-        );
-        let current = (sinex_model::event_types::find(name).unwrap().declaration)();
-        assert_eq!(
-            saved[&current.kind], current,
-            "{name} retains its exact known declaration"
-        );
     }
 }
 

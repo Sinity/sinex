@@ -29,19 +29,6 @@ pub(crate) fn hooks() -> Vec<String> {
  FRAME_FK.into(),
 ]
 }
-pub(crate) fn statements() -> Vec<String> {
-    let mut out = vec![TABLE.into()];
-    for (name, ty) in EVENT_COLUMNS {
-        out.push(format!("ALTER TABLE core.events ADD COLUMN {name} {ty}"));
-    }
-    for (name, ty) in FRAME_COLUMNS {
-        out.push(format!(
-            "ALTER TABLE core.ingress_frames ADD COLUMN {name} {ty}"
-        ));
-    }
-    out.extend(hooks());
-    out
-}
 pub(crate) fn fresh(statement: &mut String) {
     let columns = if statement.starts_with("CREATE TABLE core.events (") {
         EVENT_COLUMNS
@@ -58,18 +45,4 @@ pub(crate) fn fresh(statement: &mut String) {
         .map(|(name, ty)| format!(",\n  {name} {ty}"))
         .collect::<String>();
     statement.insert_str(end, &extra);
-}
-pub(crate) fn before(statement: &str) -> bool {
-    !statement.contains("registry.source_declarations")
-        && !statement.contains("registry.keep_source_declaration")
-        && !statement.contains("events_producer_frame")
-}
-pub(crate) fn previous(statement: &mut String) {
-    if statement.starts_with("CREATE TABLE core.events (")
-        || statement.starts_with("CREATE TABLE core.ingress_frames (")
-    {
-        for (name, ty) in EVENT_COLUMNS.iter().chain(FRAME_COLUMNS) {
-            *statement = statement.replace(&format!(",\n  {name} {ty}"), "");
-        }
-    }
 }

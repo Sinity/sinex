@@ -1,7 +1,8 @@
 //! The declarations create an empty database at the current schema version,
-//! [`VERSION`]. A database at an older version is upgraded by the forward
-//! upgrades in `upgrades.rs`, in one transaction, only by the explicit
-//! [`apply`]; [`start`] and the daemon refuse it. A newer one is refused.
+//! [`VERSION`]. A database at an older version this build has steps for is
+//! upgraded by the forward steps in `upgrades.rs`, in one transaction, only
+//! by the explicit [`apply`]; [`start`] and the daemon refuse it. A newer
+//! one, or one older than the first step, is refused.
 //!
 //! Enum CHECK lists come from the Rust enums (`DbCheck`), and the event-type
 //! bundled registry rows and views come from `sinex_model::event_types::ALL`.
@@ -16,24 +17,14 @@ use sqlx::{Connection, Executor, PgConnection};
 
 mod backups;
 mod blob_chunks;
-mod event_indexes;
-mod frame_outcomes;
 mod library_curation;
-mod lifecycle;
-pub mod online;
-mod owner_protocol;
-pub mod prepare;
 mod query_cursors;
 mod read_boundary;
-mod receipt_indexes;
-mod search_trigram;
 mod source_declarations;
 mod source_expectations;
-mod stage_without_parser;
 pub use read_boundary::require as require_read_boundary;
 mod description;
 pub mod kinds;
-mod signals;
 mod sparse_indexes;
 mod tables;
 mod tombstone_history;
@@ -43,26 +34,18 @@ mod vectors;
 /// The session advisory lock held by the database's one writer.
 pub const WRITER_LOCK: i64 = 0x7369_6e65_7857_5254;
 
-/// The schema version these declarations create: one more than the last
-/// upgrade starts from.
-pub const VERSION: i32 = upgrades::LANDED_VERSION + upgrades::NAMED.len() as i32;
-
-/// The schema version immediately before a named forward step in this build.
-pub fn version_before(step: &str) -> Option<i32> {
-    upgrades::NAMED
-        .iter()
-        .position(|name| *name == step)
-        .map(|position| {
-            upgrades::LANDED_VERSION
-                + i32::try_from(position).expect("named upgrade positions fit schema versions")
-        })
-}
+/// The schema version these declarations create: the version after the
+/// last forward step.
+pub const VERSION: i32 = upgrades::LANDED_VERSION + upgrades::STEPS.len() as i32;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
     Database(#[from] sqlx::Error),
-    #[error("database is at schema version {found}, this build declares version {VERSION}")]
+    #[error(
+        "database is at schema version {found}; this build declares version {VERSION} and upgrades from version {}",
+        upgrades::LANDED_VERSION
+    )]
     Version { found: i32 },
     #[error(
         "database is at schema version {found}, this build declares version {VERSION}; stop sinexd and run `sinexd admin upgrade`"
@@ -148,7 +131,7 @@ pub fn declarations() -> Vec<String> {
     }
     statements.push("CREATE TABLE sinex_schema.applied (version integer PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())".into());
     statements.extend(description::Description::current().statements());
-    statements.extend(grants(&description::Description::current()));
+    statements.extend(grants());
     statements
 }
 
@@ -211,17 +194,6 @@ impl Checks {
 /// without the grant: the event, its type and time stay visible, its payload
 /// and equivalence key do not.
 fn visibility() -> Vec<String> {
-    let mut statements = visibility_functions();
-    statements.extend([
-        VISIBLE_EVENTS.into(),
-        VISIBLE_SEARCH_TEXT.into(),
-        VISIBLE_SEARCH_TRIGRAM.into(),
-        VISIBLE_EMBEDDING_VECTORS.into(),
-    ]);
-    statements
-}
-
-fn visibility_functions() -> Vec<String> {
     vec![
         "CREATE OR REPLACE FUNCTION core.payload_time(value text) RETURNS timestamptz LANGUAGE plpgsql IMMUTABLE STRICT AS $$ BEGIN
  IF value !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}([.][0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})$' THEN RETURN NULL; END IF;
@@ -236,10 +208,14 @@ fn visibility_functions() -> Vec<String> {
       OR class = ANY (string_to_array(coalesce(current_setting('sinex.grants', true), ''), ','))
 $$"
         .to_string(),
+        VISIBLE_EVENTS.into(),
+        VISIBLE_SEARCH_TEXT.into(),
+        VISIBLE_SEARCH_TRIGRAM.into(),
+        VISIBLE_EMBEDDING_VECTORS.into(),
     ]
 }
 
-pub(crate) const VISIBLE_EVENTS: &str = "CREATE VIEW core.visible_events AS SELECT
+const VISIBLE_EVENTS: &str = "CREATE VIEW core.visible_events AS SELECT
   e.id, e.event_type, e.source, e.run_id, e.material_id, e.anchor, e.output_index, e.parents,
   e.ts_orig, e.ts_quality, e.ts_coided, e.ts_persisted, e.commit_seq,
   CASE WHEN core.class_visible(e.class) THEN e.payload
@@ -249,42 +225,23 @@ pub(crate) const VISIBLE_EVENTS: &str = "CREATE VIEW core.visible_events AS SELE
   e.producer_family, e.producer_identity, e.source_version, e.source_fingerprint
 FROM core.events e";
 
-pub(crate) const VISIBLE_SEARCH_TEXT: &str =
+const VISIBLE_SEARCH_TEXT: &str =
     "CREATE VIEW core.visible_search_text AS SELECT s.event_id, s.text, s.tsv
 FROM core.search_text s JOIN core.events e ON e.id = s.event_id
 WHERE core.class_visible(e.class)";
 
-pub(crate) const VISIBLE_SEARCH_TRIGRAM: &str =
+const VISIBLE_SEARCH_TRIGRAM: &str =
     "CREATE VIEW core.visible_search_trigram AS SELECT s.event_id, s.text
 FROM core.search_trigram s JOIN core.events e ON e.id=s.event_id
 WHERE core.class_visible(e.class)";
 
 /// A vector is readable when both the embedding event and its target are.
-pub(crate) const VISIBLE_EMBEDDING_VECTORS: &str =
-    "CREATE VIEW core.visible_embedding_vectors AS SELECT
+const VISIBLE_EMBEDDING_VECTORS: &str = "CREATE VIEW core.visible_embedding_vectors AS SELECT
   v.embedding_id, v.target_id, v.space, v.dimensions, v.projected, v.coverage, v.reason
 FROM core.embedding_vectors v
 JOIN core.events e ON e.id = v.embedding_id
 JOIN core.events target ON target.id = v.target_id
 WHERE core.class_visible(e.class) AND core.class_visible(target.class)";
-
-/// The views as they stood before producer metadata and stored vectors.
-pub(crate) fn visibility_before_producer_families() -> Vec<String> {
-    let mut statements = visibility_functions();
-    statements.extend([
-        "CREATE VIEW core.visible_events AS SELECT
-  e.id, e.event_type, e.source, e.run_id, e.material_id, e.anchor, e.output_index, e.parents,
-  e.ts_orig, e.ts_quality, e.ts_coided, e.ts_persisted, e.commit_seq,
-  CASE WHEN core.class_visible(e.class) THEN e.payload
-       ELSE jsonb_build_object('withheld', e.class) END AS payload,
-  CASE WHEN core.class_visible(e.class) THEN e.equivalence_key END AS equivalence_key,
-  e.reading_order, e.record_hash, e.record_state, e.class, e.kind_version, e.validation
-FROM core.events e"
-            .to_string(),
-        crate::search_trigram::PREVIOUS_VIEW.into(),
-    ]);
-    statements
-}
 
 /// One view per event type with the payload's top-level fields as columns, for
 /// read-only SQL (`event_types.<type>`).
@@ -333,7 +290,7 @@ fn kind_view(kind: &event_types::RegisteredEventType) -> description::View {
     }
 }
 
-fn grants(description: &description::Description) -> Vec<String> {
+fn grants() -> Vec<String> {
     let mut out = Vec::new();
     for schema in tables::SCHEMAS {
         out.push(format!(
@@ -382,17 +339,10 @@ fn grants(description: &description::Description) -> Vec<String> {
             "core.source_counts",
         ][..],
     ] {
-        let readable = relations
-            .iter()
-            .copied()
-            .filter(|name| description.declares_relation(name))
-            .collect::<Vec<_>>();
-        if !readable.is_empty() {
-            out.push(format!(
-                "GRANT SELECT ON {} TO sinex_reader",
-                readable.join(", ")
-            ));
-        }
+        out.push(format!(
+            "GRANT SELECT ON {} TO sinex_reader",
+            relations.join(", ")
+        ));
     }
     out
 }
@@ -414,10 +364,15 @@ pub async fn require_current(connection: &mut PgConnection) -> Result<(), Error>
         .await?;
     match found {
         Some(VERSION) => require_read_boundary(connection).await,
-        Some(found) if (0..VERSION).contains(&found) => Err(Error::UpgradeNeeded { found }),
+        Some(found) if upgradable(found) => Err(Error::UpgradeNeeded { found }),
         Some(found) => Err(Error::Version { found }),
         None => Err(Error::Unversioned),
     }
+}
+
+/// Whether this build has the forward steps from `found` to [`VERSION`].
+fn upgradable(found: i32) -> bool {
+    (upgrades::LANDED_VERSION..VERSION).contains(&found)
 }
 
 /// Create the schema in an empty database, upgrade one at an older version,
@@ -465,7 +420,7 @@ async fn apply_allowing(
                 .await?;
         return match found {
             Some(VERSION) => apply_current(connection, owners).await,
-            Some(found) if (0..VERSION).contains(&found) => {
+            Some(found) if upgradable(found) => {
                 if upgrade_allowed {
                     upgrade(connection, found, owners).await
                 } else {
@@ -506,7 +461,7 @@ async fn apply_allowing(
     }
 }
 
-/// Run the upgrades from `from` to [`VERSION`] in one transaction, while no
+/// Run the forward steps from `from` to [`VERSION`] in one transaction, while no
 /// writer holds the database: a writer of an older build would not keep the
 /// new tables current.
 async fn upgrade(
@@ -539,24 +494,33 @@ async fn run_upgrades(
     if !free {
         return Err(Error::WriterRunning);
     }
-    let all = upgrades::upgrades_with(prepare::ready(connection).await?);
-    let start = usize::try_from(from).expect("an upgrade starts at a version from 0");
-    for (version, statements) in (from..).zip(&all[start..]) {
-        for statement in statements {
-            connection
-                .execute(statement.as_str())
-                .await
-                .map_err(|e| sqlx::Error::Protocol(format!("{e}\nin statement: {statement}")))?;
+    run_steps(connection, from, upgrades::STEPS).await?;
+    description::Description::current()
+        .apply(connection, owners)
+        .await?;
+    Ok(())
+}
+
+/// Run `steps`, the steps after the landed version, from version `from`,
+/// recording each version reached.
+async fn run_steps(
+    connection: &mut PgConnection,
+    from: i32,
+    steps: &[upgrades::Step],
+) -> Result<(), Error> {
+    let start = usize::try_from(from - upgrades::LANDED_VERSION)
+        .expect("an upgrade starts at or after the landed version");
+    for (version, step) in (from..).zip(&steps[start..]) {
+        for statement in (step.statements)() {
+            connection.execute(statement.as_str()).await.map_err(|e| {
+                sqlx::Error::Protocol(format!("{e}\nin upgrade step {}: {statement}", step.name))
+            })?;
         }
         sqlx::query("INSERT INTO sinex_schema.applied (version) VALUES ($1)")
             .bind(version + 1)
             .execute(&mut *connection)
             .await?;
     }
-    kinds::upgrade_historical(connection, owners).await?;
-    description::Description::current()
-        .apply(connection, owners)
-        .await?;
     Ok(())
 }
 
@@ -663,7 +627,7 @@ async fn apply_views(
                 .await?;
         }
     }
-    for statement in grants(description) {
+    for statement in grants() {
         connection.execute(statement.as_str()).await?;
     }
     require_read_boundary(connection).await?;

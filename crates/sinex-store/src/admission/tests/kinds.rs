@@ -1,5 +1,5 @@
 use super::*;
-use sinex_model::{EventPayload, KindDeclaration, KindRef};
+use sinex_model::{DbCheck, EventPayload, KindDeclaration, KindRef};
 use sqlx::Executor;
 
 fn declared(name: &str, version: u64) -> KindDeclaration {
@@ -274,122 +274,6 @@ async fn external_validation_and_rules_apply_on_every_writer_route(db: devkit::p
 }
 
 #[devkit::test]
-async fn compressed_upgrade_keeps_immutable_rows_and_historical_metadata(
-    db: devkit::pg::TestDatabase,
-) {
-    let mut conn = crate::AdmissionContext::connect(&db.url(None))
-        .await
-        .unwrap();
-    let schema_before = crate::test_schema::catalog(&mut *conn).await;
-    admit_one(&mut conn, &batch(vec![keyed("example", 1, 1, 1)])).await;
-    let sample = Event::build(
-        &sinex_model::event_types::telemetry::SinexTelemetry {
-            component: "writer".into(),
-            name: String::new(),
-            sampled_at: Timestamp::from_unix_secs(1_700_000_000).unwrap(),
-            measures: [("events".into(), 1.0)].into(),
-        },
-        "sinex.telemetry",
-        Origin::Record {
-            location: RecordLocation {
-                material: MaterialId::new(),
-                anchor: 0,
-            },
-            output_index: 0,
-        },
-        ReadingOrder(1),
-        [7; 32],
-        Class::Open,
-    )
-    .unwrap();
-    admit_one(&mut conn, &batch(vec![sample])).await;
-    let before: Vec<(uuid::Uuid, Value, Vec<u8>)> =
-        sqlx::query_as("SELECT id,payload,record_hash FROM core.events ORDER BY id")
-            .fetch_all(&mut *conn)
-            .await
-            .unwrap();
-    assert_eq!(
-        before.len(),
-        2,
-        "ordinary telemetry and source readings have distinct retained IDs"
-    );
-    crate::test_schema::downgrade(&mut *conn).await;
-    conn.execute("INSERT INTO registry.event_types (name,payload_schema,key_fields,replace_rule) VALUES ('historic..reading','{}',ARRAY[]::text[],'suppress_repeat')").await.unwrap();
-    conn.execute("UPDATE sinex_schema.applied SET version=3")
-        .await
-        .unwrap();
-    conn.execute("SELECT compress_chunk(format('%I.%I',chunk_schema,chunk_name)::regclass) FROM timescaledb_information.chunks WHERE hypertable_schema='core' AND hypertable_name='events'").await.unwrap();
-    let compressed:i64=sqlx::query_scalar("SELECT count(*) FROM timescaledb_information.chunks WHERE hypertable_name='events' AND is_compressed").fetch_one(&mut *conn).await.unwrap();
-    assert_eq!(
-        compressed, 1,
-        "both ordinary event types share the core event chunk"
-    );
-    assert_eq!(
-        sinex_schema::apply(&mut *conn).await.unwrap(),
-        sinex_schema::Applied::Upgraded {
-            from: 3,
-            to: sinex_schema::VERSION
-        }
-    );
-    sinex_schema::online::finish(&mut *conn).await.unwrap();
-    assert_eq!(crate::test_schema::catalog(&mut *conn).await, schema_before);
-    let still_compressed:i64=sqlx::query_scalar("SELECT count(*) FROM timescaledb_information.chunks WHERE hypertable_name='events' AND is_compressed").fetch_one(&mut *conn).await.unwrap();
-    assert_eq!(still_compressed, compressed);
-    let after: Vec<(uuid::Uuid, Value, Vec<u8>)> =
-        sqlx::query_as("SELECT id,payload,record_hash FROM core.events ORDER BY id")
-            .fetch_all(&mut *conn)
-            .await
-            .unwrap();
-    assert_eq!(after, before);
-    let metadata: Vec<(i64, String)> =
-        sqlx::query_as("SELECT kind_version,validation FROM core.events ORDER BY id")
-            .fetch_all(&mut *conn)
-            .await
-            .unwrap();
-    assert_eq!(metadata, vec![(1, "unvalidated".into()); 2]);
-    let historical = sinex_schema::kinds::load(
-        &mut *conn,
-        &[
-            KindRef {
-                name: "command.executed".into(),
-                version: 1,
-            },
-            KindRef {
-                name: "sinex.telemetry".into(),
-                version: 1,
-            },
-        ],
-    )
-    .await
-    .unwrap();
-    assert_eq!(historical.len(), 2);
-    assert!(
-        historical
-            .values()
-            .all(|d| d.payload_schema.is_none() && d.key_rule.is_none())
-    );
-    let historical_name = KindRef {
-        name: "historic..reading".into(),
-        version: 1,
-    };
-    assert!(
-        sinex_schema::kinds::load(&mut *conn, std::slice::from_ref(&historical_name))
-            .await
-            .unwrap()
-            .contains_key(&historical_name)
-    );
-    let once = sinex_schema::catalog(&mut *conn).await.unwrap();
-    sinex_schema::apply(&mut *conn).await.unwrap();
-    assert_eq!(once, sinex_schema::catalog(&mut *conn).await.unwrap());
-    assert!(
-        sqlx::query("UPDATE core.events SET payload='{}'")
-            .execute(&mut *conn)
-            .await
-            .is_err()
-    );
-}
-
-#[devkit::test]
 async fn concurrent_registration_returns_one_immutable_definition(db: devkit::pg::TestDatabase) {
     let url = db.url(None);
     let d = declared("example.concurrent", 9);
@@ -524,6 +408,37 @@ async fn search_modes_apply_to_live_indexing_and_its_rebuild(db: devkit::pg::Tes
     assert_eq!(indexed, ["example.typed", "example.words"]);
 }
 
+/// Make `event` a reading stored before its kind declared rules: its kind's
+/// historical version one, saved with no rules, and the reading at that
+/// version, unvalidated. Stores that predate kind versions hold such readings.
+async fn as_historical_reading(conn: &mut PgConnection, event: &Event) {
+    let historical = KindDeclaration::historical(event.event_type.clone());
+    sqlx::query("INSERT INTO registry.event_types (name, version, declaring_producer, payload_schema, normalization,
+          key_rule, replace_rule, time_rule, field_hints, removed_rule, keep_known, owned_blobs, search, definition_hash)
+          VALUES ($1,1,$2,NULL,$3,'null',NULL,'null','[]','null','{}','[]',$4,$5)")
+        .bind(&historical.kind.name)
+        .bind(&historical.declaring_producer)
+        .bind(historical.normalization.as_db())
+        .bind(historical.search.as_db())
+        .bind(historical.definition_hash())
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    // Event rows are immutable; the guard is bypassed for this setup only.
+    let mut tx = conn.begin().await.unwrap();
+    tx.execute("SET LOCAL session_replication_role = replica")
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE core.events SET kind_version = 1, validation = 'unvalidated' WHERE id = $1",
+    )
+    .bind(event.id.0)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+}
+
 #[devkit::test]
 async fn a_removal_of_a_historical_reading_keeps_its_payload_class_and_exact_reference(
     db: devkit::pg::TestDatabase,
@@ -535,11 +450,7 @@ async fn a_removal_of_a_historical_reading_keeps_its_payload_class_and_exact_ref
     original.class = Class::Guarded;
     let location = original.location().unwrap().0;
     admit_one(&mut conn, &batch(vec![original.clone()])).await;
-    crate::test_schema::downgrade(&mut *conn).await;
-    conn.execute("UPDATE sinex_schema.applied SET version=3")
-        .await
-        .unwrap();
-    sinex_schema::apply(&mut *conn).await.unwrap();
+    as_historical_reading(&mut conn, &original).await;
     let mut removal = batch(vec![]);
     removal.archive = vec![ArchiveRequest::RemovedAtSource {
         locations: vec![location],

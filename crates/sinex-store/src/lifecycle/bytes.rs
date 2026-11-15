@@ -36,18 +36,6 @@ pub(super) async fn tombstone_events(
     )
     .execute(&mut *conn)
     .await?;
-    // The skeleton keeps the event's parent edges, which lineage reads after
-    // the row is gone. Admission wrote them already, except for an event
-    // stored before an upgrade whose edges are still being filled.
-    sqlx::query!(
-        "INSERT INTO core.event_children (parent, child)
-         SELECT DISTINCT p.parent, e.id FROM core.events e CROSS JOIN LATERAL unnest(e.parents) p(parent)
-         WHERE e.id = ANY($1)
-         ON CONFLICT DO NOTHING",
-        events
-    )
-    .execute(&mut *conn)
-    .await?;
     sqlx::query!(
         "DELETE FROM core.search_text WHERE event_id = ANY($1)",
         events

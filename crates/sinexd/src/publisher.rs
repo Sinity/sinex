@@ -194,11 +194,6 @@ pub(crate) async fn publish_pending_measured(
     subjects: &Subjects,
     mut page_done: impl FnMut(PageTiming),
 ) -> Result<Published> {
-    // Until the upgrade's publication key is built after start, a second copy
-    // of an event has no key to go under; the saved position shows the wait.
-    if sinex_schema::online::pending(conn, sinex_schema::online::Task::PublishedKey).await? {
-        return Ok(Published::default());
-    }
     let stream = confirmed_stream(conn, js, subjects).await?;
     let origin = history_origin(&stream)?;
     let instance = stream_instance(&stream);
@@ -211,13 +206,6 @@ pub(crate) async fn publish_pending_measured(
     let mut total = Published::default();
     total.tombstoned += erase_tombstoned_in(conn, js, subjects, &instance).await?;
     loop {
-        // A fresh stream can still publish its origin completion at the head.
-        // Debt waits for the native feed path without advancing its checkpoint.
-        if sinex_schema::online::pending(conn, sinex_schema::online::Task::FeedIndex).await?
-            && commit_log::latest(conn).await? > settled
-        {
-            return Ok(total);
-        }
         let started = Instant::now();
         let page = commit_log::references_after_origin(
             conn,

@@ -266,44 +266,6 @@ pub(crate) async fn install(
     Ok(())
 }
 
-pub async fn upgrade_historical(conn: &mut PgConnection, owners: &Owners) -> Result<(), Error> {
-    let exists: bool =
-        sqlx::query_scalar("SELECT to_regclass('registry.unversioned_event_types') IS NOT NULL")
-            .fetch_one(&mut *conn)
-            .await?;
-    if !exists {
-        return Ok(());
-    }
-    let names: Vec<String> = sqlx::query_scalar(&format!(
-        "SELECT name FROM registry.unversioned_event_types UNION SELECT event_type FROM ({}) stored",
-        crate::upgrades::STORED_EVENT_TYPES
-    ))
-    .fetch_all(&mut *conn)
-    .await?;
-    let mut grouped: BTreeMap<String, Vec<KindDeclaration>> = BTreeMap::new();
-    for name in names {
-        let mut d = KindDeclaration::historical(name);
-        if d.kind.name.starts_with("polylogue.") {
-            d.declaring_producer = owners
-                .prefixes
-                .get("polylogue")
-                .cloned()
-                .unwrap_or_else(|| "polylogue".into());
-        }
-        grouped
-            .entry(d.declaring_producer.clone())
-            .or_default()
-            .push(d);
-    }
-    for (owner, declarations) in grouped {
-        register_checked(conn, &owner, &declarations).await?;
-    }
-    sqlx::query("DROP TABLE registry.unversioned_event_types")
-        .execute(conn)
-        .await?;
-    Ok(())
-}
-
 fn key_fields<'a>(rule: &'a KeyRule, fields: &mut Vec<&'a str>) -> Result<(), String> {
     match rule {
         KeyRule::Location => {}

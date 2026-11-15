@@ -31,11 +31,3 @@ pub(crate) fn hooks() -> Vec<String> {
         "GRANT EXECUTE ON FUNCTION core.backup_covers(text,bigint) TO sinex_writer".into(),
     ]
 }
-pub(crate) fn statements() -> Vec<String> {
-    let mut out = tables();
-    out.extend(hooks());
-    out
-}
-pub(crate) fn before(statement: &str) -> bool {
-    !statement.contains("core.backup_")
-}

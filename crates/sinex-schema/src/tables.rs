@@ -21,7 +21,7 @@ pub(crate) const SCHEMAS: &[&str] = &[
 /// newest reading time of every event admitted from it. Admission and the
 /// lifecycle keep it current in their own transactions, so status reads one
 /// row per source instead of counting events.
-pub(crate) const SOURCE_COUNTS: &str = "CREATE TABLE core.source_counts (
+const SOURCE_COUNTS: &str = "CREATE TABLE core.source_counts (
   source text PRIMARY KEY,
   events bigint NOT NULL CHECK (events >= 0),
   first_event timestamptz,
@@ -31,7 +31,7 @@ pub(crate) const SOURCE_COUNTS: &str = "CREATE TABLE core.source_counts (
 
 /// What a tombstone keeps of a reading: its identity, time and place, never
 /// its payload or its key's fields. Kept forever.
-pub(crate) const TOMBSTONES: &str = "CREATE TABLE core.event_tombstones (
+const TOMBSTONES: &str = "CREATE TABLE core.event_tombstones (
   event_id uuid PRIMARY KEY,
   source text NOT NULL,
   event_type text NOT NULL,
@@ -51,12 +51,12 @@ pub(crate) const TOMBSTONES: &str = "CREATE TABLE core.event_tombstones (
 
 /// The chains an operation archived, and the readings it restored: what a
 /// restore or an undo of that operation moves.
-pub(crate) const ARCHIVED_OPERATION: &str = "CREATE INDEX archived_operation ON audit.archived (operation_id) WHERE operation_id IS NOT NULL";
-pub(crate) const ARCHIVE_CHANGES_RESTORED: &str = "CREATE INDEX archive_changes_restored ON audit.archive_changes (operation_id) WHERE NOT archived";
+const ARCHIVED_OPERATION: &str = "CREATE INDEX archived_operation ON audit.archived (operation_id) WHERE operation_id IS NOT NULL";
+const ARCHIVE_CHANGES_RESTORED: &str = "CREATE INDEX archive_changes_restored ON audit.archive_changes (operation_id) WHERE NOT archived";
 
 /// Every change of a material's status at its writer position, so an
 /// operation's inverse finds the materials it moved.
-pub(crate) fn material_changes(c: &Checks) -> String {
+fn material_changes(c: &Checks) -> String {
     format!(
         "CREATE TABLE raw.material_changes (
   material_id uuid NOT NULL REFERENCES raw.materials(id),
@@ -69,13 +69,13 @@ pub(crate) fn material_changes(c: &Checks) -> String {
         status = c.material_status
     )
 }
-pub(crate) const MATERIAL_CHANGES_OPERATION: &str =
+const MATERIAL_CHANGES_OPERATION: &str =
     "CREATE INDEX material_changes_operation ON raw.material_changes (operation_id)";
 
 /// Every act that changed state, with its computed actor, its scope as given,
 /// the counts it moved, where it began and ended in the commit log, and its
 /// saved progress while it runs.
-pub(crate) fn operations(c: &Checks) -> String {
+fn operations(c: &Checks) -> String {
     format!(
         "CREATE TABLE core.operations (
   id uuid PRIMARY KEY,
@@ -95,7 +95,7 @@ pub(crate) fn operations(c: &Checks) -> String {
 }
 
 /// Live keys keep all digest bits and distinguish their logical string forms.
-pub(crate) const ENCODE_EQUIVALENCE_KEY: &str = r#"CREATE FUNCTION core.encode_equivalence_key(key text)
+const ENCODE_EQUIVALENCE_KEY: &str = r#"CREATE FUNCTION core.encode_equivalence_key(key text)
 RETURNS bytea LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
   SELECT CASE
     WHEN length(key) = 64 AND key COLLATE "C" ~ '^[0-9a-f]{64}$' THEN decode('00' || key, 'hex')
@@ -105,7 +105,7 @@ RETURNS bytea LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
   END
 $$"#;
 
-pub(crate) const DECODE_EQUIVALENCE_KEY: &str = r#"CREATE FUNCTION core.decode_equivalence_key(key bytea)
+const DECODE_EQUIVALENCE_KEY: &str = r#"CREATE FUNCTION core.decode_equivalence_key(key bytea)
 RETURNS text LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
   SELECT CASE get_byte(key, 0)
     WHEN 0 THEN encode(substring(key FROM 2), 'hex')
@@ -117,36 +117,36 @@ $$"#;
 
 /// Stable authentication key for query continuations. This is independent of
 /// sealed payload keys and is never granted to the public SQL reader role.
-pub(crate) const QUERY_CURSOR_KEY: &str = "CREATE TABLE core.query_cursor_key (
+const QUERY_CURSOR_KEY: &str = "CREATE TABLE core.query_cursor_key (
   id boolean PRIMARY KEY CHECK (id),
   secret bytea NOT NULL CHECK (length(secret) = 32)
 )";
-pub(crate) const QUERY_CURSOR_KEY_INIT: &str = "INSERT INTO core.query_cursor_key (id, secret) VALUES (true, decode(replace(gen_random_uuid()::text || gen_random_uuid()::text, '-', ''), 'hex'))";
+const QUERY_CURSOR_KEY_INIT: &str = "INSERT INTO core.query_cursor_key (id, secret) VALUES (true, decode(replace(gen_random_uuid()::text || gen_random_uuid()::text, '-', ''), 'hex'))";
 
 /// One edge per exact parent. Chain walks do not scan compressed payloads.
-pub(crate) const EVENT_CHILDREN: &str = "CREATE TABLE core.event_children (
+const EVENT_CHILDREN: &str = "CREATE TABLE core.event_children (
   parent uuid NOT NULL,
   child uuid NOT NULL,
   PRIMARY KEY (parent, child),
   CHECK (parent <> child)
 )";
-pub(crate) const EVENT_CHILDREN_CHILD: &str =
+const EVENT_CHILDREN_CHILD: &str =
     "CREATE INDEX event_children_child ON core.event_children (child)";
 
 /// Every walk over the edges reads them through these two functions, so the
 /// edges have one definition. Plain SQL bodies, so the planner inlines them
 /// into each walk and uses the edge indexes.
-pub(crate) const EVENT_CHILDREN_OF: &str = "CREATE FUNCTION core.event_children_of(event uuid)
+const EVENT_CHILDREN_OF: &str = "CREATE FUNCTION core.event_children_of(event uuid)
 RETURNS TABLE (child uuid) LANGUAGE sql STABLE PARALLEL SAFE AS $$
   SELECT c.child FROM core.event_children c WHERE c.parent = $1
 $$";
-pub(crate) const EVENT_PARENTS_OF: &str = "CREATE FUNCTION core.event_parents_of(event uuid)
+const EVENT_PARENTS_OF: &str = "CREATE FUNCTION core.event_parents_of(event uuid)
 RETURNS TABLE (parent uuid) LANGUAGE sql STABLE PARALLEL SAFE AS $$
   SELECT c.parent FROM core.event_children c WHERE c.child = $1
 $$";
 
 /// One live reading per equivalence key.
-pub(crate) const LIVE_EQUIVALENCE: &str = "CREATE TABLE core.live_equivalence (
+const LIVE_EQUIVALENCE: &str = "CREATE TABLE core.live_equivalence (
   source text NOT NULL,
   event_type text NOT NULL,
   equivalence_key bytea NOT NULL,
@@ -155,11 +155,65 @@ pub(crate) const LIVE_EQUIVALENCE: &str = "CREATE TABLE core.live_equivalence (
   record_hash bytea NOT NULL,
   PRIMARY KEY (source, event_type, equivalence_key)
 )";
-pub(crate) const LIVE_EQUIVALENCE_EVENT: &str =
+const LIVE_EQUIVALENCE_EVENT: &str =
     "CREATE INDEX live_equivalence_event ON core.live_equivalence (event_id)";
 
 /// Feed pages read events in commit order.
-pub(crate) const EVENTS_FEED: &str = "CREATE INDEX events_feed ON core.events (commit_seq,id)";
+const EVENTS_FEED: &str = "CREATE INDEX events_feed ON core.events (commit_seq,id)";
+
+/// Record locations follow physical order: materials are UUIDv7 and anchors
+/// ascend within a material, so a block-range summary finds a record's rows
+/// without a B-tree entry per event. Small ranges keep a point lookup to a
+/// few pages. Per-source and all-kind time questions read the
+/// `(event_type, ts_orig)` ranges, chunk skipping on `ts_orig`, or the source
+/// and run counters, so events carry no `(source, ts_orig)`, `(ts_orig)` or
+/// per-run index.
+const EVENTS_RECORD_LOCATION: &str = "CREATE INDEX events_record_location ON core.events USING brin (material_id, anchor) WITH (pages_per_range = 32)";
+
+/// A position taken by a transaction that admitted no event: lifecycle
+/// changes, tombstones and empty transactions. An event's position is on its
+/// own row.
+const COMMIT_LOG: &str = "CREATE TABLE core.commit_log (
+  commit_seq bigint PRIMARY KEY,
+  persisted_at timestamptz DEFAULT now()
+)";
+
+/// Receipt authority and diagnostics read frames by their requested keys,
+/// not all frames.
+const FRAMES_BY_MATERIAL: &str = "CREATE INDEX ingress_frames_material ON core.ingress_frames (material_id, number) WHERE material_id IS NOT NULL";
+const FRAMES_REFUSED_AT: &str = "CREATE INDEX ingress_frames_refused_at ON core.ingress_frames (received_at) WHERE refusal IS NOT NULL";
+const FRAMES_MALFORMED_BY_PRODUCER: &str = "CREATE INDEX ingress_frames_malformed_producer ON core.ingress_frames (producer, number DESC) WHERE refusal IS NOT NULL AND outcome->>'kind' = 'malformed'";
+
+/// Trigram text is kept apart from the full-text table, so a kind's search
+/// mode decides whether its text is here without rewriting the full-text heap.
+const SEARCH_TRIGRAM: &str = "CREATE TABLE core.search_trigram (
+  event_id uuid PRIMARY KEY,
+  text text NOT NULL
+)";
+const SEARCH_TRIGRAM_TEXT: &str =
+    "CREATE INDEX search_trigram_text ON core.search_trigram USING gin (text gin_trgm_ops)";
+
+/// A material staged before any parser recognises it has no parser: its
+/// bytes are kept and a later replay assigns one. A parser and its version
+/// are given together or not at all.
+const PARSER_COLUMNS: &str = "  parser text,\n  parser_version integer,";
+const PARSER_WITH_VERSION: &str =
+    "CONSTRAINT parser_with_version CHECK ((parser IS NULL) = (parser_version IS NULL))";
+
+/// The private materialized signal state per host; ordinary events hold the
+/// rules and deliveries.
+const SIGNAL_CHECKPOINTS: &str = "CREATE TABLE core.signal_checkpoints (
+  host text PRIMARY KEY,
+  revision bigint NOT NULL CHECK (revision >= 1),
+  state jsonb NOT NULL CHECK (jsonb_typeof(state) = 'object')
+)";
+
+/// Private signing material for owner-issued producer capabilities.
+const OWNER_PROTOCOL_KEY: &str = "CREATE TABLE core.owner_protocol_key (
+  id boolean PRIMARY KEY CHECK (id),
+  secret bytea NOT NULL CHECK (length(secret)=32)
+)";
+const OWNER_PROTOCOL_KEY_INIT: &str = "INSERT INTO core.owner_protocol_key(id,secret) VALUES(true,decode(replace(gen_random_uuid()::text || gen_random_uuid()::text,'-',''),'hex'))";
 
 pub(crate) fn tables(c: &Checks) -> Vec<String> {
     let kind_columns = kind_columns();
@@ -196,7 +250,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         class = c.class,
     );
     let mut tables=vec![
-        crate::signals::CHECKPOINT.into(),
+        SIGNAL_CHECKPOINTS.into(),
         ENCODE_EQUIVALENCE_KEY.into(),
         DECODE_EQUIVALENCE_KEY.into(),
         // Events. No foreign key points into a hypertable.
@@ -231,7 +285,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   PRIMARY KEY (operation_id, first_part)
 )".into(),
         // Positions without an event; events carry their own.
-        crate::event_indexes::COMMIT_LOG.into(),
+        COMMIT_LOG.into(),
         // The writer's counters. One writer, so a row update allocates a range.
         "CREATE TABLE core.counters (name text PRIMARY KEY, value bigint NOT NULL)".into(),
         "INSERT INTO core.counters (name, value) VALUES ('commit_seq', 0), ('tombstoned', 0)".into(),
@@ -269,9 +323,9 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   write_kind_prefixes text[],
   PRIMARY KEY (producer, frame)
 )".into(),
-        crate::receipt_indexes::MATERIAL.into(),
-        crate::receipt_indexes::REFUSALS.into(),
-        crate::receipt_indexes::MALFORMED.into(),
+        FRAMES_BY_MATERIAL.into(),
+        FRAMES_REFUSED_AT.into(),
+        FRAMES_MALFORMED_BY_PRODUCER.into(),
         // The archive is logical: archived rows stay in core.events. This is
         // the current state; archive_changes holds every transition.
         format!("CREATE TABLE audit.archived (
@@ -371,8 +425,8 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   status_operation uuid,
   {parser_with_version}
 )", material_status = c.material_status,
-    parser_columns = crate::stage_without_parser::PARSER_COLUMNS,
-    parser_with_version = crate::stage_without_parser::PARSER_WITH_VERSION),
+    parser_columns = PARSER_COLUMNS,
+    parser_with_version = PARSER_WITH_VERSION),
         "CREATE INDEX materials_input ON raw.materials (input_id, part_index)".into(),
         material_changes(c),
         MATERIAL_CHANGES_OPERATION.into(),
@@ -545,8 +599,8 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   tsv tsvector GENERATED ALWAYS AS (to_tsvector('simple', text)) STORED
 )".into(),
         "CREATE INDEX search_text_tsv ON core.search_text USING gin (tsv)".into(),
-        crate::search_trigram::TABLE.into(),
-        crate::search_trigram::INDEX.into(),
+        SEARCH_TRIGRAM.into(),
+        SEARCH_TRIGRAM_TEXT.into(),
         SEARCH_REFUSALS.into(),
         SEARCH_POSITION.into(),
         // Admission's staging table. Permanent and unlogged so compile-time
@@ -581,7 +635,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
     tables.extend(crate::backups::tables());
     tables.extend(crate::blob_chunks::tables());
     tables.extend(crate::vectors::tables());
-    tables.extend(crate::owner_protocol::statements());
+    tables.extend([OWNER_PROTOCOL_KEY.into(), OWNER_PROTOCOL_KEY_INIT.into()]);
     tables
 }
 
@@ -599,7 +653,7 @@ pub(crate) fn after_tables() -> Vec<String> {
         for template in [
             "SELECT create_hypertable('$T', by_range('id', INTERVAL '1 day'), create_default_indexes => false)",
             "CREATE INDEX ON $T (event_type, ts_orig)",
-            crate::event_indexes::RECORD_LOCATION,
+            EVENTS_RECORD_LOCATION,
             // Only derived events have parents. Without the pending list a
             // search never scans an unsorted backlog of bulk inserts (which
             // made each probe cost 0.6 ms after a backfill).
@@ -625,7 +679,7 @@ SELECT coalesce((SELECT archived FROM audit.archive_changes
 $$"
 }
 
-pub(crate) fn event_guard() -> &'static str {
+fn event_guard() -> &'static str {
     "CREATE OR REPLACE FUNCTION core.event_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF TG_OP = 'UPDATE' THEN
@@ -638,7 +692,7 @@ BEGIN
 END $$"
 }
 
-pub(crate) const KIND_PREFIXES: &str = "CREATE TABLE registry.kind_prefixes (
+const KIND_PREFIXES: &str = "CREATE TABLE registry.kind_prefixes (
   prefix text PRIMARY KEY,
   declaring_producer text NOT NULL
 )";
@@ -668,21 +722,21 @@ fn kind_declarations() -> String {
     )
 }
 
-/// Events whose text the search index refused (for example a full-text
-/// vector over PostgreSQL's size limit). The search reader records the event
-/// here and moves on, so one event never stops search, `follow` or the
-/// vector index; status counts these rows.
 /// Registration reads an input's current revision on every batch it
 /// registers.
-pub(crate) const REVISIONS_BY_INPUT: &str = "CREATE INDEX IF NOT EXISTS revisions_input_latest ON raw.revisions (input_id, started_at DESC, id DESC)";
+const REVISIONS_BY_INPUT: &str = "CREATE INDEX IF NOT EXISTS revisions_input_latest ON raw.revisions (input_id, started_at DESC, id DESC)";
 
 /// Per-event derivations read events after a commit position; compressed
 /// chunks keep no B-tree, so their commit-position ranges exclude the chunks
 /// wholly before it.
-pub(crate) const EVENTS_COMMIT_SEQ_SKIPPING: &str =
+const EVENTS_COMMIT_SEQ_SKIPPING: &str =
     "SELECT enable_chunk_skipping('core.events', 'commit_seq', if_not_exists => true)";
 
-pub(crate) const SEARCH_REFUSALS: &str = "CREATE TABLE core.search_refusals (
+/// Events whose text the search index refused (for example a full-text
+/// vector over PostgreSQL's size limit). The search reader records the event
+/// here and moves on, so one event never stops search, `follow` or the
+/// vector index; status counts these rows.
+const SEARCH_REFUSALS: &str = "CREATE TABLE core.search_refusals (
   event_id uuid PRIMARY KEY,
   reason text NOT NULL,
   refused_at timestamptz NOT NULL DEFAULT now()
@@ -692,20 +746,20 @@ pub(crate) const SEARCH_REFUSALS: &str = "CREATE TABLE core.search_refusals (
 /// `core.consumer_positions` so that a backup leaving out the rebuilt search
 /// tables leaves out this row with them: a restored copy has no position and
 /// rebuilds search from the start.
-pub(crate) const SEARCH_POSITION: &str = "CREATE TABLE core.search_position (
+const SEARCH_POSITION: &str = "CREATE TABLE core.search_position (
   only_row boolean PRIMARY KEY DEFAULT true CHECK (only_row),
   commit_seq bigint NOT NULL,
   updated_at timestamptz NOT NULL DEFAULT now()
 )";
 
-pub(crate) const REPLAY_REFUSALS: &str = "CREATE TABLE core.replay_refusals (
+const REPLAY_REFUSALS: &str = "CREATE TABLE core.replay_refusals (
   operation_id uuid NOT NULL REFERENCES core.operations(id),
   material_id uuid NOT NULL,
   refusal jsonb NOT NULL,
   PRIMARY KEY (operation_id, material_id)
 )";
 
-pub(crate) const KIND_IMMUTABILITY: &str = "CREATE FUNCTION registry.keep_definition() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'kind definitions and owners are immutable'; END $$;
+const KIND_IMMUTABILITY: &str = "CREATE FUNCTION registry.keep_definition() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'kind definitions and owners are immutable'; END $$;
 CREATE TRIGGER keep_definition BEFORE UPDATE OR DELETE ON registry.event_types FOR EACH ROW EXECUTE FUNCTION registry.keep_definition();
 CREATE TRIGGER keep_owner BEFORE UPDATE OR DELETE ON registry.kind_prefixes FOR EACH ROW EXECUTE FUNCTION registry.keep_definition()";
 
@@ -720,7 +774,7 @@ fn kind_columns() -> String {
 
 /// Exact event/stream pairs; bounds select pages, never individual messages.
 /// One row per acknowledged copy, including redelivery after deduplication expires.
-pub(crate) const PUBLISHED: &str = "CREATE TABLE core.published (
+const PUBLISHED: &str = "CREATE TABLE core.published (
   event_id uuid NOT NULL,
   stream_seq bigint NOT NULL,
   stream_instance text NOT NULL DEFAULT '',
@@ -728,7 +782,7 @@ pub(crate) const PUBLISHED: &str = "CREATE TABLE core.published (
 )";
 
 /// Blob-only admissions also need a position when pairing a store with a restored database.
-pub(crate) fn blob_changes() -> Vec<String> {
+fn blob_changes() -> Vec<String> {
     vec![
         "INSERT INTO core.counters (name, value) VALUES ('blob_changes', 0)".into(),
         "CREATE FUNCTION core.note_blob_change() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -743,18 +797,18 @@ END $$"
     ]
 }
 
-pub(crate) const BLOB_SEGMENTS: &str = "CREATE TABLE core.blob_segments (
+const BLOB_SEGMENTS: &str = "CREATE TABLE core.blob_segments (
   segment text PRIMARY KEY,
   committed_end bigint NOT NULL CHECK (committed_end >= 0)
 )";
-pub(crate) const BLOB_EXTENTS: &str = "CREATE TABLE core.blob_extents (
+const BLOB_EXTENTS: &str = "CREATE TABLE core.blob_extents (
   hash text PRIMARY KEY CHECK (hash ~ '^blake3:[0-9a-f]{64}$'),
   descriptor bytea NOT NULL,
   deleting boolean NOT NULL DEFAULT false
 )";
 
 /// Writer-owned order counters retain digests rather than source record keys.
-pub(crate) const PRODUCER_ORDERS: &str = "CREATE TABLE core.producer_orders (
+const PRODUCER_ORDERS: &str = "CREATE TABLE core.producer_orders (
   source text NOT NULL,
   event_type text NOT NULL,
   key_hash bytea NOT NULL CHECK (octet_length(key_hash) = 32),

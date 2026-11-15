@@ -85,9 +85,6 @@ pub enum Error {
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
-#[cfg(test)]
-mod test_schema;
-
 impl From<std::io::Error> for Error {
     fn from(error: std::io::Error) -> Self {
         Self::Blob(error.into())
