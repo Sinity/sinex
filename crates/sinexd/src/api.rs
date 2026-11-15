@@ -198,6 +198,7 @@ pub(crate) fn router(
         .route("/v1", post(call))
         .route("/v1/commands", get(commands))
         .route("/v1/follow", get(follow))
+        .route("/v1/backup/prepare", get(backup_prepare))
         .with_state(AppState {
             api,
             tokens: Arc::new(tokens),
@@ -394,6 +395,63 @@ async fn follow(
                 }
             }
             last = now;
+        }
+    });
+    Sse::new(ReceiverStream::new(rx))
+        .keep_alive(KeepAlive::default())
+        .into_response()
+}
+
+#[derive(Deserialize)]
+struct BackupPrepareParams {
+    output: String,
+}
+
+/// A backup's copy job, for the client that copies the backup: one `snapshot`
+/// event describing it (or one `error` event). The exported snapshot stays
+/// open while this stream stays open and closes when the client goes away or
+/// the daemon stops, so the bulk copy runs in the client's process and lives
+/// exactly as long as the client.
+async fn backup_prepare(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    UrlQuery(params): UrlQuery<BackupPrepareParams>,
+) -> Response {
+    let granted = match authorize(&state, &headers, Access::Operator) {
+        Ok(g) => g,
+        Err(r) => return r,
+    };
+    let (tx, rx) = mpsc::channel::<Result<Event, std::convert::Infallible>>(1);
+    let api = state.api.clone();
+    tokio::spawn(async move {
+        let caller = api.caller(granted).await;
+        let mut stop = api.stop.clone();
+        let methods::StartedBackup { snapshot, job } =
+            match api.backup_start(&caller, params.output).await {
+                Ok(job) => job,
+                Err(error) => {
+                    let failure =
+                        serde_json::to_string(&error.failure()).expect("failures serialize");
+                    let _ = tx
+                        .send(Ok(Event::default().event("error").data(failure)))
+                        .await;
+                    return;
+                }
+            };
+        let hold = job.boundary.id;
+        let description = serde_json::to_string(&job).expect("a backup copy job serializes");
+        if tx
+            .send(Ok(Event::default().event("snapshot").data(description)))
+            .await
+            .is_ok()
+        {
+            tokio::select! {
+                () = tx.closed() => {}
+                _ = stop.wait_for(|stopped| *stopped) => {}
+            }
+        }
+        if let Err(error) = snapshot.close().await {
+            eprintln!("sinexd backup {hold}: closing the exported snapshot: {error}");
         }
     });
     Sse::new(ReceiverStream::new(rx))

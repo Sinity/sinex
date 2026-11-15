@@ -253,30 +253,109 @@ impl Client {
         let status = resp.status();
         let mut body = resp.into_body();
         if !status.is_success() {
-            let bytes = body
-                .collect()
-                .await
-                .map_err(|e| ClientError::Protocol(e.to_string()))?
-                .to_bytes();
-            let reply: Reply = serde_json::from_slice(&bytes)
-                .map_err(|e| ClientError::Protocol(format!("{status}: {e}")))?;
-            return Err(match reply {
-                Reply::Failed { failure } | Reply::StoppedEarly { failure, .. } => {
-                    ClientError::Failed(failure)
-                }
-                Reply::Ok { .. } => ClientError::Protocol(status.to_string()),
-            });
+            return Err(refusal(status, body).await);
         }
-        let mut buffer = String::new();
-        while let Some(frame) = body.frame().await {
-            let frame = frame.map_err(|e| ClientError::Protocol(e.to_string()))?;
-            let Some(data) = frame.data_ref() else {
-                continue;
-            };
-            buffer.push_str(&String::from_utf8_lossy(data));
-            // Events end with a blank line.
-            while let Some(end) = buffer.find("\n\n") {
-                let block: String = buffer.drain(..end + 2).collect();
+        let mut events = Events::default();
+        while let Some((event, data)) = events.next(&mut body).await? {
+            if !on_event(&event, &data) {
+                return Ok(());
+            }
+        }
+        Ok(())
+    }
+
+    /// Open `backup prepare`'s stream and wait for the copy job the daemon
+    /// starts, returned as its JSON. The daemon keeps the job's snapshot open
+    /// while the returned stream is alive; dropping it closes the snapshot.
+    pub(crate) async fn backup_start(
+        &self,
+        output: &str,
+    ) -> Result<(String, BackupStream), ClientError> {
+        let default = sinex_protocol::command("backup")
+            .expect("backup command")
+            .default_deadline();
+        let mut connection = self
+            .connect_before(self.deadline.connection_timeout(Some(default)))
+            .await?;
+        let req = HttpRequest::get(format!(
+            "/v1/backup/prepare?output={}",
+            percent_encode(output)
+        ))
+        .header("host", self.endpoint.host())
+        .header("authorization", format!("Bearer {}", self.token))
+        .body(Full::new(Bytes::new()))
+        .map_err(|e| ClientError::Protocol(e.to_string()))?;
+        let resp = connection
+            .send_request(req)
+            .await
+            .map_err(|e| ClientError::Unreachable(e.to_string()))?;
+        let status = resp.status();
+        let mut body = resp.into_body();
+        if !status.is_success() {
+            return Err(refusal(status, body).await);
+        }
+        let mut events = Events::default();
+        match events.next(&mut body).await? {
+            Some((event, data)) if event == "snapshot" => Ok((
+                data,
+                BackupStream {
+                    _connection: connection,
+                    _body: body,
+                },
+            )),
+            Some((event, data)) if event == "error" => Err(ClientError::Failed(
+                serde_json::from_str(&data)
+                    .map_err(|e| ClientError::Protocol(format!("backup failure: {e}")))?,
+            )),
+            Some((event, _)) => Err(ClientError::Protocol(format!(
+                "backup prepare sent an unexpected {event} event"
+            ))),
+            None => Err(ClientError::Protocol(
+                "backup prepare ended before the daemon's copy job".into(),
+            )),
+        }
+    }
+}
+
+/// The open stream of a backup's copy job: while it lives, the daemon keeps
+/// the backup's snapshot open.
+pub(crate) struct BackupStream {
+    _connection: Connection,
+    _body: hyper::body::Incoming,
+}
+
+/// The typed failure in a refused streaming request's body.
+async fn refusal(status: StatusCode, body: hyper::body::Incoming) -> ClientError {
+    let bytes = match body.collect().await {
+        Ok(collected) => collected.to_bytes(),
+        Err(e) => return ClientError::Protocol(e.to_string()),
+    };
+    match serde_json::from_slice::<Reply>(&bytes) {
+        Ok(Reply::Failed { failure } | Reply::StoppedEarly { failure, .. }) => {
+            ClientError::Failed(failure)
+        }
+        Ok(Reply::Ok { .. }) => ClientError::Protocol(status.to_string()),
+        Err(e) => ClientError::Protocol(format!("{status}: {e}")),
+    }
+}
+
+/// Server-sent events read from a response body: each an event name and
+/// its data lines joined.
+#[derive(Default)]
+struct Events {
+    buffer: String,
+}
+
+impl Events {
+    async fn next(
+        &mut self,
+        body: &mut hyper::body::Incoming,
+    ) -> Result<Option<(String, String)>, ClientError> {
+        loop {
+            // Events end with a blank line; one without data (a keep-alive
+            // comment) is skipped.
+            while let Some(end) = self.buffer.find("\n\n") {
+                let block: String = self.buffer.drain(..end + 2).collect();
                 let mut event = "message";
                 let mut payload = Vec::new();
                 for line in block.lines() {
@@ -286,12 +365,18 @@ impl Client {
                         payload.push(d.strip_prefix(' ').unwrap_or(d));
                     }
                 }
-                if !payload.is_empty() && !on_event(event, &payload.join("\n")) {
-                    return Ok(());
+                if !payload.is_empty() {
+                    return Ok(Some((event.to_owned(), payload.join("\n"))));
                 }
             }
+            let Some(frame) = body.frame().await else {
+                return Ok(None);
+            };
+            let frame = frame.map_err(|e| ClientError::Protocol(e.to_string()))?;
+            if let Some(data) = frame.data_ref() {
+                self.buffer.push_str(&String::from_utf8_lossy(data));
+            }
         }
-        Ok(())
     }
 }
 

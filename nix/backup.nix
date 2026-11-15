@@ -1,4 +1,7 @@
-# The service prepares one backup through sinexd, then archives it with Borg.
+# The service prepares one backup, then archives it with Borg. sinexd takes
+# the hold, the snapshot and producer state; `sinexctl backup prepare` copies
+# the dumps and segments in this unit, so the copy runs at this unit's
+# priority and stops with it.
 { cfg, pkgs }:
 let
   root = cfg.backup.artifactDir;
@@ -65,7 +68,8 @@ in {
       PropagatesStopTo = [ "borgbackup-job-sinex.service" "borgbackup-job-sinex-keys.service" ];
     };
     startAt = cfg.backup.startAt;
-    path = [ pkgs.systemd pkgs.coreutils pkgs.jq pkgs.util-linux ];
+    # pg_dump runs here, beside the copy.
+    path = [ pkgs.systemd pkgs.coreutils pkgs.jq pkgs.util-linux cfg.database.package ];
     serviceConfig = {
       Type = "oneshot";
       UMask = "0077";

@@ -14,6 +14,7 @@ use sqlx::PgPool;
 
 mod analysis;
 mod backup;
+pub(crate) use backup::StartedBackup;
 mod forecast;
 mod fusion;
 mod kinds;

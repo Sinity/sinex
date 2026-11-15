@@ -167,8 +167,10 @@ pub async fn list(
 #[cfg(test)]
 mod tests;
 
-/// One exported snapshot, taken while the writer still holds the hold's commit position.
-/// Dropping its connection invalidates the snapshot; an old hold cannot recreate it.
+/// One SQL snapshot of a backup: exported by the daemon while the writer
+/// still holds the hold's commit position, or imported from it by the client
+/// that copies the backup. The exported snapshot lives as long as its
+/// exporting connection; an old hold cannot recreate it.
 pub struct Snapshot {
     connection: PgConnection,
     database_url: String,
@@ -189,6 +191,39 @@ impl Snapshot {
         let exported: String = sqlx::query_scalar("SELECT pg_export_snapshot()")
             .fetch_one(&mut connection)
             .await?;
+        Self::checked(connection, exported, hold, database_url).await
+    }
+
+    /// Read under the snapshot `exported`, which its exporter must still hold
+    /// open.
+    pub async fn import(
+        mut connection: PgConnection,
+        exported: String,
+        hold: Hold,
+        database_url: String,
+    ) -> Result<Self> {
+        sqlx::query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .execute(&mut connection)
+            .await?;
+        // A snapshot name is not a bindable parameter; it is checked to be the
+        // hexadecimal form PostgreSQL exports.
+        if exported.is_empty() || !exported.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
+            return Err(Error::Invalid(format!(
+                "{exported:?} is not a snapshot name"
+            )));
+        }
+        sqlx::query(&format!("SET TRANSACTION SNAPSHOT '{exported}'"))
+            .execute(&mut connection)
+            .await?;
+        Self::checked(connection, exported, hold, database_url).await
+    }
+
+    async fn checked(
+        mut connection: PgConnection,
+        exported: String,
+        hold: Hold,
+        database_url: String,
+    ) -> Result<Self> {
         let (name, oid): (String, i64) = sqlx::query_as(
             "SELECT datname,oid::bigint FROM pg_database WHERE datname=current_database()",
         )

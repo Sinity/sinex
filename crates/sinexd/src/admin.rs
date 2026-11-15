@@ -40,6 +40,10 @@ pub(crate) enum Admin {
     /// Print every source and derivation as JSON, for the NixOS module's
     /// generated options (`nix/catalog.json`).
     Catalog,
+    /// Copy a backup under the copy job the daemon started, read as JSON from
+    /// standard input; print the manifest. `sinexctl backup prepare` runs it
+    /// while it holds the daemon's snapshot open.
+    BackupCopy,
     /// Print the NATS server `authorization` block: the daemon user with full
     /// access and one user per producer limited to its own subjects. Passwords
     /// are read from files, so they never pass through the Nix store, and the
@@ -121,6 +125,25 @@ pub(crate) async fn run(command: Admin) -> Result<()> {
         Admin::Catalog => {
             print!("{}", catalog::render());
             Ok(())
+        }
+        // `sinexctl` reads the manifest, or the failure, from standard output.
+        Admin::BackupCopy => {
+            let copied = async {
+                let job: sinex_model::backup::CopyJob = serde_json::from_reader(std::io::stdin())?;
+                crate::backup::copy(job).await
+            }
+            .await;
+            match copied {
+                Ok(manifest) => {
+                    println!("{}", serde_json::json!({ "manifest": manifest }));
+                    Ok(())
+                }
+                Err(error) => {
+                    let failure = error.failure();
+                    println!("{}", serde_json::json!({ "error": failure }));
+                    Err(failure.into())
+                }
+            }
         }
         Admin::NatsAuthorization {
             producer_grants,

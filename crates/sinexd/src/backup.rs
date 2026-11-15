@@ -68,17 +68,26 @@ pub(crate) fn record_boundary(output: &Path, boundary: &sinex_model::backup::Hol
         .map_err(Error::from)
 }
 
-/// libpq expands a URI passed as dbname, but treats PGDATABASE as a plain name.
-/// Passwords remain exclusively in the child's environment, including a URL
-/// query password, which has precedence over the user-info password in SQLx.
-fn pg_command(program: &str, database: &str) -> Result<tokio::process::Command> {
-    let mut command = tokio::process::Command::new(program);
+/// A database URL split into its public part and its password, the password
+/// taken from either the user information or a `password` query pair (SQLx
+/// gives the query pair precedence). A plain database name has no password.
+pub(crate) struct Connection {
+    /// The URL without any password, or the plain database name.
+    pub(crate) public: String,
+    pub(crate) uri: bool,
+    pub(crate) password: Option<String>,
+}
+
+pub(crate) fn split_password(database: &str) -> Result<Connection> {
     let uri = database.split_once("://").is_some_and(|(scheme, _)| {
         scheme.eq_ignore_ascii_case("postgres") || scheme.eq_ignore_ascii_case("postgresql")
     });
     if !uri {
-        command.env("PGDATABASE", database);
-        return Ok(command);
+        return Ok(Connection {
+            public: database.to_owned(),
+            uri: false,
+            password: None,
+        });
     }
     let mut url = reqwest::Url::parse(database)
         .map_err(|_| Error::bad_value("invalid PostgreSQL connection URI"))?;
@@ -117,11 +126,27 @@ fn pg_command(program: &str, database: &str) -> Result<tokio::process::Command> 
         .collect::<Vec<_>>()
         .join("&");
     url.set_query((!query.is_empty()).then_some(query.as_str()));
+    Ok(Connection {
+        public: url.as_str().to_owned(),
+        uri: true,
+        password,
+    })
+}
+
+/// libpq expands a URI passed as dbname, but treats PGDATABASE as a plain name.
+/// Passwords remain exclusively in the child's environment.
+fn pg_command(program: &str, database: &str) -> Result<tokio::process::Command> {
+    let mut command = tokio::process::Command::new(program);
+    let connection = split_password(database)?;
+    if !connection.uri {
+        command.env("PGDATABASE", connection.public);
+        return Ok(command);
+    }
     command
         .env_remove("PGDATABASE")
         .arg("--dbname")
-        .arg(url.as_str());
-    if let Some(password) = password {
+        .arg(connection.public);
+    if let Some(password) = connection.password {
         command.env("PGPASSWORD", password);
     }
     Ok(command)
@@ -280,17 +305,12 @@ pub(crate) async fn local_sources(
     }
 }
 
-/// Populate the private artifact roots established by `create`.
-pub(crate) async fn prepare(
-    mut snapshot: Snapshot,
-    store: &Path,
-    output: &Path,
-    stop: watch::Receiver<bool>,
-    source_revision: String,
-    producer_snapshots: Vec<sinex_model::backup::ProducerSnapshot>,
-    required_producers: Option<Vec<String>>,
-) -> Result<Manifest> {
-    let producers_complete = required_producers.as_ref().is_some_and(|required| {
+/// Every required producer's state was copied, exactly once.
+pub(crate) fn producers_complete(
+    producer_snapshots: &[sinex_model::backup::ProducerSnapshot],
+    required_producers: &Option<Vec<String>>,
+) -> bool {
+    required_producers.as_ref().is_some_and(|required| {
         required.len() == producer_snapshots.len()
             && required.iter().all(|producer| {
                 producer_snapshots
@@ -301,40 +321,94 @@ pub(crate) async fn prepare(
                     .count()
                     == 1
             })
-    });
+    })
+}
+
+/// Record the boundary in `output`, and refuse a backup whose producer set
+/// is incomplete before either dump or any segment copying, keeping the
+/// refusal and the fixed position in `producer-snapshots.json` rather than presenting an
+/// incomplete copy as a manifest.
+pub(crate) fn refuse_incomplete(output: &Path, manifest: &Manifest) -> Result<()> {
+    // This record survives failures and identifies the hold without claiming a complete artifact.
+    record_boundary(output, &manifest.boundary)?;
+    File::open(output).and_then(|f| f.sync_all())?;
+    if manifest.producers_complete {
+        return Ok(());
+    }
+    record(&output.join("producer-snapshots.json"), manifest)?;
+    File::open(output).and_then(|f| f.sync_all())?;
+    let unavailable = manifest
+        .producer_snapshots
+        .iter()
+        .filter_map(|producer| {
+            producer
+                .unavailable
+                .as_ref()
+                .map(|reason| format!("{}: {reason}", producer.producer))
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    Err(Error::bad_request(format!(
+        "required producer snapshots are incomplete: {unavailable}"
+    )))
+}
+
+/// Copy the backup `job` describes in this process, reading under the
+/// snapshot the daemon exported for it. This runs in the client's process,
+/// not the daemon's: the dumps' and the segment copy's reads are charged to
+/// the client's unit and its priority, and they end when the client ends.
+pub(crate) async fn copy(job: sinex_model::backup::CopyJob) -> Result<Manifest> {
+    use sqlx::Connection;
+    let connection = sqlx::PgConnection::connect(&job.database_url)
+        .await
+        .map_err(|e| Error::from(e).within("backup database"))?;
+    let snapshot = Snapshot::import(
+        connection,
+        job.snapshot,
+        job.boundary,
+        job.database_url.clone(),
+    )
+    .await?;
+    if snapshot.database != job.database {
+        return Err(Error::bad_request(
+            "the backup snapshot belongs to a different database",
+        ));
+    }
+    // The copy ends with this process; nothing else stops it.
+    let (_stop, stop) = watch::channel(false);
+    prepare(
+        snapshot,
+        Path::new(&job.store),
+        Path::new(&job.output),
+        stop,
+        job.source_revision,
+        job.producer_snapshots,
+        job.required_producers,
+    )
+    .await
+}
+
+/// Populate the private artifact roots established by `create`.
+pub(crate) async fn prepare(
+    mut snapshot: Snapshot,
+    store: &Path,
+    output: &Path,
+    stop: watch::Receiver<bool>,
+    source_revision: String,
+    producer_snapshots: Vec<sinex_model::backup::ProducerSnapshot>,
+    required_producers: Option<Vec<String>>,
+) -> Result<Manifest> {
     let mut manifest = Manifest {
         format: 1,
         boundary: snapshot.hold.clone(),
         database: snapshot.database.clone(),
         source_revision,
+        producers_complete: producers_complete(&producer_snapshots, &required_producers),
         producer_snapshots,
         required_producers,
-        producers_complete,
         files: Vec::new(),
     };
-    // This record survives failures and identifies the hold without claiming a complete artifact.
-    record_boundary(output, &manifest.boundary)?;
-    File::open(output).and_then(|f| f.sync_all())?;
-    if !producers_complete {
-        // Keep the refusal and the fixed position without presenting an incomplete copy
-        // as a manifest. Do this before either dump or any segment copying.
-        record(&output.join("producer-snapshots.json"), &manifest)?;
-        File::open(output).and_then(|f| f.sync_all())?;
-        let unavailable = manifest
-            .producer_snapshots
-            .iter()
-            .filter_map(|producer| {
-                producer
-                    .unavailable
-                    .as_ref()
-                    .map(|reason| format!("{}: {reason}", producer.producer))
-            })
-            .collect::<Vec<_>>()
-            .join("; ");
-        return Err(Error::bad_request(format!(
-            "required producer snapshots are incomplete: {unavailable}"
-        )));
-    }
+    refuse_incomplete(output, &manifest)?;
     dump(&snapshot, output, false, stop.clone()).await?;
     dump(&snapshot, output, true, stop.clone()).await?;
     let hold_id = snapshot.hold.id;

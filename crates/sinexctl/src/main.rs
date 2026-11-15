@@ -460,6 +460,9 @@ async fn main() -> ExitCode {
             Err(e) => fail(&e.failure("follow"), json),
         };
     }
+    if name == "backup" && args.get("action").and_then(Value::as_str) == Some("prepare") {
+        return backup_prepare(&client, &args, json).await;
+    }
     let request = match Request::from_args(&name, args.clone()) {
         Ok(r) => r,
         Err(failure) => return fail(&failure, json),
@@ -614,6 +617,64 @@ fn answered(empty: bool) -> ExitCode {
         ExitCode::from(EMPTY)
     } else {
         ExitCode::SUCCESS
+    }
+}
+
+/// `backup prepare`: the daemon starts the copy job (hold, exported snapshot,
+/// producer state) and keeps its snapshot open while this process copies the
+/// dumps and segments through the sibling `sinexd`, so the bulk reads are this
+/// process's and stop with it. A failed copy releases its hold.
+async fn backup_prepare(
+    client: &client::Client,
+    args: &serde_json::Map<String, Value>,
+    json: bool,
+) -> ExitCode {
+    let Some(output) = args.get("output").and_then(Value::as_str) else {
+        return fail(
+            &local(
+                FailureKind::BadRequest,
+                "backup prepare needs --output PATH",
+            ),
+            json,
+        );
+    };
+    let (job, stream) = match client.backup_start(output).await {
+        Ok(job) => job,
+        Err(e) => return fail(&e.failure("backup"), json),
+    };
+    let copied = diagnostics::backup_copy(&job).await;
+    // The copy is done with the snapshot; closing the stream ends it.
+    drop(stream);
+    match copied {
+        Ok(manifest) => {
+            let result = json!({"artifact": manifest, "output": output, "hold_open": true});
+            print_json(&result);
+            ExitCode::SUCCESS
+        }
+        Err(mut failure) => {
+            let hold = serde_json::from_str::<Value>(&job)
+                .ok()
+                .and_then(|job| job["boundary"]["id"].as_str().map(str::to_owned));
+            if let Some(hold) = hold {
+                let release = Request::Backup {
+                    action: "release".into(),
+                    hold: Some(hold.clone()),
+                    output: None,
+                    page: None,
+                    cursor: None,
+                };
+                let note = match client.call(&release).await {
+                    Ok((_, Reply::Ok { .. })) => format!("backup hold {hold} released"),
+                    Ok((_, Reply::Failed { failure } | Reply::StoppedEarly { failure, .. })) => {
+                        format!("backup hold {hold} remains open; releasing it failed: {failure}")
+                    }
+                    Err(e) => format!("backup hold {hold} remains open; releasing it failed: {e}"),
+                };
+                failure.message =
+                    format!("{}; {note}; incomplete output {output}", failure.message);
+            }
+            fail(&failure, json)
+        }
     }
 }
 

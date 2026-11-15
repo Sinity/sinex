@@ -1,6 +1,68 @@
 //! The public operation owns actor identity and exposes forgotten holds.
 use super::*;
 
+/// Open `backup prepare`'s stream and read its one event: the job's JSON, or
+/// the failure. The stream stays open (and with it the daemon's snapshot)
+/// while the returned body lives.
+async fn open_backup(w: &World, output: &std::path::Path) -> (Result<Value, Value>, Body) {
+    let request = HttpRequest::get(format!(
+        "/v1/backup/prepare?output={}",
+        url_escape(output.to_str().unwrap())
+    ))
+    .header("authorization", format!("Bearer {OPERATOR}"))
+    .body(Body::empty())
+    .unwrap();
+    let response = w.app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.into_body();
+    let mut seen = String::new();
+    // Keep-alive comments carry no data; the event ends at the blank line
+    // after its data.
+    read_until(&mut body, &mut seen, "data:").await;
+    while !seen[seen.find("data:").unwrap()..].contains("\n\n") {
+        let frame = body.frame().await.unwrap().unwrap();
+        if let Some(data) = frame.data_ref() {
+            seen.push_str(std::str::from_utf8(data).unwrap());
+        }
+    }
+    let data: String = seen
+        .lines()
+        .filter_map(|line| line.strip_prefix("data:"))
+        .map(|data| data.strip_prefix(' ').unwrap_or(data))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let event = serde_json::from_str::<Value>(&data).unwrap();
+    if seen.contains("event: snapshot") {
+        (Ok(event), body)
+    } else {
+        (Err(event), body)
+    }
+}
+
+/// What `sinexctl backup prepare` does: start the job, copy under it (as
+/// `sinexd admin backup-copy` does) while the stream is open, then close it.
+async fn prepare_backup(w: &World, output: &std::path::Path) -> Result<Value, Value> {
+    let (job, body) = open_backup(w, output).await;
+    let job: sinex_model::backup::CopyJob = serde_json::from_value(job?).unwrap();
+    let copied = crate::backup::copy(job).await;
+    drop(body);
+    copied
+        .map(|manifest| json!({"artifact": manifest, "output": output}))
+        .map_err(|error| serde_json::to_value(error.failure()).unwrap())
+}
+
+fn url_escape(text: &str) -> String {
+    text.bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"-_.~/".contains(&b) {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect()
+}
+
 #[devkit::test]
 async fn backup_captures_producer_while_saved_binding_metadata_is_blocked(
     db: devkit::pg::TestDatabase,
@@ -44,20 +106,17 @@ async fn backup_captures_producer_while_saved_binding_metadata_is_blocked(
         .unwrap();
     let root = tempfile::tempdir().unwrap();
     let artifact = root.path().join("capture-refused");
-    let request = call_unbounded(
-        &w,
-        Some(OPERATOR),
-        json!({"method":"backup","action":"prepare","output":artifact}),
-    );
+    let request = open_backup(&w, &artifact);
     let release_metadata = async {
         let observed = tokio::time::timeout(std::time::Duration::from_secs(10), observed).await;
         lock.rollback().await.unwrap();
         observed
     };
-    let ((_, result), observed) = tokio::join!(request, release_metadata);
+    let ((result, _stream), observed) = tokio::join!(request, release_metadata);
     observed
         .expect("Capture must be polled while saved metadata waits")
         .unwrap();
+    let result = result.expect_err("an incomplete producer set is refused");
     assert!(
         result
             .to_string()
@@ -112,12 +171,8 @@ async fn backup_discovers_inputs_before_pausing_producer_publication(db: devkit:
     .await;
     let root = tempfile::tempdir().unwrap();
     let artifact = root.path().join("discovery-refused");
-    let (_, result) = call_unbounded(
-        &w,
-        Some(OPERATOR),
-        json!({"method":"backup","action":"prepare","output":artifact}),
-    )
-    .await;
+    let (result, _stream) = open_backup(&w, &artifact).await;
+    let result = result.expect_err("an unknown input format is refused");
     assert!(
         result.to_string().contains("unknown-backup-format"),
         "{result}"
@@ -264,15 +319,11 @@ async fn backup_skips_staged_spool_directories_and_refuses_unreadable_spools(
     let before = listing(&staged);
     // The daemon may not write into a staged directory.
     std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o555)).unwrap();
-    let (_, prepared) = call_unbounded(
-        &w,
-        Some(OPERATOR),
-        json!({"method":"backup","action":"prepare","output":root.path().join("backup")}),
-    )
-    .await;
-    assert_eq!(prepared["outcome"], "ok", "{prepared}");
+    let prepared = prepare_backup(&w, &root.path().join("backup"))
+        .await
+        .unwrap();
     assert_eq!(listing(&staged), before);
-    let daemon = prepared["result"]["artifact"]["producer_snapshots"]
+    let daemon = prepared["artifact"]["producer_snapshots"]
         .as_array()
         .unwrap()
         .iter()
@@ -287,7 +338,7 @@ async fn backup_skips_staged_spool_directories_and_refuses_unreadable_spools(
             .all(|file| !file["path"].as_str().unwrap().contains("/spool/")),
         "{daemon}"
     );
-    let hold = prepared["result"]["artifact"]["boundary"]["id"].clone();
+    let hold = prepared["artifact"]["boundary"]["id"].clone();
     let (_, released) = call_unbounded(
         &w,
         Some(OPERATOR),
@@ -346,15 +397,10 @@ async fn backup_skips_staged_spool_directories_and_refuses_unreadable_spools(
         .unwrap();
     drop(conn);
     std::fs::set_permissions(&clipboard, std::fs::Permissions::from_mode(0o000)).unwrap();
-    let (_, refused) = call_unbounded(
-        &w,
-        Some(OPERATOR),
-        json!({"method":"backup","action":"prepare","output":root.path().join("refused")}),
-    )
-    .await;
+    let (refused, _stream) = open_backup(&w, &root.path().join("refused")).await;
     std::fs::set_permissions(&clipboard, std::fs::Permissions::from_mode(0o755)).unwrap();
     std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755)).unwrap();
-    assert_eq!(refused["outcome"], "failed", "{refused}");
+    let refused = refused.expect_err("an unreadable spool refuses the backup");
     let message = refused.to_string();
     assert!(message.contains("@daemon"), "{refused}");
     assert!(message.contains("released"), "{refused}");
@@ -365,4 +411,59 @@ async fn backup_skips_staged_spool_directories_and_refuses_unreadable_spools(
     )
     .await;
     assert_eq!(holds["result"]["holds"], json!([]), "{holds}");
+}
+
+/// The daemon only starts the job: it copies no dump or segment itself, and
+/// the snapshot it exported lives exactly as long as the client's stream.
+/// While the stream is open another session can read under the snapshot;
+/// once the client goes away the daemon closes it.
+#[devkit::test]
+async fn backup_snapshot_lives_as_long_as_the_clients_stream(db: devkit::pg::TestDatabase) {
+    use sqlx::Connection;
+    let url = db.url(None);
+    let broker = devkit::nats::test_nats().unwrap();
+    let client = async_nats::connect(broker.url()).await.unwrap();
+    let w = world_with_api(
+        db,
+        Default::default(),
+        PgPoolOptions::new().max_connections(READ_CONNECTIONS),
+        |api| {
+            api.backup_producers = Some((client, sinex_protocol::Subjects::sinex(), vec![]));
+        },
+    )
+    .await;
+    let root = tempfile::tempdir().unwrap();
+    let artifact = root.path().join("started");
+    let (job, stream) = open_backup(&w, &artifact).await;
+    let job: sinex_model::backup::CopyJob = serde_json::from_value(job.unwrap()).unwrap();
+    assert!(artifact.join("boundary.json").exists());
+    assert!(!artifact.join("main/sinex.dump").exists());
+    assert!(!artifact.join("main/segments").exists());
+    let import = |name: String| {
+        let url = url.clone();
+        async move {
+            let mut conn = sqlx::PgConnection::connect(&url).await.unwrap();
+            sqlx::query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+                .execute(&mut conn)
+                .await
+                .unwrap();
+            sqlx::query(&format!("SET TRANSACTION SNAPSHOT '{name}'"))
+                .execute(&mut conn)
+                .await
+                .is_ok()
+        }
+    };
+    assert!(
+        import(job.snapshot.clone()).await,
+        "the snapshot is open while the stream is"
+    );
+    drop(stream);
+    let closed = async {
+        while import(job.snapshot.clone()).await {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(30), closed)
+        .await
+        .expect("the daemon closes the snapshot once the client goes away");
 }

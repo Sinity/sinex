@@ -55,3 +55,26 @@ pub struct Manifest {
     pub producers_complete: bool,
     pub producer_snapshots: Vec<ProducerSnapshot>,
 }
+
+/// What the daemon hands the client that copies a backup: the hold, the
+/// exported SQL snapshot the copy reads under, and the producer state already
+/// copied into the output while producers were paused. The daemon keeps the
+/// snapshot's exporting transaction open for as long as the client's
+/// connection stays open, and no longer.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CopyJob {
+    pub boundary: Hold,
+    /// The exported snapshot's name, for `SET TRANSACTION SNAPSHOT` and
+    /// `pg_dump --snapshot`.
+    pub snapshot: String,
+    pub database: Database,
+    /// The daemon's database URL without any password; a password comes from
+    /// the copying client's own environment.
+    pub database_url: String,
+    /// The content store whose committed segment prefixes are copied.
+    pub store: String,
+    pub output: String,
+    pub source_revision: String,
+    pub producer_snapshots: Vec<ProducerSnapshot>,
+    pub required_producers: Option<Vec<String>>,
+}
