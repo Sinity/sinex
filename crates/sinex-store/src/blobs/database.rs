@@ -65,7 +65,6 @@ impl Blobs {
     /// The caller holds the database writer claim. Ordinary startup truncates tails and replays punches.
     pub async fn recover(&self, conn: &mut sqlx::PgConnection) -> Result<()> {
         self.load(conn).await?;
-        self.require_converted(conn).await?;
         let descriptors: Vec<Vec<u8>> =
             sqlx::query_scalar!("SELECT descriptor FROM core.blob_extents WHERE deleting")
                 .fetch_all(&mut *conn)
