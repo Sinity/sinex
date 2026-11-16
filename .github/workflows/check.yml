@@ -98,6 +98,7 @@ jobs:
       - name: cargo xtask test
         run: nix develop --command cargo xtask test ${{ github.event_name == 'pull_request' && '--changed-base=HEAD^1' || '' }}
       - name: Store and derivation batch measurements
+        if: ${{ !cancelled() }}
         run: nix develop --command python3 .github/verify-store-and-derivations.py
       - name: Upload store and derivation batch artifacts
         if: ${{ always() }}
