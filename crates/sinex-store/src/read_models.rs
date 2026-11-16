@@ -67,7 +67,9 @@ pub async fn apply_search_text(conn: &mut PgConnection, events: &[Committed]) ->
         return Ok(());
     }
     // A tombstone deletes search rows before deleting events. Serialize with
-    // that deletion so an already-read page cannot put tombstoned text back.
+    // that deletion and check its retained identities so an already-read page
+    // cannot put tombstoned text back. The page already holds committed rows;
+    // only tombstoning can have removed them since the page was read.
     sqlx::query!("LOCK TABLE core.search_text, core.search_trigram IN SHARE ROW EXCLUSIVE MODE")
         .execute(&mut *conn)
         .await?;
@@ -133,7 +135,9 @@ async fn insert_search_rows(
         r#"WITH input AS MATERIALIZED (
              SELECT input.event_id, input.text, input.trigram
              FROM unnest($1::uuid[], $2::text[], $3::boolean[]) AS input(event_id, text, trigram)
-             CROSS JOIN LATERAL (SELECT e.id FROM core.events e WHERE e.id=input.event_id OFFSET 0) e
+             WHERE NOT EXISTS (
+               SELECT 1 FROM core.event_tombstones t WHERE t.event_id=input.event_id
+             )
            ), words AS (
              INSERT INTO core.search_text AS stored (event_id, text)
              SELECT event_id, text FROM input
