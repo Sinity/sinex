@@ -57,12 +57,7 @@ async fn commit_pages_follow_commit_order_and_byte_bounds(db: devkit::pg::TestDa
                 }
             );
         }
-        let payload_size: i64 = sqlx::query_scalar(
-            "SELECT pg_column_size(payload)::bigint FROM core.events WHERE commit_seq=8193",
-        )
-        .fetch_one(&mut *tx)
-        .await
-        .unwrap();
+        let payload_size = crate::payload_bytes(&all.events[0].payload);
         assert_eq!(
             after(&mut tx, 8192, 16, payload_size)
                 .await

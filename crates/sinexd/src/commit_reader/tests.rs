@@ -408,11 +408,14 @@ async fn maintenance_byte_budget_accepts_oversized_first_event_and_commit_gaps(
     .await
     .unwrap();
     assert_eq!(tail.events.len(), 1);
-    // Positions whose events are gone (tombstoned) are covered without events.
+    // Positions whose events are gone (tombstoned) are covered without events
+    // by the page that reads the tombstone's own later position.
     sqlx::raw_sql(
         "SELECT set_config('sinex.tombstone_operation', gen_random_uuid()::text, false);
          DELETE FROM core.events;
-         RESET sinex.tombstone_operation",
+         RESET sinex.tombstone_operation;
+         UPDATE core.counters SET value = 3 WHERE name = 'commit_seq';
+         INSERT INTO core.commit_log (commit_seq) VALUES (3)",
     )
     .execute(&mut *conn)
     .await
@@ -421,8 +424,8 @@ async fn maintenance_byte_budget_accepts_oversized_first_event_and_commit_gaps(
         .await
         .unwrap();
     assert!(gap.events.is_empty());
-    assert_eq!(gap.up_to, Some(2));
+    assert_eq!(gap.up_to, Some(3));
     let mut consumer = ReadModelRunner(Box::new(SearchText));
-    consumer.handle(&gap.events, 2, &mut conn).await.unwrap();
-    assert_eq!(consumer.position(&mut conn).await.unwrap(), 2);
+    consumer.handle(&gap.events, 3, &mut conn).await.unwrap();
+    assert_eq!(consumer.position(&mut conn).await.unwrap(), 3);
 }
