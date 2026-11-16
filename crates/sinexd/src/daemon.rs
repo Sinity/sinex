@@ -236,10 +236,12 @@ async fn serve(
         crate::analysis::keyed_with(&configuration),
         derivation_runner::per_event_with(&configuration)?,
     );
-    if let Some(name) = sources.derivations.keys().find(|name| {
-        !keyed.iter().any(|d| d.name() == name.as_str())
-            && !per_event.iter().any(|d| d.name() == name.as_str())
-    }) {
+    let built_names = crate::catalog::derivation_names();
+    if let Some(name) = sources
+        .derivations
+        .keys()
+        .find(|name| !built_names.contains(name))
+    {
         return Err(Error::not_found(format!(
             "derivation {name}: no such derivation"
         )));

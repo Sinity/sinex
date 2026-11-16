@@ -5,7 +5,18 @@ use super::*;
 async fn public_compare_and_switch_record_actor_and_refuse_reuse_or_stale_inputs(
     db: devkit::pg::TestDatabase,
 ) {
-    let w = world(db).await;
+    let w = world_with_api(
+        db,
+        Default::default(),
+        PgPoolOptions::new().max_connections(READ_CONNECTIONS),
+        |api| {
+            api.derivations.tags = serde_json::from_value(json!([{
+                "tag": "example", "event_type": "command.executed"
+            }]))
+            .unwrap();
+        },
+    )
+    .await;
     admit(&w, &["pwd"], 0).await;
     let compare = || json!({"method":"recompute","derivation":"tag.applier","compare":true});
     let (status, body) = call_unbounded(&w, Some(AGENT), compare()).await;

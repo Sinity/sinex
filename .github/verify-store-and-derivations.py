@@ -142,7 +142,7 @@ def compare_sql() -> None:
                 (ROOT / path).write_text(base_source(path))
             STATEMENTS.unlink(missing_ok=True)
             run(
-                ["cargo", "xtask", "test", *SELECT, "-E", "package(sinex-store) & test(query::)", "--no-fail-fast"],
+                ["cargo", "xtask", "test", *SELECT, "-E", "package(sinex-store) & test(query::)"],
                 f"sql-{version}.log",
             )
             statements = sorted(set(STATEMENTS.read_text().splitlines()))
@@ -172,7 +172,7 @@ def catalog_and_query_plan() -> None:
         "catalog.log",
     )
     run(
-        ["cargo", "xtask", "test", *SELECT, "-E", "test(committed_catalog_is_current)", "--no-fail-fast"],
+        ["cargo", "xtask", "test", *SELECT, "-E", "test(committed_catalog_is_current)"],
         "catalog-test.log",
     )
     if (OUTPUT / "catalog.json").read_bytes() != (ROOT / "nix/catalog.json").read_bytes():
@@ -186,54 +186,29 @@ def catalog_and_query_plan() -> None:
 
 
 def mutation_checks() -> None:
-    paths = [
-        "crates/sinex-derivations/src/keys.rs",
-        "crates/sinex-derivations/src/session.rs",
-        "crates/sinex-derivations/src/figures.rs",
-        "crates/sinex-derivations/src/state_interval.rs",
-        "crates/sinex-derivations/src/lib.rs",
-        "crates/sinexd/src/binding_runner.rs",
-        "crates/sinex-store/src/query/compile/calendar.rs",
-        "crates/sinex-store/src/derivations/state_transitions.rs",
-        "crates/sinex-store/src/admission/archive.rs",
-        "crates/sinexd/src/replay.rs",
-    ]
-    write_json("mutations.json", TESTS)
-    with restore_files(paths):
-        change(paths[0], "pub struct DayKey {\n    pub day: Date,", 'pub struct DayKey {\n    #[serde(rename = "date")]\n    pub day: Date,')
-        change(paths[1], "                    end_is_lower_bound,", "                    end_is_lower_bound: false,")
-        for field in ["value", "numerator", "denominator"]:
-            change(paths[2], f"            sum.unknown_{field} |= f.{field}.is_none();\n", "")
-        change(paths[3], "ended_by: &[Interruption::Afk, Interruption::Suspend],", "ended_by: &[Interruption::Afk],", count=2)
-        change(paths[3], "end.min(env.now).max(interval.open.at)", "end.max(interval.open.at)")
-        change(paths[4], '''            Err(error) => Computed {
-                error: Some(sinex_model::BuildError::Key(error.to_string())),
-                outputs: vec![],
-                waiting: false,
-            },''', "            Err(_) => Computed::default(),")
-        change(paths[5], "        config.validate_derivations()?;\n", "")
-        change(paths[6], "offset_seconds: self.ctx.zone.to_offset(from).seconds(),", "offset_seconds: 0,")
-        change(paths[7], "if name == &scope_name || matching {", "if name == &scope_name {")
-        change(paths[8], '''AND NOT EXISTS (
-                 SELECT 1 FROM unnest($5::uuid[], $6::bigint[]) failed(material_id, record_offset)
-                 WHERE failed.material_id = e.material_id AND failed.record_offset = e.record_offset)''',
-               "AND (cardinality($5::uuid[])>=0 AND cardinality($6::bigint[])>=0)")
-        change(paths[9], "                materials: read_materials,", "                materials: sequence.iter().filter(|m| in_scope.contains(&m.id)).map(|m| MaterialId(m.id)).collect(),")
-        expression = " | ".join(f"test(/::{name}$/)" for name in TESTS)
-        status, log = run(
-            ["cargo", "xtask", "test", *SELECT, "-E", expression, "--no-fail-fast"],
-            "mutations.log", expected_failure=True,
-        )
-        plain = re.sub(r"\x1b\[[0-9;]*m", "", log)
-        failures = re.findall(r"\bFAIL\s+\[[^\]]*\]\s+(?:\([^)]*\)\s+)?\S+\s+(\S+)", plain)
-        failed_names = {name.rsplit("::", 1)[-1] for name in failures}
-        missing = sorted(set(TESTS) - failed_names)
-        write_json("mutation-results.json", {
-            "exit_status": status, "failed_tests": failures,
-            "missing_assertion_failures": missing,
-        })
-        if not status or missing:
-            raise RuntimeError(f"every named mutation needs an observed test failure; missing: {missing}")
+    tests = list(TESTS)
+    changes = [(('crates/sinex-derivations/src/keys.rs', 'pub struct DayKey {\n    pub day: Date,', 'pub struct DayKey {\n    #[serde(rename = "date")]\n    pub day: Date,'), {}), (('crates/sinex-derivations/src/session.rs', '                    end_is_lower_bound,', '                    end_is_lower_bound: false,'), {}), (('crates/sinex-derivations/src/figures.rs', '            sum.unknown_value |= f.value.is_none();\n', ''), {}), (('crates/sinex-derivations/src/figures.rs', '            sum.unknown_numerator |= f.numerator.is_none();\n', ''), {}), (('crates/sinex-derivations/src/figures.rs', '            sum.unknown_denominator |= f.denominator.is_none();\n', ''), {}), (('crates/sinex-derivations/src/state_interval.rs', 'ended_by: &[Interruption::Afk, Interruption::Suspend],', 'ended_by: &[Interruption::Afk],'), {'count': 2}), (('crates/sinex-derivations/src/state_interval.rs', 'end.min(env.now).max(interval.open.at)', 'end.max(interval.open.at)'), {}), (('crates/sinex-derivations/src/lib.rs', '            Err(error) => Computed {\n                error: Some(sinex_model::BuildError::Key(error.to_string())),\n                outputs: vec![],\n                waiting: false,\n            },', '            Err(_) => Computed::default(),'), {}), (('crates/sinexd/src/binding_runner.rs', '        config.validate_derivations()?;\n', ''), {}), (('crates/sinex-store/src/query/compile/calendar.rs', 'offset_seconds: self.ctx.zone.to_offset(from).seconds(),', 'offset_seconds: 0,'), {}), (('crates/sinex-store/src/derivations/state_transitions.rs', 'if name == &scope_name || matching {', 'if name == &scope_name {'), {}), (('crates/sinex-store/src/admission/archive.rs', 'AND NOT EXISTS (\n                 SELECT 1 FROM unnest($5::uuid[], $6::bigint[]) failed(material_id, record_offset)\n                 WHERE failed.material_id = e.material_id AND failed.record_offset = e.record_offset)', 'AND (cardinality($5::uuid[])>=0 AND cardinality($6::bigint[])>=0)'), {}), (('crates/sinexd/src/replay.rs', '                materials: read_materials,', '                materials: sequence.iter().filter(|m| in_scope.contains(&m.id)).map(|m| MaterialId(m.id)).collect(),'), {})]
+    results = []
+    for name, indexes in zip(tests, [[0], [1], [2, 3, 4], [5], [6], [7], [8], [9], [10], [11], [12], [11]]):
+        with restore_files(list(dict.fromkeys(changes[i][0][0] for i in indexes))):
+            for i in indexes:
+                arguments, keywords = changes[i]
+                change(*arguments, **keywords)
+            if name in list(TESTS)[:6]:
+                package, target = "sinex-derivations", ["--lib"]
+            elif name in list(TESTS)[7:9]:
+                package, target = "sinex-store", ["--lib"]
+            else:
+                package, target = "sinexd", ["--bin", "sinexd"]
+            status, log = run(["cargo", "xtask", "test", "-p", package, *target, "-E", f"test(/::{name}$/)"], f"mutation-{name}.log", expected_failure=True)
+            plain = re.sub(r"\x1b\[[0-9;]*m", "", log)
+            failures = re.findall(r"\bFAIL\s+\[[^\]]*\]\s+(?:\([^)]*\)\s+)?\S+\s+(\S+)", plain)
+            observed = any(test.rsplit("::", 1)[-1] == name for test in failures)
+            results.append({"test": name, "mutation": TESTS[name], "exit_status": status, "assertion_failure_observed": bool(status and observed)})
+        write_json("mutation-results.json", results)
+    missing = [result["test"] for result in results if not result["assertion_failure_observed"]]
+    if missing:
+        raise RuntimeError(f"missing mutation assertion failures: {missing}")
 
 
 def save_timing(label: str, kind: str) -> None:
@@ -303,8 +278,9 @@ def main() -> None:
     run(["git", "fetch", "--no-tags", "--depth=1", "origin", BASE], "fetch-base.log")
     catalog_and_query_plan()
     compare_sql()
+    mutation_checks()
     measure_edit_cascade()
-    (OUTPUT / "complete.txt").write_text("SQL comparison, catalog, query plans and edit measurements completed.\n")
+    (OUTPUT / "complete.txt").write_text("SQL comparison, catalog, query plans, mutations and edit measurements completed.\n")
 
 
 if __name__ == "__main__":

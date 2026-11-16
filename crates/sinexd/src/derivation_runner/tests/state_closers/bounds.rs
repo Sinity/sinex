@@ -419,13 +419,13 @@ async fn scalar_bounds_keep_older_keys_unknown_times_and_afk(db: devkit::pg::Tes
     assert!(has_parent(complex, complex_refresh) && has_parent(complex, complex_close));
 }
 
-/// Version 3's fold, with the old defect of omitting a key's prior observation.
-/// It leaves a closed historical output that waiting-key processing cannot fix.
+/// A fold that omits a key's prior observation at the current derivation version.
+/// Its closed historical output is left for an explicit key recomputation.
 struct MissingPrior;
 impl Keyed for MissingPrior {
     type Key = <StateIntervals as Keyed>::Key;
     const NAME: &'static str = "state.intervals";
-    const VERSION: u32 = 3;
+    const VERSION: u32 = <StateIntervals as Keyed>::VERSION;
     const USES_TIME_SETTINGS: bool = true;
     const INPUTS: &'static [&'static str] = <StateIntervals as Keyed>::INPUTS;
     const OUTPUTS: &'static [&'static str] = <StateIntervals as Keyed>::OUTPUTS;
@@ -454,9 +454,7 @@ impl Keyed for MissingPrior {
 }
 
 #[devkit::test]
-async fn explicit_key_recompute_preserves_version_three_history_and_other_keys(
-    db: devkit::pg::TestDatabase,
-) {
+async fn explicit_key_recompute_preserves_history_and_other_keys(db: devkit::pg::TestDatabase) {
     use sinex_store::admission::DerivedScope;
     let w = World::with_keys(db, vec![Box::new(MissingPrior)]).await;
     let prior = observation("history", "same", -7 * 3600, 1, "fixture.history");
