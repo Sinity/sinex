@@ -87,7 +87,7 @@ async fn replay_dry_run_changes_nothing(db: devkit::pg::TestDatabase) {
     let (_, materials) = call_unbounded(
         &world,
         Some(OPERATOR),
-        json!({"method":"query","query":"materials where parser = zsh | fields id"}),
+        json!({"method":"query","query":"materials where parser = zsh-extended-history | fields id"}),
     )
     .await;
     assert_eq!(materials["outcome"], "ok", "{materials}");
