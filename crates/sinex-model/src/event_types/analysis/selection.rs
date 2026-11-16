@@ -8,7 +8,7 @@ use serde_json::Value;
 #[serde(deny_unknown_fields)]
 pub struct QuerySelection {
     pub query: String,
-    /// Executable definition; the authored query text is kept unchanged.
+    /// Executable definition; authored query text remains unchanged evidence.
     pub template: crate::query::template::Template,
     /// The saved definitions the question used, as they were when it was asked.
     pub definitions: std::collections::BTreeMap<String, crate::query::saved::SavedQuery>,
@@ -20,6 +20,6 @@ pub struct QuerySelection {
     pub grants: Vec<String>,
     /// The resolved window, or stable shell-session/mark record coordinates.
     pub selected: Value,
-    /// The declaration references and hashes used to bind the question.
+    /// Exact declaration references and hashes used to bind the question.
     pub declarations: Value,
 }

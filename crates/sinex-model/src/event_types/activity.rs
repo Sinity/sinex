@@ -16,8 +16,10 @@ pub enum Agency {
     Mixed,
 }
 
-/// One reading and the stable record it read.
+/// An exact reading and the stable record it read.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+// Registered kind versions store this schema definition name.
+#[schemars(rename = "ActivityEvidence")]
 pub struct CitedReading {
     pub event: EventId,
     pub record: String,
@@ -51,7 +53,7 @@ pub struct ActivityWindow {
     pub continuation_before: bool,
     pub continuation_after: bool,
     pub provisional: bool,
-    /// Union of the operator's recorded activity, excluding quiet gaps, in seconds.
+    /// Union of operator evidence, excluding quiet gaps, in seconds.
     pub operator_present_s: f64,
     pub operator_intervals: Vec<(Timestamp, Timestamp)>,
 }
@@ -70,7 +72,7 @@ pub struct ActivityMember {
 pub struct ActivitySession {
     pub session_id: String,
     pub scope: String,
-    /// The day the session is filed under; it may cross any number of logical days.
+    /// Ownership only; the session may cross any number of logical days.
     pub day: String,
     pub started_at: Timestamp,
     pub ended_at: Timestamp,

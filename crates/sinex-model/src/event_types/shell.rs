@@ -42,7 +42,7 @@ pub struct CommandExecuted {
 
 /// One finished command execution, reported by the shell integration Sinex
 /// ships (zsh, bash and fish hooks) through the session integration socket.
-/// The integration makes the execution token when the command starts and
+/// The integration mints the execution token when the command starts and
 /// hands it to every other observer it can reach: the terminal records it
 /// (kitty's `sinex_execution` user variable), and the Atuin row ID started
 /// for the same execution is recorded beside it, so fusion matches these
@@ -56,7 +56,7 @@ pub struct CommandExecuted {
     quality = intrinsic
 )]
 pub struct CommandReported {
-    /// A UUIDv7 made by the shell for this execution.
+    /// A UUIDv7 minted by the shell for this execution.
     pub execution: String,
     /// `zsh`, `bash` or `fish`.
     pub shell: String,

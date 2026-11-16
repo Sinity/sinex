@@ -1,6 +1,9 @@
 //! Bundled payload validators. One Rust type per bundled event type; `ALL`
 //! is the single list the schema registry, NixOS options and documentation are
 //! generated from.
+//!
+//! A payload type's doc comments and name are part of its kind's registered
+//! schema; changing them for a registered kind version needs a new version.
 use crate::EventPayload;
 
 pub mod account;
