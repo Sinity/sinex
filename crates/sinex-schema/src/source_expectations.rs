@@ -20,6 +20,7 @@ const SOURCES: &str = "CREATE TABLE registry.sources (
   version integer NOT NULL,
   event_types text[] NOT NULL,
   purpose text NOT NULL,
+  exclusion text,
   expectation text NOT NULL CHECK (expectation IN ({expectations})),
   -- Continuous sources: no new record for longer than this is suspicious.
   silent_after interval CHECK (silent_after > interval '0'),

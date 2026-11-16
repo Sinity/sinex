@@ -261,7 +261,10 @@ async fn open_and_record(client: &Client, request: &Request, item: &str) -> Exit
 }
 
 fn print_json(v: &Value) {
-    println!("{}", serde_json::to_string_pretty(v).expect("JSON prints"));
+    output::emit(&format!(
+        "{}\n",
+        serde_json::to_string_pretty(v).expect("JSON prints")
+    ));
 }
 
 /// The text an answer was rendered as (`text`: the brief, a panel,
@@ -503,14 +506,14 @@ async fn main() -> ExitCode {
         if name == "status" {
             capture_health::attach(&mut result, capture_state);
         }
-        if let Request::Sql { sql, page, .. } = &request {
+        if let Request::Sql { sql, page_size, .. } = &request {
             // The daemon answers a statement a page at a time; the command
             // line reads every page and prints the whole result.
             collected.extend(result["rows"].as_array().cloned().unwrap_or_default());
             if let Some(cursor) = result["page"]["cursor"].as_str() {
                 request = Request::Sql {
                     sql: sql.clone(),
-                    page: *page,
+                    page_size: *page_size,
                     cursor: Some(cursor.to_owned()),
                 };
                 continue;
@@ -572,7 +575,7 @@ async fn main() -> ExitCode {
                 };
                 request = Request::Query {
                     query: query.into(),
-                    page: result["page"]["size"].as_u64(),
+                    page_size: result["page"]["size"].as_u64(),
                     cursor: Some(c),
                 };
                 continue;
@@ -625,12 +628,9 @@ async fn backup_prepare(
     args: &serde_json::Map<String, Value>,
     json: bool,
 ) -> ExitCode {
-    let Some(output) = args.get("output").and_then(Value::as_str) else {
+    let Some(output) = args.get("to").and_then(Value::as_str) else {
         return fail(
-            &local(
-                FailureKind::BadRequest,
-                "backup prepare needs --output PATH",
-            ),
+            &local(FailureKind::BadRequest, "backup prepare needs --to PATH"),
             json,
         );
     };
@@ -655,8 +655,8 @@ async fn backup_prepare(
                 let release = Request::Backup {
                     action: "release".into(),
                     hold: Some(hold.clone()),
-                    output: None,
-                    page: None,
+                    to: None,
+                    page_size: None,
                     cursor: None,
                 };
                 let note = match client.call(&release).await {

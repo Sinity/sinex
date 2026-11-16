@@ -18,10 +18,20 @@ pub(crate) struct Step {
 pub(crate) const LANDED_VERSION: i32 = 40;
 
 /// The steps after [`LANDED_VERSION`], in landing order.
-pub(crate) const STEPS: &[Step] = &[Step {
-    name: "plain_names",
-    statements: plain_names,
-}];
+pub(crate) const STEPS: &[Step] = &[
+    Step {
+        name: "plain_names",
+        statements: plain_names,
+    },
+    Step {
+        name: "source_exclusions",
+        statements: source_exclusions,
+    },
+];
+
+fn source_exclusions() -> Vec<String> {
+    vec!["ALTER TABLE registry.sources ADD COLUMN exclusion text".into()]
+}
 
 /// Renames to plain words: a record's byte offset in its material is its
 /// record offset (also in the `core.visible_events` view, whose column a

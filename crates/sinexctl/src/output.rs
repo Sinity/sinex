@@ -4,6 +4,22 @@
 use serde_json::Value;
 use std::fmt::Write;
 
+/// Write stdout as a Unix filter: a closed reader ends the process quietly.
+pub(crate) fn emit(text: &str) {
+    use std::io::Write as _;
+    let mut stdout = std::io::stdout().lock();
+    if let Err(error) = stdout
+        .write_all(text.as_bytes())
+        .and_then(|()| stdout.flush())
+    {
+        if error.kind() == std::io::ErrorKind::BrokenPipe {
+            std::process::exit(141);
+        }
+        eprintln!("sinexctl: stdout: {error}");
+        std::process::exit(i32::from(command_surface::FailureKind::Io.exit_code()));
+    }
+}
+
 /// Widest a cell is shown; longer values end in `…`. Presentation only: the
 /// row is whole in `--json`.
 const CELL: usize = 60;

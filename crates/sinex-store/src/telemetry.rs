@@ -2,8 +2,10 @@
 //! commit log is behind, each derivation's waiting work, and each source's
 //! counts. One read-only transaction per sample.
 use crate::Result;
+pub use sinex_model::event_types::telemetry::SinexTelemetry as Sample;
 use sqlx::{Connection, PgConnection};
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 /// One part's numbers, as a sample records them.
 #[derive(Clone, Debug, PartialEq)]
@@ -56,12 +58,18 @@ pub async fn read(conn: &mut PgConnection) -> Result<Vec<Reading>> {
         reading(
             "publisher",
             "",
-            &[("behind", head.commit_seq - head.published)],
+            &[
+                ("position", head.published),
+                ("behind", head.commit_seq - head.published),
+            ],
         ),
         reading(
             "search index",
             "",
-            &[("behind", head.commit_seq - search.unwrap_or(0))],
+            &[
+                ("position", search.unwrap_or(0)),
+                ("behind", head.commit_seq - search.unwrap_or(0)),
+            ],
         ),
     ];
     let keyed = sqlx::query!(
@@ -76,6 +84,7 @@ pub async fn read(conn: &mut PgConnection) -> Result<Vec<Reading>> {
     for d in keyed {
         let mut measures = vec![("dirty_keys", d.dirty), ("waiting_keys", d.waiting)];
         if let Some(position) = d.position {
+            measures.push(("position", position));
             measures.push(("behind", head.commit_seq - position));
         }
         out.push(reading("derivation", &d.name, &measures));
@@ -100,18 +109,31 @@ pub async fn read(conn: &mut PgConnection) -> Result<Vec<Reading>> {
     Ok(out)
 }
 
-/// The newest stored sample of each part from the last hour, as payloads.
-pub async fn latest(conn: &mut PgConnection, event_type: &str) -> Result<Vec<serde_json::Value>> {
-    Ok(sqlx::query_scalar!(
-        r#"SELECT DISTINCT ON (payload->>'component', payload->>'name') payload AS "payload!"
-           FROM core.visible_events e
-           WHERE event_type = $1 AND ts_orig > now() - interval '1 hour'
+/// Stored samples during `window`, oldest first within each component.
+pub async fn recent(
+    conn: &mut PgConnection,
+    event_type: &str,
+    window: Duration,
+) -> Result<Vec<Sample>> {
+    let seconds = window.as_secs_f64();
+    let payloads = sqlx::query_scalar!(
+        r#"SELECT payload AS "payload!" FROM core.visible_events e
+           WHERE event_type = $1 AND ts_orig > now() - $2 * interval '1 second'
+             AND core.class_visible(e.class)
              AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)
-           ORDER BY payload->>'component', payload->>'name', ts_orig DESC"#,
+           ORDER BY payload->>'component', payload->>'name', ts_orig, id"#,
         event_type,
+        seconds,
     )
-    .fetch_all(&mut *conn)
-    .await?)
+    .fetch_all(conn)
+    .await?;
+    payloads
+        .into_iter()
+        .map(|payload| {
+            serde_json::from_value(payload)
+                .map_err(|error| crate::Error::Invalid(error.to_string()))
+        })
+        .collect()
 }
 
 #[cfg(test)]

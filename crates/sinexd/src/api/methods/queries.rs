@@ -48,7 +48,7 @@ impl Api {
                 by: caller.actor.into(),
                 written_at: now,
             }),
-            Request::QuerySave {
+            Request::Save {
                 name,
                 query,
                 parameter: declarations,

@@ -39,14 +39,14 @@ pub fn database_failure(error: &sqlx::Error) -> Failure {
                     true,
                     Some("database_unavailable".into()),
                 ),
-                _ => (FailureKind::Io, false, state),
+                _ => (FailureKind::Internal, false, state),
             };
             let mut failure = Failure::new(kind, message);
             failure.retryable = retryable;
             failure.code = code;
             failure
         }
-        _ => Failure::new(FailureKind::Io, message),
+        _ => Failure::new(FailureKind::Internal, message),
     }
 }
 
@@ -108,7 +108,7 @@ pub fn schema_failure(error: sinex_schema::Error) -> Failure {
             failure.retryable = true;
             failure
         }
-        Schema::Declaration(_) => Failure::new(FailureKind::Io, error.to_string()),
+        Schema::Declaration(_) => Failure::new(FailureKind::Internal, error.to_string()),
         Schema::Version { .. }
         | Schema::UpgradeNeeded { .. }
         | Schema::Unversioned

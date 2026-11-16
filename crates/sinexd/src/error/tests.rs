@@ -51,3 +51,13 @@ fn driver_io_error_keeps_kind() {
         "{failure:?}"
     );
 }
+
+#[tokio::test]
+async fn internal_failure_names_the_product_fault() {
+    let semaphore = tokio::sync::Semaphore::new(0);
+    semaphore.close();
+    let failure = Error::from(semaphore.acquire().await.unwrap_err()).failure();
+    assert_eq!(failure.kind, FailureKind::Internal);
+    assert_eq!(failure.kind.exit_code(), 4);
+    assert!(!failure.retryable);
+}

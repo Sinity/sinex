@@ -164,11 +164,15 @@ async fn telemetry_payloads_use_the_callers_class_grants(db: devkit::pg::TestDat
     tx.commit().await.unwrap();
     let answer = ask(&mut conn, "telemetry | fields payload").await;
     assert_eq!(column(&answer, "payload"), [json!({"withheld": "guarded"})]);
-    assert_eq!(
-        crate::telemetry::latest(&mut conn, "sinex.telemetry")
-            .await
-            .unwrap(),
-        [json!({"withheld": "guarded"})]
+    assert!(
+        crate::telemetry::recent(
+            &mut conn,
+            "sinex.telemetry",
+            std::time::Duration::from_secs(900)
+        )
+        .await
+        .unwrap()
+        .is_empty()
     );
     let answer = ask(&mut conn, "telemetry where payload.name = example").await;
     assert_eq!(answer.total, 0);
@@ -184,9 +188,14 @@ async fn telemetry_payloads_use_the_callers_class_grants(db: devkit::pg::TestDat
     .unwrap();
     assert_eq!(payload["name"], "example");
     assert_eq!(
-        crate::telemetry::latest(&mut conn, "sinex.telemetry")
-            .await
-            .unwrap()[0]["name"],
+        crate::telemetry::recent(
+            &mut conn,
+            "sinex.telemetry",
+            std::time::Duration::from_secs(900)
+        )
+        .await
+        .unwrap()[0]
+            .name,
         "example"
     );
 }
@@ -258,10 +267,14 @@ async fn telemetry_uses_admission_commit_order_and_visibility(db: devkit::pg::Te
     .await;
     assert_eq!(ask(&mut conn, "telemetry").await.total, 0);
     assert!(
-        crate::telemetry::latest(&mut conn, "sinex.telemetry")
-            .await
-            .unwrap()
-            .is_empty()
+        crate::telemetry::recent(
+            &mut conn,
+            "sinex.telemetry",
+            std::time::Duration::from_secs(900)
+        )
+        .await
+        .unwrap()
+        .is_empty()
     );
 }
 

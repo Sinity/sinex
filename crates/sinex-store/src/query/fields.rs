@@ -22,16 +22,7 @@ pub(crate) fn from(table: Table) -> &'static str {
              LEFT JOIN raw.revisions {t}_v ON {t}_v.id = {t}.revision_id"
         }
         Table::Runs => "core.runs {t} LEFT JOIN core.manifests {t}_m ON {t}_m.id = {t}.manifest_id",
-        // Registered sources, and every other source that has had events.
-        Table::Sources => {
-            "(SELECT r.name, r.shapes, r.version, r.event_types, r.purpose, r.expectation, \
-                r.silent_after, r.every, r.expires_after FROM registry.sources r \
-              UNION ALL \
-              SELECT c.source, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL FROM core.source_counts c \
-              WHERE NOT EXISTS (SELECT 1 FROM registry.sources r WHERE r.name = c.source)) \
-             {t}(name, shapes, version, event_types, purpose, expectation, silent_after, every, \
-               expires_after)"
-        }
+        Table::Sources => super::source_views::SOURCES,
         Table::Operations => "core.operations {t}",
         Table::Failures => {
             "raw.failures {t} LEFT JOIN raw.materials {t}_m ON {t}_m.id = {t}.material_id \
@@ -171,6 +162,10 @@ pub(crate) fn field(id: FieldId) -> Option<String> {
         },
         FieldId::Source(field) => {
             return Some(match field {
+                SourceField::State => super::source_views::state(),
+                SourceField::Reason => super::source_views::reason(),
+                SourceField::LastError => super::source_views::last_error(),
+                SourceField::Exclusion => "{t}.exclusion".to_string(),
                 SourceField::Continuity => super::source_views::continuity(),
                 SourceField::Gaps => super::source_views::gaps(),
                 SourceField::Drift => super::source_views::drift(),

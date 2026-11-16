@@ -350,7 +350,10 @@ fn readback_distinguishes_exact_numeric_carriers_from_declared_text() {
         &context,
     )
     .unwrap();
-    assert!(read_as(&number).contains("payload.integer is 18446744073709551615"));
+    assert!(
+        read_as(&number, &jiff::tz::TimeZone::UTC)
+            .contains("payload.integer is 18446744073709551615")
+    );
     let text = bind("events where payload.text = 001", &context).unwrap();
-    assert!(read_as(&text).contains("payload.text is \"001\""));
+    assert!(read_as(&text, &jiff::tz::TimeZone::UTC).contains("payload.text is \"001\""));
 }

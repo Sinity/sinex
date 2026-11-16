@@ -11,8 +11,8 @@ pub(super) struct ScopeArgs {
     pub material: Vec<String>,
     pub run: Option<String>,
     pub source: Option<String>,
-    pub after: Option<String>,
-    pub before: Option<String>,
+    pub since: Option<String>,
+    pub until: Option<String>,
     pub operation: Option<String>,
 }
 
@@ -40,9 +40,7 @@ impl Api {
 
     /// The writer, which only `sinexd run` holds.
     pub(super) fn writer(&self) -> Result<&WriterHandle> {
-        self.writer.as_ref().ok_or_else(|| {
-            Error::not_configured("this daemon has no writer; writes go through `sinexd run`")
-        })
+        self.writer.as_ref().ok_or_else(Error::no_writer)
     }
 
     /// Continue an operation from its saved position: a lifecycle operation
@@ -99,8 +97,8 @@ impl Api {
                 "name exactly one scope: a reference or query, --material, --run, --source or --operation",
             ));
         }
-        if args.source.is_none() && (args.after.is_some() || args.before.is_some()) {
-            return Err(Error::bad_request("--after and --before narrow --source"));
+        if args.source.is_none() && (args.since.is_some() || args.until.is_some()) {
+            return Err(Error::bad_request("--since and --until narrow --source"));
         }
         if !args.material.is_empty() {
             return args
@@ -123,8 +121,8 @@ impl Api {
         if let Some(source) = args.source {
             return Ok(Scope::Source {
                 source,
-                after: args.after.as_deref().map(timestamp).transpose()?,
-                before: args.before.as_deref().map(timestamp).transpose()?,
+                after: args.since.as_deref().map(timestamp).transpose()?,
+                before: args.until.as_deref().map(timestamp).transpose()?,
             });
         }
         let target = args.target.expect("one scope was given");
@@ -189,7 +187,7 @@ impl Api {
             let unlock = self.unlock.lock().await;
             let session = unlock
                 .as_ref()
-                .ok_or_else(|| Error::refused("sealed replay needs an operator unlock"))?;
+                .ok_or_else(|| Error::refused("sealed replay needs an operator unlock: run `sinexctl unlock IDENTITY_FILE` first"))?;
             session.unlock.check()?;
             o.unlock = Some(session.unlock.clone());
         }

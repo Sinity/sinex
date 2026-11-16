@@ -7,15 +7,34 @@ use sinex_store::Verified;
 use sinex_store::diagnostics::{self, Snapshot};
 use std::path::Path;
 
-fn time(t: Option<time::OffsetDateTime>) -> Value {
-    t.and_then(|t| {
-        t.format(&time::format_description::well_known::Rfc3339)
-            .ok()
-    })
-    .map_or(Value::Null, Value::String)
+fn utc_context() -> sinex_model::query::Context {
+    sinex_model::query::Context::new(
+        jiff::Timestamp::now(),
+        jiff::tz::TimeZone::UTC,
+        jiff::civil::Time::constant(0, 0, 0, 0),
+    )
 }
 
-fn snapshot_json(s: &Snapshot) -> Value {
+/// Every source row through the query's source-status relation.
+pub(crate) async fn source_rows(
+    conn: &mut sqlx::PgConnection,
+    context: &sinex_model::query::Context,
+) -> Result<Vec<Value>> {
+    let mut rows = Vec::new();
+    let mut page = sinex_store::query::Page::default();
+    loop {
+        let answer =
+            sinex_store::query::run(conn, "sources | sort by binding", None, context, &page)
+                .await?;
+        rows.extend(answer.rows);
+        match answer.page.cursor {
+            Some(cursor) => page.cursor = Some(cursor),
+            None => return Ok(rows),
+        }
+    }
+}
+
+fn snapshot_json(s: &Snapshot, sources: Vec<Value>) -> Value {
     json!({
         "commit_seq": s.commit_seq,
         "schema_version": s.schema_version,
@@ -25,12 +44,7 @@ fn snapshot_json(s: &Snapshot) -> Value {
         },
         "failures_24h": s.failures_24h,
         "blobs": s.blobs,
-        "sources": s.sources.iter().map(|src| json!({
-            "source": src.source,
-            "events": src.events,
-            "last_event": time(src.last_event),
-            "last_seen": time(Some(src.last_seen)),
-        })).collect::<Vec<_>>(),
+        "sources": sources,
     })
 }
 
@@ -38,7 +52,12 @@ fn snapshot_json(s: &Snapshot) -> Value {
 async fn status(database: &str) -> Result<Value> {
     let mut conn = diagnostics::connect(database).await?;
     let s = diagnostics::snapshot(&mut conn).await?;
-    Ok(snapshot_json(&s))
+    let sources = if s.schema_version.is_some() {
+        source_rows(&mut conn, &utc_context()).await?
+    } else {
+        Vec::new()
+    };
+    Ok(snapshot_json(&s, sources))
 }
 
 /// Check the database is reachable and at this build's schema version, the

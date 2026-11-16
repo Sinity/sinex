@@ -13,14 +13,8 @@ pub fn subcommand(c: &Command) -> clap::Command {
         arg = match (a.kind, a.positional) {
             (ArgKind::Rest, _) => arg
                 .num_args(1..)
-                .trailing_var_arg(!matches!(
-                    c.name,
-                    "recall" | "mark" | "query-save" | "timeline"
-                ))
-                .allow_hyphen_values(!matches!(
-                    c.name,
-                    "recall" | "mark" | "query-save" | "timeline"
-                )),
+                .trailing_var_arg(!matches!(c.name, "recall" | "mark" | "save" | "timeline"))
+                .allow_hyphen_values(!matches!(c.name, "recall" | "mark" | "save" | "timeline")),
             (ArgKind::Bool, _) => arg.long(a.name).action(ArgAction::SetTrue).required(false),
             (ArgKind::List, true) => arg.num_args(1..).action(ArgAction::Append),
             (ArgKind::List, false) => arg.long(a.name).action(ArgAction::Append),

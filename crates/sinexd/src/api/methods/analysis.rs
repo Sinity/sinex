@@ -56,8 +56,8 @@ impl Api {
             match request {
                 Request::AnalysisRun {
                     recipe,
-                    from,
-                    to,
+                    first,
+                    last,
                     partial,
                 } => {
                     let recipe = Recipe::parse(&recipe)?;
@@ -75,16 +75,16 @@ impl Api {
                     };
                     let question = analysis::question(&mut conn, &ctx, &settings, "recipe", Some(recipe.id()),
                         &METRICS.iter().filter(|m| m.tracked).collect::<Vec<_>>(),
-                        analysis::parse_day(&from)?, analysis::parse_day(&to)?, eligibility).await?;
-                    analysis::materialize(&mut conn, self.writer.as_ref().ok_or_else(|| Error::not_configured("analysis requests require sinexd run"))?, &self.blobs,
+                        analysis::parse_day(&first)?, analysis::parse_day(&last)?, eligibility).await?;
+                    analysis::materialize(&mut conn, self.writer.as_ref().ok_or_else(|| Error::no_writer())?, &self.blobs,
                         question, caller.actor, &self.host).await?;
                     let run = analysis::run(
                         &mut conn,
                         &ctx,
                         &settings,
                         recipe,
-                        analysis::parse_day(&from)?,
-                        analysis::parse_day(&to)?,
+                        analysis::parse_day(&first)?,
+                        analysis::parse_day(&last)?,
                         eligibility,
                     )
                     .await?;
@@ -95,23 +95,23 @@ impl Api {
                     }))
                 }
                 Request::AnalysisPanel {
-                    from,
-                    to,
+                    first,
+                    last,
                     metric,
                     by,
                 } => {
                     let metrics = metrics(&metric.unwrap_or_default())?;
                     let question = analysis::question(&mut conn, &ctx, &settings, "panel", None, &metrics,
-                        analysis::parse_day(&from)?, analysis::parse_day(&to)?, Default::default()).await?;
-                    analysis::materialize(&mut conn, self.writer.as_ref().ok_or_else(|| Error::not_configured("analysis requests require sinexd run"))?, &self.blobs,
+                        analysis::parse_day(&first)?, analysis::parse_day(&last)?, Default::default()).await?;
+                    analysis::materialize(&mut conn, self.writer.as_ref().ok_or_else(|| Error::no_writer())?, &self.blobs,
                         question, caller.actor, &self.host).await?;
                     let p = analysis::panel(
                         &mut conn,
                         &ctx,
                         &settings,
                         &metrics,
-                        analysis::parse_day(&from)?,
-                        analysis::parse_day(&to)?,
+                        analysis::parse_day(&first)?,
+                        analysis::parse_day(&last)?,
                     )
                     .await?;
                     Ok(json!({
@@ -120,13 +120,13 @@ impl Api {
                         "coverage": p.coverage, "coverage_evidence": p.coverage_observations, "cells": p.cells, "producer_versions": p.producer_versions, "citation": p.citation,
                     }))
                 }
-                Request::Gaps { from, to, source } => {
+                Request::Gaps { first, last, source } => {
                     let gaps = analysis::gaps(
                         &mut conn,
                         &settings,
                         source.as_deref(),
-                        analysis::parse_day(&from)?,
-                        analysis::parse_day(&to)?,
+                        analysis::parse_day(&first)?,
+                        analysis::parse_day(&last)?,
                     )
                     .await?;
                     Ok(json!({ "day_setting": settings.label, "gaps": gaps }))
@@ -135,7 +135,7 @@ impl Api {
                     let metric = metrics(&[metric])?[0];
                     let question = analysis::question(&mut conn, &ctx, &settings, "panel", None, &[metric],
                         analysis::parse_day(&day)?, analysis::parse_day(&day)?, Default::default()).await?;
-                    analysis::materialize(&mut conn, self.writer.as_ref().ok_or_else(|| Error::not_configured("analysis requests require sinexd run"))?, &self.blobs,
+                    analysis::materialize(&mut conn, self.writer.as_ref().ok_or_else(|| Error::no_writer())?, &self.blobs,
                         question, caller.actor, &self.host).await?;
                     let text = analysis::why_not(
                         &mut conn,
@@ -147,8 +147,8 @@ impl Api {
                     .await?;
                     Ok(json!({ "text": text }))
                 }
-                Request::Brief { day, budget } => {
-                    let budget = budget.map_or(4000, |b| usize::try_from(b).unwrap_or(usize::MAX));
+                Request::Brief { day, bytes } => {
+                    let budget = bytes.map_or(4000, |b| usize::try_from(b).unwrap_or(usize::MAX));
                     if let Some(reference) = day.as_deref().filter(|value| value.starts_with("sinex:ev/") || value.starts_with("query:")) {
                         let (p, citation) = analysis::render_pack(&mut conn, reference, budget).await?;
                         return Ok(json!({"text": p.markdown, "context_pack": citation, "presentation": p}));
@@ -161,7 +161,7 @@ impl Api {
                     let all_metrics: Vec<_> = METRICS.iter().collect();
                     let question = analysis::question(&mut conn, &ctx, &settings, "brief", None, &all_metrics,
                         from, day, Default::default()).await?;
-                    let pack_request = analysis::materialize(&mut conn, self.writer.as_ref().ok_or_else(|| Error::not_configured("analysis requests require sinexd run"))?, &self.blobs,
+                    let pack_request = analysis::materialize(&mut conn, self.writer.as_ref().ok_or_else(|| Error::no_writer())?, &self.blobs,
                         question, caller.actor, &self.host).await?;
                     let (p, citation) = analysis::render_pack(&mut conn, &format!("query:{pack_request}"), budget).await?;
                     Ok(json!({"text": p.markdown, "context_pack": citation, "presentation": p}))

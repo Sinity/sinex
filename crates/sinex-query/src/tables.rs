@@ -164,6 +164,10 @@ table!(RUNS, RunField, Run, [] {
     Failed = ("failed", FieldType::Integer, "records that failed"),
 });
 table!(SOURCES, SourceField, Source, [] {
+    State = ("state", FieldType::Enum(&["excluded", "stalled", "unavailable", "capturing", "quiet"]), "input state"),
+    Reason = ("reason", FieldType::Text, "reason for the input state"),
+    LastError = ("last_error", FieldType::Text, "the current missing input's error"),
+    Exclusion = ("exclusion", FieldType::Text, "configured exclusion reason"),
     Continuity = ("continuity", FieldType::Enum(&["run_lifetimes", "unknown"]), "how run continuity is known"),
     Gaps = ("gaps", FieldType::Integer, "gaps between recorded live runs"),
     Drift = ("drift", FieldType::Json, "recorded payload schema changes"),
@@ -325,6 +329,10 @@ impl Table {
             ],
             Table::Sources => &[
                 "binding",
+                "state",
+                "reason",
+                "last_error",
+                "exclusion",
                 "shapes",
                 "expectation",
                 "event_types",

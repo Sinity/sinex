@@ -656,7 +656,7 @@ async fn compare_shows_a_derivation_update_before_switching(db: devkit::pg::Test
     assert!(cmp.to_string().contains("v2:2"));
     // The comparison is kept, newest first, with its examples.
     let mut conn = PgConnection::connect(&w.url).await.unwrap();
-    let kept = derivations::comparisons(&mut conn, Some("test.count"), 10)
+    let kept = derivations::comparisons(&mut conn, Some("test.count"), 10, None)
         .await
         .unwrap();
     assert_eq!(kept.len(), 2);

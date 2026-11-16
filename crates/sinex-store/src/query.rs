@@ -413,7 +413,7 @@ async fn run_inner(
                 .and_then(Json::as_object)
                 .map(|o| o.keys().cloned().collect())
                 .unwrap_or_default();
-            let reading = read_as(query);
+            let reading = read_as(query, &read.ctx.zone);
             use continuation::{Direction, Position, compare_positions};
             let position = |row: &Json| Position {
                 values: vec![
@@ -529,7 +529,7 @@ async fn run_inner(
             page_of(&mut tx, rendered, table, text, query, &read, Some(account)).await?
         }
     };
-    answer.read_as = read_as(query);
+    answer.read_as = read_as(query, &read.ctx.zone);
     tx.commit().await?;
     Ok(selected::SelectedPage {
         answer,
@@ -780,7 +780,7 @@ async fn page_of(
     Ok(Answer {
         table,
         query: text.into(),
-        read_as: read_as(query),
+        read_as: read_as(query, &read.ctx.zone),
         resolved: read.resolved(),
         columns: rendered.columns,
         rows: selected

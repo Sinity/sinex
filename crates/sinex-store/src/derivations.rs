@@ -1064,16 +1064,18 @@ pub async fn store_comparison(conn: &mut PgConnection, c: &StoredComparison) -> 
 pub async fn comparisons(
     conn: &mut PgConnection,
     derivation: Option<&str>,
-    limit: i64,
+    page_size: i64,
+    before: Option<i64>,
 ) -> Result<Vec<StoredComparison>> {
     let rows = sqlx::query!(
         r#"SELECT id, derivation, version, range_from, range_until, made_at, keys, unchanged,
              added, changed, removed, examples, context
            FROM derivation.comparisons
-           WHERE $1::text IS NULL OR derivation = $1
+           WHERE ($1::text IS NULL OR derivation = $1) AND ($3::bigint IS NULL OR id < $3)
            ORDER BY id DESC LIMIT $2"#,
         derivation,
-        limit,
+        page_size,
+        before,
     )
     .fetch_all(conn)
     .await?;

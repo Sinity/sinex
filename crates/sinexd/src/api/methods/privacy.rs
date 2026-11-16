@@ -18,7 +18,7 @@ impl Api {
             Request::PrivacyRule {
                 name,
                 source,
-                event_type,
+                kind,
                 field,
                 matcher,
                 pattern,
@@ -30,7 +30,7 @@ impl Api {
                 let rule = privacy::NewRule {
                     name,
                     source,
-                    event_type,
+                    event_type: kind,
                     field,
                     matcher: matcher.unwrap_or_else(|| "all".into()),
                     matcher_arg: pattern,

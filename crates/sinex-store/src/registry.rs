@@ -3,6 +3,7 @@
 //! Event types are written with the schema, which the model declares.
 use crate::Result;
 use sqlx::PgConnection;
+use std::collections::BTreeMap;
 
 /// A source as the registry records it: its declaration, so queries and
 /// status can list what is declared and what each source is expected to do.
@@ -56,6 +57,25 @@ pub async fn write_sources(conn: &mut PgConnection, catalog: &[Source]) -> Resul
         .execute(&mut *conn)
         .await?;
     }
+    Ok(())
+}
+
+/// Store each configured exclusion reason and clear sources no longer excluded.
+pub async fn write_exclusions(
+    conn: &mut PgConnection,
+    exclusions: &BTreeMap<String, String>,
+) -> Result<()> {
+    let names: Vec<String> = exclusions.keys().cloned().collect();
+    let reasons: Vec<String> = exclusions.values().cloned().collect();
+    sqlx::query!(
+        "UPDATE registry.sources s SET exclusion = (
+          SELECT x.reason FROM unnest($1::text[], $2::text[]) x(name, reason)
+          WHERE x.name = s.name)",
+        &names,
+        &reasons,
+    )
+    .execute(conn)
+    .await?;
     Ok(())
 }
 

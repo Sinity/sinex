@@ -216,30 +216,49 @@ impl Api {
         let actor = caller.actor;
         let method = request.method();
         Ok(match request {
-            Request::Signal {
+            Request::Watch {
                 action,
                 name,
                 rule,
-                page,
+                page_size,
                 cursor,
             } => data(
-                self.signal(caller, &action, name, rule, Page { size: page, cursor })
-                    .await?,
+                self.signal(
+                    caller,
+                    &action,
+                    name,
+                    rule,
+                    Page {
+                        size: page_size,
+                        cursor,
+                    },
+                )
+                .await?,
             ),
-            Request::Kinds { kind, page, cursor } => {
-                self.kind_fields(caller, kind, page, cursor, false).await?
+            Request::Kinds {
+                kind,
+                page_size,
+                cursor,
+            } => {
+                self.kind_fields(caller, kind, page_size, cursor, false)
+                    .await?
             }
-            Request::Fields { kind, page, cursor } => {
-                self.kind_fields(caller, kind, page, cursor, true).await?
+            Request::Fields {
+                kind,
+                page_size,
+                cursor,
+            } => {
+                self.kind_fields(caller, kind, page_size, cursor, true)
+                    .await?
             }
             Request::Backup {
                 action,
                 hold,
-                output,
-                page,
+                to,
+                page_size,
                 cursor,
             } => {
-                self.backup(caller, &action, hold, output, page, cursor)
+                self.backup(caller, &action, hold, to, page_size, cursor)
                     .await?
             }
             Request::Status => Reply::Ok {
@@ -250,57 +269,78 @@ impl Api {
             },
             Request::Query {
                 query,
-                page,
+                page_size,
                 cursor,
             } => {
-                self.query(caller, &query, Page { size: page, cursor })
-                    .await?
+                self.query(
+                    caller,
+                    &query,
+                    Page {
+                        size: page_size,
+                        cursor,
+                    },
+                )
+                .await?
             }
             Request::QueryComplete { query } => data(json!({"fields": query::complete(&query)})),
             Request::QueryList => {
                 let mut conn = self.acquire(caller).await?;
                 data(json!({"queries": queries::list(&mut conn).await?}))
             }
-            request @ (Request::QuerySave { .. } | Request::Mark { .. }) => {
+            request @ (Request::Save { .. } | Request::Mark { .. }) => {
                 data(self.query_record(request, caller).await?)
             }
             Request::Context {
                 since,
                 until,
-                page,
+                page_size,
                 cursor,
             } => {
-                self.context_view(caller, since, until, Page { size: page, cursor })
-                    .await?
+                self.context_view(
+                    caller,
+                    since,
+                    until,
+                    Page {
+                        size: page_size,
+                        cursor,
+                    },
+                )
+                .await?
             }
             Request::Timeline {
                 query,
-                page,
+                page_size,
                 cursor,
             } => {
                 self.query(
                     caller,
                     &format!("events {}", query.unwrap_or_default()),
-                    Page { size: page, cursor },
+                    Page {
+                        size: page_size,
+                        cursor,
+                    },
                 )
                 .await?
             }
             Request::Search {
                 words,
-                page,
+                page_size,
                 cursor,
             } => {
                 self.query(
                     caller,
                     &format!("events where {words}"),
-                    Page { size: page, cursor },
+                    Page {
+                        size: page_size,
+                        cursor,
+                    },
                 )
                 .await?
             }
             Request::Recall {
                 around,
                 cwd,
-                page,
+                page_size,
                 cursor,
             } => {
                 let mut text = match around.as_deref().map(str::trim) {
@@ -316,22 +356,36 @@ impl Api {
                     text.push_str(" where cwds ^ ");
                     text.push_str(&serde_json::to_string(&cwd).expect("strings serialize"));
                 }
-                self.recall(caller, &text, Page { size: page, cursor })
-                    .await?
+                self.recall(
+                    caller,
+                    &text,
+                    Page {
+                        size: page_size,
+                        cursor,
+                    },
+                )
+                .await?
             }
             Request::Trace {
                 reference,
-                page,
+                page_size,
                 cursor,
             } => {
                 self.query(
                     caller,
                     &format!("trace {reference}"),
-                    Page { size: page, cursor },
+                    Page {
+                        size: page_size,
+                        cursor,
+                    },
                 )
                 .await?
             }
-            Request::Sql { sql, page, cursor } => self.sql(caller, sql, page, cursor).await?,
+            Request::Sql {
+                sql,
+                page_size,
+                cursor,
+            } => self.sql(caller, sql, page_size, cursor).await?,
             Request::Show { reference } => {
                 let r = query::parse_reference(&reference)
                     .map_err(|error| error.failure(&reference))?;
@@ -352,9 +406,9 @@ impl Api {
                 material,
                 run,
                 source,
-                after,
-                before,
-                compare,
+                since,
+                until,
+                dry_run,
             } => {
                 let scope = self
                     .lifecycle_scope(
@@ -364,13 +418,13 @@ impl Api {
                             material,
                             run,
                             source,
-                            after,
-                            before,
+                            since,
+                            until,
                             operation: None,
                         },
                     )
                     .await?;
-                self.lifecycle(caller, Act::Archive, scope, compare.unwrap_or(false))
+                self.lifecycle(caller, Act::Archive, scope, dry_run.unwrap_or(false))
                     .await?
             }
             Request::Restore {
@@ -378,20 +432,20 @@ impl Api {
                 material,
                 run,
                 source,
-                after,
-                before,
+                since,
+                until,
                 operation,
-                compare,
+                dry_run,
             }
             | Request::Tombstone {
                 target,
                 material,
                 run,
                 source,
-                after,
-                before,
+                since,
+                until,
                 operation,
-                compare,
+                dry_run,
             } => {
                 let act = if method == "restore" {
                     Act::Restore
@@ -406,22 +460,22 @@ impl Api {
                             material,
                             run,
                             source,
-                            after,
-                            before,
+                            since,
+                            until,
                             operation,
                         },
                     )
                     .await?;
-                self.lifecycle(caller, act, scope, compare.unwrap_or(false))
+                self.lifecycle(caller, act, scope, dry_run.unwrap_or(false))
                     .await?
             }
-            Request::Undo { operation, compare } => {
+            Request::Undo { operation, dry_run } => {
                 let id = uuid::Uuid::parse_str(&operation)
                     .map_err(|e| Error::bad_value(format!("operation {operation}: {e}")))?;
                 let scope = sinex_model::lifecycle::Scope::Operation {
                     operation: OperationId(id),
                 };
-                self.lifecycle(caller, Act::Undo, scope, compare.unwrap_or(false))
+                self.lifecycle(caller, Act::Undo, scope, dry_run.unwrap_or(false))
                     .await?
             }
             Request::Resume { operation } => self.resume(caller, &operation).await?,
@@ -429,11 +483,11 @@ impl Api {
                 sealed,
                 material,
                 binding,
-                event_type,
-                from,
+                kind,
+                since,
                 until,
-                compare,
-                all,
+                dry_run,
+                every_change,
                 batch_events,
             } => {
                 if batch_events == Some(0) {
@@ -450,8 +504,8 @@ impl Api {
                         })
                         .collect::<Result<_>>()?,
                     binding,
-                    event_types: (!event_type.is_empty()).then_some(event_type),
-                    from: from.as_deref().map(timestamp).transpose()?,
+                    event_types: (!kind.is_empty()).then_some(kind),
+                    from: since.as_deref().map(timestamp).transpose()?,
                     until: until.as_deref().map(timestamp).transpose()?,
                     batch_events,
                 };
@@ -459,12 +513,12 @@ impl Api {
                     caller,
                     crate::replay::Options {
                         scope,
-                        compare: compare.unwrap_or(false),
+                        compare: dry_run.unwrap_or(false),
                         resume: None,
                         actor: actor.to_string(),
                         unlock: None,
                     },
-                    all.unwrap_or(false),
+                    every_change.unwrap_or(false),
                     sealed.unwrap_or(false),
                 )
                 .await?
@@ -473,15 +527,15 @@ impl Api {
                 derivation,
                 compare,
                 switch,
-                from,
+                since,
                 until,
                 examples,
             } => {
-                let from = from.as_deref().map(timestamp).transpose()?;
+                let since = since.as_deref().map(timestamp).transpose()?;
                 let until = until.as_deref().map(timestamp).transpose()?;
-                let range = (from.is_some() || until.is_some()).then(|| {
+                let range = (since.is_some() || until.is_some()).then(|| {
                     (
-                        from.unwrap_or(sinex_model::Timestamp(time::OffsetDateTime::UNIX_EPOCH)),
+                        since.unwrap_or(sinex_model::Timestamp(time::OffsetDateTime::UNIX_EPOCH)),
                         until.unwrap_or_else(sinex_model::Timestamp::now),
                     )
                 });
@@ -495,12 +549,25 @@ impl Api {
                 )
                 .await?
             }
-            Request::Comparisons { derivation, limit } => {
+            Request::Comparisons {
+                derivation,
+                page_size,
+                cursor,
+            } => {
                 let mut conn = self.acquire(caller).await?;
-                let limit = i64::try_from(limit.unwrap_or(20)).unwrap_or(i64::MAX);
-                let kept =
-                    sinex_store::derivations::comparisons(&mut conn, derivation.as_deref(), limit)
-                        .await?;
+                let limit = i64::try_from(page_size.unwrap_or(50)).unwrap_or(i64::MAX);
+                let before = cursor
+                    .as_deref()
+                    .map(str::parse::<i64>)
+                    .transpose()
+                    .map_err(Error::bad_value)?;
+                let kept = sinex_store::derivations::comparisons(
+                    &mut conn,
+                    derivation.as_deref(),
+                    limit,
+                    before,
+                )
+                .await?;
                 let rows: Vec<Value> = kept
                     .into_iter()
                     .map(|c| {
@@ -677,8 +744,12 @@ impl Api {
         let mut conn = self.acquire(caller).await?;
         let row = sinex_store::diagnostics::positions(&mut conn).await?;
         let open_backup_holds = sinex_store::backup::open_summary(&mut conn).await?;
-        let telemetry =
-            sinex_store::telemetry::latest(&mut conn, SinexTelemetry::EVENT_TYPE).await?;
+        let telemetry = sinex_store::telemetry::recent(
+            &mut conn,
+            SinexTelemetry::EVENT_TYPE,
+            std::time::Duration::from_secs(15 * 60),
+        )
+        .await?;
         let refusals = sinex_store::diagnostics::ingress_refusals(&mut conn).await?;
         let producer_errors = sinex_store::diagnostics::producer_errors(&mut conn).await?;
         let selected = sinex_store::registry::selected_derivations(&mut conn).await?;

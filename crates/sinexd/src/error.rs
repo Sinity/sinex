@@ -78,10 +78,19 @@ impl Error {
     pub(crate) fn not_configured(message: impl std::fmt::Display) -> Self {
         Self::new(FailureKind::NotConfigured, message)
     }
+    pub(crate) fn no_writer() -> Self {
+        Self::Failure(
+            Failure::new(
+                FailureKind::NotConfigured,
+                "this daemon has no writer; start it with `sinexd run`",
+            )
+            .with_code("no_writer"),
+        )
+    }
     /// A failure inside the daemon that the caller cannot fix by changing the
     /// request: stored data it cannot read, a broken invariant.
     pub(crate) fn internal(message: impl std::fmt::Display) -> Self {
-        Self::new(FailureKind::Io, message)
+        Self::new(FailureKind::Internal, message)
     }
     pub(crate) fn file(path: impl AsRef<Path>, source: std::io::Error) -> Self {
         Self::File {
@@ -153,55 +162,24 @@ impl From<Error> for Failure {
                     Failure::new(io_kind(error.kind()), message)
                 }
             },
-            Error::Task(_) => Failure::new(FailureKind::Io, message),
+            Error::Task(_) => Failure::new(FailureKind::Internal, message),
             Error::Nats(_) => Failure::new(FailureKind::NotRunning, message).with_code("nats"),
         }
     }
 }
 
-impl From<sinex_model::time_settings::TimeSettingsError> for Error {
-    fn from(error: sinex_model::time_settings::TimeSettingsError) -> Self {
-        Self::bad_value(error)
-    }
+/// Library errors classified as one failure kind.
+macro_rules! from_as {
+    ($kind:ident: $($error:ty),+ $(,)?) => {$(
+        impl From<$error> for Error {
+            fn from(error: $error) -> Self { Self::$kind(error) }
+        }
+    )+};
 }
-
-impl From<jiff::Error> for Error {
-    fn from(error: jiff::Error) -> Self {
-        Self::bad_value(error)
-    }
-}
-
-impl From<time::error::ComponentRange> for Error {
-    fn from(error: time::error::ComponentRange) -> Self {
-        Self::bad_value(error)
-    }
-}
-
-/// A number outside the range its stored or wire form can hold.
-impl From<std::num::TryFromIntError> for Error {
-    fn from(error: std::num::TryFromIntError) -> Self {
-        Self::bad_value(error)
-    }
-}
-
-impl From<signals::EvaluationError> for Error {
-    fn from(error: signals::EvaluationError) -> Self {
-        Self::bad_value(error)
-    }
-}
-
-impl From<zip::result::ZipError> for Error {
-    fn from(error: zip::result::ZipError) -> Self {
-        Self::bad_value(error)
-    }
-}
-
-/// A closed semaphore or channel: the daemon task on its other side stopped.
-impl From<tokio::sync::AcquireError> for Error {
-    fn from(error: tokio::sync::AcquireError) -> Self {
-        Self::internal(error)
-    }
-}
+from_as!(bad_value: sinex_model::time_settings::TimeSettingsError, jiff::Error,
+    time::error::ComponentRange, std::num::TryFromIntError, signals::EvaluationError,
+    zip::result::ZipError, sinex_analysis::methods::MethodError, ranking::RankError);
+from_as!(internal: tokio::sync::AcquireError, sinex_model::BuildError);
 
 impl<T> From<tokio::sync::mpsc::error::SendError<T>> for Error {
     fn from(_: tokio::sync::mpsc::error::SendError<T>) -> Self {
@@ -253,25 +231,6 @@ impl From<sinex_library::plan::PlanError> for Error {
 impl From<zbus::Error> for Error {
     fn from(error: zbus::Error) -> Self {
         Self::new(FailureKind::NotRunning, error).within("D-Bus")
-    }
-}
-
-impl From<sinex_analysis::methods::MethodError> for Error {
-    fn from(error: sinex_analysis::methods::MethodError) -> Self {
-        Self::bad_value(error)
-    }
-}
-
-/// An event that cannot be built from the values a derivation computed.
-impl From<sinex_model::BuildError> for Error {
-    fn from(error: sinex_model::BuildError) -> Self {
-        Self::internal(error)
-    }
-}
-
-impl From<ranking::RankError> for Error {
-    fn from(error: ranking::RankError) -> Self {
-        Self::bad_value(error)
     }
 }
 

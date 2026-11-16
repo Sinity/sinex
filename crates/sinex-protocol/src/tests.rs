@@ -38,11 +38,11 @@ fn the_table_and_the_requests_agree() {
 fn requests_have_stable_wire_names() {
     let r = Request::Undo {
         operation: "x".into(),
-        compare: None,
+        dry_run: None,
     };
     assert_eq!(
         serde_json::to_value(&r).unwrap(),
-        json!({"method": "undo", "operation": "x", "compare": null})
+        json!({"method": "undo", "operation": "x", "dry-run": null})
     );
     assert_eq!(r.access(), Access::Agent);
     let tombstone = Request::from_args(
@@ -115,9 +115,9 @@ fn query_authoring_options_are_not_consumed_by_the_text_argument() {
             json!("2026-09-14T08:00:00Z"),
         ),
         (
-            "query-save",
+            "save",
             vec![
-                "query-save",
+                "save",
                 "by-source",
                 "events where source = $name",
                 "--parameter",
@@ -128,8 +128,8 @@ fn query_authoring_options_are_not_consumed_by_the_text_argument() {
         ),
         (
             "timeline",
-            vec!["timeline", "where source = synthetic", "--page", "2"],
-            "page",
+            vec!["timeline", "where source = synthetic", "--page-size", "2"],
+            "page-size",
             json!(2),
         ),
     ] {
@@ -154,10 +154,10 @@ fn curation_writes_arrive_as_typed_acts_and_a_malformed_write_is_refused() {
         .unwrap(),
     )
     .unwrap();
-    let Request::LibraryCurate { writes, request } = request else {
+    let Request::LibraryCurate { writes, request_id } = request else {
         panic!("{request:?}")
     };
-    assert_eq!(request, None);
+    assert_eq!(request_id, None);
     assert!(
         matches!(&writes[0], sinex_model::event_types::library::Act::Tag { tag, .. } if tag == "-")
     );

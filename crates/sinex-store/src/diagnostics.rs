@@ -12,15 +12,6 @@ pub struct Snapshot {
     pub search_position: Option<i64>,
     pub failures_24h: i64,
     pub blobs: i64,
-    pub sources: Vec<SourceState>,
-}
-
-#[derive(Clone, Debug)]
-pub struct SourceState {
-    pub source: String,
-    pub events: i64,
-    pub last_event: Option<time::OffsetDateTime>,
-    pub last_seen: time::OffsetDateTime,
 }
 
 pub async fn connect(url: &str) -> Result<PgConnection> {
@@ -45,7 +36,6 @@ pub async fn snapshot(conn: &mut PgConnection) -> Result<Snapshot> {
             search_position: None,
             failures_24h: 0,
             blobs: 0,
-            sources: Vec::new(),
         });
     }
     let positions = positions(&mut tx).await?;
@@ -55,20 +45,6 @@ pub async fn snapshot(conn: &mut PgConnection) -> Result<Snapshot> {
     )
     .fetch_one(&mut *tx)
     .await?;
-    let sources = sqlx::query!(
-        r#"SELECT source, events, last_event, last_seen
-           FROM core.source_counts ORDER BY source"#
-    )
-    .fetch_all(&mut *tx)
-    .await?
-    .into_iter()
-    .map(|r| SourceState {
-        source: r.source,
-        events: r.events,
-        last_event: r.last_event,
-        last_seen: r.last_seen,
-    })
-    .collect();
     tx.rollback().await?;
     Ok(Snapshot {
         commit_seq: positions.commit_seq,
@@ -76,7 +52,6 @@ pub async fn snapshot(conn: &mut PgConnection) -> Result<Snapshot> {
         search_position: positions.search_position,
         failures_24h: positions.failures_24h,
         blobs: row.blobs,
-        sources,
     })
 }
 

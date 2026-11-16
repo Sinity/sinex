@@ -533,14 +533,15 @@ fn reserved_words_must_be_quoted_to_search() {
 
 #[devkit::test]
 fn reads_back_as_a_sentence() {
-    let s = read_as(&q(
-        "commands where exit_code != 0 | sort by when desc | limit 5",
-    ));
+    let s = read_as(
+        &q("commands where exit_code != 0 | sort by when desc | limit 5"),
+        &jiff::tz::TimeZone::UTC,
+    );
     assert_eq!(
         s,
         "commands, each once however many shells saw it where exit code is not 0, sorted by time it happened descending, the first 5, as currently recorded"
     );
-    let s = read_as(&q("tide"));
+    let s = read_as(&q("tide"), &jiff::tz::TimeZone::UTC);
     assert!(s.contains("most relevant first"), "{s}");
 }
 
@@ -792,7 +793,7 @@ mod depth {
     fn deeply_nested_negations_bind_and_read_back_without_overflowing_the_stack() {
         let text = format!("events where {}source = 'synthetic'", "NOT ".repeat(3_000));
         let query = q(&text);
-        assert!(read_as(&query).contains("not ("));
+        assert!(read_as(&query, &jiff::tz::TimeZone::UTC).contains("not ("));
     }
 
     #[devkit::test]
@@ -803,7 +804,7 @@ mod depth {
             "(".repeat(depth),
             ")".repeat(depth)
         );
-        assert!(read_as(&q(&text)).contains("synthetic"));
+        assert!(read_as(&q(&text), &jiff::tz::TimeZone::UTC).contains("synthetic"));
     }
 
     #[devkit::test]
@@ -817,7 +818,7 @@ mod depth {
         );
         let query = q(&text);
         assert_eq!(query.clone(), query);
-        assert!(!read_as(&query).is_empty());
+        assert!(!read_as(&query, &jiff::tz::TimeZone::UTC).is_empty());
     }
 
     #[devkit::test]
@@ -832,7 +833,7 @@ mod depth {
         let query = q(&text);
         assert_eq!(query.clone(), query);
         assert!(format!("{query:?}").contains("s2999"));
-        assert!(read_as(&query).contains("s2999"));
+        assert!(read_as(&query, &jiff::tz::TimeZone::UTC).contains("s2999"));
         drop(query);
     }
 }

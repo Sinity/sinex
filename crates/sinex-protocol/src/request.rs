@@ -4,6 +4,7 @@ use crate::commands::{Access, COMMANDS, command};
 use command_surface::{Failure, FailureKind};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use sinex_model::TagName;
 
 /// CLI and streaming spelling of the shared numeric-or-null wire budget.
 pub fn deadline(value: &str) -> Result<command_surface::Deadline, Failure> {
@@ -78,8 +79,13 @@ impl<'de> Deserialize<'de> for Call {
 
 /// One call, as the API and MCP carry it. Built from a command's arguments
 /// with [`Request::from_args`], so every surface makes the same request.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "method", rename_all = "snake_case", deny_unknown_fields)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, TagName)]
+#[serde(
+    tag = "method",
+    rename_all = "kebab-case",
+    rename_all_fields = "kebab-case",
+    deny_unknown_fields
+)]
 pub enum Request {
     Status,
     Backup {
@@ -87,32 +93,30 @@ pub enum Request {
         #[serde(default)]
         hold: Option<String>,
         #[serde(default)]
-        output: Option<String>,
+        to: Option<String>,
         #[serde(default)]
-        page: Option<u64>,
+        page_size: Option<u64>,
         #[serde(default)]
         cursor: Option<String>,
     },
-    #[serde(rename = "sources-discover")]
     SourcesDiscover,
-    Signal {
+    Watch {
         action: String,
         name: Option<String>,
         rule: Option<String>,
-        page: Option<u64>,
+        page_size: Option<u64>,
         cursor: Option<String>,
     },
     Kinds {
         kind: Option<String>,
-        page: Option<u64>,
+        page_size: Option<u64>,
         cursor: Option<String>,
     },
     Fields {
         kind: Option<String>,
-        page: Option<u64>,
+        page_size: Option<u64>,
         cursor: Option<String>,
     },
-    #[serde(rename = "forecast-issue")]
     ForecastIssue {
         target: String,
         probability: String,
@@ -122,7 +126,6 @@ pub enum Request {
         #[serde(default)]
         information: Vec<String>,
     },
-    #[serde(rename = "forecast-resolve")]
     ForecastResolve {
         forecast: String,
         outcome: String,
@@ -130,19 +133,15 @@ pub enum Request {
         at: Option<String>,
         evidence: Vec<String>,
     },
-    #[serde(rename = "forecast-report")]
     ForecastReport,
 
-    #[serde(rename = "query-save")]
-    QuerySave {
+    Save {
         name: String,
         query: String,
         #[serde(default)]
         parameter: Vec<String>,
     },
-    #[serde(rename = "query-list")]
     QueryList,
-    #[serde(rename = "query-complete")]
     QueryComplete {
         query: String,
     },
@@ -152,7 +151,7 @@ pub enum Request {
         #[serde(default)]
         until: Option<String>,
         #[serde(default)]
-        page: Option<u64>,
+        page_size: Option<u64>,
         #[serde(default)]
         cursor: Option<String>,
     },
@@ -160,21 +159,21 @@ pub enum Request {
         #[serde(default)]
         query: Option<String>,
         #[serde(default)]
-        page: Option<u64>,
+        page_size: Option<u64>,
         #[serde(default)]
         cursor: Option<String>,
     },
     Query {
         query: String,
         #[serde(default)]
-        page: Option<u64>,
+        page_size: Option<u64>,
         #[serde(default)]
         cursor: Option<String>,
     },
     Search {
         words: String,
         #[serde(default)]
-        page: Option<u64>,
+        page_size: Option<u64>,
         #[serde(default)]
         cursor: Option<String>,
     },
@@ -184,14 +183,14 @@ pub enum Request {
         #[serde(default)]
         cwd: Option<String>,
         #[serde(default)]
-        page: Option<u64>,
+        page_size: Option<u64>,
         #[serde(default)]
         cursor: Option<String>,
     },
     Sql {
         sql: String,
         #[serde(default)]
-        page: Option<u64>,
+        page_size: Option<u64>,
         #[serde(default)]
         cursor: Option<String>,
     },
@@ -201,7 +200,7 @@ pub enum Request {
     Trace {
         reference: String,
         #[serde(default)]
-        page: Option<u64>,
+        page_size: Option<u64>,
         #[serde(default)]
         cursor: Option<String>,
     },
@@ -214,19 +213,17 @@ pub enum Request {
         parser: Vec<String>,
         #[serde(default)]
         account: Option<String>,
-        #[serde(default, rename = "export-date")]
+        #[serde(default)]
         export_date: Option<String>,
         #[serde(default)]
         follow: Option<bool>,
-        #[serde(default, rename = "batch-events")]
+        #[serde(default)]
         batch_events: Option<u64>,
     },
-    #[serde(rename = "stage-list")]
     StageList {
         #[serde(default)]
         active: Option<bool>,
     },
-    #[serde(rename = "stage-show")]
     StageShow {
         operation: String,
     },
@@ -237,17 +234,17 @@ pub enum Request {
         material: Vec<String>,
         #[serde(default)]
         binding: Option<String>,
-        #[serde(default, rename = "event-type")]
-        event_type: Vec<String>,
         #[serde(default)]
-        from: Option<String>,
+        kind: Vec<String>,
+        #[serde(default)]
+        since: Option<String>,
         #[serde(default)]
         until: Option<String>,
         #[serde(default)]
-        compare: Option<bool>,
+        dry_run: Option<bool>,
         #[serde(default)]
-        all: Option<bool>,
-        #[serde(default, rename = "batch-events")]
+        every_change: Option<bool>,
+        #[serde(default)]
         batch_events: Option<u64>,
     },
     Recompute {
@@ -257,7 +254,7 @@ pub enum Request {
         #[serde(default)]
         switch: Option<i64>,
         #[serde(default)]
-        from: Option<String>,
+        since: Option<String>,
         #[serde(default)]
         until: Option<String>,
         #[serde(default)]
@@ -267,7 +264,9 @@ pub enum Request {
         #[serde(default)]
         derivation: Option<String>,
         #[serde(default)]
-        limit: Option<u64>,
+        page_size: Option<u64>,
+        #[serde(default)]
+        cursor: Option<String>,
     },
     Crawl {
         #[serde(default)]
@@ -289,11 +288,11 @@ pub enum Request {
         #[serde(default)]
         source: Option<String>,
         #[serde(default)]
-        after: Option<String>,
+        since: Option<String>,
         #[serde(default)]
-        before: Option<String>,
+        until: Option<String>,
         #[serde(default)]
-        compare: Option<bool>,
+        dry_run: Option<bool>,
     },
     Restore {
         #[serde(default)]
@@ -305,13 +304,13 @@ pub enum Request {
         #[serde(default)]
         source: Option<String>,
         #[serde(default)]
-        after: Option<String>,
+        since: Option<String>,
         #[serde(default)]
-        before: Option<String>,
+        until: Option<String>,
         #[serde(default)]
         operation: Option<String>,
         #[serde(default)]
-        compare: Option<bool>,
+        dry_run: Option<bool>,
     },
     Tombstone {
         #[serde(default)]
@@ -323,18 +322,18 @@ pub enum Request {
         #[serde(default)]
         source: Option<String>,
         #[serde(default)]
-        after: Option<String>,
+        since: Option<String>,
         #[serde(default)]
-        before: Option<String>,
+        until: Option<String>,
         #[serde(default)]
         operation: Option<String>,
         #[serde(default)]
-        compare: Option<bool>,
+        dry_run: Option<bool>,
     },
     Undo {
         operation: String,
         #[serde(default)]
-        compare: Option<bool>,
+        dry_run: Option<bool>,
     },
     Resume {
         operation: String,
@@ -347,7 +346,6 @@ pub enum Request {
         a: String,
         b: String,
     },
-    #[serde(rename = "withdraw-decision")]
     WithdrawDecision {
         a: String,
         b: String,
@@ -370,17 +368,15 @@ pub enum Request {
         #[serde(default)]
         focus_record: Option<String>,
     },
-    #[serde(rename = "privacy-rules")]
     PrivacyRules {
         #[serde(default)]
         history: Option<bool>,
     },
-    #[serde(rename = "privacy-rule")]
     PrivacyRule {
         name: String,
         source: String,
-        #[serde(default, rename = "type")]
-        event_type: Option<String>,
+        #[serde(default)]
+        kind: Option<String>,
         #[serde(default)]
         field: Option<String>,
         #[serde(default)]
@@ -392,16 +388,13 @@ pub enum Request {
         #[serde(default)]
         action: Option<String>,
     },
-    #[serde(rename = "privacy-end")]
     PrivacyEnd {
         name: String,
     },
-    #[serde(rename = "privacy-class")]
     PrivacyClass {
         source: String,
         class: String,
     },
-    #[serde(rename = "privacy-verify")]
     PrivacyVerify,
     Unlock {
         identity: String,
@@ -409,32 +402,28 @@ pub enum Request {
         minutes: Option<u64>,
     },
     Lock,
-    #[serde(rename = "analysis-catalog")]
     AnalysisCatalog,
-    #[serde(rename = "analysis-run")]
     AnalysisRun {
         recipe: String,
-        from: String,
-        to: String,
+        first: String,
+        last: String,
         #[serde(default)]
         partial: Option<String>,
     },
-    #[serde(rename = "analysis-panel")]
     AnalysisPanel {
-        from: String,
-        to: String,
+        first: String,
+        last: String,
         #[serde(default)]
         metric: Option<Vec<String>>,
         #[serde(default)]
         by: Option<String>,
     },
     Gaps {
-        from: String,
-        to: String,
+        first: String,
+        last: String,
         #[serde(default)]
         source: Option<Vec<String>>,
     },
-    #[serde(rename = "analysis-why")]
     AnalysisWhy {
         metric: String,
         day: String,
@@ -443,32 +432,27 @@ pub enum Request {
         #[serde(default)]
         day: Option<String>,
         #[serde(default)]
-        budget: Option<u64>,
+        bytes: Option<u64>,
     },
-    #[serde(rename = "library-add")]
     LibraryAdd {
         path: String,
         #[serde(default)]
         reference: Option<bool>,
     },
-    #[serde(rename = "library-item")]
     LibraryItem {
         item: String,
     },
-    #[serde(rename = "library-curate")]
     LibraryCurate {
         /// The caller's ID for this request, reused on retry so it is
         /// written once; a new one is chosen when absent.
         #[serde(default)]
-        request: Option<String>,
+        request_id: Option<String>,
         writes: Vec<sinex_model::event_types::library::Act>,
     },
-    #[serde(rename = "library-collection")]
     LibraryCollection {
         #[serde(default)]
         collection: Option<String>,
     },
-    #[serde(rename = "library-rank")]
     LibraryRank {
         scale: String,
         #[serde(default)]
@@ -476,17 +460,15 @@ pub enum Request {
         #[serde(default)]
         collection: Option<String>,
         #[serde(default)]
-        k: Option<u64>,
+        next_size: Option<u64>,
         #[serde(default)]
         rule: Option<String>,
     },
-    #[serde(rename = "library-open")]
     LibraryOpen {
         item: String,
         #[serde(default)]
         rendition: Option<String>,
     },
-    #[serde(rename = "library-viewed")]
     LibraryViewed {
         item: String,
         #[serde(default)]
@@ -494,11 +476,9 @@ pub enum Request {
         #[serde(default)]
         player: Option<String>,
     },
-    #[serde(rename = "library-preview")]
     LibraryPreview {
         item: String,
     },
-    #[serde(rename = "library-import")]
     LibraryImport {
         path: String,
     },
@@ -533,70 +513,6 @@ impl Request {
         object.insert("method".into(), Value::String(command.into()));
         serde_json::from_value(Value::Object(object))
             .map_err(|e| Failure::new(FailureKind::BadRequest, format!("`{command}`: {e}")))
-    }
-
-    pub fn method(&self) -> &'static str {
-        match self {
-            Request::Status => "status",
-            Request::Backup { .. } => "backup",
-            Request::SourcesDiscover => "sources-discover",
-            Request::Signal { .. } => "signal",
-            Request::Kinds { .. } => "kinds",
-            Request::Fields { .. } => "fields",
-            Request::ForecastIssue { .. } => "forecast-issue",
-            Request::ForecastResolve { .. } => "forecast-resolve",
-            Request::ForecastReport => "forecast-report",
-            Request::Query { .. } => "query",
-            Request::QuerySave { .. } => "query-save",
-            Request::QueryList => "query-list",
-            Request::QueryComplete { .. } => "query-complete",
-            Request::Context { .. } => "context",
-            Request::Timeline { .. } => "timeline",
-            Request::Search { .. } => "search",
-            Request::Recall { .. } => "recall",
-            Request::Sql { .. } => "sql",
-            Request::Show { .. } => "show",
-            Request::Trace { .. } => "trace",
-            Request::Follow { .. } => "follow",
-            Request::Stage { .. } => "stage",
-            Request::StageList { .. } => "stage-list",
-            Request::StageShow { .. } => "stage-show",
-            Request::Replay { .. } => "replay",
-            Request::Recompute { .. } => "recompute",
-            Request::Comparisons { .. } => "comparisons",
-            Request::Crawl { .. } => "crawl",
-            Request::Archive { .. } => "archive",
-            Request::Restore { .. } => "restore",
-            Request::Tombstone { .. } => "tombstone",
-            Request::Undo { .. } => "undo",
-            Request::Resume { .. } => "resume",
-            Request::Same { .. } => "same",
-            Request::Distinct { .. } => "distinct",
-            Request::WithdrawDecision { .. } => "withdraw-decision",
-            Request::Mark { .. } => "mark",
-            Request::PrivacyRules { .. } => "privacy-rules",
-            Request::PrivacyRule { .. } => "privacy-rule",
-            Request::PrivacyEnd { .. } => "privacy-end",
-            Request::PrivacyClass { .. } => "privacy-class",
-            Request::PrivacyVerify => "privacy-verify",
-            Request::Unlock { .. } => "unlock",
-            Request::Lock => "lock",
-            Request::AnalysisCatalog => "analysis-catalog",
-            Request::AnalysisRun { .. } => "analysis-run",
-            Request::AnalysisPanel { .. } => "analysis-panel",
-            Request::Gaps { .. } => "gaps",
-            Request::AnalysisWhy { .. } => "analysis-why",
-            Request::Brief { .. } => "brief",
-            Request::LibraryAdd { .. } => "library-add",
-            Request::LibraryItem { .. } => "library-item",
-            Request::LibraryCurate { .. } => "library-curate",
-            Request::LibraryCollection { .. } => "library-collection",
-            Request::LibraryRank { .. } => "library-rank",
-            Request::LibraryOpen { .. } => "library-open",
-            Request::LibraryViewed { .. } => "library-viewed",
-            Request::LibraryPreview { .. } => "library-preview",
-            Request::LibraryImport { .. } => "library-import",
-        }
     }
 
     /// Advertised access comes from the table. Wire requests outside the table

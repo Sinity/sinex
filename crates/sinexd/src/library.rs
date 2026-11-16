@@ -158,7 +158,7 @@ pub(crate) async fn dispatch(
                     scale,
                     judges,
                     collection,
-                    k,
+                    next_size,
                     rule,
                 } => {
                     rank_view(
@@ -166,7 +166,7 @@ pub(crate) async fn dispatch(
                         &scale,
                         judges.as_deref(),
                         collection.as_deref(),
-                        k,
+                        next_size,
                         rule.as_deref(),
                     )
                     .await
@@ -176,9 +176,7 @@ pub(crate) async fn dispatch(
         }
         (Some(w), false) => w,
         (None, false) => {
-            return Err(Error::not_configured(
-                "this daemon has no writer; writes go through `sinexd run`",
-            ));
+            return Err(Error::no_writer());
         }
     };
     let library = Library {
@@ -204,7 +202,7 @@ pub(crate) async fn dispatch(
                 .await
         }
         Request::LibraryCurate {
-            request: id,
+            request_id: id,
             writes,
         } => library.curate(conn, id, &writes, actor).await,
         Request::LibraryOpen { item, rendition } => {

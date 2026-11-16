@@ -348,7 +348,7 @@ async fn a_retried_request_is_answered_without_writing_and_other_content_is_refu
     let writes: Vec<sinex_model::event_types::library::Act> =
         serde_json::from_value(json!([{"act": "note", "target": t(&a), "text": "once"}])).unwrap();
     let send = |writes| Request::LibraryCurate {
-        request: Some("retry-1".into()),
+        request_id: Some("retry-1".into()),
         writes,
     };
     let first = w.ok(send(writes.clone())).await;

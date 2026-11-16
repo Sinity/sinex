@@ -217,6 +217,16 @@ async fn serve(
         Some(file) => binding_runner::Config::load(file)?,
         None => binding_runner::Config::default(),
     };
+    let exclusions = sources
+        .exclude
+        .iter()
+        .filter_map(|(name, exclusion)| {
+            exclusion
+                .as_ref()
+                .map(|exclusion| (name.clone(), exclusion.reason.clone()))
+        })
+        .collect();
+    sinex_store::registry::write_exclusions(&mut writer_conn, &exclusions).await?;
     // The daemon reads its own telemetry spool, whatever is configured.
     let telemetry_spool = o.telemetry_spool.clone();
     // Discovery must see the configured spool before its first planning turn.

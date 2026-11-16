@@ -41,6 +41,91 @@ pub fn db_check(input: TokenStream) -> TokenStream {
     }
 }
 
+/// Return the serialized tag of an internally tagged enum.
+#[proc_macro_derive(TagName, attributes(serde))]
+pub fn tag_name(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    match expand_tag_name(&input) {
+        Ok(tokens) => tokens.into(),
+        Err(error) => error.to_compile_error().into(),
+    }
+}
+
+fn serde_value(attrs: &[syn::Attribute], key: &str) -> syn::Result<Option<LitStr>> {
+    let mut value = None;
+    for attr in attrs.iter().filter(|attr| attr.path().is_ident("serde")) {
+        let entries = attr.parse_args_with(
+            syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+        )?;
+        for entry in entries {
+            if entry.path().is_ident(key) {
+                let syn::Meta::NameValue(entry) = entry else {
+                    return Err(syn::Error::new_spanned(entry, "expected a string value"));
+                };
+                let syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Str(text),
+                    ..
+                }) = &entry.value
+                else {
+                    return Err(syn::Error::new_spanned(entry, "expected a string value"));
+                };
+                value = Some(text.clone());
+            }
+        }
+    }
+    Ok(value)
+}
+
+fn expand_tag_name(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
+    let name = &input.ident;
+    let Data::Enum(data) = &input.data else {
+        return Err(syn::Error::new_spanned(name, "TagName derives on enums"));
+    };
+    let tag = serde_value(&input.attrs, "tag")?
+        .ok_or_else(|| syn::Error::new_spanned(name, "TagName needs #[serde(tag = \"name\")]"))?;
+    let method: Ident = syn::parse_str(&tag.value())
+        .map_err(|_| syn::Error::new_spanned(&tag, "the tag must be a Rust method name"))?;
+    let rename_all = serde_value(&input.attrs, "rename_all")?;
+    if let Some(rename) = &rename_all {
+        if !matches!(rename.value().as_str(), "snake_case" | "kebab-case") {
+            return Err(syn::Error::new_spanned(
+                rename,
+                "TagName supports snake_case and kebab-case",
+            ));
+        }
+    }
+    let mut arms = Vec::new();
+    for variant in &data.variants {
+        let ident = &variant.ident;
+        let text = match serde_value(&variant.attrs, "rename")? {
+            Some(text) => text,
+            None => {
+                let name = ident.to_string();
+                let renamed = match rename_all.as_ref().map(LitStr::value).as_deref() {
+                    Some("snake_case") => snake(&name),
+                    Some("kebab-case") => snake(&name).replace('_', "-"),
+                    _ => name,
+                };
+                LitStr::new(&renamed, ident.span())
+            }
+        };
+        let pattern = match &variant.fields {
+            Fields::Unit => quote!(Self::#ident),
+            Fields::Named(_) => quote!(Self::#ident { .. }),
+            Fields::Unnamed(_) => quote!(Self::#ident(..)),
+        };
+        arms.push(quote!(#pattern => #text));
+    }
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    Ok(quote! {
+        impl #impl_generics #name #ty_generics #where_clause {
+            pub fn #method(&self) -> &'static str {
+                match self { #(#arms),* }
+            }
+        }
+    })
+}
+
 enum Key {
     Location,
     Fields(Vec<LitStr>),

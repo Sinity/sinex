@@ -42,7 +42,7 @@ pub use payload::{
     DbCheck, EquivalenceKey, EventPayload, KeyKind, OwnedBlob, Payloads, ReplaceRule,
 };
 pub use privacy::Class;
-pub use sinex_macros::{DbCheck, EventPayload};
+pub use sinex_macros::{DbCheck, EventPayload, TagName};
 pub use source::{Expectation, SnapshotCatalog, SourceDeclaration};
 
 /// Re-exports the derives' generated code relies on.

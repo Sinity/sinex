@@ -13,7 +13,10 @@ fn shell_sessions_are_explicit_and_recall_last_filters_the_session() {
         query.source,
         Source::RecallLast { filter: Some(_) }
     ));
-    assert!(read_as(&query).contains("during the latest recorded shell session"));
+    assert!(
+        read_as(&query, &jiff::tz::TimeZone::UTC)
+            .contains("during the latest recorded shell session")
+    );
     assert!(
         err("shell-sessions where cwds ^ relative")
             .message

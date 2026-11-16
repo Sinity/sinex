@@ -99,7 +99,7 @@ fn fill_resolves_bounds_and_keeps_later_group_filters() {
     let fill = g.fill.as_ref().unwrap();
     assert_eq!(fill.to, ctx().now);
     assert_eq!(fill.to.as_second() - fill.from.as_second(), 3 * 86400);
-    assert!(read_as(&query).contains("empty time buckets"));
+    assert!(read_as(&query, &jiff::tz::TimeZone::UTC).contains("empty time buckets"));
     assert!(
         err("commands | group by day(when) | count | fill")
             .message

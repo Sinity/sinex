@@ -99,7 +99,7 @@ impl World {
         self.run_as(
             actor,
             Request::LibraryCurate {
-                request: None,
+                request_id: None,
                 writes,
             },
         )
@@ -309,7 +309,7 @@ async fn the_library_end_to_end(db: devkit::pg::TestDatabase) {
             scale: "stars".into(),
             judges: None,
             collection: None,
-            k: None,
+            next_size: None,
             rule: None,
         })
         .await;

@@ -173,7 +173,7 @@ impl Finding {
                 let at_least = if state == "recorded" { "at least " } else { "" };
                 format!(
                     "{description} ({metric}) on {unit}: {at_least}{}",
-                    num(*value)
+                    number(*value)
                 )
             }
             Template::MetricChange {
@@ -185,8 +185,8 @@ impl Finding {
             } => {
                 format!(
                     "{metric}: {} on {unit_b}, against {} on {unit_a}",
-                    num(*b),
-                    num(*a)
+                    number(*b),
+                    number(*a)
                 )
             }
             Template::Association {
@@ -219,8 +219,8 @@ impl Finding {
                 method,
             } => format!(
                 "{metric} shifted from about {} to about {} at {boundary} ({method})",
-                num(*before),
-                num(*after)
+                number(*before),
+                number(*after)
             ),
             Template::Deviation {
                 metric,
@@ -230,8 +230,8 @@ impl Finding {
                 distance,
             } => format!(
                 "{metric} on {unit} was {}, against a median of {} over the prior window ({distance:+.1} robust units)",
-                num(*value),
-                num(*median)
+                number(*value),
+                number(*median)
             ),
             Template::NotFound { what, scope } => format!("No {what} in {scope}"),
             Template::Missing {
@@ -320,11 +320,20 @@ fn one_line(text: &str) -> String {
     output
 }
 
-fn num(v: f64) -> String {
-    if v.fract() == 0.0 && v.abs() < 1e15 {
-        format!("{}", v as i64)
-    } else {
+/// Integers stay whole; small nonzero values keep three significant digits.
+pub fn number(v: f64) -> String {
+    if !v.is_finite() {
+        v.to_string()
+    } else if v.fract() == 0.0 {
+        format!("{v:.0}")
+    } else if v.abs() >= 1.0 {
         format!("{v:.2}")
+    } else {
+        let decimals = (2.0 - v.abs().log10().floor()) as usize;
+        format!("{v:.decimals$}")
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_string()
     }
 }
 

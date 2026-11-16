@@ -11,7 +11,7 @@ fn the_cli_is_generated_from_the_table() {
         .try_get_matches_from([
             "sinexctl",
             "search",
-            "--page",
+            "--page-size",
             "5",
             "cargo test",
             "tide",
@@ -25,7 +25,7 @@ fn the_cli_is_generated_from_the_table() {
         args["words"],
         Value::String("\"cargo test\" tide -la".into())
     );
-    assert_eq!(args["page"], Value::from(5u64));
+    assert_eq!(args["page-size"], Value::from(5u64));
     let m = cli()
         .try_get_matches_from([
             "sinexctl",
@@ -44,7 +44,7 @@ fn the_cli_is_generated_from_the_table() {
         request,
         Request::Query {
             query: "commands where exit_code != 0".into(),
-            page: None,
+            page_size: None,
             cursor: None
         }
     );
@@ -116,7 +116,7 @@ fn cli_discovery_lists_stage_decisions_and_recall() {
         Request::Recall {
             around: Some("yesterday".into()),
             cwd: None,
-            page: None,
+            page_size: None,
             cursor: None
         }
     );
@@ -141,7 +141,7 @@ fn recall_cwd_can_follow_last_and_preserves_path_text() {
             Request::Recall {
                 around: Some("last".into()),
                 cwd: Some(path.into()),
-                page: None,
+                page_size: None,
                 cursor: None
             }
         );
@@ -168,7 +168,7 @@ fn schema_field_discovery_uses_the_shared_request_table() {
             "fields",
             "--kind",
             "command.executed",
-            "--page",
+            "--page-size",
             "3",
         ])
         .unwrap();
@@ -182,7 +182,7 @@ fn schema_field_discovery_uses_the_shared_request_table() {
         request,
         Request::Fields {
             kind: Some("command.executed".into()),
-            page: Some(3),
+            page_size: Some(3),
             cursor: None
         }
     );

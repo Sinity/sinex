@@ -5,6 +5,17 @@ use crate::{api, catalog, reader_context};
 use clap::Subcommand;
 use std::path::PathBuf;
 
+pub(crate) fn emit(text: &str) {
+    use std::io::Write;
+    if let Err(error) = std::io::stdout().lock().write_all(text.as_bytes()) {
+        if error.kind() == std::io::ErrorKind::BrokenPipe {
+            std::process::exit(141);
+        }
+        eprintln!("sinexd: stdout: {error}");
+        std::process::exit(i32::from(command_surface::FailureKind::Io.exit_code()));
+    }
+}
+
 #[derive(Subcommand)]
 pub(crate) enum Admin {
     /// Read-only checks that work without a running daemon.
@@ -91,7 +102,7 @@ async fn schema(database: &str, mappings: Vec<String>, upgrade: bool) -> Result<
         sinex_schema::start(&mut connection, &kind_prefixes).await
     };
     applied
-        .map(|applied| println!("{applied}"))
+        .map(|applied| emit(&format!("{applied}\n")))
         .map_err(Error::from)
 }
 

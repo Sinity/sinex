@@ -45,6 +45,8 @@ pub struct Command {
     /// The method name: the CLI subcommand, the API method and, prefixed with
     /// `sinex_`, the MCP tool.
     pub name: &'static str,
+    /// Full command lines used in help and the development fixture.
+    pub examples: &'static [&'static str],
     pub summary: &'static str,
     pub args: &'static [Arg],
     pub access: Access,
@@ -132,17 +134,17 @@ const LIFECYCLE_SCOPE: &[Arg] = &[
     opt("run", ArgKind::Text, "every reading one run produced"),
     opt("source", ArgKind::Text, "one source's readings"),
     opt(
-        "after",
+        "since",
         ArgKind::Text,
         "with --source: readings at or after this time (RFC 3339)",
     ),
     opt(
-        "before",
+        "until",
         ArgKind::Text,
         "with --source: readings before this time (RFC 3339)",
     ),
     opt(
-        "compare",
+        "dry-run",
         ArgKind::Bool,
         "show the cascade and what would refuse, and change nothing",
     ),
@@ -157,12 +159,12 @@ const LIFECYCLE_SCOPE_OR_OPERATION: &[Arg] = &[
     opt("run", ArgKind::Text, "every reading one run produced"),
     opt("source", ArgKind::Text, "one source's readings"),
     opt(
-        "after",
+        "since",
         ArgKind::Text,
         "with --source: readings at or after this time (RFC 3339)",
     ),
     opt(
-        "before",
+        "until",
         ArgKind::Text,
         "with --source: readings before this time (RFC 3339)",
     ),
@@ -172,20 +174,21 @@ const LIFECYCLE_SCOPE_OR_OPERATION: &[Arg] = &[
         "the chains an earlier operation archived",
     ),
     opt(
-        "compare",
+        "dry-run",
         ArgKind::Bool,
         "show the cascade and what would refuse, and change nothing",
     ),
 ];
 
-const PAGE: Arg = opt("page", ArgKind::Integer, "rows per page (default 50)");
+const PAGE: Arg = opt("page-size", ArgKind::Integer, "rows per page (default 50)");
 const CURSOR: Arg = opt("cursor", ArgKind::Text, "the cursor from the previous page");
 
 /// Advertised commands. The CLI, API discovery and MCP use this list, so
 /// they cannot drift apart.
 pub const COMMANDS: &[Command] = &[
     Command {
-        name: "signal",
+        examples: &[],
+        name: "watch",
         summary: "Author or inspect standing signal rules",
         access: Access::Agent,
         mcp: true,
@@ -202,6 +205,7 @@ pub const COMMANDS: &[Command] = &[
         ],
     },
     Command {
+        examples: &[],
         name: "kinds",
         summary: "List immutable kind declarations",
         access: Access::Read,
@@ -209,6 +213,7 @@ pub const COMMANDS: &[Command] = &[
         args: &[opt("kind", ArgKind::Text, "event type"), PAGE, CURSOR],
     },
     Command {
+        examples: &[],
         name: "fields",
         summary: "Describe payload fields from stored declarations",
         access: Access::Read,
@@ -216,6 +221,7 @@ pub const COMMANDS: &[Command] = &[
         args: &[opt("kind", ArgKind::Text, "event type"), PAGE, CURSOR],
     },
     Command {
+        examples: &[],
         name: "forecast-issue",
         summary: "Record a binary probability forecast",
         access: Access::Agent,
@@ -238,6 +244,7 @@ pub const COMMANDS: &[Command] = &[
         ],
     },
     Command {
+        examples: &[],
         name: "forecast-resolve",
         summary: "Record an outcome and its evidence",
         access: Access::Agent,
@@ -265,6 +272,7 @@ pub const COMMANDS: &[Command] = &[
         ],
     },
     Command {
+        examples: &[],
         name: "forecast-report",
         summary: "Brier score and calibration of visible resolved forecasts",
         access: Access::Read,
@@ -272,6 +280,7 @@ pub const COMMANDS: &[Command] = &[
         args: &[],
     },
     Command {
+        examples: &[],
         name: "status",
         summary: "What Sinex holds: commit position, sources and their newest events, the search index.",
         args: &[],
@@ -279,6 +288,7 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
+        examples: &[],
         name: "sources-discover",
         summary: "Discovery dry run: every input with its state (capturing, unavailable and why, excluded and why, on demand), and the catalog sources without an implementation whose data this host has.",
         args: &[],
@@ -286,6 +296,7 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
+        examples: &[],
         name: "mark",
         summary: "Mark a moment for recall, with an optional note and client-observed context.",
         args: &[
@@ -312,12 +323,12 @@ pub const COMMANDS: &[Command] = &[
                 "focused window title observed by the client",
             ),
             opt(
-                "command_record",
+                "command-record",
                 ArgKind::Text,
                 "the command's source record key, as the client saw it",
             ),
             opt(
-                "focus_record",
+                "focus-record",
                 ArgKind::Text,
                 "the focus change's source record key, as the client saw it",
             ),
@@ -326,7 +337,8 @@ pub const COMMANDS: &[Command] = &[
         mcp: false,
     },
     Command {
-        name: "query-save",
+        examples: &[],
+        name: "save",
         summary: "Save a named query with scalar parameters ($name), attributed to the caller.",
         args: &[
             pos("name", ArgKind::Text, "saved query name"),
@@ -341,6 +353,7 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
+        examples: &[],
         name: "query-list",
         summary: "List visible saved queries, names and declared parameters.",
         args: &[],
@@ -348,6 +361,7 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
+        examples: &[],
         name: "query-complete",
         summary: "Complete query fields from the selected table and event schemas.",
         args: &[pos("query", ArgKind::Rest, "query prefix to complete")],
@@ -355,6 +369,7 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
+        examples: &[],
         name: "context",
         summary: "Activity for resuming work, with source gaps; default the past two hours.",
         args: &[
@@ -371,6 +386,7 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
+        examples: &[],
         name: "timeline",
         summary: "Events in time order, with query filters and paging.",
         args: &[
@@ -386,6 +402,7 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
+        examples: &[],
         name: "query",
         summary: "Run a query in the Sinex query language; returns one page and a cursor.",
         args: &[pos("query", ArgKind::Rest, "the query text"), PAGE, CURSOR],
@@ -393,6 +410,7 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
+        examples: &[],
         name: "search",
         summary: "Full-text search over events: words (all must match), \"phrases\", word* prefixes.",
         args: &[
@@ -404,6 +422,7 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
+        examples: &[],
         name: "recall",
         summary: "What sources recorded around a time/day or moment mark, or in the latest shell session (last).",
         args: &[
@@ -427,17 +446,15 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
+        examples: &[],
         name: "sql",
         summary: "Run one read-only SQL statement as the reader role; rows as JSON objects, a page at a time.",
-        args: &[
-            pos("sql", ArgKind::Rest, "the SQL statement"),
-            opt("page", ArgKind::Integer, "rows per page (default 1000)"),
-            CURSOR,
-        ],
+        args: &[pos("sql", ArgKind::Rest, "the SQL statement"), PAGE, CURSOR],
         access: Access::Read,
         mcp: true,
     },
     Command {
+        examples: &[],
         name: "show",
         summary: "One event in full: reading, state, provenance, payload.",
         args: &[pos("reference", ArgKind::Reference, "the event")],
@@ -445,6 +462,7 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
+        examples: &[],
         name: "trace",
         summary: "The path from an event down through its parents to stored bytes.",
         args: &[
@@ -456,6 +474,7 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
+        examples: &[],
         name: "follow",
         summary: "Stream new events matching a query as they are committed.",
         args: &[pos("query", ArgKind::Rest, "the query text")],
@@ -463,6 +482,7 @@ pub const COMMANDS: &[Command] = &[
         mcp: false,
     },
     Command {
+        examples: &[],
         name: "replay",
         summary: "Read stored materials again with current parsers and rules; old readings are archived. With no scope, every material.",
         args: &[
@@ -482,12 +502,12 @@ pub const COMMANDS: &[Command] = &[
                 "every material of a binding (`atuin@host`)",
             ),
             opt(
-                "event-type",
+                "kind",
                 ArgKind::List,
                 "only readings of this event type (repeatable)",
             ),
             opt(
-                "from",
+                "since",
                 ArgKind::Text,
                 "only readings at or after this time (RFC 3339)",
             ),
@@ -497,12 +517,12 @@ pub const COMMANDS: &[Command] = &[
                 "only readings before this time (RFC 3339)",
             ),
             opt(
-                "compare",
+                "dry-run",
                 ArgKind::Bool,
                 "show what the replay would change and keep nothing",
             ),
             opt(
-                "all",
+                "every-change",
                 ArgKind::Bool,
                 "list every change, not only the first few of each kind",
             ),
@@ -516,6 +536,7 @@ pub const COMMANDS: &[Command] = &[
         mcp: false,
     },
     Command {
+        examples: &[],
         name: "recompute",
         summary: "Recompute a keyed derivation's outputs. With --compare, show old against new and keep the difference in derivation.comparisons, without writing outputs.",
         args: &[
@@ -531,7 +552,7 @@ pub const COMMANDS: &[Command] = &[
                 "select the producer version using a full comparison ID",
             ),
             opt(
-                "from",
+                "since",
                 ArgKind::Text,
                 "only keys touched by inputs at or after this time (RFC 3339)",
             ),
@@ -550,6 +571,7 @@ pub const COMMANDS: &[Command] = &[
         mcp: false,
     },
     Command {
+        examples: &[],
         name: "comparisons",
         summary: "Comparisons kept by `recompute --compare`, newest first.",
         args: &[
@@ -558,12 +580,14 @@ pub const COMMANDS: &[Command] = &[
                 ArgKind::Text,
                 "only comparisons of this derivation",
             ),
-            opt("limit", ArgKind::Integer, "how many (default 20)"),
+            PAGE,
+            CURSOR,
         ],
         access: Access::Read,
         mcp: true,
     },
     Command {
+        examples: &[],
         name: "crawl",
         summary: "Fetch pages from stored browser history whose host is on the allow list and that were not fetched yet (`page.fetched`). Nothing is fetched without an allow list.",
         args: &[
@@ -588,6 +612,7 @@ pub const COMMANDS: &[Command] = &[
         mcp: false,
     },
     Command {
+        examples: &[],
         name: "same",
         summary: "Decide two records are one occurrence: a duplicate decision that revises your earlier one on the pair. The operator's decisions govern; an agent's governs only where the family admits agent decisions.",
         args: JUDGED_PAIR,
@@ -595,6 +620,7 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
+        examples: &[],
         name: "distinct",
         summary: "Decide two records are two occurrences, so fusion never joins them: a duplicate decision that revises your earlier one on the pair.",
         args: JUDGED_PAIR,
@@ -602,6 +628,7 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
+        examples: &[],
         name: "withdraw-decision",
         summary: "Withdraw your duplicate decision on two records; the family's rules decide the pair again.",
         args: JUDGED_PAIR,
@@ -609,6 +636,7 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
+        examples: &[],
         name: "archive",
         summary: "Archive readings with their whole live chains: the trash, reversible with restore or undo. Prints the cascade it moved; --compare prints it and moves nothing.",
         args: LIFECYCLE_SCOPE,
@@ -616,6 +644,7 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
+        examples: &[],
         name: "restore",
         summary: "Bring archived readings back with the chains that left with them. Refused while another reading of the same record is live; archive that one first.",
         args: LIFECYCLE_SCOPE_OR_OPERATION,
@@ -623,6 +652,7 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
+        examples: &[],
         name: "tombstone",
         summary: "Irreversibly drop the payloads of archived readings and their chains, keeping skeletons; a tombstoned material's bytes go when nothing else holds them. Refused for anything live. Use --compare first.",
         args: LIFECYCLE_SCOPE_OR_OPERATION,
@@ -630,12 +660,13 @@ pub const COMMANDS: &[Command] = &[
         mcp: false,
     },
     Command {
+        examples: &[],
         name: "undo",
         summary: "Reverse an operation: archive what it made live, then restore what it archived. Undoes archive, restore, replay and undo; a tombstone is irreversible.",
         args: &[
             pos("operation", ArgKind::Text, "the operation to reverse"),
             opt(
-                "compare",
+                "dry-run",
                 ArgKind::Bool,
                 "show what would move and change nothing",
             ),
@@ -644,27 +675,25 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
+        examples: &[],
         name: "backup",
         summary: "Hold a backup boundary, prepare a local backup (database and key dumps, segment prefixes and producer state), release a hold, or list open holds. Archiving the backup belongs to the deployment's backup tool.",
         args: &[
             pos("action", ArgKind::Text, "hold, prepare, release or list"),
             pos_opt("hold", ArgKind::Text, "the hold UUID, with release"),
             opt(
-                "output",
+                "to",
                 ArgKind::Text,
                 "a new absolute private artifact directory, with prepare",
             ),
-            opt("page", ArgKind::Integer, "open holds per page, with list"),
-            opt(
-                "cursor",
-                ArgKind::Text,
-                "continue the previous open-hold page",
-            ),
+            PAGE,
+            CURSOR,
         ],
         access: Access::Operator,
         mcp: false,
     },
     Command {
+        examples: &[],
         name: "stage",
         summary: "Hand Sinex files, directories or databases to read once. Each file is read by the parser named, or by the one parser whose declared structure it has; with none or several it is stored with no parser and the candidates listed. Returns the operation and the inventory of every member at once.",
         args: &[
@@ -703,6 +732,7 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
+        examples: &[],
         name: "stage-list",
         summary: "Stage operations, newest first, with each one's files, accounting and result.",
         args: &[opt(
@@ -714,6 +744,7 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
+        examples: &[],
         name: "stage-show",
         summary: "One stage: its inventory with every member's outcome, each product's accounting, and how it ended.",
         args: &[pos("operation", ArgKind::Text, "the stage's operation")],
@@ -721,6 +752,7 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
+        examples: &[],
         name: "resume",
         summary: "Continue an operation that stopped early (archive, restore, tombstone, undo, replay or stage) from its saved position.",
         args: &[pos("operation", ArgKind::Text, "the operation to continue")],
@@ -728,6 +760,7 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
+        examples: &[],
         name: "privacy-rules",
         summary: "List the privacy rules in force, or with --history every rule row ever written.",
         args: &[opt(
@@ -739,6 +772,7 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
+        examples: &[],
         name: "privacy-rule",
         summary: "Add a privacy rule, or a new version of the rule with this name. Applies to new readings; replay applies it to the past.",
         args: &[
@@ -751,7 +785,7 @@ pub const COMMANDS: &[Command] = &[
                 required: true,
                 ..opt("source", ArgKind::Text, "the source it applies to")
             },
-            opt("type", ArgKind::Text, "only this event type"),
+            opt("kind", ArgKind::Text, "only this event type"),
             opt(
                 "field",
                 ArgKind::Text,
@@ -782,6 +816,7 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
+        examples: &[],
         name: "privacy-end",
         summary: "End a privacy rule (weakens protection, so the operator's alone).",
         args: &[pos("name", ArgKind::Text, "the rule's name")],
@@ -789,6 +824,7 @@ pub const COMMANDS: &[Command] = &[
         mcp: false,
     },
     Command {
+        examples: &[],
         name: "privacy-class",
         summary: "Set a source's minimum class; lowering it is the operator's alone.",
         args: &[
@@ -799,6 +835,7 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
+        examples: &[],
         name: "privacy-verify",
         summary: "Count live events below their source's minimum class (admitted before the minimum was raised; a replay fixes them).",
         args: &[],
@@ -806,6 +843,7 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
+        examples: &[],
         name: "unlock",
         summary: "Unlock the sealed class for a while: the operator's sealed values become readable to the operator token.",
         args: &[
@@ -820,6 +858,7 @@ pub const COMMANDS: &[Command] = &[
         mcp: false,
     },
     Command {
+        examples: &[],
         name: "lock",
         summary: "Lock the sealed class now.",
         args: &[],
@@ -827,6 +866,7 @@ pub const COMMANDS: &[Command] = &[
         mcp: false,
     },
     Command {
+        examples: &[],
         name: "analysis-catalog",
         summary: "The analysis catalog: metrics with the events they count and the sources that observe them, registered methods, recipes.",
         args: &[],
@@ -834,6 +874,7 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
+        examples: &[],
         name: "analysis-run",
         summary: "Read the maintained answer of an analysis question (correlations, trends, deviations), with its stored coverage, evidence and selected commit position.",
         args: &[
@@ -842,8 +883,8 @@ pub const COMMANDS: &[Command] = &[
                 ArgKind::Text,
                 "correlations, trends or deviations",
             ),
-            pos("from", ArgKind::Text, "first logical day, YYYY-MM-DD"),
-            pos("to", ArgKind::Text, "last logical day, included"),
+            pos("first", ArgKind::Text, "first logical day, YYYY-MM-DD"),
+            pos("last", ArgKind::Text, "last logical day, included"),
             opt(
                 "partial",
                 ArgKind::Text,
@@ -854,11 +895,12 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
+        examples: &[],
         name: "analysis-panel",
         summary: "Metric cells per logical day from the daily metric figures, each with its observation state, and the coverage behind them.",
         args: &[
-            pos("from", ArgKind::Text, "first logical day, YYYY-MM-DD"),
-            pos("to", ArgKind::Text, "last logical day, included"),
+            pos("first", ArgKind::Text, "first logical day, YYYY-MM-DD"),
+            pos("last", ArgKind::Text, "last logical day, included"),
             opt(
                 "metric",
                 ArgKind::List,
@@ -874,11 +916,12 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
+        examples: &[],
         name: "gaps",
         summary: "Where each source could not have recorded between two logical days: the stretches its coverage (its runs, reads and records) does not reach, or the whole span when its coverage is unknown.",
         args: &[
-            pos("from", ArgKind::Text, "first logical day, YYYY-MM-DD"),
-            pos("to", ArgKind::Text, "last logical day, included"),
+            pos("first", ArgKind::Text, "first logical day, YYYY-MM-DD"),
+            pos("last", ArgKind::Text, "last logical day, included"),
             opt(
                 "source",
                 ArgKind::List,
@@ -889,6 +932,7 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
+        examples: &[],
         name: "analysis-why",
         summary: "Why a metric's cell for one logical day is missing, partial or observed: its state and the coverage each of its sources had.",
         args: &[
@@ -899,6 +943,7 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
+        examples: &[],
         name: "brief",
         summary: "The brief for one logical day: data quality first, the day's metrics, departures from the recent level, associations over the days before, the machine.",
         args: &[
@@ -908,7 +953,7 @@ pub const COMMANDS: &[Command] = &[
                 "YYYY-MM-DD or a stored context-pack citation; default today",
             ),
             opt(
-                "budget",
+                "bytes",
                 ArgKind::Integer,
                 "bytes of findings (default 4000)",
             ),
@@ -918,6 +963,7 @@ pub const COMMANDS: &[Command] = &[
     },
     // The media library.
     Command {
+        examples: &[],
         name: "library-add",
         summary: "Add a folder or file to the media library: store its bytes, describe it, and make or continue items.",
         args: &[
@@ -936,6 +982,7 @@ pub const COMMANDS: &[Command] = &[
         mcp: false,
     },
     Command {
+        examples: &[],
         name: "library-item",
         summary: "One library item: its revisions, renditions, copies on disk, shown tags and properties, ratings, views and collections.",
         args: &[pos("item", ArgKind::Text, "the item ID")],
@@ -943,6 +990,7 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
+        examples: &[],
         name: "library-curate",
         summary: "Curate the library in one atomic request: every write is committed or none is. \
 Acts: tag, untag, reject, set, note, rate, collect, uncollect, move, judge, define_scale, define_property, define_tag, relate, dismiss, withdraw, undo. \
@@ -958,7 +1006,7 @@ Answers the records written with their revisions, or a refusal naming the curren
                 )
             },
             opt(
-                "request",
+                "request-id",
                 ArgKind::Text,
                 "your ID for this request, reused on retry so it is written once",
             ),
@@ -967,6 +1015,7 @@ Answers the records written with their revisions, or a refusal naming the curren
         mcp: true,
     },
     Command {
+        examples: &[],
         name: "library-collection",
         summary: "A collection's entries in order, or every collection when no name is given.",
         args: &[Arg {
@@ -977,6 +1026,7 @@ Answers the records written with their revisions, or a refusal naming the curren
         mcp: true,
     },
     Command {
+        examples: &[],
         name: "library-rank",
         summary: "Items ranked on a scale from comparisons (Plackett–Luce), with intervals, rank ranges, support, groups, fit status, and the next set worth judging.",
         args: &[
@@ -992,7 +1042,7 @@ Answers the records written with their revisions, or a refusal naming the curren
                 "rank this collection's items, compared or not",
             ),
             opt(
-                "k",
+                "next-size",
                 ArgKind::Integer,
                 "how many items the next set holds (default 2)",
             ),
@@ -1006,6 +1056,7 @@ Answers the records written with their revisions, or a refusal naming the curren
         mcp: true,
     },
     Command {
+        examples: &[],
         name: "library-open",
         summary: "Where to open an item's bytes: a verified copy on disk, or the stored bytes written out.",
         args: &[
@@ -1020,6 +1071,7 @@ Answers the records written with their revisions, or a refusal naming the curren
         mcp: false,
     },
     Command {
+        examples: &[],
         name: "library-viewed",
         summary: "Record that an item was viewed or played, and for how long.",
         args: &[
@@ -1031,6 +1083,7 @@ Answers the records written with their revisions, or a refusal naming the curren
         mcp: false,
     },
     Command {
+        examples: &[],
         name: "library-preview",
         summary: "Make a preview rendition of an item (a still of a video, a small image).",
         args: &[pos("item", ArgKind::Text, "the item ID")],
@@ -1038,6 +1091,7 @@ Answers the records written with their revisions, or a refusal naming the curren
         mcp: false,
     },
     Command {
+        examples: &[],
         name: "library-import",
         summary: "Import tags and metadata from sidecar files beside a folder's media (gallery-dl JSON, Hydrus tag text).",
         args: &[pos("path", ArgKind::Text, "the file or folder")],
