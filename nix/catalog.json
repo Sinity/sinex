@@ -1976,7 +1976,8 @@
         }
       ],
       "eventTypes": [
-        "file.changed"
+        "file.changed",
+        "capture.gap"
       ],
       "expect": {
         "everySeconds": null,
