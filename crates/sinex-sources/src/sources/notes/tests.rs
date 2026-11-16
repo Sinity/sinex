@@ -304,6 +304,9 @@ fn a_renamed_note_keeps_one_identity() {
 #[devkit::test]
 fn a_note_without_an_id_is_its_path() {
     let first = note("text\n", "plain.md");
+    let payload = serde_json::to_value(&first).unwrap();
+    assert_eq!(payload.get("native_vault_path_bytes"), Some(&Value::Null));
+    assert_eq!(payload.get("native_path_bytes"), Some(&Value::Null));
     let renamed = note("text\n", "other.md");
     assert_ne!(key(&first), key(&renamed), "equal text never joins");
     let empty = note("---\nid: \"\"\n---\n", "e.md");

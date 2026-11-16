@@ -272,12 +272,11 @@ async fn background_stage_writer_failure_ends_stopped_early(db: devkit::pg::Test
         .await;
         assert_eq!(shown["result"]["result"], "stopped_early", "{shown}");
         let failures = shown["result"]["failures"].as_array().unwrap();
-        assert_eq!(failures.len(), 1);
-        assert!(
-            failures[0]
-                .as_str()
-                .unwrap()
-                .contains(&format!("synthetic {name} write failure")),
+        assert_eq!(
+            failures,
+            &vec![json!(
+                "admission refused the batch: database refused invalid data (P0001)"
+            )],
             "{shown}"
         );
         assert_eq!(shown["result"]["counts"]["stored_without_parser"], 1);

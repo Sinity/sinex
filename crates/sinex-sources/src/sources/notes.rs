@@ -26,7 +26,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     purpose: "note recall and the library",
     class: Class::Open,
     parser: "notes-vault",
-    parser_version: 6,
+    parser_version: 7,
     event_types: &["note.document"],
     framer: sinex_source_core::Framer::export(
         sinex_source_core::drivers::export_archive::frame_whole,

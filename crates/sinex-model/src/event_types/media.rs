@@ -93,12 +93,12 @@ pub struct NoteDocument {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vault_path: Option<String>,
     /// Raw path bytes of a non-UTF-8 vault root, encoded as base64.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub native_vault_path_bytes: Option<String>,
     /// Relative to the vault root.
     pub path: String,
     /// Raw path bytes of a non-UTF-8 relative path, encoded as base64.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub native_path_bytes: Option<String>,
     /// The last captured text; `None` when unavailable.
     pub text: Option<String>,
@@ -125,7 +125,7 @@ pub struct NoteDocument {
 }
 
 impl crate::EventPayload for NoteDocument {
-    const VERSION: u64 = 3;
+    const VERSION: u64 = 4;
     const EVENT_TYPE: &'static str = "note.document";
     const KEY: crate::KeyKind = crate::KeyKind::Fields(&[
         "host",

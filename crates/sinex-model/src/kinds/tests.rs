@@ -230,13 +230,16 @@ fn every_bundled_declaration_matches_its_rust_methods() {
 fn command_without_start_uses_location_identity() {
     let d = crate::event_types::CommandImported::declaration();
     assert!(
-        d.evaluate(&json!({"started_at":null}), Class::Open)
-            .unwrap()
-            .equivalence_key
-            .is_none()
+        d.evaluate(
+            &json!({"hostname":"fixture", "command":"pwd", "n":0, "started_at":null}),
+            Class::Open
+        )
+        .unwrap()
+        .equivalence_key
+        .is_none()
     );
     assert!(
-        d.evaluate(&json!({"started_at":"2026-10-27T00:00:00Z"}), Class::Open)
+        d.evaluate(&json!({"hostname":"fixture", "command":"pwd", "n":0, "started_at":"2026-10-27T00:00:00Z"}), Class::Open)
             .unwrap()
             .equivalence_key
             .is_some()

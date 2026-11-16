@@ -513,7 +513,7 @@ async fn rule_over_notifications_ignores_signal_origin_events(db: devkit::pg::Te
     let seq = current_seq(&mut conn).await.unwrap();
     let answer = standing_query(
         &mut conn,
-        "events where event_type = notification.shown | fields payload.app",
+        "events where event_type = notification.shown | fields payload.app as app",
         &ctx(),
         seq,
     )

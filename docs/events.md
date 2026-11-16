@@ -106,7 +106,7 @@ Each kind declares exactly one key kind, or explicitly none; the builder cannot 
 
 A key never contains content, for a kind whose readings supersede (content belongs in the record hash); the material the record arrived in; the processing order or run; or the producer version. Any of these would make the same record look new.
 
-If any declared key field is absent, the record uses its location instead. An explicit `null` is a field value and is hashed as `null`; missing and null fields are distinct. The key stores only the full BLAKE3 digest, not the original values.
+If any declared key field is absent, the record uses its location instead. An explicit `null` is a field value and is hashed as `null`; missing and null fields are distinct. The key stores only the full BLAKE3 digest, not the original values. Keyed payloads keep nullable identity components as explicit JSON null. In `note.document` version 4, the two raw-path components are null when the corresponding text paths identify the note.
 
 ### What admission does with a key
 
