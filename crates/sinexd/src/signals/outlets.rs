@@ -8,6 +8,7 @@ use ::signals::notifications::{Notice, NotificationConfig, RouteCommand};
 use config::{Command, ValueTarget};
 use signal_delivery::{Deliverer, NotificationRequest, NotificationUpdate};
 use std::time::Duration;
+use ureq::unversioned::transport::{ConnectionDetails, Connector, DefaultConnector, Transport};
 
 /// Start the host's one desktop deliverer with its persisted state. Committed
 /// notices reach it through the returned channel; every state change comes
@@ -173,16 +174,41 @@ async fn file_value(path: &std::path::Path, bytes: &[u8]) -> DeliveryOutcome {
     }
 }
 
+#[derive(Debug)]
+struct ValueConnector(DefaultConnector);
+
+impl Connector for ValueConnector {
+    type Out = Box<dyn Transport>;
+
+    fn connect(
+        &self,
+        details: &ConnectionDetails<'_>,
+        chained: Option<()>,
+    ) -> std::result::Result<Option<Self::Out>, ureq::Error> {
+        // These failures precede the HTTP request; later I/O failures remain uncertain.
+        self.0
+            .connect(details, chained)
+            .map_err(|error| match error {
+                ureq::Error::Io(_) | ureq::Error::Rustls(_) => ureq::Error::ConnectionFailed,
+                other => other,
+            })
+    }
+}
+
 async fn http_value(url: &str, bytes: Vec<u8>, deadline: Duration) -> DeliveryOutcome {
     let url = url.to_owned();
     tokio::task::spawn_blocking(move || {
-        let agent: ureq::Agent = ureq::Agent::config_builder()
+        let config = ureq::Agent::config_builder()
             .max_redirects(0)
             .proxy(None)
             .http_status_as_error(false)
             .timeout_global(Some(deadline))
-            .build()
-            .into();
+            .build();
+        let agent = ureq::Agent::with_parts(
+            config,
+            ValueConnector(DefaultConnector::default()),
+            ureq::unversioned::resolver::DefaultResolver::default(),
+        );
         match agent
             .post(&url)
             .header("content-type", "application/json")

@@ -1,7 +1,7 @@
 [
   {
     "record_offset": 0,
-    "failure": "invalid zsh start time"
+    "failure": "invalid zsh start time: invalid digit found in string"
   },
   {
     "record_offset": 21,

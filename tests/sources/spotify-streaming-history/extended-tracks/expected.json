@@ -27,6 +27,7 @@
           "reason_end": "trackdone",
           "shuffle": false,
           "skipped": false,
+          "skipped_inferred": false,
           "offline": false,
           "incognito_mode": false,
           "extra": {
@@ -65,6 +66,7 @@
           "reason_end": "fwdbtn",
           "shuffle": true,
           "skipped": true,
+          "skipped_inferred": true,
           "offline": false,
           "incognito_mode": false,
           "extra": {
