@@ -287,6 +287,8 @@ pub enum ArchiveRequest {
     Replay {
         scope: ReplayScope,
         operation: OperationId,
+        /// Records whose replay failed; their live readings stay.
+        failed_records: Vec<RecordLocation>,
     },
     /// The source no longer holds the records at these locations (a rewritten
     /// file without record IDs dropped them). Each live reading there gets a

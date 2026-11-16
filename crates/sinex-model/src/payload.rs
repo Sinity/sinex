@@ -181,6 +181,10 @@ pub trait DbCheck {
     }
 
     fn as_db(&self) -> &'static str;
+
+    fn from_db(text: &str) -> Option<Self>
+    where
+        Self: Sized;
 }
 
 #[cfg(test)]

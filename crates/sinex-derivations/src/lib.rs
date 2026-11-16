@@ -11,6 +11,7 @@
 //! the outputs as a `Derived` batch that replaces the key's previous outputs.
 //! Order independence holds by construction: `compute` always sees the key's
 //! full current input set, sorted by `ts_orig`.
+use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use sinex_model::time_settings::TimeSettings;
 use sinex_model::{Event, EventId, Timestamp};
@@ -24,6 +25,7 @@ pub mod embedding;
 pub mod figures;
 pub mod fusion;
 pub mod health;
+pub mod keys;
 pub mod library;
 pub mod observed;
 pub mod portfolio;
@@ -157,7 +159,7 @@ pub enum InputRange {
         end: Timestamp,
         kinds: Vec<Kind>,
         subjects: &'static [sinex_model::state_transition::SubjectField],
-        interruptions: Vec<Kind>,
+        interruptions: Vec<Neighbour>,
     },
     /// From `start` until the next selected payload time, or `now` while open.
     UntilNext {
@@ -271,6 +273,7 @@ pub struct Computed {
 }
 
 pub trait Keyed: Send + Sync {
+    type Key: Serialize + DeserializeOwned + Send + Sync;
     const HISTORY: sinex_model::DerivationHistory = sinex_model::DerivationHistory::Recompute;
     /// Registered name, also the `derivation.dirty` key.
     const NAME: &'static str;
@@ -285,13 +288,13 @@ pub trait Keyed: Send + Sync {
 
     /// The keys an input event affects. Windows are keyed by `ts_orig`, so a
     /// late or historical event lands in the right key.
-    fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Value>;
+    fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Self::Key>;
 
-    fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery>;
+    fn inputs(&self, key: &Self::Key, env: &Env) -> Option<InputQuery>;
 
     /// The live readings this key needs, named by event ID, including readings with unknown time.
 
-    fn exact_inputs(&self, _: &Value, _: &Env) -> Option<Vec<EventId>> {
+    fn exact_inputs(&self, _: &Self::Key, _: &Env) -> Option<Vec<EventId>> {
         None
     }
     fn reads_type(&self, event_type: &str) -> bool {
@@ -303,15 +306,17 @@ pub trait Keyed: Send + Sync {
     fn nearby_inputs(&self, _: &KeyView<'_>, _: &Env) -> Option<InputQuery> {
         None
     }
-    fn refresh_at(&self, _: &[Event], _: &Env) -> Option<Timestamp> {
+    fn refresh_at(&self, _: &[Event], _: &[Event], _: &Env) -> Option<Timestamp> {
         None
     }
 
     /// The key's outputs, as events derived from `inputs` (each names its
     /// parents). `inputs` are sorted by `ts_orig`, then commit order.
-    fn compute(&self, key: &Value, inputs: &[Event], env: &Env) -> Computed;
+    fn compute(&self, key: &Self::Key, inputs: &[Event], env: &Env) -> Computed;
 
-    fn key_state(&self, key: &Value, env: &Env) -> KeyState;
+    fn key_state(&self, _: &Self::Key, _: &Env) -> KeyState {
+        KeyState::Closed
+    }
 }
 
 /// One input of a per-event derivation: the committed event, and the stored
@@ -358,19 +363,35 @@ pub trait PerEvent: Send + Sync {
     fn derive(&self, input: Input<'_>, env: &Env) -> Result<Vec<Event>, String>;
 }
 
+/// The declared behaviour of a derivation.
+#[derive(Clone, Copy, Debug)]
+pub struct DerivationSpec {
+    pub name: &'static str,
+    pub history: sinex_model::DerivationHistory,
+    pub inputs: &'static [&'static str],
+    pub outputs: &'static [&'static str],
+}
+
 /// A keyed derivation with its type erased, for the registry, admission's
 /// dirty-key marking and the driver.
 pub trait AnyKeyed: Send + Sync {
+    fn spec(&self) -> DerivationSpec;
     fn history_policy(&self) -> sinex_model::DerivationHistory {
-        sinex_model::DerivationHistory::Recompute
+        self.spec().history
     }
-    fn name(&self) -> &'static str;
+    fn name(&self) -> &'static str {
+        self.spec().name
+    }
     fn version(&self) -> u32;
     fn version_for(&self, _: &TimeSettings) -> u32 {
         self.version()
     }
-    fn inputs_types(&self) -> &'static [&'static str];
-    fn output_types(&self) -> &'static [&'static str];
+    fn inputs_types(&self) -> &'static [&'static str] {
+        self.spec().inputs
+    }
+    fn output_types(&self) -> &'static [&'static str] {
+        self.spec().outputs
+    }
     fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Value>;
     fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery>;
     fn exact_inputs(&self, _: &Value, _: &Env) -> Option<Vec<EventId>> {
@@ -385,7 +406,7 @@ pub trait AnyKeyed: Send + Sync {
     fn nearby_inputs(&self, _: &KeyView<'_>, _: &Env) -> Option<InputQuery> {
         None
     }
-    fn refresh_at(&self, _: &[Event], _: &Env) -> Option<Timestamp> {
+    fn refresh_at(&self, _: &[Event], _: &[Event], _: &Env) -> Option<Timestamp> {
         None
     }
     fn compute(&self, key: &Value, inputs: &[Event], env: &Env) -> Computed;
@@ -393,11 +414,13 @@ pub trait AnyKeyed: Send + Sync {
 }
 
 impl<K: Keyed> AnyKeyed for K {
-    fn history_policy(&self) -> sinex_model::DerivationHistory {
-        K::HISTORY
-    }
-    fn name(&self) -> &'static str {
-        K::NAME
+    fn spec(&self) -> DerivationSpec {
+        DerivationSpec {
+            name: K::NAME,
+            history: K::HISTORY,
+            inputs: K::INPUTS,
+            outputs: K::OUTPUTS,
+        }
     }
     fn version(&self) -> u32 {
         Keyed::version(self)
@@ -411,20 +434,25 @@ impl<K: Keyed> AnyKeyed for K {
         hash.update(time_settings.label().as_bytes());
         1 + (u32::from_le_bytes(hash.finalize().as_bytes()[..4].try_into().unwrap()) >> 2)
     }
-    fn inputs_types(&self) -> &'static [&'static str] {
-        K::INPUTS
-    }
-    fn output_types(&self) -> &'static [&'static str] {
-        K::OUTPUTS
-    }
     fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Value> {
         Keyed::keys_for(self, input, env)
+            .into_iter()
+            .map(|key| serde_json::to_value(key).expect("derivation keys serialize"))
+            .collect()
     }
     fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery> {
-        Keyed::inputs(self, key, env)
+        Keyed::inputs(
+            self,
+            &serde_json::from_value::<K::Key>(key.clone()).ok()?,
+            env,
+        )
     }
     fn exact_inputs(&self, key: &Value, env: &Env) -> Option<Vec<EventId>> {
-        Keyed::exact_inputs(self, key, env)
+        Keyed::exact_inputs(
+            self,
+            &serde_json::from_value::<K::Key>(key.clone()).ok()?,
+            env,
+        )
     }
     fn reads_type(&self, event_type: &str) -> bool {
         Keyed::reads_type(self, event_type)
@@ -435,45 +463,56 @@ impl<K: Keyed> AnyKeyed for K {
     fn nearby_inputs(&self, input: &KeyView<'_>, env: &Env) -> Option<InputQuery> {
         Keyed::nearby_inputs(self, input, env)
     }
-    fn refresh_at(&self, outputs: &[Event], env: &Env) -> Option<Timestamp> {
-        Keyed::refresh_at(self, outputs, env)
+    fn refresh_at(&self, inputs: &[Event], outputs: &[Event], env: &Env) -> Option<Timestamp> {
+        Keyed::refresh_at(self, inputs, outputs, env)
     }
     fn compute(&self, key: &Value, inputs: &[Event], env: &Env) -> Computed {
-        Keyed::compute(self, key, inputs, env)
+        match serde_json::from_value::<K::Key>(key.clone()) {
+            Ok(key) => Keyed::compute(self, &key, inputs, env),
+            Err(error) => Computed {
+                error: Some(sinex_model::BuildError::Key(error.to_string())),
+                outputs: vec![],
+                waiting: false,
+            },
+        }
     }
     fn key_state(&self, key: &Value, env: &Env) -> KeyState {
-        Keyed::key_state(self, key, env)
+        serde_json::from_value::<K::Key>(key.clone())
+            .map_or(KeyState::Closed, |key| Keyed::key_state(self, &key, env))
     }
 }
 
 /// A per-event derivation with its type erased.
 pub trait AnyPerEvent: Send + Sync {
+    fn spec(&self) -> DerivationSpec;
     fn history_policy(&self) -> sinex_model::DerivationHistory {
-        sinex_model::DerivationHistory::Recompute
+        self.spec().history
     }
-    fn name(&self) -> &'static str;
+    fn name(&self) -> &'static str {
+        self.spec().name
+    }
     fn version(&self) -> u32;
-    fn inputs_types(&self) -> &'static [&'static str];
-    fn output_types(&self) -> &'static [&'static str];
+    fn inputs_types(&self) -> &'static [&'static str] {
+        self.spec().inputs
+    }
+    fn output_types(&self) -> &'static [&'static str] {
+        self.spec().outputs
+    }
     fn reads(&self, event: &Event) -> Reads;
     fn derive(&self, input: Input<'_>, env: &Env) -> Result<Vec<Event>, String>;
 }
 
 impl<P: PerEvent> AnyPerEvent for P {
-    fn history_policy(&self) -> sinex_model::DerivationHistory {
-        P::HISTORY
-    }
-    fn name(&self) -> &'static str {
-        P::NAME
+    fn spec(&self) -> DerivationSpec {
+        DerivationSpec {
+            name: P::NAME,
+            history: P::HISTORY,
+            inputs: P::INPUTS,
+            outputs: P::OUTPUTS,
+        }
     }
     fn version(&self) -> u32 {
         PerEvent::version(self)
-    }
-    fn inputs_types(&self) -> &'static [&'static str] {
-        P::INPUTS
-    }
-    fn output_types(&self) -> &'static [&'static str] {
-        P::OUTPUTS
     }
     fn reads(&self, event: &Event) -> Reads {
         PerEvent::reads_for(self, event)
@@ -549,16 +588,12 @@ pub fn per_event() -> Vec<Box<dyn AnyPerEvent>> {
 
 /// Pure per-event derivations using the declared rules.
 pub fn per_event_with(configuration: &Configuration) -> Result<Vec<Box<dyn AnyPerEvent>>, String> {
-    Ok(vec![
-        Box::new(embedding::Embeddings),
-        Box::new(library::Hints),
-        Box::new(tags::TagApplier::new(configuration.tags.clone())?),
-    ])
-}
-
-/// The tag applier runs only when explicitly enabled.
-pub fn enabled_by_default(name: &str) -> bool {
-    name != tags::TagApplier::NAME
+    let mut all: Vec<Box<dyn AnyPerEvent>> =
+        vec![Box::new(embedding::Embeddings), Box::new(library::Hints)];
+    if !configuration.tags.is_empty() {
+        all.push(Box::new(tags::TagApplier::new(configuration.tags.clone())?));
+    }
+    Ok(all)
 }
 
 /// The parent IDs of a set of input events, in input order, without repeats.

@@ -357,6 +357,7 @@ fn expand_db_check(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream>
     };
     let mut values = Vec::new();
     let mut arms = Vec::new();
+    let mut parse_arms = Vec::new();
     for variant in &data.variants {
         if !matches!(variant.fields, Fields::Unit) {
             return Err(syn::Error::new_spanned(
@@ -367,6 +368,7 @@ fn expand_db_check(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream>
         let ident = &variant.ident;
         let text = LitStr::new(&snake(&ident.to_string()), Span::call_site());
         arms.push(quote!(Self::#ident => #text));
+        parse_arms.push(quote!(#text => Some(Self::#ident)));
         values.push(text);
     }
     Ok(quote! {
@@ -374,6 +376,9 @@ fn expand_db_check(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream>
             const VALUES: &'static [&'static str] = &[#(#values),*];
             fn as_db(&self) -> &'static str {
                 match self { #(#arms),* }
+            }
+            fn from_db(text: &str) -> Option<Self> {
+                match text { #(#parse_arms,)* _ => None }
             }
         }
     })

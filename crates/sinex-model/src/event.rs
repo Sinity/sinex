@@ -58,6 +58,8 @@ pub enum BuildError {
     Declaration(String),
     #[error("payload is not a valid {0}: {1}")]
     Payload(String, String),
+    #[error("stored derivation key does not decode: {0}")]
+    Key(String),
 }
 
 /// An event ready for admission.
