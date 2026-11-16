@@ -256,7 +256,11 @@ fn payloads_without_metadata_and_removed_markers_keep_unknown_information() {
     assert_eq!(payload.front_matter, None);
     assert_eq!(payload.tags, None);
     assert_eq!(payload.key_kind(), sinex_model::KeyKind::Location);
-    assert_eq!(serde_json::to_value(payload).unwrap(), partial);
+    assert_eq!(
+        serde_json::to_value(payload).unwrap(),
+        serde_json::json!({"vault":"v","path":"a.md","native_vault_path_bytes":null,
+            "native_path_bytes":null,"text":"","size":0,"modified_at":null,"removed_at":null})
+    );
     let manifest = sinex_model::Manifest::from_json(serde_json::json!({"path":"/vault/v"}));
     let member = serde_json::from_value::<sinex_model::Member>(
         serde_json::json!({"path":"a.md","removed_at_ns":"1700000000000000000"}),

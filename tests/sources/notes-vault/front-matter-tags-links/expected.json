@@ -10,6 +10,8 @@
         "state": "Present",
         "payload": {
           "vault": "MyVault",
+          "native_vault_path_bytes": null,
+          "native_path_bytes": null,
           "path": "areas/weekly.md",
           "text": "---\r\ntitle: Weekly review\r\nid: areas.review.weekly\r\ntags: [review, \"#planning\"]\r\n---\r\n# Heading is not a tag\r\nBody with #inline-tag and [[Other Note|alias]] and [[Other Note#part]] and [[Third]].\r\n",
           "size": 197,
