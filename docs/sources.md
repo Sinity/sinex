@@ -169,7 +169,7 @@ The session producer uses one dedicated async scheduler worker so transport task
 - **Child processes** run with interruptible lifetimes and a recorded exit status; a nonzero exit is a failed attempt, never an empty reading.
 - **Upgrades** may pause capture briefly; the spool covers the pause. A deploy that drops nothing is welcome but not required, and is not a reason for process topology.
 
-Desktop notification capture keeps delivery hints from the sender and records `signal_origin` with the sending product and delivery identifier in the extra fields. Standing rules exclude these notifications before grouping, so a notification delivered by a product cannot trigger another notice.
+Capture records a product delivery as `extra.signal_origin`, containing the sending product and delivery identifier. Desktop notification capture obtains this marker from the sender's delivery hint. Standing rules exclude marked events before grouping or aggregation, so a product's own delivery cannot trigger another notice.
 
 ## Gaps
 

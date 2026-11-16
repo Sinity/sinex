@@ -92,22 +92,13 @@ pub async fn standing_query(
             op: sinex_model::query::Op::Prefix,
             rhs: sinex_model::query::Value::Text("signal.".into()),
         }));
-        let product_notification = Expr::And(
-            Box::new(Expr::Compare {
-                lhs: Operand::Field(FieldRef::Field(
-                    Table::Events.field("event_type").expect("event type field"),
-                )),
-                op: sinex_model::query::Op::Eq,
-                rhs: sinex_model::query::Value::Text("notification.shown".into()),
-            }),
-            Box::new(Expr::Exists(Operand::Field(FieldRef::TypedPayload {
-                path: vec!["extra".into(), "signal_origin".into()],
-                ty: sinex_model::query::tables::FieldType::Json,
-            }))),
-        );
+        let product_delivery = Expr::Exists(Operand::Field(FieldRef::TypedPayload {
+            path: vec!["extra".into(), "signal_origin".into()],
+            ty: sinex_model::query::tables::FieldType::Json,
+        }));
         let exclude = Expr::And(
             Box::new(exclude),
-            Box::new(Expr::Not(Box::new(product_notification))),
+            Box::new(Expr::Not(Box::new(product_delivery))),
         );
         bound.filter = Some(match bound.filter.take() {
             Some(filter) => Expr::And(Box::new(filter), Box::new(exclude)),
