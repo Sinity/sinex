@@ -227,9 +227,12 @@ async fn run_inner(
     if !in_snapshot {
         read_one_snapshot(&mut tx).await?;
     }
-    sqlx::query!("SET LOCAL TimeZone = 'UTC'")
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(&format!(
+        "SET LOCAL TimeZone = '{}'",
+        ctx.zone_name().replace('\'', "''")
+    ))
+    .execute(&mut *tx)
+    .await?;
     let size = page.size.unwrap_or(DEFAULT_PAGE).max(1);
     if size > i64::MAX as u64 {
         return Err(Error::Invalid("page size is out of range".into()));
@@ -574,7 +577,12 @@ impl ReadPage {
     }
     fn resolved(&self) -> Resolved {
         Resolved {
-            now: self.ctx.now.to_string(),
+            now: self
+                .ctx
+                .now
+                .to_zoned(self.ctx.zone.clone())
+                .strftime("%Y-%m-%d %H:%M:%S%:z")
+                .to_string(),
             zone: self.ctx.zone_name(),
             day_start: self.ctx.day_start.to_string(),
             commit_seq: self.seq,

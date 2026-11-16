@@ -41,10 +41,22 @@ impl Endpoint {
     }
 }
 
+impl std::fmt::Display for Endpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unix(path) => write!(f, "unix:{}", path.display()),
+            Self::Tcp(address) => write!(f, "http://{address}"),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) enum ClientError {
     /// The daemon is not running or not reachable.
-    Unreachable(String),
+    Unreachable {
+        endpoint: String,
+        error: String,
+    },
     Protocol(String),
     /// The daemon refused the call with a typed failure.
     Failed(Failure),
@@ -56,9 +68,9 @@ impl ClientError {
     /// from a daemon built from other sources.
     pub(crate) fn failure(self, operation: &str) -> Failure {
         match self {
-            ClientError::Unreachable(m) => Failure::new(
+            ClientError::Unreachable { endpoint, error } => Failure::new(
                 FailureKind::NotRunning,
-                format!("the daemon is not reachable: {m}"),
+                format!("the daemon is not reachable at {endpoint}: {error}"),
             )
             .with_code("daemon_unreachable")
             .with_hint(
@@ -85,7 +97,9 @@ pub(crate) fn protocol_mismatch(operation: &str, error: impl std::fmt::Display) 
 impl std::fmt::Display for ClientError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ClientError::Unreachable(m) => write!(f, "the daemon is not reachable: {m}"),
+            ClientError::Unreachable { endpoint, error } => {
+                write!(f, "the daemon is not reachable at {endpoint}: {error}")
+            }
             ClientError::Protocol(m) => write!(f, "{m}"),
             ClientError::Failed(failure) => write!(f, "{failure}"),
         }
@@ -124,13 +138,16 @@ impl Drop for Connection {
     }
 }
 
-async fn handshake<T>(io: T) -> Result<Connection, ClientError>
+async fn handshake<T>(io: T, endpoint: &Endpoint) -> Result<Connection, ClientError>
 where
     T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
     let (sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(io))
         .await
-        .map_err(|e| ClientError::Unreachable(e.to_string()))?;
+        .map_err(|error| ClientError::Unreachable {
+            endpoint: endpoint.to_string(),
+            error: error.to_string(),
+        })?;
     Ok(Connection {
         sender,
         driver: tokio::spawn(conn),
@@ -138,19 +155,26 @@ where
 }
 
 impl Client {
+    fn unreachable(&self, error: impl std::fmt::Display) -> ClientError {
+        ClientError::Unreachable {
+            endpoint: self.endpoint.to_string(),
+            error: error.to_string(),
+        }
+    }
+
     async fn connect(&self) -> Result<Connection, ClientError> {
         match &self.endpoint {
             Endpoint::Unix(path) => {
                 let s = tokio::net::UnixStream::connect(path)
                     .await
-                    .map_err(|e| ClientError::Unreachable(format!("{}: {e}", path.display())))?;
-                handshake(s).await
+                    .map_err(|error| self.unreachable(error))?;
+                handshake(s, &self.endpoint).await
             }
             Endpoint::Tcp(addr) => {
                 let s = tokio::net::TcpStream::connect(addr)
                     .await
-                    .map_err(|e| ClientError::Unreachable(format!("{addr}: {e}")))?;
-                handshake(s).await
+                    .map_err(|error| self.unreachable(error))?;
+                handshake(s, &self.endpoint).await
             }
         }
     }
@@ -202,7 +226,7 @@ impl Client {
         let resp = sender
             .send_request(req)
             .await
-            .map_err(|e| ClientError::Unreachable(e.to_string()))?;
+            .map_err(|error| self.unreachable(error))?;
         let status = resp.status();
         let bytes = resp
             .into_body()
@@ -249,7 +273,7 @@ impl Client {
         let resp = sender
             .send_request(req)
             .await
-            .map_err(|e| ClientError::Unreachable(e.to_string()))?;
+            .map_err(|error| self.unreachable(error))?;
         let status = resp.status();
         let mut body = resp.into_body();
         if !status.is_success() {
@@ -277,18 +301,15 @@ impl Client {
         let mut connection = self
             .connect_before(self.deadline.connection_timeout(Some(default)))
             .await?;
-        let req = HttpRequest::get(format!(
-            "/v1/backup/prepare?output={}",
-            percent_encode(output)
-        ))
-        .header("host", self.endpoint.host())
-        .header("authorization", format!("Bearer {}", self.token))
-        .body(Full::new(Bytes::new()))
-        .map_err(|e| ClientError::Protocol(e.to_string()))?;
+        let req = HttpRequest::get(format!("/v1/backup/prepare?to={}", percent_encode(output)))
+            .header("host", self.endpoint.host())
+            .header("authorization", format!("Bearer {}", self.token))
+            .body(Full::new(Bytes::new()))
+            .map_err(|e| ClientError::Protocol(e.to_string()))?;
         let resp = connection
             .send_request(req)
             .await
-            .map_err(|e| ClientError::Unreachable(e.to_string()))?;
+            .map_err(|error| self.unreachable(error))?;
         let status = resp.status();
         let mut body = resp.into_body();
         if !status.is_success() {

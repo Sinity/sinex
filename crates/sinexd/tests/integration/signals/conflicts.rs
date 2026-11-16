@@ -81,7 +81,7 @@ async fn a_firing_whose_reading_was_replayed_is_withdrawn_then_cites_the_new_rea
     held["for"] = json!(5000);
     ok(
         &socket,
-        json!({"method":"signal","action":"add","name":"held","rule":held.to_string()}),
+        json!({"method":"watch","action":"add","name":"held","rule":held.to_string()}),
     );
     wait_scalar(&mut conn, ADOPTED, 1).await;
     ok(
@@ -105,10 +105,7 @@ async fn a_firing_whose_reading_was_replayed_is_withdrawn_then_cites_the_new_rea
         vec![i64::MAX],
         "the original firing is still held before replay"
     );
-    ok(
-        &socket,
-        json!({"method":"replay","event-type":["operator.mark"]}),
-    );
+    ok(&socket, json!({"method":"replay","kind":["operator.mark"]}));
     let replaced: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM audit.archived a JOIN core.events e ON e.id = a.event_id WHERE e.event_type = 'operator.mark' AND a.reason = 'replay'",
     )
@@ -163,7 +160,7 @@ async fn a_step_refused_for_a_changed_checkpoint_is_taken_again() {
         quiet_daemon(&database, root.path(), &nats, &["sinex.signals"]).await;
     ok(
         &socket,
-        json!({"method":"signal","action":"add","name":"plain","rule":rule("plain","notice").to_string()}),
+        json!({"method":"watch","action":"add","name":"plain","rule":rule("plain","notice").to_string()}),
     );
     wait_scalar(&mut conn, ADOPTED, 1).await;
     // The next checkpoint save finds no row to update, as when another step

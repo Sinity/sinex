@@ -131,6 +131,16 @@ One configurable day boundary per deployment, used by every day- and hour-grain 
 - **Changing it** is a version change of every day-grain derivation, which re-derives them by the usual version mechanism ([derivations.md](derivations.md)); every day- and hour-grain value records the boundary and zone it was cut with.
 - A wake-to-wake view is a separate derived kind shown beside the logical day, never a second definition of it ([higher-layer.md](higher-layer.md)). A coarse source time stays in the calendar the source meant ([events.md](events.md#time)).
 
+## Status
+
+`sinexctl status` reports the daemon's stored progress, its consumer rates and each
+source's computed state. The [status view](interfaces.md#the-status-view) owns its
+`verdict`, `reasons`, `consumers`, `sources` and `source_states` fields.
+`sinexctl status --offline` and `sinexctl doctor` read sources through the same
+query relation with a UTC read context. A search backlog or failures recorded in
+the last 24 hours are informational doctor results; a backlog alone does not
+mean the daemon has failed.
+
 ## Backup and restore
 
 The stores are the backup unit, and the deployment chooses the backup tool; Sinex supplies the boundary the tool needs and the restore that proves the copy.
@@ -174,8 +184,8 @@ A backup records the dump's commit position and schema version, the blob-only ch
 
 ```
 sinexctl backup hold
-sinexctl backup list --page 100
-sinexctl backup prepare --output /private/backups/new-run
+sinexctl backup list --page-size 100
+sinexctl backup prepare --to /private/backups/new-run
 sinexctl backup release HOLD
 ```
 

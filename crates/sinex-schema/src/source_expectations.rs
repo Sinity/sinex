@@ -20,7 +20,6 @@ const SOURCES: &str = "CREATE TABLE registry.sources (
   version integer NOT NULL,
   event_types text[] NOT NULL,
   purpose text NOT NULL,
-  exclusion text,
   expectation text NOT NULL CHECK (expectation IN ({expectations})),
   -- Continuous sources: no new record for longer than this is suspicious.
   silent_after interval CHECK (silent_after > interval '0'),
@@ -28,6 +27,7 @@ const SOURCES: &str = "CREATE TABLE registry.sources (
   every interval CHECK (every > interval '0'),
   -- How long the provider keeps its own records, where it expires them.
   expires_after interval CHECK (expires_after > interval '0'),
+  exclusion text,
   CONSTRAINT continuous_declares_silence CHECK ((expectation = 'continuous') = (silent_after IS NOT NULL)),
   CONSTRAINT cadence_declares_period CHECK ((expectation = 'cadence') = (every IS NOT NULL))
 )";

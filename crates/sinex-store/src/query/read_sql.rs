@@ -14,7 +14,7 @@ use sqlx::PgConnection;
 
 /// Rows per page when the caller names none. Pages are bounded by bytes too
 /// ([`PAGE_BYTES`]), so a page of wide rows ends early.
-pub const DEFAULT_ROWS: u64 = 1000;
+pub const DEFAULT_ROWS: u64 = 50;
 
 /// One page of a statement's rows.
 #[derive(Debug)]

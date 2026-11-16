@@ -217,3 +217,76 @@ fn read_deadline_is_global_and_typed_before_the_query_text() {
             .is_err()
     );
 }
+
+#[devkit::test]
+fn help_starts_with_status_and_query_examples() {
+    let rendered = cli().render_help().to_string();
+    let first_commands: Vec<_> = rendered
+        .lines()
+        .skip_while(|line| *line != "Commands:")
+        .skip(1)
+        .take(5)
+        .filter_map(|line| line.split_whitespace().next())
+        .collect();
+    assert_eq!(
+        first_commands,
+        ["status", "query", "recall", "brief", "search"]
+    );
+    for command in COMMANDS {
+        let help = sinex_protocol::cli::subcommand(command)
+            .render_long_help()
+            .to_string();
+        assert!(help.contains("Examples:"), "{}: {help}", command.name);
+        for example in command.examples {
+            assert!(help.contains(example), "{example}: {help}");
+        }
+    }
+    let help = sinex_protocol::cli::subcommand(sinex_protocol::command("query").unwrap())
+        .render_long_help()
+        .to_string();
+    for word in [
+        "events",
+        "commands",
+        "shell-sessions",
+        "materials",
+        "runs",
+        "sources",
+        "archive",
+        "failures",
+        "docs/query.md",
+    ] {
+        assert!(help.contains(word), "{word}: {help}");
+    }
+}
+
+#[devkit::test]
+fn replay_and_whole_answer_options_stay_distinct() {
+    let matches = cli()
+        .try_get_matches_from(["sinexctl", "--all", "replay", "--every-change", "--dry-run"])
+        .unwrap();
+    assert!(matches.get_flag("all"));
+    let (name, sub) = matches.subcommand().unwrap();
+    let request =
+        Request::from_args(name, arguments(sinex_protocol::command(name).unwrap(), sub)).unwrap();
+    assert!(matches!(
+        request,
+        Request::Replay {
+            every_change: Some(true),
+            dry_run: Some(true),
+            ..
+        }
+    ));
+}
+
+#[devkit::test]
+fn list_page_hint_keeps_the_filters() {
+    let request = Request::Comparisons {
+        derivation: Some("shell.sessions".into()),
+        page_size: Some(3),
+        cursor: Some("previous".into()),
+    };
+    assert_eq!(
+        next_page_command(sinex_protocol::command("comparisons").unwrap(), &request),
+        "sinexctl comparisons 'shell.sessions' --page-size '3'"
+    );
+}

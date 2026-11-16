@@ -98,7 +98,9 @@ is the shared kind for an operation that did not finish.
   | serialization failure, deadlock (`40001`, `40P01`) | `conflict` | yes | the SQLSTATE |
   | insufficient privilege (`42501`): the reader role may not do it | `refused` | no | the SQLSTATE |
   | a connection URL this build cannot use | `bad_value` | no | |
-  | any other | `io` | no | the SQLSTATE |
+  | any other | `internal` | no | the SQLSTATE |
+
+- **Internal failures** describe stored data the product cannot read, a broken invariant, or a task that stopped. They are `internal`, exit 4 and HTTP 500, and are not retryable. A schema declaration error has the same kind.
 
 - **File and blob errors** are classified in the same module: a missing file
   is `not_found`, a forbidden one `refused`, a slow one `timeout`; a sealed
@@ -118,6 +120,11 @@ is the shared kind for an operation that did not finish.
   `{"error": {…}}` on standard output and nothing on standard error; without
   it, standard error carries the message, the caret, the hint, a runnable
   correction and the candidates. `sinexd` exits with the same codes.
+- A daemon connection failure names the endpoint tried and the service-start command.
+  A missing-token hint names `read.token`, `agent.token` and `operator.token`, which
+  `sinexd` writes in its token directory, and `--token-file` selects one explicitly.
+  A missing writer names `sinexd run`; a replay requiring the operator's key names
+  `sinexctl unlock IDENTITY_FILE`.
 - **MCP** answers a failure as a tool error (`isError`) whose text is the
   message with its caret and correction, and whose structured content is
   `{"error": failure}`; never a success with empty rows.
@@ -199,6 +206,31 @@ The CLI and MCP server use a current-thread async runtime. One-shot requests run
 
 `sinexctl` is product UI, not developer tooling. (ruling 2026-02-12, claude.ai:7abe2ed3-2651-4e23-a23a-48a61c82bb85:019c5366-a07e-7623-9477-9d8a857b0aa3).
 
+### Current commands
+
+The command table supplies the CLI, API and MCP names. Common reads start with
+`status`, `query`, `recall`, `brief`, `search`, `context`, `timeline`, `show` and
+`trace`. `save NAME QUERY` stores a query; `watch` manages rules that raise notices.
+Their MCP tools are `sinex_save` and `sinex_watch`. `stage` hands source files to
+Sinex; `library-add` and `library-import` keep their library meanings.
+
+- `--page-size` is rows per page, default 50, including SQL and backup lists. A
+  returned `page.cursor` continues a list; `comparisons` also takes `--cursor`.
+  `crawl --limit` is a total number of pages to visit.
+- `--since` and `--until` bound times; `--kind` selects an event kind, such as
+  `command.executed`. Analysis ranges use positional `first` and `last` logical days,
+  with the last day included.
+- `--dry-run` shows what lifecycle operations and replay would change and writes
+  nothing. `recompute --compare` stores a comparison for a later version switch.
+- `backup prepare --to PATH` writes a backup; `library-curate --request-id ID`
+  identifies a retried write. `brief --bytes N` measures presentation bytes.
+- Compound option and request argument names use hyphens, including `command-record`
+  and `focus-record`. `library-rank --next-size` selects the next comparison's size;
+  `replay --every-change` lists each change, while the global `--all` follows list
+  pages to the end.
+
+The query-first grammar below is a decided target, not built.
+
 ### Grammar
 
 - **One grammar rule, shared with Polylogue**
@@ -221,7 +253,7 @@ The CLI and MCP server use a current-thread async runtime. One-shot requests run
   `stage list|show`, `parser try`, `parsers`, `hosts`, `placement`, `kinds [KIND]`,
   `store verify`. Rules, saved queries and lanes are authored records written through
   `write` (`write signal:NAME …`). Decided target (2026-11-01): this replaces the
-  current `library tag|untag|set|…`, `analysis` and `signal add|…` groups.
+  current `library tag|untag|set|…`, `analysis` and `watch add|…` groups.
 - **Export is `read --to`.** `QUERY read --to DIR` writes the bundle atomically with its
   manifest: the question, its resolved read context, the selected records, references to
   the material bytes they came from, what was left out, and the replay recipe.
@@ -270,18 +302,18 @@ the surfaces are:
   not finish ([staging](materials.md#inventory-and-accounting)); `stage-list
   [--active]` and `stage-show OPERATION` read stages later. With the daemon stopped,
   `sinexd admin stage` runs the same command with its own writer;
-- `archive REF | QUERY | --material ID… | --run ID | --source S [--after T] [--before T]`
+- `archive REF | QUERY | --material ID… | --run ID | --source S [--since T] [--until T]`
   and `restore` over the same scopes or `--operation OP` (the chains that operation
-  archived), each refusing when any part cannot move; `--compare` prints the cascade and
+  archived), each refusing when any part cannot move; `--dry-run` prints what moves with the selected events and
   what would refuse and changes nothing;
-- `undo OPERATION [--compare]` archives what the operation made live and restores what it
+- `undo OPERATION [--dry-run]` archives what the operation made live and restores what it
   archived, for an archive, a restore, a replay or an undo;
 - `resume OPERATION` continues an archive, restore, tombstone, undo, replay or stage that
   ended `stopped_early` or whose daemon stopped mid-run;
-- `replay QUERY [--parser NAME] [--compare] [--batch-events N]` and its undo, with `--compare` showing per-field changes; `recompute DERIVATION [--compare]` and
+- `replay QUERY [--parser NAME] [--dry-run] [--batch-events N]` and its undo, with `--dry-run` showing per-field changes; `recompute DERIVATION [--compare]` and
   `recompute DERIVATION --switch` ([versions](derivations.md#versions));
-- `tombstone` over the same scopes as `restore`, only on archived chains; `--compare`
-  previews the cascade, and the act is reserved to the operator
+- `tombstone` over the same scopes as `restore`, only on archived chains; `--dry-run`
+  previews what moves with the selected events, and the act is reserved to the operator
   ([one command set](#one-command-set));
 - `backup hold` and `backup release HOLD`, called by the deployment's backup tool
   around a copy ([backup](operations.md#backup-and-restore));
@@ -301,14 +333,18 @@ one irreversible deletion; a refused material is read again by replay.
 - Colour only on a terminal with `NO_COLOR` unset. Colour and weight encode status only
   (ok, stale, missing, provisional, error), never source identity. Provisional rows look
   provisional; unknown is printed "unknown", never blank. Widths count display columns.
-  Local times carry their offset when ambiguous. Captured control characters are
-  escaped.
+  Answer times use the resolved context zone, or UTC when the answer has no zone,
+  and print as `YYYY-MM-DD HH:MM:SS±HH:MM`; the footer names that same zone. `follow`
+  and SQL output use and label UTC. Captured control characters are escaped.
 - Long output on a terminal streams into `$PAGER`, fetching later pages only as the
   pager reads.
 - **Errors** are one line of what failed and what to do, positioned in the query, with a
   runnable correction when one exists; with `--json`, an error object on stdout. An
   empty result says why: nothing matched, the source was not observed, or the rows are
   outside the caller's grants.
+- A closed output pipe ends `sinexctl` or `sinexd admin` with exit 141 and no panic
+  message. Other standard-output errors print one line and use the shared `io` exit
+  code.
 - `--deadline` has no upper bound; `--deadline none` lifts it.
 
 ### Completion, picker and references
@@ -337,20 +373,24 @@ Completion and fuzzy finding are part of the product. (ruling 2026-10-27, cc:ee5
 
 ### Help and orientation
 
-- Help is generated from the table; no command is hidden; each entry says what it does
-  and one usable next step, and its examples run as tests.
-- `explain QUERY` prints the query read back as a sentence (`read_as`), its field
-  phrases and the resolved read context.
+- Help is generated from the command table. Each command carries one to three full
+  `sinexctl` examples, printed after its help and in its MCP tool description. The
+  examples run against the development fixture. `query --help` names query units and
+  points to [the query language](query.md).
+- **Decided target, not built:** `explain QUERY` prints the query read back as a
+  sentence (`read_as`), its field phrases and the resolved read context. Current query
+  answers include `read_as` directly.
 - `kinds [KIND]` lists event types with counts, schemas, time quality and the aliases
   that expand to them; `kinds export DIR` writes JSON Schemas for outside producers.
-- `setting` prints the effective configuration and where each value came from.
-- **Bare `sinexctl` renders [Today](web.md#today)**; `status` stays explicit.
+- **Decided target, not built:** `setting` prints the effective configuration and
+  where each value came from; bare `sinexctl` renders [Today](web.md#today).
 
 ## MCP
 
 - `sinexctl mcp` (stdio, on `rmcp`) advertises the operations the table marks for MCP,
-  with strict argument schemas and `outputSchema`, grouped into tools by the common
-  grouping rule.
+  with strict argument schemas and `outputSchema`. Each current tool corresponds to
+  one command row. A list answer includes `page.cursor` in its structured content
+  whenever rows remain; pass it back with `page-size` to continue.
 - **Eight tools** (decided target, 2026-11-01). Agents bypass a long flat tool list by
   reaching for raw SQL, so Sinex groups its rows into eight tools named like
   Polylogue's:
@@ -366,10 +406,10 @@ Completion and fuzzy finding are part of the product. (ruling 2026-10-27, cc:ee5
 | `sinex_act` | stage, replay (compare by default), archive, restore, tombstone, undo, library add, import, save, open and viewed, experiment acts, notify, ack, snooze |
 | `sinex_explain` | syntax, units, fields, a query's reading, metrics, methods, missing cells |
 
-  `sinex_sql` stays a local operator tool, not an agent tool. The deployed flat tools
-  (`sinex_brief`, `sinex_hide`, `sinex_unhide`, the `sinex_library-*`, `sinex_analysis-*`,
-  `sinex_forecast-*` and `sinex_privacy-*` tools and `sinex_comparisons`) fold into these
-  rows; hide and unhide are the lifecycle's archive and restore.
+  In this target design, `sinex_sql` stays a local operator tool. The current flat
+  tools, including `sinex_brief`, `sinex_archive`, `sinex_restore`, `sinex_save`,
+  `sinex_watch`, `sinex_library-*`, `sinex_analysis-*`, `sinex_forecast-*`,
+  `sinex_privacy-*` and `sinex_comparisons`, are intended to fold into these rows.
 - Every answer uses the common answer contract: the text part is the rendering, rows
   appear as JSON only with `format: json`, and a budget cuts whole lines with counts of
   what was left out and expand handles.
@@ -385,7 +425,37 @@ Completion and fuzzy finding are part of the product. (ruling 2026-10-27, cc:ee5
 
 ### The status view
 
-One status view covers:
+`status` returns a shared `verdict` object: `{state: healthy}`, or
+`{state: degraded|unknown, reason: TEXT}`. `reasons` lists every current problem.
+A stalled or falling-behind consumer, or a stalled source, makes the verdict
+`degraded`; its first reason names the affected source or consumer. Consumer reasons
+state how far behind it is and when its progress was last observed.
+With no consumer position samples and no degraded condition the verdict is `unknown`.
+Otherwise it is `healthy`.
+
+`consumers` lists the publisher, search index and derivations with `name`,
+`position`, `behind`, `rate` (positions per second), `estimate_seconds`,
+`last_advanced` and `state`. Rates use the last 15 minutes of self-observation.
+The states are `current` when nothing remains, `catching_up` when the remaining
+positions decrease, `falling_behind` when progress advances without reducing the
+remaining work, `stalled` when at least three samples spanning five minutes
+show an unchanged position with work remaining, and `unknown` with fewer
+than two usable position samples or an observation span too short to classify.
+Keyed derivations track dirty and waiting keys rather than a commit cursor; their
+position, backlog and progress estimates are unknown. Per-event derivations start
+at position zero until they save their first cursor. Estimates are unknown when the samples cannot establish a
+positive catch-up rate. `last_advanced` is unknown until a sample shows an increase;
+a stalled reason can instead name the start of the observed unchanged span. The
+rate window smooths short bursts; the shorter stall window exposes a stopped
+reader sooner.
+
+`sources` contains all rows of `sources | sort by binding`, following every
+50-row page. `source_states` counts rows in each [input state](sources.md#input-states).
+The same source relation supplies offline status and the `doctor` sources check.
+`doctor` reports the search backlog and failures in the last 24 hours as information;
+the failure detail points to `sinexctl query 'failures since 24h'`.
+
+The wider status design covers:
 
 - the daemon, writer, bus and ingress backlog, and database;
 - per source, its run state and coverage;
@@ -424,10 +494,9 @@ holder through the reader role while the daemon is down.
   ([tables](query.md#tables)), read and paged like any query, so there are no separate
   gap, continuity, drift or readiness commands.
 - Fields: `source`, `binding`, `shapes`, `version`, `event_types`, `purpose`,
-  `exclusion` and its reason, `state`, `last_run`, `expectation`, `silent_after`, `every`,
+  `exclusion`, `state`, `reason`, `last_error`, `last_run`, `expectation`, `silent_after`, `every`,
   `expires_after` and the remaining margin, `coverage`, `behind`, `rate`,
-  `refused_rate`, `shape_changed`, `days_with_data_30d`, `gaps_30d`, `last_success`,
-  `last_error`.
+  `refused_rate`, `shape_changed`, `days_with_data_30d`, `gaps_30d` and `last_success`.
 - **One source-status path** classifies sources for fill, panels, recall, status and
   alerts: recorded poll outcomes (success, unchanged, failure), cursor positions, gap
   records with their missing count, record failures and shape observations, read under
@@ -553,7 +622,7 @@ because its configured outlet belongs to its own product. Polylogue shows only i
 - **Own notifications are excluded** (decided target, not built). A notification captured by Sinex's D-Bus source
   whose hints carry a product's delivery identifier is marked as a signal origin, and no
   rule reads it.
-- `sinexctl attention` prints presence, quiet, the budget, held notices and the last 24
+- **Decided target, not built:** `sinexctl attention` prints presence, quiet, the budget, held notices and the last 24
   hours of interruptions.
 
 ### Shipped rules
@@ -612,8 +681,7 @@ decides which prompts may be sent (default; open operator question).
 - Event follows wait for the search read model's saved position, including queries
   without an explicit text predicate. Read-model lag delays delivery. An event whose
   text the search index refuses (a full-text vector over PostgreSQL's size limit) is
-  recorded in `core.search_refusals`, counted by `status` as `search_index.refused`,
-  and passed; it never holds the position. Read-model
+  recorded in `core.search_refusals` and passed; it never holds the position. Read-model
   completion wakes subscriptions, and each captured batch stays within its lower
   exclusive and upper inclusive commit positions across every page.
 - Each message carries its commit or stream position as the SSE `id`. A reconnect with

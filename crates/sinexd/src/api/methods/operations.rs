@@ -21,6 +21,250 @@ fn uuid(what: &str, text: &str) -> Result<uuid::Uuid> {
 }
 
 impl Api {
+    pub(super) async fn lifecycle_request(
+        &self,
+        caller: &Caller,
+        request: Request,
+    ) -> Result<Reply> {
+        if let Request::Undo { operation, dry_run } = request {
+            let scope = Scope::Operation {
+                operation: OperationId(uuid("operation", &operation)?),
+            };
+            return self
+                .lifecycle(caller, Act::Undo, scope, dry_run.unwrap_or(false))
+                .await;
+        }
+        let (act, args, dry_run) = match request {
+            Request::Archive {
+                target,
+                material,
+                run,
+                source,
+                since,
+                until,
+                dry_run,
+            } => (
+                Act::Archive,
+                ScopeArgs {
+                    target,
+                    material,
+                    run,
+                    source,
+                    since,
+                    until,
+                    operation: None,
+                },
+                dry_run,
+            ),
+            Request::Restore {
+                target,
+                material,
+                run,
+                source,
+                since,
+                until,
+                operation,
+                dry_run,
+            } => (
+                Act::Restore,
+                ScopeArgs {
+                    target,
+                    material,
+                    run,
+                    source,
+                    since,
+                    until,
+                    operation,
+                },
+                dry_run,
+            ),
+            Request::Tombstone {
+                target,
+                material,
+                run,
+                source,
+                since,
+                until,
+                operation,
+                dry_run,
+            } => (
+                Act::Tombstone,
+                ScopeArgs {
+                    target,
+                    material,
+                    run,
+                    source,
+                    since,
+                    until,
+                    operation,
+                },
+                dry_run,
+            ),
+            _ => unreachable!("lifecycle request"),
+        };
+        let scope = self.lifecycle_scope(caller, args).await?;
+        self.lifecycle(caller, act, scope, dry_run.unwrap_or(false))
+            .await
+    }
+
+    pub(super) async fn replay_request(&self, caller: &Caller, request: Request) -> Result<Reply> {
+        let Request::Replay {
+            sealed,
+            material,
+            binding,
+            kind,
+            since,
+            until,
+            dry_run,
+            every_change,
+            batch_events,
+        } = request
+        else {
+            unreachable!("replay request");
+        };
+        if batch_events == Some(0) {
+            return Err(Error::bad_request(
+                "--batch-events needs at least one reading per batch",
+            ));
+        }
+        let scope = crate::replay::Scope {
+            materials: material
+                .iter()
+                .map(|material| uuid("material", material))
+                .collect::<Result<_>>()?,
+            binding,
+            event_types: (!kind.is_empty()).then_some(kind),
+            from: since.as_deref().map(timestamp).transpose()?,
+            until: until.as_deref().map(timestamp).transpose()?,
+            batch_events,
+        };
+        self.replay(
+            caller,
+            crate::replay::Options {
+                scope,
+                compare: dry_run.unwrap_or(false),
+                resume: None,
+                actor: caller.actor.to_owned(),
+                unlock: None,
+            },
+            every_change.unwrap_or(false),
+            sealed.unwrap_or(false),
+        )
+        .await
+    }
+
+    pub(super) async fn recompute_request(
+        &self,
+        caller: &Caller,
+        request: Request,
+    ) -> Result<Reply> {
+        let Request::Recompute {
+            derivation,
+            compare,
+            switch,
+            since,
+            until,
+            examples,
+        } = request
+        else {
+            unreachable!("recompute request");
+        };
+        let since = since.as_deref().map(timestamp).transpose()?;
+        let until = until.as_deref().map(timestamp).transpose()?;
+        let range = (since.is_some() || until.is_some()).then(|| {
+            (
+                since.unwrap_or(sinex_model::Timestamp(time::OffsetDateTime::UNIX_EPOCH)),
+                until.unwrap_or_else(sinex_model::Timestamp::now),
+            )
+        });
+        self.recompute(
+            caller,
+            &derivation,
+            compare.unwrap_or(false),
+            switch,
+            range,
+            usize::try_from(examples.unwrap_or(5)).unwrap_or(usize::MAX),
+        )
+        .await
+    }
+
+    pub(super) async fn comparisons(&self, caller: &Caller, request: Request) -> Result<Reply> {
+        let Request::Comparisons {
+            derivation,
+            page_size,
+            cursor,
+        } = request
+        else {
+            unreachable!("comparisons request");
+        };
+        let page_size = i64::try_from(page_size.unwrap_or(50)).unwrap_or(i64::MAX);
+        if page_size == 0 {
+            return Err(Error::bad_value("page size must be positive"));
+        }
+        let before = cursor
+            .as_deref()
+            .map(str::parse::<i64>)
+            .transpose()
+            .map_err(Error::bad_value)?;
+        let mut conn = self.acquire(caller).await?;
+        let mut kept = sinex_store::derivations::comparisons(
+            &mut conn,
+            derivation.as_deref(),
+            page_size.saturating_add(1),
+            before,
+        )
+        .await?;
+        let has_more = kept.len() as u64 > page_size as u64;
+        kept.truncate(usize::try_from(page_size).unwrap_or(usize::MAX));
+        let cursor = if has_more {
+            kept.last().map(|row| row.id.to_string())
+        } else {
+            None
+        };
+        let rows: Vec<Value> = kept.into_iter().map(|comparison| json!({
+            "id": comparison.id, "derivation": comparison.derivation, "version": comparison.version,
+            "context": comparison.context, "since": comparison.range.and_then(|range| range.0),
+            "until": comparison.range.and_then(|range| range.1), "made_at": comparison.made_at,
+            "keys": comparison.keys, "unchanged": comparison.unchanged, "added": comparison.added,
+            "changed": comparison.changed, "removed": comparison.removed, "examples": comparison.examples,
+        })).collect();
+        Ok(Reply::Ok {
+            result: json!({ "total": rows.len(), "rows": rows, "page": { "cursor": cursor } }),
+        })
+    }
+
+    pub(super) async fn stage_request(&self, caller: &Caller, request: Request) -> Result<Reply> {
+        let Request::Stage {
+            path,
+            parser,
+            account,
+            export_date,
+            follow,
+            batch_events,
+        } = request
+        else {
+            unreachable!("stage request");
+        };
+        self.stage(
+            caller,
+            &path,
+            &parser,
+            account,
+            export_date,
+            follow.unwrap_or(false),
+            batch_events,
+        )
+        .await
+    }
+
+    pub(super) async fn stage_list(&self, caller: &Caller, active: bool) -> Result<Reply> {
+        let mut conn = self.acquire(caller).await?;
+        let stages = sinex_store::stages::list(&mut conn, active).await?;
+        Ok(Reply::Ok {
+            result: json!({ "stages": stages }),
+        })
+    }
+
     /// Archive, restore, tombstone or undo, through the writer in batches.
     pub(super) async fn lifecycle(
         &self,
@@ -181,7 +425,7 @@ impl Api {
         if sealed {
             if caller.actor != "operator" || !caller.grants.split(',').any(|g| g == "sealed") {
                 return Err(Error::refused(
-                    "sealed replay requires the operator's current unlock and explicit --sealed grant",
+                    "sealed replay needs the operator unlock and --sealed: run `sinexctl unlock IDENTITY_FILE` first",
                 ));
             }
             let unlock = self.unlock.lock().await;

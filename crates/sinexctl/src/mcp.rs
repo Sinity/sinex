@@ -63,7 +63,7 @@ pub(crate) fn tools() -> Vec<Tool> {
         .map(|c| {
             Tool::new(
                 format!("{PREFIX}{}", c.name),
-                c.summary,
+                format!("{}\n\nExamples:\n  {}", c.summary, c.examples.join("\n  ")),
                 Arc::new(schema(c)),
             )
             .annotate(ToolAnnotations::new().read_only(c.access == sinex_protocol::Access::Read))

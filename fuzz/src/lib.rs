@@ -17,6 +17,8 @@ pub fn producer_roundtrip(bytes: &[u8]) {
 }
 pub fn query(bytes: &[u8]) {
     if let Ok(text) = std::str::from_utf8(bytes) {
+        let context = sinex_query::Context::utc(jiff::Timestamp::UNIX_EPOCH);
+        if let Ok(bound) = sinex_query::bind(text, &context) {
             let sentence = sinex_query::read_as(&bound, &context.zone);
             assert!(!sentence.is_empty());
         }

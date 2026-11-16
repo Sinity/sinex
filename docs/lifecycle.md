@@ -20,9 +20,9 @@ In primary mode, Polylogue's materials and the `polylogue.*` readings made from 
 
 Archive (live → archived) is how anything is deleted, and there is no other way to delete. Archiving is reversible, like an operating system's trash. (ruling 2025-08-11, cc:505f40e8-3618-4857-81d3-e201f417a2ff:9833b29b-2a3a-4d64-9ee3-d04f6eb0748e). (ruling 2026-02-03, cc:7ef0e4c5-d017-412d-b3d8-42ad7d0c2819:89712340-bbdf-4b1b-9220-ce7b4fafbf20).
 
-- **Scope**: a reference, a query (`--source terminal --before 2026-09-01`, any `events where …`), a material, or a run.
+- **Scope**: a reference, a query (`--source terminal --until 2026-09-01`, any `events where …`), a material, or a run.
 - **It moves the scope's live readings and their whole live chains** ([whole chains](#whole-chains-move-together)).
-- **The answer reports the cascade it moved**: readings by kind and reason, materials whose status changed, keyed aggregates dirtied. `--compare` reports the same cascade and writes nothing.
+- **The answer reports the cascade it moved**: readings by kind and reason, materials whose status changed, keyed aggregates dirtied. `--dry-run` reports the same cascade and writes nothing.
 - **It refuses if any part cannot move**, naming each reason. The checks run on every batch ([the operation is the unit](#the-operation-is-the-unit)): a refusal before the first batch commits changes nothing; a refusal after it ends the operation `stopped_early`, naming what moved. (ruling 2025-07, aistudio:Sinex core.events, audit.log refactoring:31).
 
 ### Archive is not hiding
@@ -62,7 +62,7 @@ Replay reads stored bytes again. It is a rescan of materials, not a procedure ov
 - Each transaction moves complete records with their chains, saves the parser carry and the operation's progress, and is bounded in duration, so live admission is served between transactions. A part is the normal unit, split only at record boundaries whose carry is saved.
 - After every commit each record has exactly one live reading.
 - A stopped replay **resumes** from its saved progress without redoing finished work. An indivisible record larger than the duration budget is processed whole, and its size and hold time are reported.
-- **`--compare`** runs the same path with the same validation and failures, reports unchanged, changed, added and removed readings with examples, and writes nothing: no events, positions, bytes or stream messages.
+- **`--dry-run`** runs the same path with the same validation and failures, reports unchanged, changed, added and removed readings with examples, and writes nothing: no events, positions, bytes or stream messages.
 
 **Replay is the normal path for reading data again.** A failed record's retry is a replay of exactly its bytes; there is no separate store of failed messages.
 
@@ -168,7 +168,7 @@ Every user act that changes state is an **operation**: stage, archive, restore, 
 | start and end commit positions | where it began and ended in the commit log |
 | result | ok or `stopped_early` |
 
-- **Operations have no workflow states**: no preview, approval, expiry or cancel lifecycle. A multi-batch operation's saved position is progress, not a state; it ends ok or `stopped_early`, and a stopped one resumes from its position. A `--compare` is a read and writes nothing.
+- **Operations have no workflow states**: no preview, approval, expiry or cancel lifecycle. A multi-batch operation's saved position is progress, not a state; it ends ok or `stopped_early`, and a stopped one resumes from its position. A `--dry-run` is a read and writes nothing.
 - **The actor is computed by the daemon** from the authenticated caller: the operator, an agent session with its harness and session ID, an outside producer's credential, or `sinexd` itself. No command supplies it. Writes through the API keep their actor. How callers are authenticated is in [callers](interfaces.md#callers).
 - **No act is refused because the caller is an agent.** Agents have the same lifecycle powers as the operator; what differs is the recorded actor.
 

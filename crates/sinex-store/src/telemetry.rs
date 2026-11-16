@@ -73,7 +73,7 @@ pub async fn read(conn: &mut PgConnection) -> Result<Vec<Reading>> {
         ),
     ];
     let keyed = sqlx::query!(
-        r#"SELECT d.name AS "name!",
+        r#"SELECT d.name AS "name!", d.kind,
              (SELECT count(*) FROM derivation.dirty k WHERE k.derivation = d.name) AS "dirty!",
              (SELECT count(*) FROM derivation.waiting w WHERE w.derivation = d.name) AS "waiting!",
              (SELECT p.commit_seq FROM derivation.positions p WHERE p.derivation = d.name) AS position
@@ -83,7 +83,7 @@ pub async fn read(conn: &mut PgConnection) -> Result<Vec<Reading>> {
     .await?;
     for d in keyed {
         let mut measures = vec![("dirty_keys", d.dirty), ("waiting_keys", d.waiting)];
-        if let Some(position) = d.position {
+        if let Some(position) = d.position.or((d.kind == "per_event").then_some(0)) {
             measures.push(("position", position));
             measures.push(("behind", head.commit_seq - position));
         }
@@ -116,8 +116,8 @@ pub async fn recent(
     window: Duration,
 ) -> Result<Vec<Sample>> {
     let seconds = window.as_secs_f64();
-    let payloads = sqlx::query_scalar!(
-        r#"SELECT payload AS "payload!" FROM core.visible_events e
+    let samples = sqlx::query_scalar!(
+        r#"SELECT payload AS "payload!: sqlx::types::Json<Sample>" FROM core.visible_events e
            WHERE event_type = $1 AND ts_orig > now() - $2 * interval '1 second'
              AND core.class_visible(e.class)
              AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)
@@ -127,13 +127,7 @@ pub async fn recent(
     )
     .fetch_all(conn)
     .await?;
-    payloads
-        .into_iter()
-        .map(|payload| {
-            serde_json::from_value(payload)
-                .map_err(|error| crate::Error::Invalid(error.to_string()))
-        })
-        .collect()
+    Ok(samples.into_iter().map(|sample| sample.0).collect())
 }
 
 #[cfg(test)]

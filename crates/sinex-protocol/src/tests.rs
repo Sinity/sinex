@@ -226,3 +226,101 @@ fn deadlines_keep_absence_none_and_large_milliseconds_distinct() {
         Deadline::Milliseconds(u64::MAX)
     );
 }
+
+#[devkit::test]
+fn every_option_name_has_one_kind() {
+    use std::collections::BTreeMap;
+    let value_kind = |kind| match kind {
+        // Repetition changes cardinality, while each value is still text.
+        ArgKind::List => ArgKind::Text,
+        other => other,
+    };
+    let mut kinds = BTreeMap::new();
+    for command in COMMANDS {
+        for argument in command.args.iter().filter(|argument| !argument.positional) {
+            let kind = value_kind(argument.kind);
+            if let Some(previous) = kinds.insert(argument.name, kind) {
+                assert_eq!(previous, kind, "{} --{}", command.name, argument.name);
+            }
+        }
+    }
+    for (name, option, kind) in [
+        ("query", "page-size", ArgKind::Integer),
+        ("sql", "page-size", ArgKind::Integer),
+        ("backup", "page-size", ArgKind::Integer),
+        ("comparisons", "page-size", ArgKind::Integer),
+        ("comparisons", "cursor", ArgKind::Text),
+        ("replay", "kind", ArgKind::Text),
+        ("privacy-rule", "kind", ArgKind::Text),
+        ("replay", "since", ArgKind::Text),
+        ("recompute", "since", ArgKind::Text),
+        ("archive", "since", ArgKind::Text),
+        ("restore", "until", ArgKind::Text),
+        ("tombstone", "dry-run", ArgKind::Bool),
+        ("undo", "dry-run", ArgKind::Bool),
+        ("replay", "dry-run", ArgKind::Bool),
+        ("backup", "to", ArgKind::Text),
+        ("library-curate", "request-id", ArgKind::Text),
+        ("brief", "bytes", ArgKind::Integer),
+        ("library-rank", "next-size", ArgKind::Integer),
+        ("replay", "every-change", ArgKind::Bool),
+    ] {
+        let argument = command(name)
+            .unwrap()
+            .args
+            .iter()
+            .find(|argument| argument.name == option)
+            .unwrap_or_else(|| panic!("{name} needs --{option}"));
+        assert_eq!(value_kind(argument.kind), kind, "{name} --{option}");
+    }
+}
+
+#[devkit::test]
+fn every_listed_command_has_an_example() {
+    for command in COMMANDS {
+        assert!(
+            (1..=3).contains(&command.examples.len()),
+            "{}",
+            command.name
+        );
+        for example in command.examples {
+            assert!(
+                example.starts_with(&format!("sinexctl {}", command.name)),
+                "{example}"
+            );
+        }
+    }
+}
+
+#[devkit::test]
+fn tag_name_matches_the_serde_tag() {
+    for command in COMMANDS {
+        let arguments = command
+            .args
+            .iter()
+            .map(|argument| (argument.name.to_owned(), sample(argument.kind)))
+            .collect();
+        let request = Request::from_args(command.name, arguments).unwrap();
+        assert_eq!(
+            serde_json::to_value(&request).unwrap()["method"],
+            request.method()
+        );
+    }
+
+    #[derive(serde::Serialize, sinex_model::TagName)]
+    #[serde(tag = "outcome", rename_all = "snake_case")]
+    enum Example {
+        AlreadyDone,
+        #[serde(rename = "waiting-for-input")]
+        Waiting {
+            count: usize,
+        },
+    }
+    for (example, expected) in [
+        (Example::AlreadyDone, "already_done"),
+        (Example::Waiting { count: 3 }, "waiting-for-input"),
+    ] {
+        assert_eq!(example.outcome(), expected);
+        assert_eq!(serde_json::to_value(&example).unwrap()["outcome"], expected);
+    }
+}

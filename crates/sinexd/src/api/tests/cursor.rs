@@ -4,7 +4,7 @@ async fn first(w: &World, token: &str, query: &str) -> Value {
     let (_, page) = call_unbounded(
         w,
         Some(token),
-        json!({"method":"query", "query":query, "page":1}),
+        json!({"method":"query", "query":query, "page-size":1}),
     )
     .await;
     assert_eq!(page["outcome"], "ok", "{page}");
@@ -17,7 +17,7 @@ async fn a_public_cursor_cannot_skip_rows_in_a_different_question(db: devkit::pg
     let w = world(db).await;
     admit(&w, &["alpha", "beta", "gamma"], 0).await;
     let page = first(&w, READ, "events | sort by when").await;
-    let (_, next) = call_unbounded(&w, Some(READ), json!({"method":"query", "query":"events where beta", "page":1, "cursor":page["result"]["page"]["cursor"]})).await;
+    let (_, next) = call_unbounded(&w, Some(READ), json!({"method":"query", "query":"events where beta", "page-size":1, "cursor":page["result"]["page"]["cursor"]})).await;
     assert_eq!(
         next["outcome"], "failed",
         "a different one-row answer was silently skipped: {next}"
@@ -44,7 +44,7 @@ async fn a_public_cursor_does_not_transfer_the_operators_guarded_visibility(
     assert_eq!(set["outcome"], "ok");
     admit(&w, &["guarded alpha", "guarded beta"], 0).await;
     let page = first(&w, OPERATOR, "events | sort by when").await;
-    let (_, next) = call_unbounded(&w, Some(READ), json!({"method":"query", "query":"events | sort by when", "page":1, "cursor":page["result"]["page"]["cursor"]})).await;
+    let (_, next) = call_unbounded(&w, Some(READ), json!({"method":"query", "query":"events | sort by when", "page-size":1, "cursor":page["result"]["page"]["cursor"]})).await;
     assert_eq!(next["outcome"], "failed", "{next}");
     assert!(!next.to_string().contains("guarded beta"));
     let (_, fresh) = call_unbounded(
@@ -117,7 +117,7 @@ async fn public_continuation_refuses_permanent_removal_instead_of_skipping_the_n
         .await;
         assert_eq!(removed["outcome"], "ok", "{removed}");
     }
-    let (_, next) = call_unbounded(&w, Some(READ), json!({"method":"query", "query":"commands | sort by when", "page":1, "cursor":page["result"]["page"]["cursor"]})).await;
+    let (_, next) = call_unbounded(&w, Some(READ), json!({"method":"query", "query":"commands | sort by when", "page-size":1, "cursor":page["result"]["page"]["cursor"]})).await;
     assert_eq!(
         next["outcome"], "failed",
         "a permanent removal silently changed page positions: {next}"
@@ -156,7 +156,7 @@ async fn public_run_metadata_changes_invalidate_a_question_without_new_event_com
     sinex_store::runs::end(&mut w.reads.acquire().await.unwrap(), RunId(id))
         .await
         .unwrap();
-    let (_, next) = call_unbounded(&w, Some(READ), json!({"method":"query", "query":query, "page":1, "cursor":page["result"]["page"]["cursor"]})).await;
+    let (_, next) = call_unbounded(&w, Some(READ), json!({"method":"query", "query":query, "page-size":1, "cursor":page["result"]["page"]["cursor"]})).await;
     assert_eq!(next["outcome"], "failed", "{next}");
     assert!(
         next["failure"]["message"]
@@ -190,7 +190,7 @@ async fn public_cursor_refuses_obsolete_and_overflow_values(db: devkit::pg::Test
     let (_, oversized) = call_unbounded(
         &w,
         Some(READ),
-        json!({"method":"query", "query":"events", "page":u64::MAX}),
+        json!({"method":"query", "query":"events", "page-size":u64::MAX}),
     )
     .await;
     assert_eq!(oversized["outcome"], "failed");

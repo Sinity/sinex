@@ -47,7 +47,7 @@ async fn wait_rows(socket: &Path, words: &str, count: usize) -> Vec<Value> {
     loop {
         let answer = call(
             socket,
-            json!({"method":"search","words":format!("event_type = document.text AND {words}"),"page":100}),
+            json!({"method":"search","words":format!("event_type = document.text AND {words}"),"page-size":100}),
         );
         let rows = answer["rows"].as_array().unwrap();
         if rows.len() == count {
@@ -146,7 +146,7 @@ async fn assert_provenance(
     assert_eq!(payload["content"], content);
     let trace = call(
         socket,
-        json!({"method":"trace","reference":format!("sinex:ev/{}",row["id"].as_str().unwrap()),"page":100}),
+        json!({"method":"trace","reference":format!("sinex:ev/{}",row["id"].as_str().unwrap()),"page-size":100}),
     );
     let lineage = trace["rows"].as_array().unwrap();
     let copy = lineage

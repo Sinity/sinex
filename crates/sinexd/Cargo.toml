@@ -8,7 +8,7 @@ license.workspace = true
 
 [dependencies]
 sinex-query.workspace = true
-command-surface.workspace = true
+command-surface = { workspace = true, features = ["runtime"] }
 hashed-blobs.workspace = true
 query-language.workspace = true
 signals.workspace = true

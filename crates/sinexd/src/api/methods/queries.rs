@@ -7,10 +7,6 @@ use sinex_model::query_definition::SavedQuery;
 use sinex_query::saved::parameter;
 use std::collections::BTreeMap;
 
-pub(super) async fn list(conn: &mut sqlx::PgConnection) -> Result<Vec<Saved>> {
-    Ok(sinex_store::query::saved_records(conn).await?)
-}
-
 pub(super) async fn definitions(
     conn: &mut sqlx::PgConnection,
     requested: &str,
@@ -19,6 +15,122 @@ pub(super) async fn definitions(
 }
 
 impl Api {
+    pub(super) async fn query_request(&self, caller: &Caller, request: Request) -> Result<Reply> {
+        match request {
+            Request::Query {
+                query,
+                page_size,
+                cursor,
+            } => {
+                self.query(
+                    caller,
+                    &query,
+                    Page {
+                        size: page_size,
+                        cursor,
+                    },
+                )
+                .await
+            }
+            Request::Context {
+                since,
+                until,
+                page_size,
+                cursor,
+            } => {
+                self.context_view(
+                    caller,
+                    since,
+                    until,
+                    Page {
+                        size: page_size,
+                        cursor,
+                    },
+                )
+                .await
+            }
+            Request::Timeline {
+                query,
+                page_size,
+                cursor,
+            } => {
+                self.query(
+                    caller,
+                    &format!("events {}", query.unwrap_or_default()),
+                    Page {
+                        size: page_size,
+                        cursor,
+                    },
+                )
+                .await
+            }
+            Request::Search {
+                words,
+                page_size,
+                cursor,
+            } => {
+                self.query(
+                    caller,
+                    &format!("events where {words}"),
+                    Page {
+                        size: page_size,
+                        cursor,
+                    },
+                )
+                .await
+            }
+            Request::Trace {
+                reference,
+                page_size,
+                cursor,
+            } => {
+                self.query(
+                    caller,
+                    &format!("trace {reference}"),
+                    Page {
+                        size: page_size,
+                        cursor,
+                    },
+                )
+                .await
+            }
+            Request::QueryComplete { query } => {
+                Ok(data(json!({"fields": query::complete(&query)})))
+            }
+            Request::QueryList => {
+                let mut conn = self.acquire(caller).await?;
+                Ok(data(
+                    json!({"queries": sinex_store::query::saved_records(&mut conn).await?}),
+                ))
+            }
+            request @ (Request::Save { .. } | Request::Mark { .. }) => {
+                self.query_record(request, caller).await.map(data)
+            }
+            _ => unreachable!("query request"),
+        }
+    }
+
+    pub(super) async fn show(&self, caller: &Caller, request: Request) -> Result<Reply> {
+        let Request::Show { reference } = request else {
+            unreachable!("show request");
+        };
+        let reference =
+            query::parse_reference(&reference).map_err(|error| error.failure(&reference))?;
+        if let query::Reference::Window { from, to } = &reference {
+            return self
+                .query(
+                    caller,
+                    &format!("recall sinex:window/{from}/{to}"),
+                    Page::default(),
+                )
+                .await;
+        }
+        let mut conn = self.acquire(caller).await?;
+        Ok(data(
+            json!({ "event": sinex_store::query::show(&mut conn, &reference).await? }),
+        ))
+    }
+
     pub(super) async fn query_record(&self, request: Request, caller: &Caller) -> Result<Value> {
         if !caller.grants.split(',').any(|g| g == "guarded") {
             return Err(Error::refused("query authoring requires the guarded grant"));
@@ -85,10 +197,7 @@ impl Api {
             }
             _ => return Err(Error::bad_request("not a query authoring command")),
         };
-        let writer = self
-            .writer
-            .as_ref()
-            .ok_or_else(|| Error::not_configured("query authoring requires sinexd run"))?;
+        let writer = self.writer.as_ref().ok_or_else(Error::no_writer)?;
         let acquired =
             sinex_sources::sources::query::request_material(record, caller.actor, &self.host, now);
         let done = crate::submit::request(

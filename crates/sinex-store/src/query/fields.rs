@@ -162,9 +162,9 @@ pub(crate) fn field(id: FieldId) -> Option<String> {
         },
         FieldId::Source(field) => {
             return Some(match field {
-                SourceField::State => super::source_views::state(),
-                SourceField::Reason => super::source_views::reason(),
-                SourceField::LastError => super::source_views::last_error(),
+                SourceField::State => "{t}.state".to_string(),
+                SourceField::Reason => "{t}.reason".to_string(),
+                SourceField::LastError => "{t}.last_error".to_string(),
                 SourceField::Exclusion => "{t}.exclusion".to_string(),
                 SourceField::Continuity => super::source_views::continuity(),
                 SourceField::Gaps => super::source_views::gaps(),

@@ -55,7 +55,7 @@ async fn an_external_history_survives_a_stopped_admission_and_remains_queryable(
 
     let mut query = target.sinexd(&["admin", "query"]);
     query.args([
-        "--page",
+        "--page-size",
         "10",
         "events where source = terminal.atuin-history and state = present | fields event_type",
     ]);

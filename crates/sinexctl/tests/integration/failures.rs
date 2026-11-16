@@ -303,3 +303,117 @@ fn a_one_shot_request_uses_one_thread() {
         "one-shot requests run on the process's main thread"
     );
 }
+
+#[devkit::test]
+fn unreachable_names_service_and_endpoint() {
+    let unused = TcpListener::bind("127.0.0.1:0").unwrap();
+    let tcp = format!("http://{}", unused.local_addr().unwrap());
+    drop(unused);
+    let root = tempfile::tempdir().unwrap();
+    let unix = format!("unix:{}", root.path().join("missing.sock").display());
+    for endpoint in [tcp, unix] {
+        let output = sinexctl(&endpoint, &["--json", "query", "events"]);
+        assert_eq!(output.status.code(), Some(6), "{output:?}");
+        let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(
+            result["error"]["message"]
+                .as_str()
+                .unwrap()
+                .starts_with(&format!("the daemon is not reachable at {endpoint}: ")),
+            "{result}"
+        );
+        let hint = result["error"]["hint"].as_str().unwrap();
+        assert!(hint.contains("systemctl start sinexd"), "{hint}");
+        assert!(hint.contains("sinexd run"), "{hint}");
+    }
+}
+
+#[devkit::test]
+fn missing_token_names_token_files() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("missing.token");
+    let output = Command::new(env!("CARGO_BIN_EXE_sinexctl"))
+        .arg("--token-file")
+        .arg(&path)
+        .args(["--json", "query", "events"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let result: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(
+        result["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains(&path.display().to_string())
+    );
+    let hint = result["error"]["hint"].as_str().unwrap();
+    for name in [
+        "read.token",
+        "agent.token",
+        "operator.token",
+        "--token-file",
+    ] {
+        assert!(hint.contains(name), "{hint}");
+    }
+}
+
+#[devkit::test]
+fn closed_stdout_exits_141_without_panic() {
+    let body = json!({"outcome":"ok", "result": {
+        "rows":[{"text":"x".repeat(1024 * 1024)}],
+        "columns":["text"], "total":1,
+        "resolved":{"zone":"UTC"}, "page":{"size":50,"cursor":null}
+    }})
+    .to_string();
+    let (endpoint, server) = daemon(vec![(200, body)]);
+    let mut child = Command::new(env!("CARGO_BIN_EXE_sinexctl"))
+        .args([
+            "--endpoint",
+            &endpoint,
+            "--token-file",
+            "/dev/null",
+            "--json",
+            "query",
+            "events",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdout = child.stdout.take().unwrap();
+    stdout.read_exact(&mut [0; 1]).unwrap();
+    drop(stdout);
+    let output = child.wait_with_output().unwrap();
+    server.join().unwrap();
+    assert_eq!(output.status.code(), Some(141), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+}
+
+#[devkit::test]
+fn mcp_page_keeps_its_continuation() {
+    let result = json!({
+        "query":"events", "rows":[{"id":1}], "columns":["id"], "total":2,
+        "page":{"size":1,"cursor":"next-page"}, "resolved":{"zone":"UTC"}
+    });
+    let body = json!({"outcome":"ok", "result":result}).to_string();
+    let (endpoint, server) = daemon(vec![(200, body)]);
+    let reply = mcp_call(
+        &endpoint,
+        "sinex_query",
+        json!({"query":"events","page-size":1}),
+    );
+    server.join().unwrap();
+    assert_eq!(reply["result"]["isError"], false, "{reply}");
+    assert_eq!(
+        reply["result"]["structuredContent"]["page"]["cursor"],
+        "next-page"
+    );
+    let text = reply["result"]["content"][0]["text"].as_str().unwrap();
+    let value: Value = serde_json::from_str(
+        text.strip_prefix(sinex_protocol::DATA_NOTICE)
+            .unwrap()
+            .trim(),
+    )
+    .unwrap();
+    assert_eq!(value["page"]["cursor"], "next-page");
+}

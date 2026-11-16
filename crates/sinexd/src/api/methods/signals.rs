@@ -5,6 +5,31 @@ use sinex_model::event_types::signal::{RuleWritten, SignalRecord};
 use sinex_model::{Class, Timestamp};
 
 impl Api {
+    pub(super) async fn watch_request(&self, caller: &Caller, request: Request) -> Result<Reply> {
+        let Request::Watch {
+            action,
+            name,
+            rule,
+            page_size,
+            cursor,
+        } = request
+        else {
+            unreachable!("watch request");
+        };
+        self.signal(
+            caller,
+            &action,
+            name,
+            rule,
+            Page {
+                size: page_size,
+                cursor,
+            },
+        )
+        .await
+        .map(data)
+    }
+
     pub(super) async fn signal(
         &self,
         caller: &Caller,
@@ -27,7 +52,7 @@ impl Api {
         }
         if page.cursor.is_some() || page.size.is_some() {
             return Err(Error::bad_request(
-                "signal mutation does not take a page or cursor",
+                "watch changes do not take --page-size or --cursor",
             ));
         }
         let configuration = self
@@ -35,10 +60,7 @@ impl Api {
             .signals
             .as_ref()
             .ok_or_else(|| Error::not_configured("signals are not configured"))?;
-        let writer = self
-            .writer
-            .as_ref()
-            .ok_or_else(|| Error::not_configured("signal authoring requires sinexd run"))?;
+        let writer = self.writer.as_ref().ok_or_else(Error::no_writer)?;
         let _serial = writer.lock_signals().await;
         let mut conn = self.acquire(caller).await?;
         let submitted = rule

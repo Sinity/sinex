@@ -4,30 +4,32 @@ use crate::{Error, Result};
 use sinex_model::OperationId;
 
 impl Api {
-    pub(super) async fn backup(
-        &self,
-        caller: &Caller,
-        action: &str,
-        hold: Option<String>,
-        output: Option<String>,
-        page: Option<u64>,
-        cursor: Option<String>,
-    ) -> Result<Reply> {
+    pub(super) async fn backup(&self, caller: &Caller, request: super::Request) -> Result<Reply> {
+        let super::Request::Backup {
+            action,
+            hold,
+            to,
+            page_size,
+            cursor,
+        } = request
+        else {
+            unreachable!("backup request");
+        };
         let id = |text: &str| -> Result<OperationId> {
             text.parse::<uuid::Uuid>()
                 .map(OperationId)
                 .map_err(|e| Error::bad_value(format!("backup hold {text}: {e}")))
         };
         if action == "list" {
-            if hold.is_some() || output.is_some() {
+            if hold.is_some() || to.is_some() {
                 return Err(Error::bad_request(
-                    "backup list takes only --page and --cursor",
+                    "backup list takes only --page-size and --cursor",
                 ));
             }
             let after = cursor.as_deref().map(id).transpose()?;
-            let size = i64::try_from(page.unwrap_or(100)).unwrap_or(i64::MAX);
+            let size = i64::try_from(page_size.unwrap_or(50)).unwrap_or(i64::MAX);
             if size == 0 {
-                return Err(Error::bad_value("backup list page must be positive"));
+                return Err(Error::bad_value("backup list page size must be positive"));
             }
             let mut conn = self.acquire(caller).await?;
             let holds = sinex_store::backup::list(&mut conn, after, size).await?;
@@ -40,20 +42,20 @@ impl Api {
                 result: json!({"holds":holds,"page":{"cursor":next}}),
             });
         }
-        if page.is_some() || cursor.is_some() {
+        if page_size.is_some() || cursor.is_some() {
             return Err(Error::bad_request(
-                "backup --page and --cursor belong to list",
+                "backup --page-size and --cursor belong to list",
             ));
         }
         let writer = self.writer()?;
-        match action {
-            "hold" if hold.is_none() && output.is_none() => {
+        match action.as_str() {
+            "hold" if hold.is_none() && to.is_none() => {
                 let hold = writer.backup_hold(caller.actor).await?;
                 Ok(Reply::Ok {
                     result: json!({"hold":hold}),
                 })
             }
-            "release" if output.is_none() => {
+            "release" if to.is_none() => {
                 let hold = id(hold
                     .as_deref()
                     .ok_or_else(|| Error::bad_request("backup release needs HOLD"))?)?;
@@ -63,10 +65,10 @@ impl Api {
                 })
             }
             "prepare" => Err(Error::bad_request(
-                "backup prepare streams its snapshot to the client that copies the backup; run sinexctl backup prepare --output PATH",
+                "backup prepare streams its snapshot to the client that copies the backup; run sinexctl backup prepare --to PATH",
             )),
             _ => Err(Error::bad_request(
-                "backup takes hold, release HOLD, prepare --output PATH, or list",
+                "backup takes hold, release HOLD, prepare --to PATH, or list",
             )),
         }
     }

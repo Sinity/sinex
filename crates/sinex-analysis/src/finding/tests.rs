@@ -80,3 +80,59 @@ fn multiline_observations_are_one_citable_presentation_line() {
     assert!(!text.contains('\n') && !text.contains('\r') && !text.contains('\u{2028}'));
     assert!(text.contains("first\\r\\nsecond\\nthird\\u{2028}fourth"));
 }
+
+#[devkit::test]
+fn num_keeps_small_effects() {
+    for (value, expected) in [
+        (0.0, "0"),
+        (-0.0, "0"),
+        (1.0, "1"),
+        (-12.0, "-12"),
+        (12.345, "12.35"),
+        (-1.234, "-1.23"),
+        (0.0031, "0.0031"),
+        (-0.003123, "-0.00312"),
+        (0.0000000031, "0.0000000031"),
+        (0.9999, "1"),
+    ] {
+        assert_eq!(number(value), expected, "{value}");
+    }
+    let association = Finding {
+        template: Template::Association {
+            x: "x".into(),
+            y: "y".into(),
+            lag: 0,
+            r: 0.0031,
+            ci95: Some([-0.00012, 0.00632]),
+            n: 20,
+            n_eff: 18.0,
+            q: Some(0.000031),
+            family_size: 2,
+        },
+        caveats: vec![Caveat::SmallN {
+            n: 20,
+            min_detectable_r: Some(0.00042),
+        }],
+        evidence: vec![],
+    };
+    assert_eq!(
+        association.markdown(),
+        "x and y (lag 0) are associated, r = 0.0031 over 20 units (effective 18.0), 95% interval -0.00012 to 0.00632, q = 0.000031 across 2 tested pairs [20 units; effects below r = 0.00042 would go undetected]"
+    );
+    let trend = Finding {
+        template: Template::Trend {
+            metric: "small.effect".into(),
+            slope_per_unit: -0.0031,
+            p: 0.00021,
+            from: "2026-01-01".into(),
+            to: "2026-01-20".into(),
+            units: 20,
+        },
+        caveats: vec![],
+        evidence: vec![],
+    };
+    assert_eq!(
+        trend.markdown(),
+        "small.effect fell by 0.0031 per day from 2026-01-01 to 2026-01-20 (20 days, Mann-Kendall p = 0.00021)"
+    );
+}

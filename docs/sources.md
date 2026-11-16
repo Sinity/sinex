@@ -210,20 +210,44 @@ A registered command or a live process does not establish capture; only admitted
 
 ### Input states
 
-Decided target (2026-11-01). An input has exactly one state at any time, and that state is the vocabulary of status:
+An input has exactly one state at any time. The `sources` relation computes it
+from stored facts, in this order:
+
+1. An exclusion produces `state: excluded`; `reason` and `exclusion` carry its text.
+2. A live current `source.coverage` reading marked `missing` produces `stalled`,
+   with its reason also in `last_error`. A continuous source with a prior source event
+   is also stalled after `silent_after` without another source event; a cadence
+   source is stalled when its newest coverage interval ended more than `every` ago.
+3. A source with neither events nor a coverage reading is `unavailable`, with
+   `reason: not_present`. An export never staged is waiting for input.
+4. A source event or associated current coverage reading seen within the last hour
+   produces `capturing`.
+5. Every other input is `quiet`. Export and on-demand sources do not become stalled
+   merely because their recorded events are old.
+
+Startup copies configured exclusions by source name to `registry.sources.exclusion`
+and clears that column for sources no longer excluded. The source query owns this
+classification for online status, offline status and `doctor`.
+
+The full state vocabulary also includes decided targets that the current build
+does not yet produce: `backlogged`, `held`, `finished`, and unavailable causes
+other than `not_present`. These need cursor, producer or completion facts that are
+not stored yet:
 
 | State | Meaning |
 |---|---|
-| `capturing` | reading and keeping up |
+| `capturing` | a source event or associated current coverage reading seen within the last hour |
 | `backlogged` | reading, with records waiting behind the cursor |
 | `quiet` | nothing new, within its expectation |
-| `stalled` | a continuous source silent past `silent_after`, or a reader that fails on every attempt while its process lives |
+| `stalled` | a current coverage reading marked `missing`, a continuous source silent past `silent_after`, or a missed cadence |
 | `held` | a remote producer that was capturing has not reported past a point while out of contact ([hosts](hosts.md#contact-held-data-and-coverage)) |
 | `unavailable(cause)` | `not_present`, `permission_denied(grant)`, `awaiting_credentials` or `not_applicable` |
 | `excluded(reason)` | the operator's exclusion |
 | `finished` | a one-shot stage that read everything |
 
-The state is computed from facts already stored (cursor, last record, expectation, last attempt and its outcome, the producer's capture report); nothing stores the state itself, so it cannot drift from them.
+The state itself is never stored. The current build uses exclusions, current coverage
+readings, last-seen time and the declared expectation. The remaining states need the
+facts named above.
 
 ## Completeness
 

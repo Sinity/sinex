@@ -6,7 +6,7 @@ use super::*;
 /// while the returned body lives.
 async fn open_backup(w: &World, output: &std::path::Path) -> (Result<Value, Value>, Body) {
     let request = HttpRequest::get(format!(
-        "/v1/backup/prepare?output={}",
+        "/v1/backup/prepare?to={}",
         url_escape(output.to_str().unwrap())
     ))
     .header("authorization", format!("Bearer {OPERATOR}"))
@@ -219,7 +219,7 @@ async fn backup_holds_require_operator_access_and_page_without_expiry(
     let (_, first) = call_unbounded(
         &w,
         Some(OPERATOR),
-        json!({"method":"backup","action":"list","page":1}),
+        json!({"method":"backup","action":"list","page-size":1}),
     )
     .await;
     assert_eq!(first["result"]["holds"].as_array().unwrap().len(), 1);
@@ -227,7 +227,7 @@ async fn backup_holds_require_operator_access_and_page_without_expiry(
     let (_, second) = call_unbounded(
         &w,
         Some(OPERATOR),
-        json!({"method":"backup","action":"list","page":1,"cursor":cursor}),
+        json!({"method":"backup","action":"list","page-size":1,"cursor":cursor}),
     )
     .await;
     assert_eq!(second["result"]["holds"].as_array().unwrap().len(), 1);

@@ -7,7 +7,11 @@ use std::path::PathBuf;
 
 pub(crate) fn emit(text: &str) {
     use std::io::Write;
-    if let Err(error) = std::io::stdout().lock().write_all(text.as_bytes()) {
+    let mut stdout = std::io::stdout().lock();
+    if let Err(error) = stdout
+        .write_all(text.as_bytes())
+        .and_then(|()| stdout.flush())
+    {
         if error.kind() == std::io::ErrorKind::BrokenPipe {
             std::process::exit(141);
         }
@@ -113,7 +117,7 @@ pub(crate) async fn run(command: Admin) -> Result<()> {
             Ok(()) => Ok(()),
             Err(error) => {
                 let failure = error.failure();
-                println!("{}", serde_json::json!({ "error": failure }));
+                emit(&format!("{}\n", serde_json::json!({ "error": failure })));
                 Err(failure.into())
             }
         },
@@ -134,7 +138,7 @@ pub(crate) async fn run(command: Admin) -> Result<()> {
                 .map_err(Error::from)
         }
         Admin::Catalog => {
-            print!("{}", catalog::render());
+            emit(&format!("{}", catalog::render()));
             Ok(())
         }
         // `sinexctl` reads the manifest, or the failure, from standard output.
@@ -146,12 +150,15 @@ pub(crate) async fn run(command: Admin) -> Result<()> {
             .await;
             match copied {
                 Ok(manifest) => {
-                    println!("{}", serde_json::json!({ "manifest": manifest }));
+                    emit(&format!(
+                        "{}\n",
+                        serde_json::json!({ "manifest": manifest })
+                    ));
                     Ok(())
                 }
                 Err(error) => {
                     let failure = error.failure();
-                    println!("{}", serde_json::json!({ "error": failure }));
+                    emit(&format!("{}\n", serde_json::json!({ "error": failure })));
                     Err(failure.into())
                 }
             }
@@ -198,10 +205,10 @@ pub(crate) async fn run(command: Admin) -> Result<()> {
                     )
                 })
                 .collect::<Vec<_>>();
-            println!(
-                "{}",
+            emit(&format!(
+                "{}\n",
                 subjects.authorization((&daemon_user, &daemon_hash), &users, &consumers)
-            );
+            ));
             Ok(())
         }
     }
@@ -367,18 +374,18 @@ async fn admin_table(args: Vec<String>) -> Result<()> {
     ctx.close().await?;
     match reply {
         sinex_protocol::Reply::Ok { result } => {
-            println!(
-                "{}",
+            emit(&format!(
+                "{}\n",
                 serde_json::to_string_pretty(&result).expect("JSON values print")
-            );
+            ));
             Ok(())
         }
         sinex_protocol::Reply::Failed { failure } => Err(failure.into()),
         sinex_protocol::Reply::StoppedEarly { failure, result } => {
-            println!(
-                "{}",
+            emit(&format!(
+                "{}\n",
                 serde_json::to_string_pretty(&result).expect("JSON values print")
-            );
+            ));
             Err(failure.into())
         }
     }

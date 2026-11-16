@@ -179,6 +179,8 @@ Rows whose purpose needs model calls are set aside while model features are off 
 
 ## Surfaces
 
+Decided target, not built. The commands and grouped MCP tools below describe the planned surfaces; the current command table exposes `analysis-*` and `forecast-*` operations.
+
 ```
 sinexctl explain metric NAME | construct NAME | method NAME | instrument NAME | missing METRIC UNIT
 sinexctl 'figures where metric in (rest.duration, activity.operator_seconds) since:90d | fill'
@@ -204,7 +206,7 @@ Every printed number ends with a short citation (`[f:3a1c]` for a cell, `[e:91c2
 | `sinex_act` | experiment start, unblind, peek and stop; manual forecast resolution |
 | `sinex_explain` | metric, construct, method, instrument, missing |
 
-The deployed `sinex_analysis-catalog`, `-panel`, `-run`, `-why`, `sinex_forecast-issue`, `-report`, `-resolve` and `sinex_comparisons` fold into these rows.
+The current `sinex_analysis-catalog`, `-panel`, `-run`, `-why`, `sinex_forecast-issue`, `-report`, `-resolve` and `sinex_comparisons` are intended to fold into these rows.
 
 | Unit | Rows | Notable fields |
 |---|---|---|

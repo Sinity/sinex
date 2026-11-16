@@ -149,6 +149,7 @@ state, signal rule, delivery, outcome, route, attention, inhibition, lane and se
 - **study**: an authored question in computable form (design, family, population, method); **confirmatory** when registered before its outcome period, otherwise **exploratory**; its computed product is a **study result** (`study.result`).
 - **finding**: a typed statement in a study result, with role, support status, caveats and evidence.
 - **specification band**: a result's range across the declared reasonable alternatives of its parameters.
+- **estimand**: what a method estimates: its question, the units and population it applies to, the dependence between units, and whether the design identifies a cause. A lagged correlation estimates the association of one metric with another at a stated lag; it does not identify a causal effect.
 - **detectable effect**: the smallest effect a result's units could have detected at 80% power.
 - **experiment**: a study with a protocol whose assignment Sinex fixes from a committed seed before exposure.
 - **track record**: a forecaster's scores over its resolved forecasts, with skill against climatology and persistence.

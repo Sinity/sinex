@@ -15,7 +15,7 @@
 //! The new readings carry the operation's ID as their run, so an undo finds
 //! what the replay admitted.
 //!
-//! `--compare` runs exactly the same transactions and rolls each back after
+//! `--dry-run` runs exactly the same transactions and rolls each back after
 //! reading what it would change.
 use crate::writer::{ReplaySequence, WriterHandle};
 use crate::{Error, Result};

@@ -170,7 +170,7 @@ impl Target {
             "--store",
         ])
         .arg(&self.store)
-        .args(["--page", "1000", text])
+        .args(["--page-size", "1000", text])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
         serde_json::from_str(&finish(&mut c)).unwrap()
@@ -939,7 +939,7 @@ async fn comparisons_change_nothing_and_shared_bytes_survive_a_material_tombston
                         + (SELECT count(*) FROM raw.material_changes)";
     let recorded = scalar(&mut c, changes).await;
 
-    let compared = t.lifecycle_done("archive", &["--material", &material, "--compare"]);
+    let compared = t.lifecycle_done("archive", &["--material", &material, "--dry-run"]);
     assert_eq!(compared["compare_only"], true, "{compared}");
     assert_eq!(
         live(&mut c).await,
@@ -962,7 +962,7 @@ async fn comparisons_change_nothing_and_shared_bytes_survive_a_material_tombston
         "archiving the material archives what was read from it"
     );
 
-    let compared = t.lifecycle_done("tombstone", &["--material", &material, "--compare"]);
+    let compared = t.lifecycle_done("tombstone", &["--material", &material, "--dry-run"]);
     assert_eq!(
         scalar(&mut c, "SELECT count(*) FROM core.events").await,
         events,
@@ -1420,8 +1420,7 @@ async fn telemetry_samples_use_admission_replay_and_the_event_queries() {
     let mut spooled = Vec::new();
     let sampled_start = sinex_model::Timestamp::now().unix_ns() - 3_000_000_000;
     for (i, component) in ["writer", "publisher", "search index"].iter().enumerate() {
-        let line =
-            serde_json::json!({"component": component, "name": "", "measures": {"behind": i}});
+        let line = serde_json::json!({"component": component, "name": "", "measures": {"behind": i, "position": i}});
         let at = sinex_model::Timestamp::from_unix_ns(sampled_start + i as i128 * 1_000_000_000)
             .unwrap();
         spooled.extend(live_stream::frame(at, line.to_string().as_bytes()));
@@ -1483,17 +1482,13 @@ async fn telemetry_samples_use_admission_replay_and_the_event_queries() {
     assert_eq!(by_kind["total"], 1, "{by_kind}");
     let mut command = t.sinexd(&["admin", "status"]);
     let status: serde_json::Value = serde_json::from_str(&finish(&mut command)).unwrap();
-    let latest = status["telemetry"].as_array().unwrap();
-    assert_eq!(latest.len(), 3, "{status}");
+    let latest = status["consumers"].as_array().unwrap();
+    assert_eq!(latest.len(), 2, "{status}");
     let publisher = latest
         .iter()
-        .find(|sample| sample["component"] == "publisher")
+        .find(|sample| sample["name"] == "publisher")
         .unwrap();
-    assert_eq!(
-        publisher["measures"]["behind"].as_f64(),
-        Some(1.0),
-        "{status}"
-    );
+    assert_eq!(publisher["behind"].as_i64(), Some(1), "{status}");
 }
 
 /// The live commands and their times (Unix seconds), through the public

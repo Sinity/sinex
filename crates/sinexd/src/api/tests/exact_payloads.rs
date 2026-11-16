@@ -87,13 +87,14 @@ async fn no_rules_preserve_nested_keys_in_follow_and_cursor_pages(db: devkit::pg
     let (_, first) = call_unbounded(
         &w,
         Some(READ),
-        json!({"method":"query","query":"events | sort by when","page":1}),
+        json!({"method":"query","query":"events | sort by when","page-size":1}),
     )
     .await;
     assert_eq!(first["outcome"], "ok", "{first}");
     assert_eq!(first["result"]["rows"][0]["payload"], expected[0]);
     let cursor = first["result"]["page"]["cursor"].as_str().unwrap();
-    let next = json!({"method":"query","query":"events | sort by when","page":1,"cursor":cursor});
+    let next =
+        json!({"method":"query","query":"events | sort by when","page-size":1,"cursor":cursor});
     for _ in 0..2 {
         let (_, reply) = call_unbounded(&w, Some(READ), next.clone()).await;
         assert_eq!(reply["outcome"], "ok", "{reply}");
@@ -111,7 +112,7 @@ async fn no_rules_preserve_credential_shaped_request_errors(db: devkit::pg::Test
         let (status, body) = call_unbounded(
             &w,
             Some(OPERATOR),
-            json!({"method":"recompute","derivation":"synthetic","from":text}),
+            json!({"method":"recompute","derivation":"synthetic","since":text}),
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");

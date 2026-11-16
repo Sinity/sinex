@@ -61,3 +61,12 @@ async fn internal_failure_names_the_product_fault() {
     assert_eq!(failure.kind.exit_code(), 4);
     assert!(!failure.retryable);
 }
+
+#[tokio::test]
+async fn stopped_task_reports_internal() {
+    let task = tokio::spawn(std::future::pending::<()>());
+    task.abort();
+    let failure = Error::from(task.await.unwrap_err()).failure();
+    assert_eq!(failure.kind, FailureKind::Internal);
+    assert!(!failure.retryable);
+}

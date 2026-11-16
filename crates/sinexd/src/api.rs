@@ -5,7 +5,7 @@
 use crate::{Error, Result};
 mod methods;
 
-pub(crate) use methods::Api;
+pub(crate) use methods::{Api, HISTORY_WINDOW, status_fields};
 
 use axum::extract::{Query as UrlQuery, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -226,6 +226,7 @@ async fn commands() -> Json<Value> {
                 json!({
                     "name": c.name,
                     "summary": c.summary,
+                    "examples": c.examples,
                     "access": c.access,
                     "mcp": c.mcp,
                     "latency": c.latency(),
@@ -404,7 +405,7 @@ async fn follow(
 
 #[derive(Deserialize)]
 struct BackupPrepareParams {
-    output: String,
+    to: String,
 }
 
 /// A backup's copy job, for the client that copies the backup: one `snapshot`
@@ -427,7 +428,7 @@ async fn backup_prepare(
         let caller = api.caller(granted).await;
         let mut stop = api.stop.clone();
         let methods::StartedBackup { snapshot, job } =
-            match api.backup_start(&caller, params.output).await {
+            match api.backup_start(&caller, params.to).await {
                 Ok(job) => job,
                 Err(error) => {
                     let failure =

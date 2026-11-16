@@ -72,3 +72,117 @@ async fn a_sample_keeps_one_snapshot_while_admission_commits(db: devkit::pg::Tes
     assert_eq!(measures(&next, "writer", "")["commit_seq"], 2.0);
     assert_eq!(measures(&next, "source", "test.source")["events"], 2.0);
 }
+
+#[devkit::test]
+async fn recent_samples_keep_history_within_the_window(db: devkit::pg::TestDatabase) {
+    use sinex_model::{
+        Batch, BatchKind, Class, Event, MaterialId, Origin, ReadingOrder, RecordLocation,
+        RecordOutcome, RunId, Timestamp,
+    };
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let now = Timestamp::now();
+    let mut events = Vec::new();
+    for (minutes, position) in [(20, 10.0), (10, 20.0), (5, 30.0)] {
+        let sampled_at = Timestamp(now.0 - time::Duration::minutes(minutes));
+        events.push(
+            Event::build(
+                &Sample {
+                    component: "search index".into(),
+                    name: String::new(),
+                    sampled_at,
+                    measures: [
+                        ("position".into(), position),
+                        ("behind".into(), 40.0 - position),
+                    ]
+                    .into(),
+                },
+                "sinex.telemetry",
+                Origin::Record {
+                    location: RecordLocation {
+                        material: MaterialId::new(),
+                        record_offset: 0,
+                    },
+                    output_index: 0,
+                },
+                ReadingOrder(0),
+                [0; 32],
+                Class::Open,
+            )
+            .unwrap(),
+        );
+    }
+    let batch = Batch {
+        run: RunId::new(),
+        kind: BatchKind::Api {
+            actor: "test".into(),
+        },
+        records: vec![RecordOutcome::Events {
+            location: None,
+            events,
+        }],
+        archive: vec![],
+    };
+    let mut tx = conn.begin().await.unwrap();
+    tx.admit(&batch, &crate::NoDerivations).await.unwrap();
+    tx.commit().await.unwrap();
+    let samples = recent(&mut conn, "sinex.telemetry", Duration::from_secs(15 * 60))
+        .await
+        .unwrap();
+    assert_eq!(
+        samples,
+        [
+            Sample {
+                component: "search index".into(),
+                name: String::new(),
+                sampled_at: Timestamp(now.0 - time::Duration::minutes(10)),
+                measures: [("position".into(), 20.0), ("behind".into(), 20.0)].into()
+            },
+            Sample {
+                component: "search index".into(),
+                name: String::new(),
+                sampled_at: Timestamp(now.0 - time::Duration::minutes(5)),
+                measures: [("position".into(), 30.0), ("behind".into(), 10.0)].into()
+            },
+        ]
+    );
+    for kind in ["per_event", "keyed"] {
+        crate::registry::register_derivation(
+            &mut conn,
+            &crate::registry::Derivation {
+                name: format!("example.{kind}"),
+                kind,
+                version: 1,
+                inputs: vec![],
+                outputs: vec![],
+            },
+            "test",
+        )
+        .await
+        .unwrap();
+    }
+    let readings = read(&mut conn).await.unwrap();
+    for component in ["publisher", "search index"] {
+        let reading = readings
+            .iter()
+            .find(|reading| reading.component == component)
+            .unwrap();
+        assert_eq!(reading.measures["position"], 0.0);
+        assert_eq!(reading.measures["behind"], 3.0);
+    }
+    let initial = readings
+        .iter()
+        .find(|reading| reading.name == "example.per_event")
+        .unwrap();
+    assert_eq!(initial.measures["position"], 0.0);
+    assert_eq!(initial.measures["behind"], 3.0);
+    let keyed = readings
+        .iter()
+        .find(|reading| reading.name == "example.keyed")
+        .unwrap();
+    assert_eq!(
+        keyed.measures,
+        [("dirty_keys".into(), 0.0), ("waiting_keys".into(), 0.0)].into()
+    );
+}

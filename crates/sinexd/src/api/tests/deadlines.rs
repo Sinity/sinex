@@ -286,7 +286,7 @@ async fn a_first_sql_page_timeout_does_not_publish_an_unread_cursor(db: devkit::
     let (_, reply) = call(
         &w,
         Some(OPERATOR),
-        json!({"method":"sql", "sql":statement, "page":1, "deadline":200}),
+        json!({"method":"sql", "sql":statement, "page-size":1, "deadline":200}),
     )
     .await;
     assert_eq!(reply["failure"]["kind"], "timeout", "{reply}");

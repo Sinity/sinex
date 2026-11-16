@@ -758,12 +758,15 @@ name = "command-surface"
 version = "0.1.0"
 source = "git+https://github.com/Sinity/polylogue-sinex-common?branch=master#fc8b154d292be055da50af7c605912cdf0c098f1"
 dependencies = [
+ "canonical-json",
  "http",
  "jiff",
  "query-language",
  "schemars",
  "serde",
  "serde_json",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -5375,6 +5378,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "libc",
  "pin-project-lite",
  "tokio",

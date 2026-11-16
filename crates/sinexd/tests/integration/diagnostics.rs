@@ -118,3 +118,63 @@ fn commands_without_day_settings_do_not_require_a_named_system_zone() {
     assert!(error.contains("database"), "{error}");
     assert!(!error.contains("IANA"), "{error}");
 }
+
+#[devkit::test]
+async fn doctor_keeps_search_lag_and_past_failures_informational(db: devkit::pg::TestDatabase) {
+    let directory = tempfile::tempdir().unwrap();
+    let store = directory.path().join("store");
+    let history = directory.path().join("history.zsh");
+    std::fs::write(
+        &history,
+        ": 1600000000:0;synthetic command\n: invalid:0;synthetic malformed command\n",
+    )
+    .unwrap();
+    let database = db.url(None);
+    let staged = Command::new(env!("CARGO_BIN_EXE_sinexd"))
+        .args(["admin", "stage", "--database", &database, "--store"])
+        .arg(&store)
+        .args(["--zone", "UTC", "--parser", "zsh"])
+        .arg(&history)
+        .output()
+        .unwrap();
+    assert!(staged.status.success(), "{staged:?}");
+    let report = Command::new(env!("CARGO_BIN_EXE_sinexd"))
+        .args([
+            "admin",
+            "diagnostics",
+            "doctor",
+            "--database",
+            &database,
+            "--store",
+        ])
+        .arg(&store)
+        .output()
+        .unwrap();
+    assert!(report.status.success(), "{report:?}");
+    let body: serde_json::Value = serde_json::from_slice(&report.stdout).unwrap();
+    let checks = body["checks"].as_array().unwrap();
+    let search = checks
+        .iter()
+        .find(|check| check["check"] == "search index")
+        .unwrap();
+    assert_eq!(search["ok"], true, "{body}");
+    assert!(
+        search["detail"].as_str().unwrap().contains("behind"),
+        "{body}"
+    );
+    let failures = checks
+        .iter()
+        .find(|check| check["check"] == "failures")
+        .unwrap();
+    assert_eq!(failures["ok"], true, "{body}");
+    assert_eq!(
+        failures["detail"],
+        "1 records failed in the last 24 hours; `sinexctl query 'failures since 24h'` lists them"
+    );
+    let sources = checks
+        .iter()
+        .find(|check| check["check"] == "sources")
+        .unwrap();
+    assert_eq!(sources["ok"], true, "{body}");
+    assert_eq!(body["ok"], true, "{body}");
+}

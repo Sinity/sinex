@@ -134,3 +134,88 @@ fn rendered_answers_print_their_text_once_unless_json_is_asked() {
         "git.commits on 2026-09-14: recorded\n"
     );
 }
+
+#[devkit::test]
+fn answer_times_share_one_labelled_zone() {
+    let result = json!({
+        "read_as":"events since 2026-09-14 10:00:00+02:00",
+        "columns":["when"], "rows":[{"when":"2026-09-14T08:00:00Z"}], "total":1,
+        "resolved":{"zone":"Europe/Warsaw"}, "page":{"size":50,"cursor":null}
+    });
+    let text = answered(&["query", "events"], result.clone());
+    assert!(
+        text.starts_with("# events since 2026-09-14 10:00:00+02:00\n"),
+        "{text}"
+    );
+    assert_eq!(
+        text.matches("2026-09-14 10:00:00+02:00").count(),
+        2,
+        "{text}"
+    );
+    assert!(
+        text.ends_with("1 of 1 rows; times in Europe/Warsaw\n"),
+        "{text}"
+    );
+    let printed: Value =
+        serde_json::from_str(&answered(&["--json", "query", "events"], result.clone())).unwrap();
+    assert_eq!(printed, result);
+}
+
+#[devkit::test]
+fn sql_times_are_labelled_utc() {
+    let text = answered(
+        &["sql", "SELECT now()"],
+        json!({
+            "columns":["when"], "rows":[{"when":"2026-09-14T08:00:00Z"}],
+            "page":{"size":50,"cursor":null}
+        }),
+    );
+    assert!(text.contains("2026-09-14 08:00:00+00:00"), "{text}");
+    assert!(text.ends_with("1 rows; times in UTC\n"), "{text}");
+}
+
+#[devkit::test]
+fn lists_continue_their_own_command() {
+    for args in [
+        vec!["comparisons", "--page-size", "1"],
+        vec!["kinds", "--page-size", "1"],
+        vec!["fields", "--page-size", "1"],
+        vec!["backup", "list", "--page-size", "1"],
+    ] {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let mut requests = Vec::new();
+            for page in 0..2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                requests.push(request(&mut stream));
+                let body = json!({"outcome":"ok","result":{
+                    "columns":["id"], "rows":[{"id":page + 1}], "total":2,
+                    "page":{"size":1,"cursor":if page == 0 {Some("next")} else {None}}
+                }})
+                .to_string();
+                write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).unwrap();
+            }
+            requests
+        });
+        let output = Command::new(env!("CARGO_BIN_EXE_sinexctl"))
+            .args([
+                "--endpoint",
+                &endpoint,
+                "--token-file",
+                "/dev/null",
+                "--all",
+                "--json",
+            ])
+            .args(&args)
+            .output()
+            .unwrap();
+        let requests = server.join().unwrap();
+        assert!(output.status.success(), "{output:?}");
+        let answer: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(answer["rows"], json!([{"id":1},{"id":2}]));
+        assert_eq!(requests[1]["method"], args[0]);
+        assert_eq!(requests[1]["cursor"], "next");
+        assert_eq!(requests[1]["page-size"], 1);
+    }
+}

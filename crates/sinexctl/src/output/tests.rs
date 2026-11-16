@@ -11,7 +11,7 @@ fn tables_align_and_times_turn_local() {
     let t = table(&["command".into(), "when".into()], &rows, &local);
     assert_eq!(
         t,
-        "command     when\ncargo test  2026-09-14 10:00:00\nls          —\n"
+        "command     when\ncargo test  2026-09-14 10:00:00+02:00\nls          —\n"
     );
 }
 
@@ -44,4 +44,33 @@ fn empty_recall_prints_its_complete_reason_without_terminal_controls() {
         json!({"rows":[],"total":0,"recall":{"reason":format!("{reason}\nSynthetic\tend")}});
     let text = answer(&result, &Local::new(Some("UTC")), None);
     assert!(text.contains(&format!("{reason} Synthetic end")));
+}
+
+#[devkit::test]
+fn footer_zone_matches_row_conversion() {
+    for zone in [None, Some("invalid/zone"), Some("UTC")] {
+        let result = json!({
+            "rows":[{"when":"2026-09-14T08:00:00Z"}],
+            "columns":["when"], "total":1, "resolved":{"zone":zone}
+        });
+        let rendered = answer(&result, &Local::new(zone), None);
+        assert!(rendered.contains("2026-09-14 08:00:00+00:00"), "{rendered}");
+        assert!(
+            rendered.ends_with("1 of 1 rows; times in UTC\n"),
+            "{rendered}"
+        );
+    }
+}
+
+#[devkit::test]
+fn zone_keeps_repeated_hour_offsets() {
+    let local = Local::new(Some("Europe/Warsaw"));
+    assert_eq!(
+        local.time("2026-10-25T00:30:00Z").unwrap(),
+        "2026-10-25 02:30:00+02:00"
+    );
+    assert_eq!(
+        local.time("2026-10-25T01:30:00Z").unwrap(),
+        "2026-10-25 02:30:00+01:00"
+    );
 }

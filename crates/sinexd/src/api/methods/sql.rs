@@ -30,10 +30,10 @@ impl Api {
         &self,
         caller: &Caller,
         statement: String,
-        page: Option<u64>,
+        page_size: Option<u64>,
         cursor: Option<String>,
     ) -> Result<Reply> {
-        let rows = page.unwrap_or(read_sql::DEFAULT_ROWS);
+        let rows = page_size.unwrap_or(read_sql::DEFAULT_ROWS);
         let mut held = match cursor {
             Some(token) => self.take_cursor(caller, &statement, &token).await?,
             None => {

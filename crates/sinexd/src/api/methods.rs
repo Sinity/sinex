@@ -4,8 +4,6 @@
 use crate::writer::WriterHandle;
 use crate::{Error, Result};
 use serde_json::{Value, json};
-use sinex_model::event_types::telemetry::SinexTelemetry;
-use sinex_model::lifecycle::Act;
 use sinex_model::{EventId, EventPayload, OperationId, RunId};
 use sinex_protocol::{Access, DATA_NOTICE, Reply, Request};
 use sinex_query::{self as query, Context, QueryError, Source};
@@ -24,6 +22,8 @@ mod queries;
 mod recall;
 mod signals;
 mod sql;
+mod status;
+pub(crate) use status::{HISTORY_WINDOW, status_fields};
 
 pub(crate) use sql::SqlCursors;
 
@@ -213,385 +213,38 @@ impl Api {
     }
 
     async fn dispatch(&self, request: Request, caller: &Caller) -> Result<Reply> {
-        let actor = caller.actor;
-        let method = request.method();
-        Ok(match request {
-            Request::Watch {
-                action,
-                name,
-                rule,
-                page_size,
-                cursor,
-            } => data(
-                self.signal(
-                    caller,
-                    &action,
-                    name,
-                    rule,
-                    Page {
-                        size: page_size,
-                        cursor,
-                    },
-                )
-                .await?,
-            ),
-            Request::Kinds {
-                kind,
-                page_size,
-                cursor,
-            } => {
-                self.kind_fields(caller, kind, page_size, cursor, false)
-                    .await?
+        match request {
+            Request::Status => self.status(caller).await,
+            Request::SourcesDiscover => self.sources_discover().await,
+            request @ Request::Watch { .. } => self.watch_request(caller, request).await,
+            request @ (Request::Kinds { .. } | Request::Fields { .. }) => {
+                self.kind_fields(caller, request).await
             }
-            Request::Fields {
-                kind,
-                page_size,
-                cursor,
-            } => {
-                self.kind_fields(caller, kind, page_size, cursor, true)
-                    .await?
-            }
-            Request::Backup {
-                action,
-                hold,
-                to,
-                page_size,
-                cursor,
-            } => {
-                self.backup(caller, &action, hold, to, page_size, cursor)
-                    .await?
-            }
-            Request::Status => Reply::Ok {
-                result: self.status(caller).await?,
-            },
-            Request::SourcesDiscover => Reply::Ok {
-                result: self.sources_discover().await?,
-            },
-            Request::Query {
-                query,
-                page_size,
-                cursor,
-            } => {
-                self.query(
-                    caller,
-                    &query,
-                    Page {
-                        size: page_size,
-                        cursor,
-                    },
-                )
-                .await?
-            }
-            Request::QueryComplete { query } => data(json!({"fields": query::complete(&query)})),
-            Request::QueryList => {
-                let mut conn = self.acquire(caller).await?;
-                data(json!({"queries": queries::list(&mut conn).await?}))
-            }
-            request @ (Request::Save { .. } | Request::Mark { .. }) => {
-                data(self.query_record(request, caller).await?)
-            }
-            Request::Context {
-                since,
-                until,
-                page_size,
-                cursor,
-            } => {
-                self.context_view(
-                    caller,
-                    since,
-                    until,
-                    Page {
-                        size: page_size,
-                        cursor,
-                    },
-                )
-                .await?
-            }
-            Request::Timeline {
-                query,
-                page_size,
-                cursor,
-            } => {
-                self.query(
-                    caller,
-                    &format!("events {}", query.unwrap_or_default()),
-                    Page {
-                        size: page_size,
-                        cursor,
-                    },
-                )
-                .await?
-            }
-            Request::Search {
-                words,
-                page_size,
-                cursor,
-            } => {
-                self.query(
-                    caller,
-                    &format!("events where {words}"),
-                    Page {
-                        size: page_size,
-                        cursor,
-                    },
-                )
-                .await?
-            }
-            Request::Recall {
-                around,
-                cwd,
-                page_size,
-                cursor,
-            } => {
-                let mut text = match around.as_deref().map(str::trim) {
-                    Some(a) if !a.is_empty() => format!("recall {a}"),
-                    _ => "recall".to_string(),
-                };
-                if let Some(cwd) = cwd {
-                    if around.as_deref().map(str::trim) != Some("last") {
-                        return Err(Error::bad_request(
-                            "cwd applies only to recall last; use a session-field query for other filters",
-                        ));
-                    }
-                    text.push_str(" where cwds ^ ");
-                    text.push_str(&serde_json::to_string(&cwd).expect("strings serialize"));
-                }
-                self.recall(
-                    caller,
-                    &text,
-                    Page {
-                        size: page_size,
-                        cursor,
-                    },
-                )
-                .await?
-            }
-            Request::Trace {
-                reference,
-                page_size,
-                cursor,
-            } => {
-                self.query(
-                    caller,
-                    &format!("trace {reference}"),
-                    Page {
-                        size: page_size,
-                        cursor,
-                    },
-                )
-                .await?
-            }
+            request @ Request::Backup { .. } => self.backup(caller, request).await,
+            request @ (Request::Query { .. }
+            | Request::QueryComplete { .. }
+            | Request::QueryList
+            | Request::Save { .. }
+            | Request::Mark { .. }
+            | Request::Context { .. }
+            | Request::Timeline { .. }
+            | Request::Search { .. }
+            | Request::Trace { .. }) => self.query_request(caller, request).await,
+            request @ Request::Recall { .. } => self.recall_request(caller, request).await,
             Request::Sql {
                 sql,
                 page_size,
                 cursor,
-            } => self.sql(caller, sql, page_size, cursor).await?,
-            Request::Show { reference } => {
-                let r = query::parse_reference(&reference)
-                    .map_err(|error| error.failure(&reference))?;
-                if let query::Reference::Window { from, to } = &r {
-                    return self
-                        .query(
-                            caller,
-                            &format!("recall sinex:window/{from}/{to}"),
-                            Page::default(),
-                        )
-                        .await;
-                }
-                let mut conn = self.acquire(caller).await?;
-                data(json!({ "event": sinex_store::query::show(&mut conn, &r).await? }))
-            }
-            Request::Archive {
-                target,
-                material,
-                run,
-                source,
-                since,
-                until,
-                dry_run,
-            } => {
-                let scope = self
-                    .lifecycle_scope(
-                        caller,
-                        operations::ScopeArgs {
-                            target,
-                            material,
-                            run,
-                            source,
-                            since,
-                            until,
-                            operation: None,
-                        },
-                    )
-                    .await?;
-                self.lifecycle(caller, Act::Archive, scope, dry_run.unwrap_or(false))
-                    .await?
-            }
-            Request::Restore {
-                target,
-                material,
-                run,
-                source,
-                since,
-                until,
-                operation,
-                dry_run,
-            }
-            | Request::Tombstone {
-                target,
-                material,
-                run,
-                source,
-                since,
-                until,
-                operation,
-                dry_run,
-            } => {
-                let act = if method == "restore" {
-                    Act::Restore
-                } else {
-                    Act::Tombstone
-                };
-                let scope = self
-                    .lifecycle_scope(
-                        caller,
-                        operations::ScopeArgs {
-                            target,
-                            material,
-                            run,
-                            source,
-                            since,
-                            until,
-                            operation,
-                        },
-                    )
-                    .await?;
-                self.lifecycle(caller, act, scope, dry_run.unwrap_or(false))
-                    .await?
-            }
-            Request::Undo { operation, dry_run } => {
-                let id = uuid::Uuid::parse_str(&operation)
-                    .map_err(|e| Error::bad_value(format!("operation {operation}: {e}")))?;
-                let scope = sinex_model::lifecycle::Scope::Operation {
-                    operation: OperationId(id),
-                };
-                self.lifecycle(caller, Act::Undo, scope, dry_run.unwrap_or(false))
-                    .await?
-            }
-            Request::Resume { operation } => self.resume(caller, &operation).await?,
-            Request::Replay {
-                sealed,
-                material,
-                binding,
-                kind,
-                since,
-                until,
-                dry_run,
-                every_change,
-                batch_events,
-            } => {
-                if batch_events == Some(0) {
-                    return Err(Error::bad_request(
-                        "--batch-events needs at least one reading per batch",
-                    ));
-                }
-                let scope = crate::replay::Scope {
-                    materials: material
-                        .iter()
-                        .map(|m| {
-                            uuid::Uuid::parse_str(m)
-                                .map_err(|e| Error::bad_value(format!("material {m}: {e}")))
-                        })
-                        .collect::<Result<_>>()?,
-                    binding,
-                    event_types: (!kind.is_empty()).then_some(kind),
-                    from: since.as_deref().map(timestamp).transpose()?,
-                    until: until.as_deref().map(timestamp).transpose()?,
-                    batch_events,
-                };
-                self.replay(
-                    caller,
-                    crate::replay::Options {
-                        scope,
-                        compare: dry_run.unwrap_or(false),
-                        resume: None,
-                        actor: actor.to_string(),
-                        unlock: None,
-                    },
-                    every_change.unwrap_or(false),
-                    sealed.unwrap_or(false),
-                )
-                .await?
-            }
-            Request::Recompute {
-                derivation,
-                compare,
-                switch,
-                since,
-                until,
-                examples,
-            } => {
-                let since = since.as_deref().map(timestamp).transpose()?;
-                let until = until.as_deref().map(timestamp).transpose()?;
-                let range = (since.is_some() || until.is_some()).then(|| {
-                    (
-                        since.unwrap_or(sinex_model::Timestamp(time::OffsetDateTime::UNIX_EPOCH)),
-                        until.unwrap_or_else(sinex_model::Timestamp::now),
-                    )
-                });
-                self.recompute(
-                    caller,
-                    &derivation,
-                    compare.unwrap_or(false),
-                    switch,
-                    range,
-                    usize::try_from(examples.unwrap_or(5)).unwrap_or(usize::MAX),
-                )
-                .await?
-            }
-            Request::Comparisons {
-                derivation,
-                page_size,
-                cursor,
-            } => {
-                let mut conn = self.acquire(caller).await?;
-                let limit = i64::try_from(page_size.unwrap_or(50)).unwrap_or(i64::MAX);
-                let before = cursor
-                    .as_deref()
-                    .map(str::parse::<i64>)
-                    .transpose()
-                    .map_err(Error::bad_value)?;
-                let kept = sinex_store::derivations::comparisons(
-                    &mut conn,
-                    derivation.as_deref(),
-                    limit,
-                    before,
-                )
-                .await?;
-                let rows: Vec<Value> = kept
-                    .into_iter()
-                    .map(|c| {
-                        json!({
-                            "id": c.id,
-                            "derivation": c.derivation,
-                            "version": c.version,
-                            "context": c.context,
-                            "from": c.range.and_then(|r| r.0),
-                            "until": c.range.and_then(|r| r.1),
-                            "made_at": c.made_at,
-                            "keys": c.keys,
-                            "unchanged": c.unchanged,
-                            "added": c.added,
-                            "changed": c.changed,
-                            "removed": c.removed,
-                            "examples": c.examples,
-                        })
-                    })
-                    .collect();
-                Reply::Ok {
-                    result: json!({ "total": rows.len(), "comparisons": rows }),
-                }
-            }
+            } => self.sql(caller, sql, page_size, cursor).await,
+            request @ Request::Show { .. } => self.show(caller, request).await,
+            request @ (Request::Archive { .. }
+            | Request::Restore { .. }
+            | Request::Tombstone { .. }
+            | Request::Undo { .. }) => self.lifecycle_request(caller, request).await,
+            Request::Resume { operation } => self.resume(caller, &operation).await,
+            request @ Request::Replay { .. } => self.replay_request(caller, request).await,
+            request @ Request::Recompute { .. } => self.recompute_request(caller, request).await,
+            request @ Request::Comparisons { .. } => self.comparisons(caller, request).await,
             Request::Crawl {
                 allow,
                 url,
@@ -599,60 +252,36 @@ impl Api {
                 pause,
             } => {
                 self.crawl(caller, allow, url, limit, pause.unwrap_or(2))
-                    .await?
+                    .await
             }
-            r @ (Request::ForecastIssue { .. }
+            request @ (Request::ForecastIssue { .. }
             | Request::ForecastResolve { .. }
-            | Request::ForecastReport) => data(self.forecast(r, caller).await?),
-            Request::AnalysisCatalog
+            | Request::ForecastReport) => self.forecast(request, caller).await.map(data),
+            request @ (Request::AnalysisCatalog
             | Request::AnalysisRun { .. }
             | Request::AnalysisPanel { .. }
             | Request::Gaps { .. }
             | Request::AnalysisWhy { .. }
-            | Request::Brief { .. } => self.analysis(caller, request).await?,
-            Request::Follow { .. } => {
-                return Err(Error::bad_request(
-                    "follow streams; use the API's follow stream",
-                ));
-            }
-            Request::Stage {
-                path,
-                parser,
-                account,
-                export_date,
-                follow,
-                batch_events,
-            } => {
-                self.stage(
-                    caller,
-                    &path,
-                    &parser,
-                    account,
-                    export_date,
-                    follow.unwrap_or(false),
-                    batch_events,
-                )
-                .await?
-            }
-            Request::StageList { active } => {
-                let mut conn = self.acquire(caller).await?;
-                let stages = sinex_store::stages::list(&mut conn, active.unwrap_or(false)).await?;
-                Reply::Ok {
-                    result: json!({ "stages": stages }),
-                }
-            }
-            Request::StageShow { operation } => self.stage_show(caller, &operation).await?,
-            r @ (Request::Same { .. }
+            | Request::Brief { .. }) => self.analysis(caller, request).await,
+            Request::Follow { .. } => Err(Error::bad_request(
+                "follow streams; use the API's follow stream",
+            )),
+            request @ Request::Stage { .. } => self.stage_request(caller, request).await,
+            Request::StageList { active } => self.stage_list(caller, active.unwrap_or(false)).await,
+            Request::StageShow { operation } => self.stage_show(caller, &operation).await,
+            request @ (Request::Same { .. }
             | Request::Distinct { .. }
-            | Request::WithdrawDecision { .. }) => data(self.decide_pair(r, caller).await?),
-            r @ (Request::PrivacyRules { .. }
+            | Request::WithdrawDecision { .. }) => {
+                self.decide_pair(request, caller).await.map(data)
+            }
+            request @ (Request::PrivacyRules { .. }
             | Request::PrivacyRule { .. }
             | Request::PrivacyEnd { .. }
             | Request::PrivacyClass { .. }
             | Request::Unlock { .. }
             | Request::Lock
-            | Request::PrivacyVerify) => self.privacy(r, caller).await?,
-            r @ (Request::LibraryAdd { .. }
+            | Request::PrivacyVerify) => self.privacy(request, caller).await,
+            request @ (Request::LibraryAdd { .. }
             | Request::LibraryItem { .. }
             | Request::LibraryCurate { .. }
             | Request::LibraryCollection { .. }
@@ -660,8 +289,8 @@ impl Api {
             | Request::LibraryOpen { .. }
             | Request::LibraryViewed { .. }
             | Request::LibraryPreview { .. }
-            | Request::LibraryImport { .. }) => data(self.library(r, caller).await?),
-        })
+            | Request::LibraryImport { .. }) => self.library(request, caller).await.map(data),
+        }
     }
 
     /// The media library's commands (`crate::library`). Reads see only what
@@ -729,7 +358,7 @@ impl Api {
 
     /// The discovery dry run: what this host's sources would capture, read
     /// only from the inputs' metadata.
-    async fn sources_discover(&self) -> Result<Value> {
+    async fn sources_discover(&self) -> Result<Reply> {
         let context = self.source_config.context(&self.host);
         let (inputs, unimplemented) = tokio::task::spawn_blocking(move || {
             sinex_sources::discovery::status(&context)
@@ -737,139 +366,9 @@ impl Api {
         })
         .await?
         .map_err(Error::internal)?;
-        Ok(json!({"inputs": inputs, "unimplemented": unimplemented}))
-    }
-
-    async fn status(&self, caller: &Caller) -> Result<Value> {
-        let mut conn = self.acquire(caller).await?;
-        let row = sinex_store::diagnostics::positions(&mut conn).await?;
-        let open_backup_holds = sinex_store::backup::open_summary(&mut conn).await?;
-        let telemetry = sinex_store::telemetry::recent(
-            &mut conn,
-            SinexTelemetry::EVENT_TYPE,
-            std::time::Duration::from_secs(15 * 60),
-        )
-        .await?;
-        let refusals = sinex_store::diagnostics::ingress_refusals(&mut conn).await?;
-        let producer_errors = sinex_store::diagnostics::producer_errors(&mut conn).await?;
-        let selected = sinex_store::registry::selected_derivations(&mut conn).await?;
-        let time_settings =
-            sinex_model::time_settings::TimeSettings::from_parts(self.zone.clone(), self.day_start);
-        let mut available: Vec<(String, u32, sinex_model::DerivationHistory)> =
-            crate::analysis::keyed_with(&self.derivations)
-                .iter()
-                .map(|d| {
-                    (
-                        d.name().to_owned(),
-                        d.version_for(&time_settings),
-                        d.history_policy(),
-                    )
-                })
-                .collect();
-        available.extend(
-            crate::derivation_runner::per_event_with(&self.derivations)?
-                .iter()
-                .map(|d| (d.name().to_owned(), d.version(), d.history_policy())),
-        );
-        let build = crate::build_identity::current()?;
-        let names: Vec<_> = available.iter().map(|(name, _, _)| name.clone()).collect();
-        let versions: Vec<_> = available
-            .iter()
-            .map(|(_, version, _)| i64::from(*version))
-            .collect();
-        let comparisons =
-            sinex_store::registry::latest_comparisons(&mut conn, &names, &versions, build).await?;
-        let producer_versions: Vec<_> = available.into_iter().map(|(name, version, history)| {
-            let current = selected.iter().find(|(selected_name, _, _)| selected_name == &name);
-            let compared = comparisons.iter().find(|(producer,..)| producer == &name);
-            json!({"name": name, "selected": current.map(|(_,version,_)| version), "selected_build": current.map(|(_,_,build)|build), "available": version,
-                "state": if current.is_some_and(|(_,selected_version,selected_build)| *selected_version == i64::from(version) && selected_build == build) { "selected" } else { "pending_history_switch" },
-                "history": history, "build": build, "last_comparison": compared.map(|(_,id,made_at,keys,changed,complete)| json!({"id":id,"made_at":made_at,"keys":keys,"changed":changed,"complete":complete}))})
-        }).collect();
-        let rule_rows = sinex_store::signals::rule_rows(
-            &mut conn,
-            sinex_model::event_types::signal::RuleWritten::EVENT_TYPE,
-            row.commit_seq,
-        )
-        .await?;
-        // Ambiguity per fusion family: pairs awaiting a decision, decided
-        // pairs, and fused records chosen among several candidates.
-        let fusion_families: Vec<(String, String)> = sinex_derivations::fusion::families()
-            .iter()
-            .map(|f| (f.name.to_owned(), f.output.to_owned()))
-            .collect();
-        let fusion = sinex_store::diagnostics::fusion_ambiguity(
-            &mut conn,
-            &fusion_families,
-            sinex_model::event_types::fused::ConsideredPair::EVENT_TYPE,
-        )
-        .await?;
-        let signals = json!({"configured":self.source_config.signals.is_some(),"rules":rule_rows.into_iter().map(|(id,payload)|json!({"citation":format!("sinex:ev/{id}"),"rule":payload})).collect::<Vec<_>>()});
-        drop(conn);
-        let sources = match self
-            .query(
-                caller,
-                "sources | sort by binding",
-                Page {
-                    size: Some(1000),
-                    cursor: None,
-                },
-            )
-            .await
-        {
-            Ok(Reply::Ok { result }) => result.get("rows").cloned().unwrap_or(Value::Null),
-            Ok(Reply::StoppedEarly { failure, .. } | Reply::Failed { failure }) => {
-                json!({ "unavailable": failure })
-            }
-            Err(error) => json!({ "unavailable": error.failure() }),
-        };
-        let context = self.source_config.context(&self.host);
-        let discovery =
-            tokio::task::spawn_blocking(move || sinex_sources::discovery::status(&context))
-                .await?
-                .map_err(Error::internal)?;
-        let read_failures: Vec<_> = self
-            .read_failures
-            .lock()
-            .unwrap()
-            .iter()
-            .map(|(binding, failure)| {
-                json!({"binding": binding, "error": failure.error, "since": failure.since})
-            })
-            .collect();
-        let exclusions: std::collections::BTreeMap<_, _> = self
-            .source_config
-            .exclude
-            .iter()
-            .filter_map(|(name, exclusion)| exclusion.as_ref().map(|exclusion| (name, exclusion)))
-            .collect();
-        Ok(json!({
-            "commit_seq": row.commit_seq,
-            "search_index": {
-                "position": row.search_position,
-                "behind": row.commit_seq - row.search_position.unwrap_or(0),
-                "refused": row.search_refusals,
-            },
-            "schema_version": row.schema_version,
-            "failures_24h": row.failures_24h,
-            // Inputs that cannot be read admit no records, so no record failure
-            // counts them; each binding failing now is listed here instead.
-            "read_failures": read_failures,
-            "ingress_refusals_24h": refusals,
-            "producer_errors": producer_errors,
-            "writer": self.writer.is_some(),
-            "backup_holds": { "open":open_backup_holds.0,"oldest":open_backup_holds.1 },
-            "zone": self.context().zone_name(),
-            "day_start": self.day_start.to_string(),
-            "sources": sources,
-            // The daemon's newest sample of each of its parts.
-            "telemetry": telemetry,
-            "producer_versions": producer_versions,
-            "signals":signals,
-            "fusion":fusion,
-            "discovery": discovery,
-            "exclusions": exclusions,
-        }))
+        Ok(Reply::Ok {
+            result: json!({"inputs": inputs, "unimplemented": unimplemented}),
+        })
     }
 }
 

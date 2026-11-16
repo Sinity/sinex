@@ -104,7 +104,7 @@ pub(crate) fn finish(command: &mut Command) -> String {
 
 pub(crate) fn query(binary: &Path, database: &str, store: &Path, text: &str) -> Value {
     serde_json::from_str(&finish(
-        run(binary, database, store, &["admin", "query"]).args(["--page", "1000", text]),
+        run(binary, database, store, &["admin", "query"]).args(["--page-size", "1000", text]),
     ))
     .unwrap()
 }

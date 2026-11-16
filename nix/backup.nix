@@ -88,7 +88,7 @@ in {
         fi
       done
       run=${pkgs.lib.escapeShellArg root}/$(uuidgen)
-      ${asUser} ${client} backup prepare --output "$run" > ${pkgs.lib.escapeShellArg "${control}/prepare.json"}
+      ${asUser} ${client} backup prepare --to "$run" > ${pkgs.lib.escapeShellArg "${control}/prepare.json"}
       ${asUser} test -s "$run/manifest.json"
       hold=$(jq -er '.artifact.boundary.id' ${pkgs.lib.escapeShellArg "${control}/prepare.json"})
       [[ "$hold" =~ ^[0-9a-f-]{36}$ ]]

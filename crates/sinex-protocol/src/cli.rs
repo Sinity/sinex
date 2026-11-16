@@ -7,7 +7,21 @@ use serde_json::{Map, Value};
 
 /// One table command as a clap subcommand.
 pub fn subcommand(c: &Command) -> clap::Command {
-    let mut sub = clap::Command::new(c.name).about(c.summary);
+    let mut sub = clap::Command::new(c.name)
+        .display_order(
+            COMMANDS
+                .iter()
+                .position(|command| command.name == c.name)
+                .expect("command is in the table"),
+        )
+        .about(c.summary)
+        .after_help(format!("Examples:\n  {}", c.examples.join("\n  ")));
+    if c.name == "query" {
+        sub = sub.long_about(format!(
+            "{}\n\nUnits include events, commands, shell-sessions, materials, runs, sources, archive and failures. See docs/query.md for the query language.",
+            c.summary
+        ));
+    }
     for a in c.args {
         let mut arg = Arg::new(a.name).help(a.help).required(a.required);
         arg = match (a.kind, a.positional) {

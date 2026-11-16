@@ -71,7 +71,7 @@ A parser fix re-reads old bytes into a new reading without making them a newer s
 - **Precision is part of the time:** `instant`, `second`, `minute`, `day`, `month`, `year`, or `bounded` with an end. A coarse time stands for its whole period, starting in the zone the source meant. Precision comes from the declaration or per record, never inferred from a midnight.
 - **The source's own representation is kept** in the payload beside the resolved `ts_orig`, offset or zone included.
 - **Time records per byte range** for live streams: `(material, byte range, captured at, precision, clock, quality)`, append-only, read by framing on capture and on replay, so replay resolves the same times.
-- **Plausibility is a label, never a rejection.** A stated time in the future or before the source existed is kept and labelled suspect with its reason. The one hard bound: a `captured` time from Sinex's own clock more than the declared skew (5 minutes) ahead of `ts_coided` is a bug, refused by a CHECK.
+- **Plausibility is a label, never a rejection.** The query field `time_suspect` reports an implausible time, such as `future` or `epoch zero`, while preserving the stated time and the event. `time_suspect:known` selects labelled events; an unlabelled time has an unknown value.
 - **Ranges are half-open.** Ties among equal times break by record coordinates and output index, then by a per-record tie counter, never by commit order or event ID.
 - **One time vocabulary in both products:** quality and precision on every time; published `polylogue.*` events carry both.
 - **Derived `ts_orig`** is declared by the derivation from its inputs, never "now".
@@ -170,11 +170,11 @@ Manifests, runs and [operations](lifecycle.md#operations-and-actors) are three d
 
 ### Parser versions
 
-A new parser version applies to newly staged material. Records that the new version may now read and that have **no live reading** (record failures, materials staged without a parser) are read again automatically; nothing is archived by that, since nothing was live. Reading again records that have live readings is a [replay](lifecycle.md#replay), an operation, compared first with `--compare`.
+A new parser version applies to newly staged material. Records that the new version may now read and that have **no live reading** (record failures, materials staged without a parser) are read again automatically; nothing is archived by that, since nothing was live. Reading again records that have live readings is a [replay](lifecycle.md#replay), an operation, compared first with `--dry-run`.
 
 ### Derivation versions
 
-A new derivation version is compared with the old one on real data before it switches (`derivation.comparisons`, which writes no outputs). Each derivation declares one of:
+A new derivation version is compared with the old one on real data before it switches. `recompute DERIVATION --compare` stores the comparison without replacing the outputs ([versions](derivations.md#versions)). Each derivation declares one of:
 
 - `recompute`: a switch replaces its outputs over the recomputed scope as a set, archiving the old ones with reason `version_change`, whole chains, whether or not keys match;
 - `keep_history`: the new version applies from the switch onward.

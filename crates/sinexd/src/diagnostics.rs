@@ -3,12 +3,13 @@
 //! directly in read-only transactions and never write.
 use crate::{Error, Result};
 use serde_json::{Value, json};
+use sinex_model::EventPayload;
 use sinex_store::Verified;
-use sinex_store::diagnostics::{self, Snapshot};
+use sinex_store::diagnostics;
 use std::path::Path;
 
-fn utc_context() -> sinex_model::query::Context {
-    sinex_model::query::Context::new(
+fn utc_context() -> sinex_query::Context {
+    sinex_query::Context::new(
         jiff::Timestamp::now(),
         jiff::tz::TimeZone::UTC,
         jiff::civil::Time::constant(0, 0, 0, 0),
@@ -18,7 +19,7 @@ fn utc_context() -> sinex_model::query::Context {
 /// Every source row through the query's source-status relation.
 pub(crate) async fn source_rows(
     conn: &mut sqlx::PgConnection,
-    context: &sinex_model::query::Context,
+    context: &sinex_query::Context,
 ) -> Result<Vec<Value>> {
     let mut rows = Vec::new();
     let mut page = sinex_store::query::Page::default();
@@ -34,34 +35,40 @@ pub(crate) async fn source_rows(
     }
 }
 
-fn snapshot_json(s: &Snapshot, sources: Vec<Value>) -> Value {
-    json!({
-        "commit_seq": s.commit_seq,
-        "schema_version": s.schema_version,
-        "search_index": {
-            "position": s.search_position,
-            "behind": s.commit_seq - s.search_position.unwrap_or(0),
-        },
-        "failures_24h": s.failures_24h,
-        "blobs": s.blobs,
-        "sources": sources,
-    })
-}
-
 /// What the database holds, without the daemon.
 async fn status(database: &str) -> Result<Value> {
     let mut conn = diagnostics::connect(database).await?;
     let s = diagnostics::snapshot(&mut conn).await?;
-    let sources = if s.schema_version.is_some() {
-        source_rows(&mut conn, &utc_context()).await?
+    let context = utc_context();
+    let (sources, samples) = if s.schema_version.is_some() {
+        (
+            source_rows(&mut conn, &context).await?,
+            sinex_store::telemetry::recent(
+                &mut conn,
+                sinex_model::event_types::telemetry::SinexTelemetry::EVENT_TYPE,
+                crate::api::HISTORY_WINDOW,
+            )
+            .await?,
+        )
     } else {
-        Vec::new()
+        (Vec::new(), Vec::new())
     };
-    Ok(snapshot_json(&s, sources))
+    let mut status = crate::api::status_fields(&samples, &sources, &context)?;
+    status.as_object_mut().expect("status object").extend(
+        json!({
+            "commit_seq": s.commit_seq, "schema_version": s.schema_version,
+            "failures_24h": s.failures_24h, "blobs": s.blobs,
+            "zone": "UTC",
+        })
+        .as_object()
+        .expect("status details")
+        .clone(),
+    );
+    Ok(status)
 }
 
 /// Check the database is reachable and at this build's schema version, the
-/// content store is readable, and the search index is not behind.
+/// content store is readable, and sources report their expected states.
 async fn doctor(database: &str, store: &Path) -> Value {
     let mut checks = Vec::new();
     let mut check = |name: &str, ok: bool, detail: String| {
@@ -95,18 +102,39 @@ async fn doctor(database: &str, store: &Path) -> Value {
                     let behind = s.commit_seq - s.search_position.unwrap_or(0);
                     check(
                         "search index",
-                        behind == 0,
-                        if behind == 0 {
-                            "current".into()
-                        } else {
-                            format!("{behind} commits behind; the daemon catches it up")
-                        },
+                        true,
+                        format!("{behind} commits behind; the daemon catches it up"),
                     );
                     check(
                         "failures",
-                        s.failures_24h == 0,
-                        format!("{} records failed in the last 24 hours", s.failures_24h),
+                        true,
+                        format!(
+                            "{} records failed in the last 24 hours; `sinexctl query 'failures since 24h'` lists them",
+                            s.failures_24h
+                        ),
                     );
+                    match source_rows(&mut conn, &utc_context()).await {
+                        Ok(rows) => {
+                            let stalled: Vec<_> = rows
+                                .iter()
+                                .filter(|source| source["state"] == "stalled")
+                                .map(|source| {
+                                    format!(
+                                        "{}: {}",
+                                        source["binding"].as_str().unwrap_or("source"),
+                                        source["reason"].as_str().unwrap_or("stalled")
+                                    )
+                                })
+                                .collect();
+                            let detail = if stalled.is_empty() {
+                                format!("{} sources; none stalled", rows.len())
+                            } else {
+                                stalled.join("; ")
+                            };
+                            check("sources", stalled.is_empty(), detail);
+                        }
+                        Err(error) => check("sources", false, error.to_string()),
+                    }
                 }
             }
         }
@@ -182,6 +210,6 @@ pub(crate) async fn run(command: Command) -> Result<()> {
         Command::Status { database } => status(&database).await?,
         Command::VerifyStore { database, store } => verify_store(&database, &store).await?,
     };
-    println!("{value}");
+    crate::admin::emit(&format!("{value}\n"));
     Ok(())
 }

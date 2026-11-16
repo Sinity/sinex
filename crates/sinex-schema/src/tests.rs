@@ -106,6 +106,21 @@ async fn a_forward_step_runs_from_its_version_and_records_the_next(db: devkit::p
         .unwrap();
 }
 
+async fn sources_before_exclusions(conn: &mut PgConnection) {
+    sqlx::query("DROP TABLE registry.sources")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    let definition = crate::source_expectations::sources().replace("  exclusion text,\n", "");
+    sqlx::query(&definition).execute(&mut *conn).await.unwrap();
+    for statement in crate::query_cursors::triggers()
+        .into_iter()
+        .filter(|statement| statement.contains(" ON registry.sources "))
+    {
+        sqlx::query(&statement).execute(&mut *conn).await.unwrap();
+    }
+}
+
 /// The plain-names step takes a database at the landed version, holding a
 /// compressed chunk of events, to the schema a fresh database is created
 /// with, and keeps the rows.
@@ -115,6 +130,7 @@ async fn plain_names_step_reaches_the_described_schema_and_keeps_compressed_rows
 ) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     let fresh = catalog(&mut conn).await.unwrap();
+    sources_before_exclusions(&mut conn).await;
     let id = sinex_model::MaterialId::new().0;
     sqlx::query(
         "INSERT INTO core.events (id, event_type, source, run_id, material_id, record_offset, ts_quality, commit_seq, payload, reading_order, record_hash)
@@ -220,3 +236,52 @@ async fn query_kinds_keep_their_definitions_when_apply_recreates_a_view(
 }
 
 mod kinds;
+
+#[devkit::test]
+async fn source_exclusions_step_keeps_version_41_rows(db: devkit::pg::TestDatabase) {
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let fresh = catalog(&mut conn).await.unwrap();
+    sources_before_exclusions(&mut conn).await;
+    for statement in [
+        "INSERT INTO registry.sources (name, shapes, version, event_types, purpose, expectation) VALUES ('example.export', ARRAY['export-archive'], 1, ARRAY['example.record'], 'stored source description', 'export')",
+        "DELETE FROM sinex_schema.applied",
+        "INSERT INTO sinex_schema.applied (version) VALUES (41)",
+    ] {
+        sqlx::query(statement).execute(&mut conn).await.unwrap();
+    }
+    assert!(matches!(
+        apply(&mut conn).await.unwrap(),
+        Applied::Upgraded {
+            from: 41,
+            to: VERSION
+        }
+    ));
+    assert_eq!(catalog(&mut conn).await.unwrap(), fresh);
+    let row: (String, Option<String>) = sqlx::query_as(
+        "SELECT purpose, exclusion FROM registry.sources WHERE name = 'example.export'",
+    )
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(row, ("stored source description".into(), None));
+    sqlx::query("UPDATE registry.sources SET exclusion = 'input intentionally excluded' WHERE name = 'example.export'").execute(&mut conn).await.unwrap();
+    let reason: String =
+        sqlx::query_scalar("SELECT exclusion FROM registry.sources WHERE name = 'example.export'")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(reason, "input intentionally excluded");
+}
+
+#[devkit::test]
+async fn non_ascii_text_round_trips(db: devkit::pg::TestDatabase) {
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let text = "café 漢 🦀";
+    sqlx::query("INSERT INTO registry.sources (name, shapes, version, event_types, purpose, expectation) VALUES ('example.unicode', '{}', 1, '{}', $1, 'on_demand')")
+        .bind(text).execute(&mut conn).await.unwrap();
+    let (stored, characters, constructed): (String, i32, String) = sqlx::query_as("SELECT purpose, char_length(purpose), chr(233) || ' ' || chr(28450) || ' ' || chr(129408) FROM registry.sources WHERE name = 'example.unicode'")
+        .fetch_one(&mut conn).await.unwrap();
+    assert_eq!(stored, text);
+    assert_eq!(characters, 8);
+    assert_eq!(constructed, "é 漢 🦀");
+}

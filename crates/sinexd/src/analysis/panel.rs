@@ -5,6 +5,7 @@ use super::{Settings, rfc3339};
 use crate::{Error, Result};
 use serde_json::Value;
 use sinex_analysis::coverage::{self, Coverage};
+use sinex_analysis::finding::number;
 use sinex_analysis::methods::Point;
 use sinex_analysis::panel::{PanelCell, Unit};
 use sinex_analysis::{Cell, Span};
@@ -211,14 +212,6 @@ pub(crate) fn table(p: &Panel, metrics: &[&Metric], by: Option<&str>) -> String 
     out
 }
 
-fn number(v: f64) -> String {
-    if v.fract() == 0.0 {
-        format!("{}", v as i64)
-    } else {
-        format!("{v:.2}")
-    }
-}
-
 /// The span of a coverage row, as text.
 pub(super) fn span_text(span: Span) -> (String, String) {
     (rfc3339(span.start), rfc3339(span.end))
@@ -275,3 +268,6 @@ pub(crate) async fn gaps(
     }
     Ok(out)
 }
+
+#[cfg(test)]
+mod tests;

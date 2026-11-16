@@ -116,3 +116,40 @@ async fn each_failure_kind_reaches_http_with_its_status(db: devkit::pg::TestData
     assert_eq!(unavailable["code"], "database_unavailable", "{unavailable}");
     assert_eq!(unavailable["retryable"], true, "{unavailable}");
 }
+
+#[devkit::test]
+async fn writer_down_and_sealed_replay_messages_name_the_command(db: devkit::pg::TestDatabase) {
+    let world = world_with_api(
+        db,
+        Default::default(),
+        PgPoolOptions::new().max_connections(READ_CONNECTIONS),
+        |api| api.writer = None,
+    )
+    .await;
+    let (_, body) = call_unbounded(
+        &world,
+        Some(OPERATOR),
+        json!({"method":"archive","source":"terminal.atuin"}),
+    )
+    .await;
+    assert_eq!(body["failure"]["kind"], "not_configured", "{body}");
+    assert_eq!(body["failure"]["code"], "no_writer");
+    assert_eq!(
+        body["failure"]["message"],
+        "this daemon has no writer; start it with `sinexd run`"
+    );
+    let (_, body) = call_unbounded(
+        &world,
+        Some(OPERATOR),
+        json!({"method":"replay","sealed":true,"binding":"synthetic"}),
+    )
+    .await;
+    assert_eq!(body["failure"]["kind"], "refused", "{body}");
+    assert!(
+        body["failure"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("sinexctl unlock IDENTITY_FILE"),
+        "{body}"
+    );
+}

@@ -500,3 +500,6 @@ fn camel(snake: &str) -> String {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests;

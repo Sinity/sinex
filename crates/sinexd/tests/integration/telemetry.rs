@@ -81,7 +81,21 @@ async fn daemon_samples_admission_and_failures_through_public_commands() {
         &["admin", "status"],
     )))
     .unwrap();
-    let latest = status["telemetry"].as_array().unwrap();
+    let samples = query(binary, &database, &store, "telemetry | fields payload");
+    let latest: Vec<_> = samples["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| &row["payload"])
+        .collect();
+    assert!(
+        status["consumers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|consumer| consumer["name"] == "search index"),
+        "{status}"
+    );
     let writer = latest
         .iter()
         .find(|sample| sample["component"] == "writer")

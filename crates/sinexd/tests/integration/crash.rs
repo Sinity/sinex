@@ -755,12 +755,7 @@ async fn stage_survives(inputs: Inputs, ready: Option<&str>, lock_sql: &str) {
         }
         // Both stores replay their own captured bytes and explicit previous-part
         // boundaries. No cursor coordinate is borrowed from the other store.
-        let scope = [
-            "--event-type",
-            "command.imported",
-            "--event-type",
-            "command.executed",
-        ];
+        let scope = ["--kind", "command.imported", "--kind", "command.executed"];
         finish(&mut reference.replay(&inputs, &scope));
         finish(&mut target.replay(&inputs, &scope));
         consistent(&reference).await;
@@ -899,12 +894,7 @@ async fn an_interrupted_replay_resumes_where_it_stopped() {
     let target = Target::new(&inputs);
     finish(&mut target.stage(&inputs));
     // Two sequences: the zsh history and the Atuin rows.
-    let scope = [
-        "--event-type",
-        "command.imported",
-        "--event-type",
-        "command.executed",
-    ];
+    let scope = ["--kind", "command.imported", "--kind", "command.executed"];
     let before = state(&mut target.connect().await).await;
     kill_at(
         &target,

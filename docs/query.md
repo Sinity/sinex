@@ -23,9 +23,9 @@ coverage is not complete is marked `lower bound` ([completeness](sources.md#comp
 decided target):
 
 ```sh
-sinexctl 'commands where cwd ^ /src/tide AND when in last 7d | sort by when desc'
-sinexctl explain 'shell-sessions where cwds ^ /src/tide | sort by start desc'
-sinexctl find rate limit
+sinexctl query 'commands where cwd ^ /src/tide AND when in last 7d | sort by when desc'
+sinexctl query 'shell-sessions where cwds ^ /src/tide | sort by start desc'
+sinexctl search rate limit
 ```
 
 The bundled declaration snapshot is immutable for one executable, so its query
@@ -95,8 +95,8 @@ Aliases are payload views over registered, produced event types: `commands`,
 `duplicates`, `shell-sessions`, `activity-sessions`, `episodes`, `intervals`, `now`, `figures`,
 `focus`, `visits`, `plays`, `items`, `media`, `curation`, and one for each
 [higher-layer](higher-layer.md) kind once its producer exists. An alias exists only with
-its producer, so an alias never answers from nothing. Every duration alias states
-its unit. `kinds [KIND]` lists which aliases expand to which event types.
+its producer, so an alias never answers from nothing. Decided target, not built:
+every duration column carries its unit in the answer metadata. `kinds [KIND]` lists which aliases expand to which event types.
 
 `commands` reads a [fusion family](derivations.md#fusion): its fused commands plus the
 shell records no fused command joins (the shell integration's reports, Atuin and the
@@ -271,7 +271,7 @@ keep their original position.
   same output rules as every output; the reader role cannot reach withheld fields or keys
   ([privacy](privacy.md)). PostgreSQL cancels a statement that runs longer than 120 seconds,
   even after its caller has gone away.
-- `sql` answers a page at a time from a database cursor: up to `--page` rows (1000 when
+- `sql` answers a page at a time from a database cursor: up to `--page-size` rows (50 when
   not given), ending early once a page holds 8 MiB of row text, so a statement costs the
   daemon one page however many rows it selects. While rows remain, the answer's
   `page.cursor` continues the same statement; the cursor serves only that statement and
@@ -283,10 +283,10 @@ keep their original position.
 A query can be saved, named and invoked inside another query. (ruling 2026-07-09, cc-queued:3b0038ec-234c-44b8-bb88-fe222b44fe0f@2026-07-09T20:06Z).
 
 ```sh
-sinexctl 'commands where cwd ^ $directory AND since:$period | count' \
-  save in-directory --parameter directory:text --parameter period:duration
-sinexctl 'query:in-directory(directory="/src/tide", period=7d)'
-sinexctl 'queries'
+sinexctl save in-directory --parameter directory:text --parameter period:duration \
+  'commands where cwd ^ $directory AND since:$period | count'
+sinexctl query 'query:in-directory(directory="/src/tide", period=7d)'
+sinexctl query-list
 ```
 
 - **A saved query has a content identity,** `sinex:query/<hash>` over its canonical AST

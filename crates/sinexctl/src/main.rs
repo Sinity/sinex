@@ -43,6 +43,19 @@ fn default_token_file() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/etc/sinex/token"))
 }
 
+fn default_capture_state() -> Option<PathBuf> {
+    std::env::var_os("SINEX_CAPTURE_STATE")
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("XDG_STATE_HOME")
+                .map(PathBuf::from)
+                .or_else(|| {
+                    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/state"))
+                })
+                .map(|root| root.join("sinex-session"))
+        })
+}
+
 /// The CLI, generated from the command table, plus the local commands.
 fn cli() -> Command {
     let mut app =
@@ -80,7 +93,7 @@ fn cli() -> Command {
         let mut sub = sinex_protocol::cli::subcommand(c);
         if c.name == "status" {
             sub =
-                sub.arg(Arg::new("capture-state").long("capture-state").help(
+                sub.arg(Arg::new("capture-state").long("capture-state").value_parser(clap::value_parser!(PathBuf)).help(
                     "local capture state directory (default: $SINEX_CAPTURE_STATE or $XDG_STATE_HOME/sinex-session)",
                 ))
                 .arg(
@@ -274,9 +287,49 @@ fn rendered_text(result: &Value) -> Option<&str> {
     result["text"].as_str()
 }
 
+/// The same list command with its filters, ready for the next page's cursor.
+fn next_page_command(spec: &sinex_protocol::Command, request: &Request) -> String {
+    let values = serde_json::to_value(request).expect("requests serialize");
+    let quote = |value: &Value| {
+        let text = value
+            .as_str()
+            .map(str::to_owned)
+            .unwrap_or_else(|| value.to_string());
+        format!("'{}'", text.replace('\'', "'\\''"))
+    };
+    let mut words = vec!["sinexctl".to_owned(), spec.name.to_owned()];
+    for argument in spec
+        .args
+        .iter()
+        .filter(|argument| argument.name != "cursor")
+    {
+        let value = &values[argument.name];
+        if value.is_null() {
+            continue;
+        }
+        if argument.kind == sinex_protocol::ArgKind::Bool {
+            if value.as_bool() == Some(true) {
+                words.push(format!("--{}", argument.name));
+            }
+            continue;
+        }
+        let items = value
+            .as_array()
+            .map(Vec::as_slice)
+            .unwrap_or(std::slice::from_ref(value));
+        for item in items {
+            if !argument.positional {
+                words.push(format!("--{}", argument.name));
+            }
+            words.push(quote(item));
+        }
+    }
+    words.join(" ")
+}
+
 /// Status when the daemon cannot answer it: why, with the local capture
 /// report, which stays readable without the daemon.
-fn status_error(failure: &Failure, state: Option<&str>) -> ExitCode {
+fn status_error(failure: &Failure, state: Option<&std::path::Path>) -> ExitCode {
     let mut status = json!({"daemon": {"unavailable": failure.message, "error": failure}});
     capture_health::attach(&mut status, state);
     print_json(&status);
@@ -303,10 +356,12 @@ async fn main() -> ExitCode {
         None => ("status".to_string(), matches.clone()),
     };
     let capture_state = sub
-        .try_get_one::<String>("capture-state")
+        .try_get_one::<PathBuf>("capture-state")
         .ok()
         .flatten()
-        .map(String::as_str);
+        .cloned()
+        .or_else(default_capture_state);
+    let capture_state = capture_state.as_deref();
     let offline = sub
         .try_get_one::<bool>("offline")
         .ok()
@@ -330,11 +385,11 @@ async fn main() -> ExitCode {
                     } else {
                         "FAIL"
                     };
-                    println!(
-                        "{mark} {}: {}",
+                    output::emit(&format!(
+                        "{mark} {}: {}\n",
                         c["check"].as_str().unwrap_or("?"),
                         c["detail"].as_str().unwrap_or("")
-                    );
+                    ));
                 }
             }
             return report_exit(&report);
@@ -428,12 +483,15 @@ async fn main() -> ExitCode {
             .unwrap_or_default()
             .to_string();
         let local = output::Local::new(None);
+        if !json {
+            output::emit("# times in UTC\n");
+        }
         let result = client
             .follow(&query, |event, data| {
                 match event {
                     "notice" => eprintln!("# {data}"),
                     "error" => eprintln!("sinexctl: {data}"),
-                    _ if json => println!("{data}"),
+                    _ if json => output::emit(&format!("{data}\n")),
                     _ => {
                         if let Ok(row) = serde_json::from_str::<Value>(data) {
                             let columns: Vec<String> = row
@@ -441,12 +499,11 @@ async fn main() -> ExitCode {
                                 .map(|o| o.keys().cloned().collect())
                                 .unwrap_or_default();
                             let t = output::table(&columns, &[row], &local);
-                            print!(
-                                "{}",
-                                t.lines()
+                            output::emit(
+                                &t.lines()
                                     .nth(1)
-                                    .map(|l| format!("{l}\n"))
-                                    .unwrap_or_default()
+                                    .map(|line| format!("{line}\n"))
+                                    .unwrap_or_default(),
                             );
                         }
                     }
@@ -496,7 +553,7 @@ async fn main() -> ExitCode {
                         Ok(report) => report,
                         Err(e) => return fail(&client::protocol_mismatch(&name, e), json),
                     };
-                    print!("{}", sinex_protocol::stage_report::render(&report));
+                    output::emit(&sinex_protocol::stage_report::render(&report));
                 } else {
                     print_json(&result);
                 }
@@ -526,11 +583,12 @@ async fn main() -> ExitCode {
                     .and_then(Value::as_object)
                     .map(|o| o.keys().cloned().collect())
                     .unwrap_or_default();
-                print!(
-                    "{}",
-                    output::table(&columns, &collected, &output::Local::new(None))
-                );
-                println!("{} rows", collected.len());
+                output::emit(&output::table(
+                    &columns,
+                    &collected,
+                    &output::Local::new(None),
+                ));
+                output::emit(&format!("{} rows; times in UTC\n", collected.len()));
             }
             return answered(collected.is_empty());
         }
@@ -543,7 +601,7 @@ async fn main() -> ExitCode {
                     Ok(report) => report,
                     Err(e) => return fail(&client::protocol_mismatch(&name, e), json),
                 };
-                print!("{}", sinex_protocol::stage_report::render(&report));
+                output::emit(&sinex_protocol::stage_report::render(&report));
             } else if name == "stage-list" {
                 let reports: sinex_protocol::stage_report::Reports =
                     match serde_json::from_value(result) {
@@ -551,12 +609,12 @@ async fn main() -> ExitCode {
                         Err(e) => return fail(&client::protocol_mismatch(&name, e), json),
                     };
                 for report in &reports.stages {
-                    print!("{}", sinex_protocol::stage_report::render(report));
+                    output::emit(&sinex_protocol::stage_report::render(report));
                 }
             } else if let Some(text) = rendered_text(&result) {
-                print!("{text}");
+                output::emit(text);
                 if !text.ends_with('\n') {
-                    println!();
+                    output::emit("\n");
                 }
             } else {
                 print_json(&result);
@@ -567,16 +625,24 @@ async fn main() -> ExitCode {
         if all {
             collected.extend(result["rows"].as_array().cloned().unwrap_or_default());
             if let Some(c) = cursor {
-                let Some(query) = result["query"].as_str() else {
-                    return fail(
-                        &client::protocol_mismatch(&name, "a paged answer has no query text"),
-                        json,
-                    );
-                };
-                request = Request::Query {
-                    query: query.into(),
-                    page_size: result["page"]["size"].as_u64(),
-                    cursor: Some(c),
+                request = if let Some(query) = result["query"].as_str() {
+                    Request::Query {
+                        query: query.into(),
+                        page_size: result["page"]["size"].as_u64(),
+                        cursor: Some(c),
+                    }
+                } else {
+                    let mut arguments = serde_json::to_value(&request)
+                        .expect("requests serialize")
+                        .as_object()
+                        .expect("request is an object")
+                        .clone();
+                    arguments.remove("method");
+                    arguments.insert("cursor".into(), Value::String(c));
+                    match Request::from_args(&name, arguments) {
+                        Ok(request) => request,
+                        Err(error) => return fail(&error, json),
+                    }
                 };
                 continue;
             }
@@ -587,7 +653,7 @@ async fn main() -> ExitCode {
                 print_json(&whole);
             } else {
                 let local = output::Local::new(whole["resolved"]["zone"].as_str());
-                print!("{}", output::answer(&whole, &local, None));
+                output::emit(&output::answer(&whole, &local, None));
             }
             return answered(empty);
         }
@@ -595,14 +661,11 @@ async fn main() -> ExitCode {
             print_json(&result);
         } else {
             let local = output::Local::new(result["resolved"]["zone"].as_str());
-            let hint = format!(
-                "sinexctl query '{}'",
-                result["query"]
-                    .as_str()
-                    .unwrap_or("")
-                    .replace('\'', "'\\''")
-            );
-            print!("{}", output::answer(&result, &local, Some(&hint)));
+            let hint = match result["query"].as_str() {
+                Some(query) => format!("sinexctl query '{}'", query.replace('\'', "'\\''")),
+                None => next_page_command(spec, &request),
+            };
+            output::emit(&output::answer(&result, &local, Some(&hint)));
         }
         let empty = cursor.is_none() && result["rows"].as_array().is_some_and(Vec::is_empty);
         return answered(empty);

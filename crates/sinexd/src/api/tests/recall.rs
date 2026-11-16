@@ -193,7 +193,7 @@ async fn recall_last_pages_keep_the_selected_commit_and_equal_start_ties_are_sta
     let (_, first) = call_unbounded(
         &w,
         Some(READ),
-        json!({"method":"recall","around":"last","page":2}),
+        json!({"method":"recall","around":"last","page-size":2}),
     )
     .await;
     let seq = first["result"]["resolved"]["commit_seq"].clone();
@@ -204,7 +204,7 @@ async fn recall_last_pages_keep_the_selected_commit_and_equal_start_ties_are_sta
         let (_, page) = call_unbounded(
             &w,
             Some(READ),
-            json!({"method":"recall","around":"last","page":2,"cursor":c}),
+            json!({"method":"recall","around":"last","page-size":2,"cursor":c}),
         )
         .await;
         assert_eq!(page["result"]["resolved"]["commit_seq"], seq);
@@ -388,7 +388,7 @@ async fn recall_does_not_write(db: devkit::pg::TestDatabase) {
     };
     let before = count(&w).await;
     for request in [
-        json!({"method":"recall","around":"last","cwd":"/src/tide","page":1}),
+        json!({"method":"recall","around":"last","cwd":"/src/tide","page-size":1}),
         json!({"method":"recall"}),
         json!({"method":"query","query":"recall 2026-09-14T08:00:00Z"}),
     ] {
@@ -418,12 +418,12 @@ async fn saved_recall_and_context_pages_keep_their_clock_and_grants(db: devkit::
     );
     let activity_ids = activity.iter().map(|event| event.id).collect::<Vec<_>>();
     admit_events(&w, activity).await;
-    let (_,saved) = call_unbounded(&w,Some(OPERATOR),json!({"method":"query-save","name":"remember-tide","query":"recall last where cwds ^ /src/tide"})).await;
+    let (_,saved) = call_unbounded(&w,Some(OPERATOR),json!({"method":"save","name":"remember-tide","query":"recall last where cwds ^ /src/tide"})).await;
     assert_eq!(saved["outcome"], "ok", "{saved}");
     let (_, first) = call_unbounded(
         &w,
         Some(OPERATOR),
-        json!({"method":"query","query":"query:remember-tide","page":1}),
+        json!({"method":"query","query":"query:remember-tide","page-size":1}),
     )
     .await;
     assert_eq!(first["outcome"], "ok", "{first}");
@@ -432,12 +432,12 @@ async fn saved_recall_and_context_pages_keep_their_clock_and_grants(db: devkit::
     let (_, next) = call_unbounded(
         &w,
         Some(OPERATOR),
-        json!({"method":"query","query":"query:remember-tide","page":1,"cursor":cursor}),
+        json!({"method":"query","query":"query:remember-tide","page-size":1,"cursor":cursor}),
     )
     .await;
     assert_eq!(next["outcome"], "ok", "{next}");
     assert_eq!(next["result"]["resolved"], first["result"]["resolved"]);
-    let request = json!({"method":"context","since":"2026-09-14T00:00:00Z","page":1});
+    let request = json!({"method":"context","since":"2026-09-14T00:00:00Z","page-size":1});
     let context = assert_activity_context(&w, READ, &request, &activity_ids).await;
     assert_eq!(
         context["result"]["recall"]["to"], context["result"]["resolved"]["now"],
@@ -449,21 +449,21 @@ async fn saved_recall_and_context_pages_keep_their_clock_and_grants(db: devkit::
     let (_, refused) = call_unbounded(
         &w,
         Some(READ),
-        json!({"method":"context","since":"2026-09-14T00:00:01Z","page":1,"cursor":cursor}),
+        json!({"method":"context","since":"2026-09-14T00:00:01Z","page-size":1,"cursor":cursor}),
     )
     .await;
     assert_eq!(refused["outcome"], "failed", "{refused}");
     let (_, same) = call_unbounded(
         &w,
         Some(READ),
-        json!({"method":"context","since":"2026-09-14T00:00:00Z","until":context["result"]["recall"]["to"],"page":1,"cursor":cursor}),
+        json!({"method":"context","since":"2026-09-14T00:00:00Z","until":context["result"]["recall"]["to"],"page-size":1,"cursor":cursor}),
     )
     .await;
     assert_eq!(same["outcome"], "ok", "{same}");
     let (_, changed_grants) = call_unbounded(
         &w,
         Some(OPERATOR),
-        json!({"method":"context","since":"2026-09-14T00:00:00Z","page":1,"cursor":cursor}),
+        json!({"method":"context","since":"2026-09-14T00:00:00Z","page-size":1,"cursor":cursor}),
     )
     .await;
     assert_eq!(changed_grants["outcome"], "failed", "{changed_grants}");
@@ -599,7 +599,7 @@ async fn recall_context_excludes_saved_definitions_but_inherits_selected_activit
             .iter()
             .any(|row| row["payload"]["query"] == "events | fields id")
     );
-    let request = json!({"method":"context","since":"2026-09-14T00:00:00Z","until":"2026-09-14T09:00:00Z","page":1});
+    let request = json!({"method":"context","since":"2026-09-14T00:00:00Z","until":"2026-09-14T09:00:00Z","page-size":1});
     assert_activity_context(&w, READ, &request, &activity_ids).await;
     let private = facts(
         "private",
@@ -633,7 +633,7 @@ async fn a_stored_recall_cursor_keeps_the_callers_grants(db: devkit::pg::TestDat
     let (_, first) = call_unbounded(
         &w,
         Some(OPERATOR),
-        json!({"method":"recall","around":"last","page":1}),
+        json!({"method":"recall","around":"last","page-size":1}),
     )
     .await;
     assert_eq!(first["outcome"], "ok", "{first}");
@@ -641,7 +641,7 @@ async fn a_stored_recall_cursor_keeps_the_callers_grants(db: devkit::pg::TestDat
     let (_, other) = call_unbounded(
         &w,
         Some(READ),
-        json!({"method":"recall","around":"last","page":1,"cursor":cursor}),
+        json!({"method":"recall","around":"last","page-size":1,"cursor":cursor}),
     )
     .await;
     assert_eq!(other["outcome"], "failed", "{other}");
@@ -684,7 +684,7 @@ async fn archived_parent_recall_is_an_explicit_historical_preview(db: devkit::pg
     let (_, historical) = call_unbounded(
         &w,
         Some(READ),
-        json!({"method":"query","query":format!("recall last | as of seq {before}"),"page":1}),
+        json!({"method":"query","query":format!("recall last | as of seq {before}"),"page-size":1}),
     )
     .await;
     assert_eq!(historical["outcome"], "ok", "{historical}");
@@ -711,7 +711,7 @@ async fn archived_parent_recall_is_an_explicit_historical_preview(db: devkit::pg
         packs
     );
     let cursor = historical["result"]["page"]["cursor"].as_str().unwrap();
-    let (_,next) = call_unbounded(&w,Some(READ),json!({"method":"query","query":format!("recall last | as of seq {before}"),"page":1,"cursor":cursor})).await;
+    let (_,next) = call_unbounded(&w,Some(READ),json!({"method":"query","query":format!("recall last | as of seq {before}"),"page-size":1,"cursor":cursor})).await;
     assert_eq!(next["outcome"], "ok", "{next}");
     assert_eq!(next["result"]["resolved"], historical["result"]["resolved"]);
     let (_, current) =
@@ -781,7 +781,7 @@ async fn a_stored_work_resume_card_is_shared_by_brief_and_machine_without_recomp
     let (_, second) = call_unbounded(
         &w,
         Some(READ),
-        json!({"method":"brief","day":citation,"budget":10000}),
+        json!({"method":"brief","day":citation,"bytes":10000}),
     )
     .await;
     assert_eq!(second["result"]["context_pack"], citation);

@@ -12,17 +12,23 @@ struct Continuation {
 }
 
 impl Api {
-    pub(super) async fn kind_fields(
-        &self,
-        caller: &Caller,
-        kind: Option<String>,
-        page: Option<u64>,
-        cursor: Option<String>,
-        fields: bool,
-    ) -> Result<Reply> {
+    pub(super) async fn kind_fields(&self, caller: &Caller, request: Request) -> Result<Reply> {
+        let (kind, page_size, cursor, fields) = match request {
+            Request::Kinds {
+                kind,
+                page_size,
+                cursor,
+            } => (kind, page_size, cursor, false),
+            Request::Fields {
+                kind,
+                page_size,
+                cursor,
+            } => (kind, page_size, cursor, true),
+            _ => unreachable!("kind fields request"),
+        };
         Ok(Reply::Ok {
             result: self
-                .kind_fields_page(caller, kind, page, cursor, fields)
+                .kind_fields_page(caller, kind, page_size, cursor, fields)
                 .await?,
         })
     }

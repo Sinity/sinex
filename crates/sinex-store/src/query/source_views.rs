@@ -29,8 +29,9 @@ pub(super) const SOURCES: &str = r#"(
     CROSS JOIN LATERAL (
       SELECT count(*) AS readings,
         bool_or(e.payload->>'state' = 'missing') AS missing,
-        max((e.payload->>'ended_at')::timestamptz) AS ended_at,
-        (array_agg(e.payload->>'reason' ORDER BY e.ts_orig DESC, e.id DESC)
+        (array_agg((e.payload->>'ended_at')::timestamptz ORDER BY e.commit_seq DESC))[1] AS ended_at,
+        max(e.ts_coided) AS last_seen,
+        (array_agg(e.payload->>'reason' ORDER BY e.commit_seq DESC)
           FILTER (WHERE e.payload->>'state' = 'missing'))[1] AS last_error
       FROM core.visible_events e
       WHERE e.event_type = 'source.coverage'
@@ -43,21 +44,9 @@ pub(super) const SOURCES: &str = r#"(
         s.expectation = 'continuous' AND sc.last_seen < now() - s.silent_after AS silent,
         s.expectation = 'cadence' AND c.ended_at < now() - s.every AS overdue,
         coalesce(sc.events, 0) = 0 AND c.readings = 0 AS absent,
-        sc.last_seen >= now() - interval '1 hour' AS recent
+        greatest(sc.last_seen, c.last_seen) >= now() - interval '1 hour' AS recent
     ) f
 ) {t}"#;
-
-pub(super) fn state() -> String {
-    "{t}.state".into()
-}
-
-pub(super) fn reason() -> String {
-    "{t}.reason".into()
-}
-
-pub(super) fn last_error() -> String {
-    "{t}.last_error".into()
-}
 
 pub(super) const GAPS: &str =
     "(SELECT source, id AS run, prior_end AS start, started_at AS \"end\",

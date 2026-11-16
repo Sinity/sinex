@@ -120,7 +120,7 @@ async fn an_unanswered_notification_stays_unknown_and_never_holds_admission() {
     rule["interrupt"] = json!(true);
     ok(
         &socket,
-        json!({"method":"signal","action":"add","name":"desktop-guard","rule":rule.to_string()}),
+        json!({"method":"watch","action":"add","name":"desktop-guard","rule":rule.to_string()}),
     );
     wait_scalar(&mut conn, ADOPTED, 1).await;
     ok(
@@ -236,7 +236,7 @@ async fn a_missing_server_is_retried_once_when_it_appears() {
     );
     ok(
         &socket,
-        json!({"method":"signal","action":"add","name":"held-group","rule":watched.to_string()}),
+        json!({"method":"watch","action":"add","name":"held-group","rule":watched.to_string()}),
     );
     wait_scalar(&mut conn, ADOPTED, 1).await;
     let original = ok(

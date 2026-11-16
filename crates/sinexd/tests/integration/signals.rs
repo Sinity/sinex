@@ -149,14 +149,14 @@ async fn real_daemon_checkpoints_precede_effects_and_unknown_actions_survive_res
     assert_eq!(
         call(
             &socket,
-            json!({"method":"signal","action":"add","name":"unconfigured","rule":invalid.to_string()})
+            json!({"method":"watch","action":"add","name":"unconfigured","rule":invalid.to_string()})
         )["outcome"],
         "failed"
     );
     for (name, deliver) in [("file", "value"), ("controlled", "action")] {
         ok(
             &socket,
-            json!({"method":"signal","action":"add","name":name,"rule":rule(name,deliver).to_string()}),
+            json!({"method":"watch","action":"add","name":name,"rule":rule(name,deliver).to_string()}),
         );
     }
     // Both rules are adopted, with their empty baseline, before the input.
@@ -226,7 +226,7 @@ async fn real_daemon_checkpoints_precede_effects_and_unknown_actions_survive_res
     );
     let answer = ok(
         &socket,
-        json!({"method":"query","query":"events where event_type = signal.delivery","page":100}),
+        json!({"method":"query","query":"events where event_type = signal.delivery","page-size":100}),
     );
     assert_eq!(
         answer["total"], 4,

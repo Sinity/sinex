@@ -5,6 +5,40 @@ use super::*;
 use crate::Result;
 
 impl Api {
+    pub(super) async fn recall_request(&self, caller: &Caller, request: Request) -> Result<Reply> {
+        let Request::Recall {
+            around,
+            cwd,
+            page_size,
+            cursor,
+        } = request
+        else {
+            unreachable!("recall request");
+        };
+        let mut text = match around.as_deref().map(str::trim) {
+            Some(around) if !around.is_empty() => format!("recall {around}"),
+            _ => "recall".to_owned(),
+        };
+        if let Some(cwd) = cwd {
+            if around.as_deref().map(str::trim) != Some("last") {
+                return Err(Error::bad_request(
+                    "cwd applies only to recall last; use a session-field query for other filters",
+                ));
+            }
+            text.push_str(" where cwds ^ ");
+            text.push_str(&serde_json::to_string(&cwd).expect("strings serialize"));
+        }
+        self.recall(
+            caller,
+            &text,
+            Page {
+                size: page_size,
+                cursor,
+            },
+        )
+        .await
+    }
+
     pub(super) async fn recall(&self, caller: &Caller, text: &str, page: Page) -> Result<Reply> {
         self.recall_in(caller, text, page, self.context()).await
     }
