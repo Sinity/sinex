@@ -276,10 +276,17 @@ def main() -> None:
         measure_one(*args.measure_one)
         return
     run(["git", "fetch", "--no-tags", "--depth=1", "origin", BASE], "fetch-base.log")
-    catalog_and_query_plan()
-    compare_sql()
-    mutation_checks()
-    measure_edit_cascade()
+    errors = []
+    for check in [catalog_and_query_plan, compare_sql, mutation_checks, measure_edit_cascade]:
+        try:
+            check()
+        except Exception as error:
+            import traceback
+            traceback.print_exc()
+            errors.append({"check": check.__name__, "error": str(error)})
+    write_json("summary.json", {"errors": errors})
+    if errors:
+        raise RuntimeError("batch measurements failed; see summary.json and individual logs")
     (OUTPUT / "complete.txt").write_text("SQL comparison, catalog, query plans, mutations and edit measurements completed.\n")
 
 
