@@ -314,6 +314,72 @@ async fn two_conditions_on_one_field_are_both_required(db: devkit::pg::TestDatab
 }
 
 #[devkit::test]
+async fn delayed_search_page_keeps_only_surviving_commands(db: devkit::pg::TestDatabase) {
+    use crate::lifecycle::{self, Ended, Progress};
+    use sinex_model::lifecycle::{Act, Scope};
+
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let ids = admit_commands(&mut conn, &[("orchid", "/"), ("marigold", "/")]).await;
+    let page = crate::commit_log::after(&mut conn, 0, 10, i64::MAX)
+        .await
+        .unwrap();
+    catch_up_search_text(&mut conn).await.unwrap();
+    assert_eq!(
+        column(&ask(&mut conn, "commands where orchid").await, "command"),
+        [json!("orchid")]
+    );
+
+    for act in [Act::Archive, Act::Tombstone] {
+        let operation = lifecycle::begin(
+            &mut conn,
+            act,
+            "agent:test",
+            Scope::Events {
+                events: vec![EventId(ids[0].1)],
+                query: None,
+            },
+        )
+        .await
+        .unwrap();
+        let result = lifecycle::run_on(
+            &mut conn,
+            &operation,
+            Progress::default(),
+            16,
+            &NoDerivations,
+        )
+        .await
+        .unwrap();
+        assert!(matches!(result, Ended::Ok { .. }), "{result:?}");
+    }
+    catch_up_search_text(&mut conn).await.unwrap();
+
+    let mut tx = conn.begin().await.unwrap();
+    crate::read_models::apply_search_text(&mut tx, &page.events)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+
+    // Search joins event rows; inspect its stored identities too, because an
+    // orphaned text row would otherwise be hidden rather than erased.
+    let indexed: Vec<Uuid> =
+        sqlx::query_scalar("SELECT event_id FROM core.search_text ORDER BY event_id")
+            .fetch_all(&mut conn)
+            .await
+            .unwrap();
+    let mut surviving = vec![ids[1].0, ids[1].1];
+    surviving.sort();
+    assert_eq!(indexed, surviving);
+    assert_eq!(ask(&mut conn, "commands where orchid").await.total, 0);
+    assert_eq!(
+        column(&ask(&mut conn, "commands where marigold").await, "command"),
+        [json!("marigold")]
+    );
+}
+
+#[devkit::test]
 async fn words_search_ranks_and_marks_snippets(db: devkit::pg::TestDatabase) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
