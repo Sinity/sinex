@@ -150,7 +150,7 @@ fn dbus_notification_with_delivery_hint_records_signal_origin() {
             serde_json::json!({"product":product,"delivery":"delivery-1"})
         );
         assert_eq!(
-            shown(&events[0]).hints[format!("x-{product}-delivery")],
+            shown(&events[0]).hints[&format!("x-{product}-delivery")],
             "delivery-1"
         );
     }
