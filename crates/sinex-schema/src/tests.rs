@@ -135,6 +135,7 @@ async fn plain_names_step_reaches_the_described_schema_and_keeps_compressed_rows
         "ALTER TABLE raw.failures RENAME COLUMN record_offset TO anchor",
         "ALTER TABLE core.admission_stage RENAME COLUMN record_offset TO anchor",
         "ALTER TABLE core.events RENAME CONSTRAINT record_offset_in_range TO anchor_in_range",
+        "ALTER VIEW core.visible_events RENAME COLUMN record_offset TO anchor",
         "ALTER TABLE core.store_secret RENAME TO owner_protocol_key",
         "ALTER TABLE core.library_shown RENAME COLUMN supporting_records TO supporters",
         "ALTER TRIGGER keep_declaring_producer ON registry.kind_prefixes RENAME TO keep_owner",

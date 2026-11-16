@@ -24,9 +24,11 @@ pub(crate) const STEPS: &[Step] = &[Step {
 }];
 
 /// Renames to plain words: a record's byte offset in its material is its
-/// record offset, the database secret is the store secret, the records
-/// behind a shown library value are its supporting records, and the trigger
-/// that keeps kind prefixes fixed names what it keeps. No row changes.
+/// record offset (also in the `core.visible_events` view, whose column a
+/// recreated view cannot rename), the database secret is the store secret,
+/// the records behind a shown library value are its supporting records, and
+/// the trigger that keeps kind prefixes fixed names what it keeps. No row
+/// changes.
 fn plain_names() -> Vec<String> {
     let mut statements: Vec<String> = [
         "core.events",
@@ -41,6 +43,7 @@ fn plain_names() -> Vec<String> {
     statements.extend(
         [
             "ALTER TABLE core.events RENAME CONSTRAINT anchor_in_range TO record_offset_in_range",
+            "ALTER VIEW core.visible_events RENAME COLUMN anchor TO record_offset",
             "ALTER TABLE core.owner_protocol_key RENAME TO store_secret",
             "ALTER TABLE core.library_shown RENAME COLUMN supporters TO supporting_records",
             "ALTER TRIGGER keep_owner ON registry.kind_prefixes RENAME TO keep_declaring_producer",
