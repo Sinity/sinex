@@ -1,0 +1,22 @@
+[package]
+name = "sinex-query"
+description = "Sinex query parsing, binding and completion. No IO."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+sinex-model.workspace = true
+query-language.workspace = true
+references.workspace = true
+command-surface.workspace = true
+jiff.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
