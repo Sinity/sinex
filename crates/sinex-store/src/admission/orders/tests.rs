@@ -119,14 +119,7 @@ async fn missing_order_seed_takes_maxima_from_history_and_stored_counters(
         many.push(n, false, None);
         many.push(n, true, None);
     }
-    // A stored counter still wins even when no history survives.
-    many.push(256, false, Some(i64::MAX - 8));
-    sqlx::query("INSERT INTO core.producer_orders(source,event_type,key_hash,reading_order) VALUES($1,$2,$3,$4)")
-        .bind(SOURCE).bind(KIND).bind(many.hashes.last().unwrap()).bind(i64::MAX-8)
-        .execute(&mut conn).await.unwrap();
-    let mut cached = Offers::default();
-    cached.push(256, false, Some(i64::MAX - 8));
-    for offers in [&cached, &small, &many] {
+    for offers in [&small, &many] {
         assert_eq!(seed(&mut conn, offers).await, offers.expected);
     }
     let chunk:String=sqlx::query_scalar("SELECT tableoid::regclass::text FROM core.events WHERE id='01700000-0000-7000-8000-000000000001'")
@@ -137,7 +130,20 @@ async fn missing_order_seed_takes_maxima_from_history_and_stored_counters(
         .await
         .unwrap();
     // Compressed history gives the same bases.
-    for offers in [&cached, &small, &many] {
+    for offers in [&small, &many] {
         assert_eq!(seed(&mut conn, offers).await, offers.expected);
     }
+    // A stored counter wins even when no history survives.
+    let mut cached = Offers::default();
+    cached.push(256, false, Some(i64::MAX - 8));
+    sqlx::query("INSERT INTO core.producer_orders(source,event_type,key_hash,reading_order) VALUES($1,$2,$3,$4)")
+        .bind(SOURCE).bind(KIND).bind(cached.hashes.last().unwrap()).bind(i64::MAX-8)
+        .execute(&mut conn).await.unwrap();
+    assert_eq!(seed(&mut conn, &cached).await, cached.expected);
+    // Once the source and kind has a counter, a key without one is new: its
+    // stored history is not read again.
+    let mut counted = Offers::default();
+    counted.push(1, false, None);
+    counted.push(1, true, None);
+    assert_eq!(seed(&mut conn, &counted).await, counted.expected);
 }

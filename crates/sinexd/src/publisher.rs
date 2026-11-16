@@ -159,7 +159,6 @@ pub(crate) async fn run(
                 tokio::select! {
                     _ = commits.changed() => {}
                     _ = stop.changed() => {}
-                    _ = tokio::time::sleep(RETRY) => {}
                 }
             }
             Ok(_) => {}

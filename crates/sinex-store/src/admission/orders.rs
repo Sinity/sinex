@@ -86,8 +86,9 @@ pub(super) async fn assign(
         .collect::<Vec<_>>();
     let outputs = seeds.values().map(|seed| seed.output).collect::<Vec<_>>();
     // The session writer claim serializes this seed and upsert with every other admission.
-    // Seed all missing keys from one pass over stored source/kind metadata. This
-    // includes archived and replaced readings, whose maxima still count.
+    // A key without a counter is new unless its source and kind has no counters
+    // yet; only then are its maxima read from stored history, archived and
+    // replaced readings included.
     let rows = sqlx::query_file!(
         "src/admission/orders/seed.sql",
         &sources,

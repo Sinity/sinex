@@ -2,8 +2,11 @@ WITH input AS (
       SELECT * FROM unnest($1::text[],$2::text[],$3::bytea[],$4::text[],$5::uuid[],$6::bigint[],$7::bigint[])
         AS i(source,event_type,key_hash,equivalence_key,material_id,record_offset,output_index)),
       missing AS (SELECT i.* FROM input i LEFT JOIN core.producer_orders c USING(source,event_type,key_hash) WHERE c.key_hash IS NULL),
-      source_types AS MATERIALIZED (SELECT DISTINCT source,event_type FROM missing),
-      -- Select source/type metadata once for both record-key representations.
+      -- A source and kind with any counter has every reading's order in its
+      -- counters: only a pair's first frame reads its stored history, once for
+      -- both record-key representations.
+      source_types AS MATERIALIZED (SELECT DISTINCT m.source,m.event_type FROM missing m
+        WHERE NOT EXISTS (SELECT 1 FROM core.producer_orders c WHERE c.source=m.source AND c.event_type=m.event_type)),
       selected_history AS MATERIALIZED (
         SELECT e.* FROM source_types f CROSS JOIN LATERAL (
           SELECT e.source,e.event_type,e.equivalence_key,e.material_id,e.record_offset,e.output_index,e.reading_order

@@ -101,65 +101,40 @@ pub struct Page {
 }
 
 /// Up to `limit` positions after `after`, in commit order, ending early once
-/// the events' stored payloads pass `bytes` (the first position is always
-/// read). Event positions are on the events; the commit log holds the
-/// positions that admitted no event.
+/// the events' payloads pass `bytes` (the first position is always read).
+/// Event positions are on the events; the commit log holds the positions that
+/// admitted no event. The page ends at the last position it read a row for,
+/// never at a later head, so a commit whose rows this read could not see is
+/// read by the next page.
 pub async fn after(conn: &mut PgConnection, after: i64, limit: i64, bytes: i64) -> Result<Page> {
     if limit <= 0 {
         return Err(Error::Invalid("commit page limit must be positive".into()));
     }
-    let rows = sqlx::query_file!("src/commit_log/page.sql", after, limit, bytes,)
+    let selected: Vec<Selected> = sqlx::query_file!("src/commit_log/page.sql", after, limit)
         .fetch_all(&mut *conn)
-        .await?;
-    let mut page = Page::default();
-    for row in rows {
-        let Some(position) = row.commit_seq else {
-            if row.head > after {
-                page.up_to = Some(row.head);
-            }
-            continue;
-        };
-        page.up_to = Some(position);
-        // Tombstoned: the content is gone, the position is not.
-        let (Some(id), Some(event_type), Some(source), Some(run_id)) =
-            (row.id, row.event_type, row.source, row.run_id)
-        else {
-            continue;
-        };
-        page.events.push(Committed {
-            search: sinex_model::kinds::Search::None,
-            commit_seq: position,
-            id,
-            event_type,
-            kind_version: row
-                .kind_version
-                .ok_or_else(|| Error::Invalid("missing kind version".into()))?,
-            validation: row
-                .validation
-                .ok_or_else(|| Error::Invalid("missing validation".into()))?,
-            replace_rule: None,
-            source,
-            run_id,
-            material_id: row.material_id,
-            record_offset: row.record_offset,
-            output_index: row
-                .output_index
-                .ok_or_else(|| Error::Invalid("event has no output index".into()))?,
-            parents: row.parents,
-            ts_orig: row.ts_orig,
-            ts_quality: row.ts_quality.unwrap_or_default(),
-            ts_coided: row.ts_coided,
-            ts_persisted: row.ts_persisted.unwrap_or(OffsetDateTime::UNIX_EPOCH),
-            payload: row.payload.unwrap_or(Value::Null),
-            equivalence_key: row.equivalence_key,
-            reading_order: row.reading_order.unwrap_or(0),
-            record_hash: row.record_hash.unwrap_or_default(),
-            record_state: row.record_state.unwrap_or_default(),
-            class: row.class.unwrap_or_default(),
-        });
-    }
-    let references: Vec<_> = page
-        .events
+        .await?
+        .into_iter()
+        .map(|row| Selected {
+            commit_seq: row.commit_seq,
+            event: row.id.map(|id| SelectedEvent {
+                id,
+                event_type: row.event_type.unwrap_or_default(),
+                ts_orig: row.ts_orig,
+            }),
+        })
+        .collect();
+    let (mut events, up_to) = fetch_selected(conn, &selected, bytes).await?;
+    add_declarations(conn, &mut events).await?;
+    Ok(Page { events, up_to })
+}
+
+/// Fill each event's replacement rule and search mode from its stored kind
+/// declaration.
+pub(crate) async fn add_declarations(
+    conn: &mut PgConnection,
+    events: &mut [Committed],
+) -> Result<()> {
+    let references: Vec<_> = events
         .iter()
         .map(|e| sinex_model::KindRef {
             name: e.event_type.clone(),
@@ -169,7 +144,7 @@ pub async fn after(conn: &mut PgConnection, after: i64, limit: i64, bytes: i64) 
         .into_iter()
         .collect();
     let declarations = sinex_schema::kinds::load(conn, &references).await?;
-    for e in &mut page.events {
+    for e in events {
         let reference = sinex_model::KindRef {
             name: e.event_type.clone(),
             version: e.kind_version as u64,
@@ -180,7 +155,167 @@ pub async fn after(conn: &mut PgConnection, after: i64, limit: i64, bytes: i64) 
         e.replace_rule = d.replace_rule.map(|r| r.as_db().to_string());
         e.search = d.search;
     }
-    Ok(page)
+    Ok(())
+}
+
+/// One position a page selected, with the event at it when there is one.
+pub(crate) struct Selected {
+    pub commit_seq: i64,
+    pub event: Option<SelectedEvent>,
+}
+
+/// What bounds the read of a selected event's row.
+pub(crate) struct SelectedEvent {
+    pub id: Uuid,
+    pub event_type: String,
+    pub ts_orig: Option<OffsetDateTime>,
+}
+
+/// How many selected events one row read covers. Reading a page in groups
+/// keeps the payloads read past its byte bound to one group.
+const ROWS_PER_READ: usize = 64;
+
+/// Read the selected events' rows, each payload once, in the selected order,
+/// stopping once the payloads read pass `bytes` (the first is always read).
+/// Returns the events and the last position covered. A selected event whose
+/// row is gone (tombstoned since) covers its position without an event.
+pub(crate) async fn fetch_selected(
+    conn: &mut PgConnection,
+    selected: &[Selected],
+    bytes: i64,
+) -> Result<(Vec<Committed>, Option<i64>)> {
+    let mut events = Vec::new();
+    let mut up_to = None;
+    let mut read = 0i64;
+    for group in selected.chunks(ROWS_PER_READ) {
+        let mut rows = read_rows(conn, group).await?;
+        for position in group {
+            if read >= bytes {
+                return Ok((events, up_to));
+            }
+            up_to = Some(position.commit_seq);
+            let Some(event) = &position.event else {
+                continue;
+            };
+            let Some(mut row) = rows.remove(&event.id) else {
+                continue;
+            };
+            read = read.saturating_add(crate::payload_bytes(&row.payload));
+            row.commit_seq = position.commit_seq;
+            events.push(row);
+        }
+    }
+    Ok((events, up_to))
+}
+
+/// The rows of one group's events. Inclusive ID and time bounds and the kinds
+/// let compressed batches be skipped by their order and segment columns; the
+/// ID list keeps exact membership.
+async fn read_rows(
+    conn: &mut PgConnection,
+    group: &[Selected],
+) -> Result<std::collections::HashMap<Uuid, Committed>> {
+    let events: Vec<&SelectedEvent> = group.iter().filter_map(|p| p.event.as_ref()).collect();
+    let mut rows = std::collections::HashMap::with_capacity(events.len());
+    let kinds: Vec<String> = events
+        .iter()
+        .map(|e| e.event_type.clone())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let (timed, untimed): (Vec<&SelectedEvent>, Vec<&SelectedEvent>) =
+        events.into_iter().partition(|e| e.ts_orig.is_some());
+    if !timed.is_empty() {
+        let ids: Vec<Uuid> = timed.iter().map(|e| e.id).collect();
+        let times = timed.iter().filter_map(|e| e.ts_orig);
+        let (earliest, latest) = (times.clone().min(), times.max());
+        let found = sqlx::query_file_as!(
+            StoredRow,
+            "src/commit_log/rows.sql",
+            &ids,
+            ids.iter().min().copied(),
+            ids.iter().max().copied(),
+            &kinds,
+            earliest,
+            latest,
+        )
+        .fetch_all(&mut *conn)
+        .await?;
+        for row in found {
+            rows.insert(row.id, row.into_committed());
+        }
+    }
+    if !untimed.is_empty() {
+        let ids: Vec<Uuid> = untimed.iter().map(|e| e.id).collect();
+        let found = sqlx::query_file_as!(
+            StoredRow,
+            "src/commit_log/rows_without_time.sql",
+            &ids,
+            ids.iter().min().copied(),
+            ids.iter().max().copied(),
+            &kinds,
+        )
+        .fetch_all(&mut *conn)
+        .await?;
+        for row in found {
+            rows.insert(row.id, row.into_committed());
+        }
+    }
+    Ok(rows)
+}
+
+/// One stored event row as the commit page reads it.
+struct StoredRow {
+    id: Uuid,
+    event_type: String,
+    kind_version: i64,
+    validation: String,
+    source: String,
+    run_id: Uuid,
+    material_id: Option<Uuid>,
+    record_offset: Option<i64>,
+    output_index: i64,
+    parents: Option<Vec<Uuid>>,
+    ts_orig: Option<OffsetDateTime>,
+    ts_quality: String,
+    ts_coided: Option<OffsetDateTime>,
+    ts_persisted: OffsetDateTime,
+    payload: Value,
+    equivalence_key: Option<String>,
+    reading_order: i64,
+    record_hash: Vec<u8>,
+    record_state: String,
+    class: String,
+}
+
+impl StoredRow {
+    fn into_committed(self) -> Committed {
+        Committed {
+            commit_seq: 0,
+            id: self.id,
+            event_type: self.event_type,
+            kind_version: self.kind_version,
+            validation: self.validation,
+            search: sinex_model::kinds::Search::None,
+            replace_rule: None,
+            source: self.source,
+            run_id: self.run_id,
+            material_id: self.material_id,
+            record_offset: self.record_offset,
+            output_index: self.output_index,
+            parents: self.parents,
+            ts_orig: self.ts_orig,
+            ts_quality: self.ts_quality,
+            ts_coided: self.ts_coided,
+            ts_persisted: self.ts_persisted,
+            payload: self.payload,
+            equivalence_key: self.equivalence_key,
+            reading_order: self.reading_order,
+            record_hash: self.record_hash,
+            record_state: self.record_state,
+            class: self.class,
+        }
+    }
 }
 
 impl Committed {

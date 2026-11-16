@@ -855,7 +855,8 @@ async fn nearest(
     Ok(out)
 }
 
-/// Live committed and unhidden events after `after_seq`, in writer order.
+/// Live committed and unhidden events after `after_seq`, in writer order,
+/// ending early once their payloads pass `bytes` (the first is always read).
 pub async fn after_seq(
     conn: &mut PgConnection,
     event_types: &[String],
@@ -863,20 +864,35 @@ pub async fn after_seq(
     limit: i64,
     bytes: i64,
 ) -> Result<Vec<Committed>> {
-    let rows = sqlx::query_file!(
+    let selected: Vec<crate::commit_log::Selected> = sqlx::query_file!(
         "src/derivations/sql/after_seq.sql",
         event_types,
         after_seq,
         limit,
-        bytes,
     )
     .fetch_all(&mut *conn)
-    .await?;
-    let mut out = Vec::with_capacity(rows.len());
-    for r in rows {
-        out.push(committed!(r));
-    }
-    Ok(out)
+    .await?
+    .into_iter()
+    .map(|row| crate::commit_log::Selected {
+        commit_seq: row.commit_seq,
+        event: Some(crate::commit_log::SelectedEvent {
+            id: row.id,
+            event_type: row.event_type,
+            ts_orig: row.ts_orig,
+        }),
+    })
+    .collect();
+    let (mut events, _) = crate::commit_log::fetch_selected(conn, &selected, bytes).await?;
+    crate::commit_log::add_declarations(conn, &mut events).await?;
+    events
+        .iter()
+        .map(|c| {
+            Ok(Committed {
+                commit_seq: c.commit_seq,
+                event: c.to_event()?,
+            })
+        })
+        .collect()
 }
 
 /// The live readings at these record locations, of any event type and output

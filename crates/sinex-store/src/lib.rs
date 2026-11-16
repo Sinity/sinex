@@ -50,12 +50,29 @@ pub use blobs::Verified;
 /// depending on the database driver.
 pub use sqlx::PgConnection as Connection;
 
-/// The stored payload bytes one page of events reads at most. Pages of events
-/// are bounded by count and by size together, so a run of large payloads (a
-/// notification carrying its image) never fills memory; a page always holds
-/// its first event, however large. Stored payloads are compressed, and one
-/// parsed in memory can take ten times its stored size.
+/// The payload bytes one page of events reads at most, measured as JSON text
+/// ([`payload_bytes`]). Pages of events are bounded by count and by size
+/// together, so a run of large payloads (a notification carrying its image)
+/// never fills memory; a page always holds its first event, however large.
 pub const PAGE_BYTES: i64 = 8 << 20;
+
+/// The length of a payload as compact JSON text, measured on the value
+/// already read, so a page's byte bound costs no second read of its payloads.
+pub fn payload_bytes(payload: &serde_json::Value) -> i64 {
+    struct Length(i64);
+    impl std::io::Write for Length {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 = self.0.saturating_add(bytes.len() as i64);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut length = Length(0);
+    serde_json::to_writer(&mut length, payload).expect("a JSON value always serializes");
+    length.0
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

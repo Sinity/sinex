@@ -233,11 +233,14 @@ async fn commit_pages_cover_deleted_tail_gaps_and_refuse_zero_limits(db: devkit:
     )
     .await;
     assert!(commit_log::after(&mut conn, 0, 0, i64::MAX).await.is_err());
-    // Positions whose events are gone (tombstoned) are covered without events.
+    // Positions whose events are gone (tombstoned) are covered without events
+    // by the page that reads the tombstone's own later position.
     sqlx::raw_sql(
         "SELECT set_config('sinex.tombstone_operation', gen_random_uuid()::text, false);
          DELETE FROM core.events WHERE commit_seq >= 2;
-         RESET sinex.tombstone_operation",
+         RESET sinex.tombstone_operation;
+         UPDATE core.counters SET value = 4 WHERE name = 'commit_seq';
+         INSERT INTO core.commit_log (commit_seq) VALUES (4)",
     )
     .execute(&mut *conn)
     .await
@@ -246,10 +249,10 @@ async fn commit_pages_cover_deleted_tail_gaps_and_refuse_zero_limits(db: devkit:
     assert_eq!(first.up_to, Some(1));
     assert_eq!(first.events.len(), 1);
     let gap = commit_log::after(&mut conn, 1, 1, i64::MAX).await.unwrap();
-    assert_eq!(gap.up_to, Some(3));
+    assert_eq!(gap.up_to, Some(4));
     assert!(gap.events.is_empty());
     assert!(
-        commit_log::after(&mut conn, 3, 1, i64::MAX)
+        commit_log::after(&mut conn, 4, 1, i64::MAX)
             .await
             .unwrap()
             .up_to

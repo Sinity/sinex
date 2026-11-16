@@ -94,3 +94,56 @@ async fn commit_pages_follow_commit_order_and_byte_bounds(db: devkit::pg::TestDa
         tx.rollback().await.unwrap();
     }
 }
+
+/// The head counter can cover a commit whose rows a page did not read; the
+/// page then ends at the last position it read a row for, and the next page
+/// reads that commit once its rows are visible.
+#[devkit::test]
+async fn a_page_ends_at_the_last_position_it_read_a_row_for(db: devkit::pg::TestDatabase) {
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let declaration = sinex_model::KindDeclaration::schemaless(
+        sinex_model::KindRef {
+            name: "synthetic.page".into(),
+            version: 1,
+        },
+        "synthetic".into(),
+    );
+    sinex_schema::kinds::register(&mut conn, "synthetic", &[declaration])
+        .await
+        .unwrap();
+    let insert = |n: i64| {
+        format!(
+            "INSERT INTO core.events(id,event_type,source,run_id,parents,ts_orig,ts_quality,commit_seq,payload,reading_order,record_hash)
+             VALUES (uuidv7(),'synthetic.page','synthetic.page',uuidv7(),ARRAY[uuidv7()],now(),'intrinsic',{n},
+               jsonb_build_object('n',{n}),{n},decode(repeat(md5('{n}'),2),'hex'))"
+        )
+    };
+    conn.execute(
+        format!(
+            "{}; {}; UPDATE core.counters SET value=4 WHERE name='commit_seq'",
+            insert(1),
+            insert(2)
+        )
+        .as_str(),
+    )
+    .await
+    .unwrap();
+    let read = after(&mut conn, 0, 16, i64::MAX).await.unwrap();
+    assert_eq!(read.up_to, Some(2));
+    let unseen = after(&mut conn, 2, 16, i64::MAX).await.unwrap();
+    assert_eq!(unseen.up_to, None);
+    assert!(unseen.events.is_empty());
+    conn.execute(format!("{}; {}", insert(3), insert(4)).as_str())
+        .await
+        .unwrap();
+    let later = after(&mut conn, 2, 16, i64::MAX).await.unwrap();
+    assert_eq!(later.up_to, Some(4));
+    assert_eq!(
+        later
+            .events
+            .iter()
+            .map(|e| e.commit_seq)
+            .collect::<Vec<_>>(),
+        [3, 4]
+    );
+}

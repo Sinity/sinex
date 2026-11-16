@@ -21,17 +21,12 @@ impl AdmissionContext {
         sqlx::query("SET client_connection_check_interval = '1s'")
             .execute(&mut connection)
             .await?;
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
-        loop {
-            if crate::writer_lock::try_claim(&mut connection).await? {
-                break;
-            }
-            if tokio::time::Instant::now() >= deadline {
-                return Err(crate::Error::Invalid(
-                    "another sinexd writer is running against this database".into(),
-                ));
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        if !crate::writer_lock::claim_waiting(&mut connection, std::time::Duration::from_secs(5))
+            .await?
+        {
+            return Err(crate::Error::Invalid(
+                "another sinexd writer is running against this database".into(),
+            ));
         }
         sinex_schema::require_current(&mut connection).await?;
         // The key must commit before any admission can cache or use it.
