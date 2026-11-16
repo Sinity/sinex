@@ -1,4 +1,94 @@
 //! Every source, one module per family, registered in one list.
+macro_rules! input_format {
+    ($vis:vis $name:ident = $format:literal {
+        specs: [$first:expr $(, $spec:expr)* $(,)?], parser: |$b:ident| $parser:expr,
+        $($fields:tt)*
+    }) => {
+        input_format!(@fields $vis $name = $format;
+            (|| vec![&$first $(, &$spec)*]);
+            (|$b| Ok(Box::new(::sinex_source_core::DeclaredSource { spec: $first, parser: $parser })));
+            $($fields)*
+        );
+    };
+    ($vis:vis $name:ident = $format:literal {
+        specs: [$($spec:expr),+ $(,)?], source: $source:expr,
+        $($fields:tt)*
+    }) => {
+        input_format!(@fields $vis $name = $format;
+            (|| vec![$(&$spec),+]); ($source); $($fields)*
+        );
+    };
+    ($vis:vis $name:ident = $format:literal {
+        specs: $specs:expr, source: $source:expr,
+        $($fields:tt)*
+    }) => {
+        input_format!(@fields $vis $name = $format; ($specs); ($source); $($fields)*);
+    };
+    (@fields $vis:vis $name:ident = $format:literal; ($specs:expr); ($source:expr);
+        discovery: $discovery:expr,
+        $(accepts: [$($accept:expr),* $(,)?],)?
+        $(discover: $discover:expr,)?
+        plan: $plan:ident, $($reader:tt)*
+    ) => {
+        input_format!(@reading $vis $name = $format; ($specs); ($source);
+            $discovery; [$($($accept),*)?]; [$($discover)?];
+            input_format!(@plan ($specs) $plan); $($reader)*
+        );
+    };
+    (@fields $vis:vis $name:ident = $format:literal; ($specs:expr); ($source:expr);
+        discovery: $discovery:expr,
+        $(accepts: [$($accept:expr),* $(,)?],)?
+        $(discover: $discover:expr,)?
+        plan: |$i:ident, $s:ident| $body:expr, $($reader:tt)*
+    ) => {
+        input_format!(@reading $vis $name = $format; ($specs); ($source);
+            $discovery; [$($($accept),*)?]; [$($discover)?];
+            Some(|$i, $s| $body); $($reader)*
+        );
+    };
+    (@reading $vis:vis $name:ident = $format:literal; ($specs:expr); ($source:expr);
+        $discovery:expr; [$($accept:expr),*]; [$($discover:expr)?]; $plan:expr;
+        reader: $kind:ident $(($driver:path))?, $(capture: $capture:expr,)?
+    ) => {
+        input_format!(@build $vis $name = $format; ($specs); ($source);
+            $discovery; [$($accept),*]; [$($discover)?]; $plan;
+            input_format!(@reader $kind $(($driver))?); [$($capture)?]
+        );
+    };
+    (@reading $vis:vis $name:ident = $format:literal; ($specs:expr); ($source:expr);
+        $discovery:expr; [$($accept:expr),*]; [$($discover:expr)?]; $plan:expr;
+        reader: |$b:ident| $body:expr, $(capture: $capture:expr,)?
+    ) => {
+        input_format!(@build $vis $name = $format; ($specs); ($source);
+            $discovery; [$($accept),*]; [$($discover)?]; $plan;
+            Some(|$b| $body); [$($capture)?]
+        );
+    };
+    (@build $vis:vis $name:ident = $format:literal; ($specs:expr); ($source:expr);
+        $discovery:expr; [$($accept:expr),*]; [$($discover:expr)?]; $plan:expr;
+        $reader:expr; [$($capture:expr)?]
+    ) => {
+        $vis const $name: ::sinex_source_core::InputFormat = ::sinex_source_core::InputFormat {
+            name: $format, specs: $specs, source: $source, discovery: $discovery,
+            accepts: &[$($accept),*],
+            discover: input_format!(@discover $($discover)?),
+            plan: $plan,
+            reader: $reader, capture: input_format!(@capture $($capture)?),
+        };
+    };
+    (@discover) => { $crate::discovery::discover_format };
+    (@discover $discover:expr) => { $discover };
+    (@capture) => { None };
+    (@capture $capture:expr) => { Some($capture) };
+    (@reader none) => { None };
+    (@reader $kind:ident($driver:path)) => { Some(|b| Ok(::sinex_source_core::binding::$kind($driver(b.input.clone(), b.settings.host.clone())))) };
+    (@plan ($specs:expr) single) => { Some(|i, s| Ok(::sinex_source_core::binding::single(($specs)()[0], i, s))) };
+    (@plan ($specs:expr) per_file) => { Some(|i, s| Ok(::sinex_source_core::binding::per_file(($specs)()[0], i, s, false, ::sinex_source_core::binding::any))) };
+    (@plan ($specs:expr) none) => { None };
+    (@plan ($specs:expr) $plan:expr) => { Some($plan) };
+}
+pub(crate) use input_format;
+
 #[cfg(feature = "full")]
 pub mod activitywatch;
 #[cfg(feature = "full")]

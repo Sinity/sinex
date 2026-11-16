@@ -18,6 +18,8 @@ enum ReaderFraming {
 }
 
 impl Framer {
+    pub const LINES: Self = Self::incremental(crate::drivers::append_file::lines);
+
     /// Append framing whose completed records do not change when later bytes arrive.
     /// Keep its last record undecided until another record or true EOF is seen.
     pub const fn incremental(slice: SliceFramer) -> Self {

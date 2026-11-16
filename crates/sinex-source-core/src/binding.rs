@@ -233,7 +233,7 @@ impl Reading {
 type ReaderFor = fn(&Binding) -> Result<Reading, String>;
 /// Live capture of one binding into its spool, until stopped or until the
 /// source ends; the number of captured lines or segments.
-pub type Capture = fn(&Binding, &crate::capture::CaptureStop) -> Result<u64, String>;
+pub use crate::discovery::Capture;
 
 /// An input format and the sources that read it: what `stage --parser
 /// FORMAT`, `sources.json` and `sinex-session` name.

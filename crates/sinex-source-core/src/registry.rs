@@ -80,6 +80,21 @@ pub struct SourceSpec {
     pub framer: Framer,
 }
 
+impl SourceSpec {
+    pub const DEFAULT: Self = Self {
+        name: "",
+        origin: Origin::Request,
+        purpose: "",
+        expect: Expectation::OnDemand,
+        expires_after: None,
+        class: Class::Open,
+        parser: "",
+        parser_version: 1,
+        event_types: &[],
+        framer: Framer::LINES,
+    };
+}
+
 /// A declared source: its spec and its parser.
 pub struct DeclaredSource<P> {
     pub spec: SourceSpec,

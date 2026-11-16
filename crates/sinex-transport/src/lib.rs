@@ -8,3 +8,5 @@ pub mod replies;
 pub mod producer;
 
 pub mod backup;
+
+pub mod durable;

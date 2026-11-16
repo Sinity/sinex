@@ -19,6 +19,12 @@ pub struct Location {
     pub path: &'static str,
 }
 
+impl Location {
+    pub const fn new(root: &'static str, path: &'static str) -> Self {
+        Self { root, path }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Serialize)]
 pub struct CaptureStream {
     pub spool: &'static str,
@@ -64,6 +70,25 @@ pub struct DiscoverySpec {
     pub credentials: &'static [&'static str],
     pub streams: &'static [CaptureStream],
 }
+
+impl DiscoverySpec {
+    pub const DEFAULT: Self = Self {
+        captured_by: CapturedBy::System,
+        locations: &[],
+        capabilities: &[],
+        credentials: &[],
+        streams: &[],
+    };
+    pub const fn system(locations: &'static [Location]) -> Self {
+        Self {
+            locations,
+            ..Self::DEFAULT
+        }
+    }
+}
+
+pub type Capture =
+    fn(&Binding, &DiscoveryContext, &crate::capture::CaptureStop) -> Result<u64, String>;
 
 /// What a deployment sets for one source. Where its inputs are is never a
 /// setting: discovery finds them at canonical locations.
@@ -151,10 +176,15 @@ pub type Discover = fn(&InputFormat, &DiscoveryContext) -> Vec<DiscoveredInput>;
 impl DiscoveryContext {
     /// Runtime facts of the account doing discovery. System services receive the
     /// operator's roots explicitly instead of using their own home directory.
-    pub fn for_process(host: &str, spool: PathBuf) -> Self {
-        let home = std::env::var_os("HOME").map(PathBuf::from);
+    pub fn from_environment(
+        host: &str,
+        spool: PathBuf,
+        environment: BTreeMap<String, String>,
+    ) -> Self {
+        let home = environment.get("HOME").map(PathBuf::from);
         let root = |variable, suffix| {
-            std::env::var_os(variable)
+            environment
+                .get(variable)
                 .map(PathBuf::from)
                 .or_else(|| home.as_ref().map(|h| h.join(suffix)))
         };
@@ -163,8 +193,8 @@ impl DiscoveryContext {
             data_home: root("XDG_DATA_HOME", ".local/share"),
             config_home: root("XDG_CONFIG_HOME", ".config"),
             home,
-            runtime_dir: std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from),
-            environment: std::env::vars().collect(),
+            runtime_dir: environment.get("XDG_RUNTIME_DIR").map(PathBuf::from),
+            environment,
             spool,
             ..Self::default()
         }
