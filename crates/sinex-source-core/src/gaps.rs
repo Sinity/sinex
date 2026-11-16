@@ -35,13 +35,12 @@ pub fn source(class: sinex_model::Class) -> crate::DeclaredSource<Stateless<GapP
             name: "capture.gap",
             origin: Origin::Input(Shape::AppendFile),
             expect: Expectation::OnDemand,
-            expires_after: None,
             purpose: "intervals when a capture stream could not record",
             class,
             parser: "capture-gap",
-            parser_version: 1,
             event_types: &["capture.gap"],
-            framer: crate::Framer::incremental(crate::drivers::append_file::lines),
+            framer: crate::Framer::LINES,
+            ..crate::SourceSpec::DEFAULT
         },
         parser: Stateless(GapParser),
     }

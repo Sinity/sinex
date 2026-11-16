@@ -41,8 +41,8 @@ fn forecast_requests_keep_bytes_but_take_author_and_time_from_manifest() {
     let value = events[0].payload_as::<Issued>().unwrap();
     assert_eq!(value.by, "agent");
     assert_eq!(value.at, at);
-    assert_eq!(events[0].class::Guarded);
-    assert_eq!(events[0].location().unwrap().material, material.id);
+    assert_eq!(events[0].class, Class::Guarded);
+    assert_eq!(events[0].location().unwrap().0.material, material.id);
 }
 
 #[devkit::test]

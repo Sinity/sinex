@@ -44,8 +44,8 @@ fn query_requests_keep_bytes_and_use_manifest_authorship_without_changing_the_ma
     assert_eq!(payload.at, marked);
     assert_eq!(payload.by, "operator");
     assert_eq!(payload.written_at, at);
-    assert_eq!(events[0].class::Guarded);
-    assert_eq!(events[0].location().unwrap().material, material.id);
+    assert_eq!(events[0].class, Class::Guarded);
+    assert_eq!(events[0].location().unwrap().0.material, material.id);
 }
 
 #[devkit::test]
@@ -153,7 +153,7 @@ fn saved_query_records_carry_their_parsed_template() {
         .source,
         sinex_query::Source::RecallLast { filter: Some(_) }
     ));
-    assert_eq!(events[0].location().unwrap().material, material.id);
+    assert_eq!(events[0].location().unwrap().0.material, material.id);
 
     // The template is part of the record; a line without it is refused.
     let mut line: Value = serde_json::from_slice(&material.bytes).unwrap();

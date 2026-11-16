@@ -511,9 +511,10 @@ pub fn experiment_driver(root: PathBuf, host: String) -> DirSnapshot {
     }
 }
 
-/// `stage --parser machine-records PATH`: the machine root's record files and
-/// experiment runs, one binding each.
-super::input_format! { pub FORMAT = "machine-records" {
+super::input_format! {
+    /// `stage --parser machine-records PATH`: the machine root's record files and
+    /// experiment runs, one binding each.
+    pub FORMAT = "machine-records" {
     specs: || FILES.iter().map(|(spec, _)| *spec).collect(),
     source: |b| source(spec_of(&b.parser)?),
     discovery: DiscoverySpec::system(&[

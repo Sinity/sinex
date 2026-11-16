@@ -103,8 +103,9 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
     }
 }
 
-/// `stage --parser samsung-sms PATH`: each Samsung SMS backup (`SMS_*.csv`) under PATH.
-super::input_format! { pub FORMAT = "samsung-sms" {
+super::input_format! {
+    /// `stage --parser samsung-sms PATH`: each Samsung SMS backup (`SMS_*.csv`) under PATH.
+    pub FORMAT = "samsung-sms" {
     specs: [SPEC],
     parser: |_b| SmsParser,
     discovery: DiscoverySpec::system(&[Location::new("input", "samsung-sms")]),

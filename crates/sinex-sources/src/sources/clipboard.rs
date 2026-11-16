@@ -205,10 +205,11 @@ fn selection(b: &sinex_source_core::binding::Binding) -> &'static str {
     }
 }
 
-/// `stage --parser clipboard SPOOL`: the clipboard (or, with the option
-/// `selection: primary`, the primary selection), captured into SPOOL. The
-/// frame printer is this program's own `clipboard-frame` command.
-super::input_format! { pub FORMAT = "clipboard" {
+super::input_format! {
+    /// `stage --parser clipboard SPOOL`: the clipboard (or, with the option
+    /// `selection: primary`, the primary selection), captured into SPOOL. The
+    /// frame printer is this program's own `clipboard-frame` command.
+    pub FORMAT = "clipboard" {
     specs: [SPEC],
     parser: |_b| Stateless(ClipboardParser),
     discovery: DiscoverySpec {

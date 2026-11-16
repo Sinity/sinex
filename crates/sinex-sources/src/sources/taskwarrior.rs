@@ -6,7 +6,6 @@
 //! The working-set number (`id`) and `urgency` change without the task
 //! changing, so they are left out of the record hash.
 use crate::sources::fields;
-use crate::sources::input_format;
 use serde_json::{Map, Value};
 use sinex_model::Timestamp;
 use sinex_model::event_types::account::TaskRevised;
@@ -117,8 +116,9 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
     }
 }
 
-/// `stage --parser taskwarrior PATH`: each `task export` file in PATH.
-input_format! { pub FORMAT = "taskwarrior" {
+input_format! {
+    /// `stage --parser taskwarrior PATH`: each `task export` file in PATH.
+    pub FORMAT = "taskwarrior" {
     specs: [SPEC],
     parser: |_b| Stateless(TaskwarriorParser),
     discovery: DiscoverySpec::system(&[Location::new("input", "taskwarrior")]),

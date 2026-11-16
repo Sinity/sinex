@@ -114,9 +114,10 @@ fn archive_file(path: &std::path::Path) -> bool {
         .is_some_and(|n| n == "comments.jsonl" || n == "submissions.jsonl")
 }
 
-/// `stage --parser reddit-archive PATH`: an Arctic Shift pull of the operator's
-/// items, a directory holding its two files.
-super::input_format! { pub FORMAT = "reddit-archive" {
+super::input_format! {
+    /// `stage --parser reddit-archive PATH`: an Arctic Shift pull of the operator's
+    /// items, a directory holding its two files.
+    pub FORMAT = "reddit-archive" {
     specs: [SPEC],
     parser: |_b| Stateless(RedditArchiveParser),
     discovery: DiscoverySpec::system(&[Location::new("input", "reddit-archive")]),

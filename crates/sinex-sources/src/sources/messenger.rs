@@ -164,8 +164,9 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
     }
 }
 
-/// `stage --parser messenger PATH`: each Messenger export in PATH.
-super::input_format! { pub FORMAT = "messenger" {
+super::input_format! {
+    /// `stage --parser messenger PATH`: each Messenger export in PATH.
+    pub FORMAT = "messenger" {
     specs: [SPEC],
     parser: |_b| Stateless(MessengerParser),
     discovery: DiscoverySpec::system(&[Location::new("input", "messenger")]),

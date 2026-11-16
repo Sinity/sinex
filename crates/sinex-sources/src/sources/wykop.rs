@@ -460,8 +460,9 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
     }
 }
 
-/// `stage --parser wykop PATH`: each of the account's own Wykop export files in PATH.
-super::input_format! { pub FORMAT = "wykop" {
+super::input_format! {
+    /// `stage --parser wykop PATH`: each of the account's own Wykop export files in PATH.
+    pub FORMAT = "wykop" {
     specs: [SPEC],
     parser: |_b| Stateless(WykopParser),
     discovery: DiscoverySpec::system(&[Location::new("input", "wykop")]),

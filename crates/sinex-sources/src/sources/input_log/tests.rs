@@ -1,5 +1,6 @@
 use super::*;
 use sinex_model::{EventPayload, MaterialId, ReadingOrder, RecordOutcome, TimeQuality};
+use sinex_source_core::drivers::append_file::lines;
 use sinex_source_core::{DrainInput, Limits, drain};
 
 fn parse_all(lines: &[&str]) -> Vec<Input> {

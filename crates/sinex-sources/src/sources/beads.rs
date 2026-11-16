@@ -11,7 +11,6 @@
 //! new export with exactly the export whose records were admitted. Missing
 //! issues become removed readings even when the file changed while stopped.
 use crate::sources::fields;
-use crate::sources::input_format;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sinex_model::event_types::account::TaskRevised;
@@ -271,8 +270,9 @@ pub fn driver(path: PathBuf, host: String) -> ApiCursor<Export> {
     }
 }
 
-/// `stage --parser beads PATH`: a Beads JSONL export.
-input_format! { pub FORMAT = "beads" {
+input_format! {
+    /// `stage --parser beads PATH`: a Beads JSONL export.
+    pub FORMAT = "beads" {
     specs: [SPEC],
     parser: |_b| Stateless(BeadsParser),
     discovery: DiscoverySpec::system(&[Location::new("input", "beads")]),

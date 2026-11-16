@@ -305,8 +305,9 @@ pub fn driver(root: PathBuf, host: String) -> DirSnapshot {
     }
 }
 
-/// `stage --parser kitty-scrollback DIR`: the lake's scrollback snapshots in DIR.
-super::input_format! { pub FORMAT = "kitty-scrollback" {
+super::input_format! {
+    /// `stage --parser kitty-scrollback DIR`: the lake's scrollback snapshots in DIR.
+    pub FORMAT = "kitty-scrollback" {
     specs: [SPEC],
     parser: |_b| ScrollbackParser,
     discovery: DiscoverySpec::system(&[Location::new("capture", "kitty-scrollback")]),

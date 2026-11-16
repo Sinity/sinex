@@ -21,7 +21,6 @@
 //!
 //! Times are UTC: Lynchpin's materialized view read them as local time and is
 //! two hours late in summer.
-use crate::sources::input_format;
 use sinex_model::Timestamp;
 use sinex_model::event_types::desktop::{SampledWindow, WindowSampled};
 use sinex_source_core::discovery::{DiscoverySpec, Location};
@@ -255,8 +254,9 @@ pub fn driver(path: PathBuf, host: String) -> AppendFile {
     }
 }
 
-/// `stage --parser arbtt PATH`: each ARBTT `capture.log` under PATH.
-input_format! { pub FORMAT = "arbtt" {
+input_format! {
+    /// `stage --parser arbtt PATH`: each ARBTT `capture.log` under PATH.
+    pub FORMAT = "arbtt" {
     specs: [SPEC],
     parser: |_b| ArbttParser,
     discovery: DiscoverySpec::system(&[Location::new("home", ".arbtt/capture.log")]),

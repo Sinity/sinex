@@ -18,7 +18,6 @@
 //! or update time changes. A re-run of a run older than that is seen through
 //! its pull request's checks.
 use crate::sources::fields;
-use crate::sources::input_format;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sinex_model::event_types::code::{
@@ -1070,9 +1069,10 @@ fn reader(binding: &sinex_source_core::binding::Binding) -> Result<ApiCursor<Git
     Ok(ApiCursor { api: github })
 }
 
-/// `stage --parser github PATH`: the GitHub repository of the local repository at
-/// PATH.
-input_format! { pub FORMAT = "github" {
+input_format! {
+    /// `stage --parser github PATH`: the GitHub repository of the local repository at
+    /// PATH.
+    pub FORMAT = "github" {
     specs: [SPEC],
     parser: |_b| Stateless(GithubParser),
     discovery: DiscoverySpec {

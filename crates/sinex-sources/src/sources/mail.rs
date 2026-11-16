@@ -20,7 +20,6 @@
 //! message again under its new name and records the old name's reading as
 //! removed; the new reading is the newer one. A message kept in two folders
 //! and deleted from the one it was last read in is recorded as removed.
-use crate::sources::input_format;
 use mailparse::{MailHeaderMap, ParsedMail};
 use sinex_model::Timestamp;
 use sinex_model::event_types::communication::{MailAttachment, MailMessage};
@@ -345,8 +344,9 @@ pub fn maildir_driver(root: PathBuf, host: String) -> DirSnapshot {
     }
 }
 
-/// `stage --parser mbox PATH`: each mbox file in PATH.
-input_format! { pub MBOX_FORMAT = "mbox" {
+input_format! {
+    /// `stage --parser mbox PATH`: each mbox file in PATH.
+    pub MBOX_FORMAT = "mbox" {
     specs: [MBOX],
     parser: |_b| Stateless(MailParser),
     discovery: DiscoverySpec::system(&[Location::new("input", "mbox")]),
@@ -354,8 +354,9 @@ input_format! { pub MBOX_FORMAT = "mbox" {
     reader: shared(mbox_driver),
 } }
 
-/// `stage --parser maildir PATH`: the Maildir at PATH, walked as one directory.
-input_format! { pub MAILDIR_FORMAT = "maildir" {
+input_format! {
+    /// `stage --parser maildir PATH`: the Maildir at PATH, walked as one directory.
+    pub MAILDIR_FORMAT = "maildir" {
     specs: [MAILDIR],
     parser: |_b| Stateless(MaildirParser),
     discovery: DiscoverySpec::system(&[Location::new("input", "maildir")]),

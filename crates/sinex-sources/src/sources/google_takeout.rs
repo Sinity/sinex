@@ -8,7 +8,7 @@ pub mod keep;
 pub mod location;
 pub mod purchases;
 pub mod tasks;
-use sinex_source_core::binding::{Binding, Reading, shared};
+use sinex_source_core::binding::{Binding, shared};
 use sinex_source_core::discovery::{DiscoverySpec, Location};
 use sinex_source_core::drivers::export_archive::ExportArchive;
 use sinex_source_core::registry::SourceSpec;
@@ -73,10 +73,11 @@ pub fn takeout_member(member: &str) -> bool {
     member.starts_with("Takeout/")
 }
 
-/// `stage --parser takeout PATH`: every product of each Takeout archive in PATH,
-/// plus the calendars in it; each product its own binding, so each keeps its
-/// own cursor.
-super::input_format! { pub FORMAT = "takeout" {
+super::input_format! {
+    /// `stage --parser takeout PATH`: every product of each Takeout archive in PATH,
+    /// plus the calendars in it; each product its own binding, so each keeps its
+    /// own cursor.
+    pub FORMAT = "takeout" {
     specs: [
         activity::MY_ACTIVITY,
         activity::YOUTUBE,
@@ -109,7 +110,7 @@ super::input_format! { pub FORMAT = "takeout" {
         }
         Ok(out)
     },
-    reader: |b| -> Result<Reading, String> {
+    reader: |b| {
         if b.source == super::calendar::SPEC.name {
             return (super::calendar::FORMAT.reader.expect("calendar reads"))(b);
         }

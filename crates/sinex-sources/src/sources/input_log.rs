@@ -20,7 +20,7 @@ use sinex_model::event_types::input::{
 use sinex_model::{Class, Timestamp};
 use sinex_source_core::RecordResult;
 use sinex_source_core::discovery::{DiscoverySpec, Location};
-use sinex_source_core::drivers::append_file::{AppendFile, lines};
+use sinex_source_core::drivers::append_file::AppendFile;
 use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::collections::BTreeMap;
@@ -307,8 +307,9 @@ pub fn driver(path: PathBuf, host: String) -> AppendFile {
     }
 }
 
-/// `stage --parser input-log DIR`: each day's log in DIR, or one log file.
-super::input_format! { pub FORMAT = "input-log" {
+super::input_format! {
+    /// `stage --parser input-log DIR`: each day's log in DIR, or one log file.
+    pub FORMAT = "input-log" {
     specs: [SPEC],
     parser: |_b| InputLogParser,
     discovery: DiscoverySpec::system(&[Location::new("capture", "keylog")]),

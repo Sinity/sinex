@@ -356,9 +356,10 @@ impl StatelessParser for JournalExportParser {
     }
 }
 
-/// Raw JSON-lines exports, including a final record without a newline.
 #[cfg(feature = "full")]
-super::input_format! { pub EXPORT_FORMAT = "journal-json" {
+super::input_format! {
+    /// Raw JSON-lines exports, including a final record without a newline.
+    pub EXPORT_FORMAT = "journal-json" {
     specs: [EXPORT_SPEC],
     parser: |_b| Stateless(JournalExportParser),
     discovery: DiscoverySpec::system(&[Location::new("input", "journal-json")]),
@@ -424,7 +425,7 @@ fn resume_cursor(spool: &Path) -> std::io::Result<Option<String>> {
 fn save_resume_cursor(spool: &Path, cursor: &str) -> std::io::Result<()> {
     let temporary = spool.join(format!("{RESUME_FILE}.tmp"));
     std::fs::write(&temporary, cursor.as_bytes())?;
-    sinex_source_core::drivers::media::place(spool, &temporary, &spool.join(RESUME_FILE))
+    sinex_transport::durable::place(&temporary, &spool.join(RESUME_FILE))
 }
 
 /// The cursor of the last complete entry in the spool's segments.
@@ -596,11 +597,12 @@ fn spool_entries(
     Ok(count)
 }
 
-/// `stage --parser journald SPOOL`: the journal, captured into SPOOL. Options:
-/// `directory` (archived journal files to read instead of the live journal),
-/// `since` (where a first capture starts, a `journalctl --since` expression;
-/// the whole journal otherwise) and `follow`.
-super::input_format! { pub FORMAT = "journald" {
+super::input_format! {
+    /// `stage --parser journald SPOOL`: the journal, captured into SPOOL. Options:
+    /// `directory` (archived journal files to read instead of the live journal),
+    /// `since` (where a first capture starts, a `journalctl --since` expression;
+    /// the whole journal otherwise) and `follow`.
+    pub FORMAT = "journald" {
     specs: [SPEC],
     parser: |_b| Stateless(JournaldParser),
     discovery: DiscoverySpec {

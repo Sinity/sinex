@@ -18,7 +18,6 @@
 //!
 //! A commit that cannot be decoded is a record failure of its own; the rest
 //! of the poll is read.
-use crate::sources::input_format;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -454,8 +453,9 @@ pub fn driver(path: PathBuf, host: String) -> ApiCursor<Repository> {
     }
 }
 
-/// `stage --parser repository PATH`: a local repository's commits and ref updates.
-input_format! { pub FORMAT = "repository" {
+input_format! {
+    /// `stage --parser repository PATH`: a local repository's commits and ref updates.
+    pub FORMAT = "repository" {
     specs: [SPEC],
     parser: |_b| Stateless(GitParser),
     discovery: DiscoverySpec::system(&[Location::new("projects", "")]),

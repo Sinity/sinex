@@ -388,6 +388,7 @@ async fn a_plan_is_not_admitted_after_curation_changed_under_it(db: devkit::pg::
         blobs: &w.blobs,
         host: "h",
         roots: &[],
+        cache: w.root.as_path(),
         time_settings: sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
             .unwrap(),
     };
@@ -449,6 +450,7 @@ async fn a_stale_base_or_withdrawal_expectation_is_refused_inside_admission(
             blobs: &w.blobs,
             host: "h",
             roots: &[],
+            cache: w.root.as_path(),
             time_settings: sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
                 .unwrap(),
         };
@@ -521,6 +523,7 @@ async fn store_raw(w: &mut World, records: Vec<Curation>) {
         blobs: &w.blobs,
         host: "h",
         roots: &[],
+        cache: w.root.as_path(),
         time_settings: sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
             .unwrap(),
     };

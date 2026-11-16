@@ -374,8 +374,9 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
     }
 }
 
-/// `stage --parser samsung-account PATH`: each table of a Samsung account export under PATH.
-super::input_format! { pub FORMAT = "samsung-account" {
+super::input_format! {
+    /// `stage --parser samsung-account PATH`: each table of a Samsung account export under PATH.
+    pub FORMAT = "samsung-account" {
     specs: [SPEC],
     parser: |_b| SamsungCloudParser,
     discovery: DiscoverySpec::system(&[Location::new("input", "samsung-account")]),

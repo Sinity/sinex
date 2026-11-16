@@ -344,9 +344,10 @@ pub fn driver(spool: PathBuf, host: String) -> LiveStream {
     }
 }
 
-/// `stage --parser file-watch SPOOL`: changes under the directories in the
-/// `roots` option (and not under `skip` names), captured into SPOOL.
-super::input_format! { pub FORMAT = "file-watch" {
+super::input_format! {
+    /// `stage --parser file-watch SPOOL`: changes under the directories in the
+    /// `roots` option (and not under `skip` names), captured into SPOOL.
+    pub FORMAT = "file-watch" {
     specs: [SPEC],
     parser: |_b| Stateless(FileWatchParser),
     discovery: DiscoverySpec {

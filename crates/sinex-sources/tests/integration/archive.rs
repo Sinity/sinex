@@ -107,7 +107,9 @@ fn facts(length: usize) -> ObservationFacts {
 fn route(cursor: Value, budget: usize) -> Route {
     driver(budget).route(cursor, Class::Open)
 }
-fn source(index: usize) -> sinex_source_core::DeclaredSource<fit::FitParser> {
+fn source(
+    index: usize,
+) -> sinex_source_core::DeclaredSource<sinex_source_core::Stateless<fit::FitParser>> {
     let mut source = fit::source();
     source.spec.name = if index == 0 {
         "synthetic.fit-a"

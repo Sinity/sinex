@@ -132,8 +132,9 @@ pub fn driver(path: PathBuf, host: String) -> AppendFile {
     }
 }
 
-/// `stage --parser bash PATH`: a bash history file.
-super::input_format! { pub FORMAT = "bash" {
+super::input_format! {
+    /// `stage --parser bash PATH`: a bash history file.
+    pub FORMAT = "bash" {
     specs: [SPEC],
     parser: |b| BashParser { host: b.settings.host.clone() },
     discovery: DiscoverySpec::system(&[Location::new("environment", "BASH_HISTFILE")]),

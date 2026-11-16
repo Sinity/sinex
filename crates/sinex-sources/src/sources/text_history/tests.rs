@@ -1,7 +1,7 @@
 use super::*;
 use crate::test_support::body;
 use sinex_model::{EventPayload, MaterialId, ReadingOrder, RecordOutcome};
-use sinex_source_core::{DrainInput, Limits};
+use sinex_source_core::{DrainInput, Limits, binding};
 
 #[devkit::test]
 fn only_line_terminators_are_removed_and_no_time_is_invented() {
@@ -50,9 +50,9 @@ fn every_append_split_keeps_complete_utf8_lines_and_duplicate_locations() {
     }
     let records = frame(raw).0;
     let events = sinex_source_core::drain(
-        &TextHistoryParser {
+        &Stateless(TextHistoryParser {
             host: "example-host".into(),
-        },
+        }),
         DrainInput {
             source: SPEC.name,
             class: Class::Guarded,

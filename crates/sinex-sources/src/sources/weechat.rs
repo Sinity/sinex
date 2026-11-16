@@ -137,9 +137,10 @@ pub fn driver(path: PathBuf, host: String) -> AppendFile {
     }
 }
 
-/// `stage --parser weechat PATH`: each WeeChat log under PATH, read in the
-/// binding's zone (WeeChat writes local times), recorded when it is planned.
-super::input_format! { pub FORMAT = "weechat" {
+super::input_format! {
+    /// `stage --parser weechat PATH`: each WeeChat log under PATH, read in the
+    /// binding's zone (WeeChat writes local times), recorded when it is planned.
+    pub FORMAT = "weechat" {
     specs: [SPEC],
     parser: |b| {
         Stateless(WeeChatParser {

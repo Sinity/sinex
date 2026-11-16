@@ -63,8 +63,8 @@ fn decisions_take_their_author_channel_and_time_from_the_request() {
         events[0].ts_orig.at,
         Some(Timestamp::from_unix_secs(50).unwrap())
     );
-    assert_eq!(events[0].class::Guarded);
-    assert_eq!(events[0].location().unwrap().material, material);
+    assert_eq!(events[0].class, Class::Guarded);
+    assert_eq!(events[0].location().unwrap().0.material, material);
 }
 
 #[devkit::test]

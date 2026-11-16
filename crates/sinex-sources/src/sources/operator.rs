@@ -8,7 +8,6 @@
 //! commitments, activities and reviews, read on `SqliteRows`, one table per
 //! binding; every row can change (a commitment's status), so each poll
 //! compares them all.
-use crate::sources::input_format;
 use serde_json::{Map, Value};
 use sinex_model::{
     Timestamp,
@@ -171,9 +170,10 @@ pub fn steering(table: &'static str) -> Option<DeclaredSource<Stateless<Steering
     })
 }
 
-/// `stage --parser raw-log PATH`: the operator's raw log, read in the binding's
-/// zone, recorded when it is planned.
-input_format! { pub RAW_LOG_FORMAT = "raw-log" {
+input_format! {
+    /// `stage --parser raw-log PATH`: the operator's raw log, read in the binding's
+    /// zone, recorded when it is planned.
+    pub RAW_LOG_FORMAT = "raw-log" {
     specs: [RAW_LOG], parser: |b| Stateless(RawLogParser { zone: b.settings.zone()? }),
     discovery: DiscoverySpec::system(&[Location::new("declared", "raw-log")]),
     plan: |input, settings| Ok(binding::single(&RAW_LOG, input, &settings.clone().with_zone()?)),
@@ -188,8 +188,9 @@ fn steering_table(b: &Binding) -> Result<&'static str, String> {
         .ok_or_else(|| format!("{}: not a steering table", b.parser))
 }
 
-/// `stage --parser steering PATH`: the steering store's three tables.
-input_format! { pub STEERING_FORMAT = "steering" {
+input_format! {
+    /// `stage --parser steering PATH`: the steering store's three tables.
+    pub STEERING_FORMAT = "steering" {
     specs: || STEERING.iter().collect(), source: |b| {
         let table = steering_table(b)?;
         steering(table).map(|s| Box::new(s) as Box<dyn Source>)

@@ -1,5 +1,4 @@
 //! Explicit transcript imports. Relative offsets are never receipt timestamps.
-use crate::sources::input_format;
 use query_language::number::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};

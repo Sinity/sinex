@@ -173,8 +173,9 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
     }
 }
 
-/// `stage --parser spotify PATH`: each Spotify export archive in PATH.
-super::input_format! { pub FORMAT = "spotify" {
+super::input_format! {
+    /// `stage --parser spotify PATH`: each Spotify export archive in PATH.
+    pub FORMAT = "spotify" {
     specs: [SPEC],
     parser: |_b| Stateless(SpotifyParser),
     discovery: DiscoverySpec::system(&[Location::new("input", "spotify")]),

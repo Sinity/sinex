@@ -234,8 +234,9 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
     }
 }
 
-/// `stage --parser sleep-as-android PATH`: each Sleep as Android export in PATH.
-super::input_format! { pub FORMAT = "sleep-as-android" {
+super::input_format! {
+    /// `stage --parser sleep-as-android PATH`: each Sleep as Android export in PATH.
+    pub FORMAT = "sleep-as-android" {
     specs: [SPEC],
     parser: |_b| SleepParser,
     discovery: DiscoverySpec::system(&[Location::new("input", "sleep-as-android")]),

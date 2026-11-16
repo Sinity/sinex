@@ -11,7 +11,6 @@
 //! time ends, a line takes the later of its two instants unless that is after
 //! the sample that read it.
 use super::fields::{FieldReader, unix_seconds};
-use crate::sources::input_format;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use sinex_model::event_types::router::{
@@ -441,10 +440,11 @@ pub fn driver(path: PathBuf, host: String) -> AppendFile {
     }
 }
 
-/// `stage --parser router PATH`: every lane day file under PATH (the router
-/// directory, one lane's directory or one day file), read in the binding's
-/// zone, recorded when it is planned.
-input_format! { pub FORMAT = "router" {
+input_format! {
+    /// `stage --parser router PATH`: every lane day file under PATH (the router
+    /// directory, one lane's directory or one day file), read in the binding's
+    /// zone, recorded when it is planned.
+    pub FORMAT = "router" {
     specs: || LANES.iter().map(|(spec, _)| spec).collect(),
     source: |b| {
         let (spec, lane) = LANES

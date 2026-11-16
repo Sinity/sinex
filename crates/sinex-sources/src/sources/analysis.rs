@@ -1,5 +1,4 @@
 //! Authenticated analysis requests keep their own source material.
-use crate::sources::input_format;
 use serde_json::{Map, Value, json};
 use sinex_model::{
     InputRef, MaterialId, ObservationFacts, ReadingOrder, RevisionChange, Timestamp,

@@ -74,8 +74,9 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
     }
 }
 
-/// `stage --parser takeout-chrome PATH`: each Takeout Chrome history in PATH.
-super::input_format! { pub FORMAT = "takeout-chrome" {
+super::input_format! {
+    /// `stage --parser takeout-chrome PATH`: each Takeout Chrome history in PATH.
+    pub FORMAT = "takeout-chrome" {
     specs: [SPEC],
     parser: |_b| Stateless(TakeoutChromeParser),
     discovery: DiscoverySpec::system(&[Location::new("input", "takeout-chrome")]),

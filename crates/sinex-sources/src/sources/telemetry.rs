@@ -69,9 +69,10 @@ pub fn driver(spool: PathBuf, host: String) -> LiveStream {
     }
 }
 
-/// `stage --parser sinex-telemetry SPOOL`: the samples a daemon spooled into SPOOL.
-/// The daemon reads its own spool without configuration.
-super::input_format! { pub FORMAT = "sinex-telemetry" {
+super::input_format! {
+    /// `stage --parser sinex-telemetry SPOOL`: the samples a daemon spooled into SPOOL.
+    /// The daemon reads its own spool without configuration.
+    pub FORMAT = "sinex-telemetry" {
     specs: [SPEC],
     parser: |_b| Stateless(TelemetryParser),
     discovery: DiscoverySpec {

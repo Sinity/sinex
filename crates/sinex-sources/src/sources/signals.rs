@@ -1,6 +1,5 @@
 //! Authored signal rules, the host deliverer's outcomes and the evaluator
 //! reports other products forward.
-use crate::sources::input_format;
 use serde_json::{Map, Value, json};
 use sinex_model::{
     InputRef, MaterialId, ObservationFacts, ReadingOrder, RevisionChange, Timestamp,
@@ -11,10 +10,7 @@ use sinex_source_core::{
     DeclaredSource, Expectation, Framer, Origin, RecordContext, RecordError, RecordResult,
     SourceSpec, Stateless, StatelessParser,
     discovery::DiscoverySpec,
-    drivers::{
-        Acquired, NewMaterial,
-        export_archive::{Framing, frame_lines},
-    },
+    drivers::{Acquired, NewMaterial, export_archive::Framing},
 };
 
 pub const SPEC: SourceSpec = SourceSpec {
@@ -137,8 +133,7 @@ impl StatelessParser for SignalParser {
                 detail("authenticated_producer")?,
                 detail("authenticated_family")?,
                 at,
-            )
-            .map(|records| (records, ()));
+            );
         }
         let mut record: SignalRecord =
             serde_json::from_value(Value::Object(record.clone())).record("invalid record")?;

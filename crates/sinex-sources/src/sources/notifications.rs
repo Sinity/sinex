@@ -228,9 +228,10 @@ pub fn capture(
     dbus::capture(MATCHES, &[], spool, stop)
 }
 
-/// `stage --parser notifications SPOOL`: desktop notifications on the session
-/// bus, captured into SPOOL.
-super::input_format! { pub FORMAT = "notifications" {
+super::input_format! {
+    /// `stage --parser notifications SPOOL`: desktop notifications on the session
+    /// bus, captured into SPOOL.
+    pub FORMAT = "notifications" {
     specs: [SPEC],
     parser: |_b| NotificationsParser,
     discovery: DiscoverySpec {

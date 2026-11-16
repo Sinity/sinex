@@ -345,9 +345,10 @@ pub fn driver(path: PathBuf, host: String, spec: &SourceSpec) -> AppendFile {
     }
 }
 
-/// `stage --parser asciinema PATH`: each recording directory under PATH, its cast
-/// and the capture's events beside it.
-super::input_format! { pub FORMAT = "asciinema" {
+super::input_format! {
+    /// `stage --parser asciinema PATH`: each recording directory under PATH, its cast
+    /// and the capture's events beside it.
+    pub FORMAT = "asciinema" {
     specs: [CAST, EVENTS],
     source: |b| {
         if b.source == CAST.name {

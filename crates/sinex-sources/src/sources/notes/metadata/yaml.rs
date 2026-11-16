@@ -5,7 +5,7 @@ use serde::{
     Deserialize, Deserializer,
     de::{self, MapAccess, SeqAccess, Visitor},
 };
-use serde_saphyr::granit_parser::{Event, ScalarStyle};
+use serde_saphyr::granit_parser::{Event, Parser, ScalarStyle};
 use std::fmt;
 
 fn invalid(kind: NoteFrontMatterError, line: Option<u64>, column: Option<u64>) -> NoteFrontMatter {

@@ -1,7 +1,6 @@
 //! Duplicate decisions (`same`, `distinct`, `withdraw-decision`) kept as
 //! JSON-line request materials. The server supplies the author, channel and
 //! time from the request's manifest; a line cannot claim another author.
-use crate::sources::input_format;
 use serde_json::{Map, Value, json};
 use sinex_model::{
     Class, InputRef, MaterialId, ObservationFacts, ReadingOrder, RevisionChange, Timestamp,

@@ -7,7 +7,6 @@
 //! A note whose front matter declares an `id` is identified by that ID, so a
 //! renamed or moved note is a newer reading of the same note. Directory
 //! removals cite stored record locations, including when the content is sealed.
-use serde_json::Value;
 use sinex_model::Timestamp;
 use sinex_model::event_types::media::NoteDocument;
 use sinex_model::json::JsonExt;
@@ -134,8 +133,9 @@ pub fn driver(root: PathBuf, host: String) -> DirSnapshot {
     }
 }
 
-/// `stage --parser notes PATH`: the note vault at PATH, walked as one directory.
-super::input_format! { pub FORMAT = "notes" {
+super::input_format! {
+    /// `stage --parser notes PATH`: the note vault at PATH, walked as one directory.
+    pub FORMAT = "notes" {
     specs: [SPEC],
     source: |_b| Ok(Box::new(source())),
     discovery: DiscoverySpec::system(&[Location::new("declared", "notes")]),

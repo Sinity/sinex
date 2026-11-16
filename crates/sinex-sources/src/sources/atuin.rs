@@ -130,8 +130,9 @@ pub fn driver(path: PathBuf, host: String) -> SqliteRows {
     }
 }
 
-/// `stage --parser atuin PATH`: Atuin's history database.
-super::input_format! { pub FORMAT = "atuin" {
+super::input_format! {
+    /// `stage --parser atuin PATH`: Atuin's history database.
+    pub FORMAT = "atuin" {
     specs: [SPEC],
     source: |_b| Ok(Box::new(source())),
     discovery: DiscoverySpec::system(&[Location::new("data", "atuin/history.db")]),

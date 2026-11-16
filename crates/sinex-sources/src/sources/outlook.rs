@@ -148,9 +148,10 @@ pub fn csv_driver(path: PathBuf, host: String) -> ExportArchive {
     }
 }
 
-/// `stage --parser outlook PATH`: each `.pst` under PATH, converted with `readpst`
-/// to one mbox per folder, each folder its own stable binding of the PST.
-super::input_format! { pub FORMAT = "outlook" {
+super::input_format! {
+    /// `stage --parser outlook PATH`: each `.pst` under PATH, converted with `readpst`
+    /// to one mbox per folder, each folder its own stable binding of the PST.
+    pub FORMAT = "outlook" {
     specs: [PST],
     parser: |_b| Stateless(mail::MailParser),
     discovery: DiscoverySpec::system(&[Location::new("input", "outlook")]),
@@ -158,8 +159,9 @@ super::input_format! { pub FORMAT = "outlook" {
     reader: |b| staging::reader(b),
 } }
 
-/// `stage --parser outlook-csv PATH`: each Outlook CSV export under PATH.
-super::input_format! { pub CSV_FORMAT = "outlook-csv" {
+super::input_format! {
+    /// `stage --parser outlook-csv PATH`: each Outlook CSV export under PATH.
+    pub CSV_FORMAT = "outlook-csv" {
     specs: [CSV],
     parser: |_b| CsvParser,
     discovery: DiscoverySpec::system(&[Location::new("input", "outlook-csv")]),

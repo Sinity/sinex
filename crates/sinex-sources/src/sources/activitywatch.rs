@@ -16,7 +16,6 @@
 //!   those sources, not something a single row can show.
 //!
 //! The correction parameters live in [`CORRECTIONS`], one declaration.
-use crate::sources::input_format;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sinex_model::event_types::desktop::{
@@ -266,8 +265,9 @@ pub fn driver(path: PathBuf, host: String) -> SqliteRows {
     }
 }
 
-/// `stage --parser activitywatch PATH`: `aw-server-rust`'s database.
-input_format! { pub FORMAT = "activitywatch" {
+input_format! {
+    /// `stage --parser activitywatch PATH`: `aw-server-rust`'s database.
+    pub FORMAT = "activitywatch" {
     specs: [SPEC],
     parser: |_b| ActivityWatchParser,
     discovery: DiscoverySpec::system(&[Location::new("data", "activitywatch/aw-server-rust/sqlite.db")]),

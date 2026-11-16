@@ -1,5 +1,4 @@
 //! Explicit plain history. Every nonempty complete line is an untimed command.
-use crate::sources::input_format;
 use sinex_model::{Class, event_types::CommandImported};
 use sinex_source_core::discovery::{DiscoverySpec, Location};
 use sinex_source_core::drivers::append_file::AppendFile;

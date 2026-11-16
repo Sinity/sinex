@@ -1,7 +1,7 @@
 //! Converted folders live in private managed directories owned by their readers.
 use super::{PST, pst_driver};
 use serde_json::Value;
-use sinex_model::ObservationFacts;
+use sinex_model::{Class, ObservationFacts};
 use sinex_source_core::DriverError;
 use sinex_source_core::binding::{Binding, Reading, Settings};
 use sinex_source_core::shared_pass::{Acquisition, Route, SharedPass, SharedReadStart};

@@ -305,7 +305,7 @@ fn empty_and_nonempty_members_keep_body_ranges_in_every_order() {
             assert_eq!(end - start, body.len());
         }
         let chunks = drain(
-            &notes::NotesParser,
+            &crate::Stateless(notes::NotesParser),
             crate::DrainInput {
                 source: "synthetic",
                 class: Class::Open,

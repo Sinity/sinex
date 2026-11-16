@@ -4,7 +4,6 @@ pub mod framing;
 mod includes;
 mod posting;
 
-use crate::sources::input_format;
 use serde::{Deserialize, Serialize};
 use sinex_model::json::JsonExt;
 use sinex_model::{

@@ -1,6 +1,5 @@
 //! Additional document roots store file bytes independently of text extraction.
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use sinex_model::event_types::documents::DocumentCaptured;
 use sinex_model::json::JsonExt;
 use sinex_model::{Class, Timestamp};

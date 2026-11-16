@@ -398,9 +398,10 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
     }
 }
 
-/// `stage --parser calendar PATH`: each calendar export in PATH. Floating times are
-/// read in the binding's zone, recorded when it is planned.
-super::input_format! { pub FORMAT = "calendar" {
+super::input_format! {
+    /// `stage --parser calendar PATH`: each calendar export in PATH. Floating times are
+    /// read in the binding's zone, recorded when it is planned.
+    pub FORMAT = "calendar" {
     specs: [SPEC],
     parser: |b| {
         Stateless(CalendarParser {

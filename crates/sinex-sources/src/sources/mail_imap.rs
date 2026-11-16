@@ -24,7 +24,6 @@
 //! The client is a small synchronous IMAP4rev1 client (RFC 3501): the
 //! commands live mail needs (LOGIN or AUTHENTICATE XOAUTH2, SELECT, UID
 //! FETCH, IDLE, LOGOUT) over TLS (rustls) or, for tests, plain TCP.
-use crate::sources::input_format;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -597,9 +596,10 @@ fn read_memory(mut rest: &[u8]) -> Result<Vec<(u32, sinex_model::RecordLocation)
     Ok(out)
 }
 
-/// `stage --parser imap CONFIG.json`: live mail from the account CONFIG describes,
-/// the messages new since the last read.
-input_format! { pub FORMAT = "imap" {
+input_format! {
+    /// `stage --parser imap CONFIG.json`: live mail from the account CONFIG describes,
+    /// the messages new since the last read.
+    pub FORMAT = "imap" {
     specs: [SPEC],
     parser: |_b| Stateless(super::mail::MailParser),
     discovery: DiscoverySpec {

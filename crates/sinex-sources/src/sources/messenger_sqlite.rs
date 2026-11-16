@@ -80,8 +80,9 @@ pub fn driver(path: PathBuf, host: String) -> SqliteRows {
     }
 }
 
-/// `stage --parser messenger-sqlite PATH`: an `fbmessengerexport` database.
-super::input_format! { pub FORMAT = "messenger-sqlite" {
+super::input_format! {
+    /// `stage --parser messenger-sqlite PATH`: an `fbmessengerexport` database.
+    pub FORMAT = "messenger-sqlite" {
     specs: [SPEC],
     parser: |_b| Stateless(MessengerSqliteParser),
     discovery: DiscoverySpec::system(&[Location::new("input", "messenger-sqlite")]),

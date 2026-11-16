@@ -198,8 +198,9 @@ pub fn capture(
     Ok(count)
 }
 
-/// `stage --parser udev SPOOL`: device events from udev, captured into SPOOL.
-super::input_format! { pub FORMAT = "udev" {
+super::input_format! {
+    /// `stage --parser udev SPOOL`: device events from udev, captured into SPOOL.
+    pub FORMAT = "udev" {
     specs: [SPEC],
     parser: |_b| Stateless(UdevParser),
     discovery: DiscoverySpec {

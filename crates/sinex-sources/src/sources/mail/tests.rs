@@ -1,4 +1,5 @@
 use super::*;
+use sinex_model::Class;
 
 const MESSAGE: &[u8] = b"From 1234@xxx Tue Mar 05 10:00:00 +0000 2024\n\
 X-GM-THRID: 1790000000000000001\n\
@@ -186,7 +187,7 @@ fn a_deleted_maildir_message_is_removed_where_it_was_read() {
     );
     // The renamed file is read again; the removal markers read as nothing.
     let chunks = sinex_source_core::drain(
-        &MailParser,
+        &Stateless(MailParser),
         sinex_source_core::DrainInput {
             source: "communication.maildir",
             class: Class::Open,

@@ -1,73 +1,74 @@
 //! Every source, one module per family, registered in one list.
 macro_rules! input_format {
-    ($vis:vis $name:ident = $format:literal {
+    ($(#[$attr:meta])* $vis:vis $name:ident = $format:literal {
         specs: [$first:expr $(, $spec:expr)* $(,)?], parser: |$b:ident| $parser:expr,
         $($fields:tt)*
     }) => {
-        input_format!(@fields $vis $name = $format;
+        input_format!(@fields [$($attr),*] $vis $name = $format;
             (|| vec![&$first $(, &$spec)*]);
             (|$b| Ok(Box::new(::sinex_source_core::DeclaredSource { spec: $first, parser: $parser })));
             $($fields)*
         );
     };
-    ($vis:vis $name:ident = $format:literal {
+    ($(#[$attr:meta])* $vis:vis $name:ident = $format:literal {
         specs: [$($spec:expr),+ $(,)?], source: $source:expr,
         $($fields:tt)*
     }) => {
-        input_format!(@fields $vis $name = $format;
+        input_format!(@fields [$($attr),*] $vis $name = $format;
             (|| vec![$(&$spec),+]); ($source); $($fields)*
         );
     };
-    ($vis:vis $name:ident = $format:literal {
+    ($(#[$attr:meta])* $vis:vis $name:ident = $format:literal {
         specs: $specs:expr, source: $source:expr,
         $($fields:tt)*
     }) => {
-        input_format!(@fields $vis $name = $format; ($specs); ($source); $($fields)*);
+        input_format!(@fields [$($attr),*] $vis $name = $format; ($specs); ($source); $($fields)*);
     };
-    (@fields $vis:vis $name:ident = $format:literal; ($specs:expr); ($source:expr);
+    (@fields [$($attr:meta),*] $vis:vis $name:ident = $format:literal; ($specs:expr); ($source:expr);
         discovery: $discovery:expr,
         $(accepts: [$($accept:expr),* $(,)?],)?
         $(discover: $discover:expr,)?
         plan: $plan:ident, $($reader:tt)*
     ) => {
-        input_format!(@reading $vis $name = $format; ($specs); ($source);
+        input_format!(@reading [$($attr),*] $vis $name = $format; ($specs); ($source);
             $discovery; [$($($accept),*)?]; [$($discover)?];
             input_format!(@plan ($specs) $plan); $($reader)*
         );
     };
-    (@fields $vis:vis $name:ident = $format:literal; ($specs:expr); ($source:expr);
+    (@fields [$($attr:meta),*] $vis:vis $name:ident = $format:literal; ($specs:expr); ($source:expr);
         discovery: $discovery:expr,
         $(accepts: [$($accept:expr),* $(,)?],)?
         $(discover: $discover:expr,)?
         plan: |$i:ident, $s:ident| $body:expr, $($reader:tt)*
     ) => {
-        input_format!(@reading $vis $name = $format; ($specs); ($source);
+        input_format!(@reading [$($attr),*] $vis $name = $format; ($specs); ($source);
             $discovery; [$($($accept),*)?]; [$($discover)?];
             Some(|$i, $s| $body); $($reader)*
         );
     };
-    (@reading $vis:vis $name:ident = $format:literal; ($specs:expr); ($source:expr);
+    (@reading [$($attr:meta),*] $vis:vis $name:ident = $format:literal; ($specs:expr); ($source:expr);
         $discovery:expr; [$($accept:expr),*]; [$($discover:expr)?]; $plan:expr;
         reader: $kind:ident $(($driver:path))?, $(capture: $capture:expr,)?
     ) => {
-        input_format!(@build $vis $name = $format; ($specs); ($source);
+        input_format!(@build [$($attr),*] $vis $name = $format; ($specs); ($source);
             $discovery; [$($accept),*]; [$($discover)?]; $plan;
             input_format!(@reader $kind $(($driver))?); [$($capture)?]
         );
     };
-    (@reading $vis:vis $name:ident = $format:literal; ($specs:expr); ($source:expr);
+    (@reading [$($attr:meta),*] $vis:vis $name:ident = $format:literal; ($specs:expr); ($source:expr);
         $discovery:expr; [$($accept:expr),*]; [$($discover:expr)?]; $plan:expr;
         reader: |$b:ident| $body:expr, $(capture: $capture:expr,)?
     ) => {
-        input_format!(@build $vis $name = $format; ($specs); ($source);
+        input_format!(@build [$($attr),*] $vis $name = $format; ($specs); ($source);
             $discovery; [$($accept),*]; [$($discover)?]; $plan;
             Some(|$b| $body); [$($capture)?]
         );
     };
-    (@build $vis:vis $name:ident = $format:literal; ($specs:expr); ($source:expr);
+    (@build [$($attr:meta),*] $vis:vis $name:ident = $format:literal; ($specs:expr); ($source:expr);
         $discovery:expr; [$($accept:expr),*]; [$($discover:expr)?]; $plan:expr;
         $reader:expr; [$($capture:expr)?]
     ) => {
+        $(#[$attr])*
         $vis const $name: ::sinex_source_core::InputFormat = ::sinex_source_core::InputFormat {
             name: $format, specs: $specs, source: $source, discovery: $discovery,
             accepts: &[$($accept),*],

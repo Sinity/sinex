@@ -55,8 +55,9 @@ pub const REQUEST: SourceSpec = SourceSpec {
     ..SourceSpec::DEFAULT
 };
 
-/// Library roots are bindings like any other; library requests are supplied by the API.
-super::input_format! { pub FORMAT = "library" {
+super::input_format! {
+    /// Library roots are bindings like any other; library requests are supplied by the API.
+    pub FORMAT = "library" {
     specs: [SCAN, REQUEST],
     source: |b| {
         if b.source == SCAN.name {

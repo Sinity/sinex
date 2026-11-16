@@ -1,6 +1,5 @@
 //! Explicit OCR imports preserve provider confidence scales and geometry.
 use super::transcript::{Carry, identifier, optional_number, optional_string, required_string};
-use crate::sources::input_format;
 use serde_json::{Map, Value};
 use sinex_model::Class;
 use sinex_model::event_types::imported_text::{BoundingBox, OcrText};

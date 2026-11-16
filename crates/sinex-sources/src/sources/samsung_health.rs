@@ -299,8 +299,9 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
     }
 }
 
-/// `stage --parser samsung-health PATH`: each Samsung Health export ZIP under PATH.
-super::input_format! { pub FORMAT = "samsung-health" {
+super::input_format! {
+    /// `stage --parser samsung-health PATH`: each Samsung Health export ZIP under PATH.
+    pub FORMAT = "samsung-health" {
     specs: [SPEC, ATTACHMENTS],
     source: |b| {
         if b.parser == ATTACHMENTS.parser {

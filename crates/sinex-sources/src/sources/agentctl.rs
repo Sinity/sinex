@@ -9,7 +9,7 @@
 //! receipt and evidence (manifests of the checkout's files, up to megabytes)
 //! stay in the stored line; the event carries the checkout's HEAD at the
 //! job's start and end from them.
-use crate::sources::{fields, input_format};
+use crate::sources::fields;
 use serde_json::{Map, Value};
 use sinex_model::{event_types::work::AgentctlEvent, json::JsonExt};
 use sinex_source_core::{
@@ -92,8 +92,9 @@ impl StatelessParser for AgentctlParser {
     }
 }
 
-/// `stage --parser agentctl PATH`: AgentCTL's event log.
-input_format! { pub FORMAT = "agentctl" {
+input_format! {
+    /// `stage --parser agentctl PATH`: AgentCTL's event log.
+    pub FORMAT = "agentctl" {
     specs: [SPEC], parser: |_b| Stateless(AgentctlParser),
     discovery: DiscoverySpec::system(&[Location::new("input", "agentctl")]),
     plan: single, reader: |b| Ok(binding::appended(AppendFile { path: b.input.clone(), host: b.settings.host.clone(), framer: Framer::LINES })),

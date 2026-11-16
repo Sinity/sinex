@@ -2026,6 +2026,7 @@ async fn daemon_status_counts_refusals_by_producer_source_and_event_type(
         sql_cursors: Default::default(),
         stop,
         library_roots: Vec::new(),
+        library_cache: h.store_dir.join("library-cache"),
         reads: h.reads.clone(),
         writer: Some(h.writer.clone()),
         blobs: h.blobs.clone(),

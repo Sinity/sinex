@@ -547,10 +547,11 @@ fn scrollback(
     })
 }
 
-/// `stage --parser integration-socket SPOOL`: lines the editor and terminal
-/// integrations write to the integration socket (the `socket` option, or the default path),
-/// captured into SPOOL.
-super::input_format! { pub FORMAT = "integration-socket" {
+super::input_format! {
+    /// `stage --parser integration-socket SPOOL`: lines the editor and terminal
+    /// integrations write to the integration socket (the `socket` option, or the default path),
+    /// captured into SPOOL.
+    pub FORMAT = "integration-socket" {
     specs: [SPEC],
     parser: |_b| Stateless(SessionSocketParser),
     discovery: DiscoverySpec {

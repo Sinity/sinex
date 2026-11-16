@@ -244,8 +244,9 @@ fn tables(path: &Path) -> Option<Vec<String>> {
         .ok()
 }
 
-/// `stage --parser machine-telemetry PATH`: the collector's databases.
-super::input_format! { pub FORMAT = "machine-telemetry" {
+super::input_format! {
+    /// `stage --parser machine-telemetry PATH`: the collector's databases.
+    pub FORMAT = "machine-telemetry" {
     specs: || SPECS.iter().collect(),
     source: |b| {
         let table = table_of(&b.parser)?;

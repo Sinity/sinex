@@ -259,10 +259,11 @@ fn media(b: &sinex_source_core::binding::Binding) -> Result<&'static str, String
     }
 }
 
-/// `stage --parser media SPOOL`: screen stills (option `kind: screen`, every
-/// `every` seconds, 60 by default) or audio segments (`kind: audio`,
-/// `segment` seconds each, 300 by default), captured into SPOOL.
-super::input_format! { pub FORMAT = "media" {
+super::input_format! {
+    /// `stage --parser media SPOOL`: screen stills (option `kind: screen`, every
+    /// `every` seconds, 60 by default) or audio segments (`kind: audio`,
+    /// `segment` seconds each, 300 by default), captured into SPOOL.
+    pub FORMAT = "media" {
     specs: [SPEC],
     parser: |_b| Stateless(MediaParser),
     discovery: DiscoverySpec {

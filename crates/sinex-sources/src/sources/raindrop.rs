@@ -231,8 +231,9 @@ pub fn bookmark_file(path: &std::path::Path) -> bool {
     name.ends_with(".csv") || (name.starts_with("raindrops-") && name.ends_with(".jsonl"))
 }
 
-/// `stage --parser raindrop PATH`: each Raindrop export in PATH.
-super::input_format! { pub FORMAT = "raindrop" {
+super::input_format! {
+    /// `stage --parser raindrop PATH`: each Raindrop export in PATH.
+    pub FORMAT = "raindrop" {
     specs: [SPEC],
     parser: |_b| RaindropParser,
     discovery: DiscoverySpec::system(&[Location::new("input", "raindrop")]),

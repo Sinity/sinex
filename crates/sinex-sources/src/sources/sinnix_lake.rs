@@ -3,7 +3,6 @@
 //! relative to the lake root and the accepted envelope lanes. An unbound lane
 //! is a record failure. Stream-owned lanes keep `lake.observed`; the other
 //! lanes produce domain events, one per observed record or listed device.
-use crate::sources::input_format;
 use serde_json::{Map, Value};
 use sinex_model::{Class, Timestamp, json::JsonExt};
 use sinex_source_core::discovery::{DiscoverySpec, Location};
@@ -354,9 +353,10 @@ fn lake_source_of(b: &sinex_source_core::binding::Binding) -> Result<&'static La
         .ok_or_else(|| format!("{}: not a lake source", b.parser))
 }
 
-/// `stage --parser sinnix-lake ROOT`: every lane's day files under the lake root;
-/// each lane's directories are its configuration.
-input_format! { pub FORMAT = "sinnix-lake" {
+input_format! {
+    /// `stage --parser sinnix-lake ROOT`: every lane's day files under the lake root;
+    /// each lane's directories are its configuration.
+    pub FORMAT = "sinnix-lake" {
     specs: || LAKE_SOURCES.iter().map(|l| &l.spec).collect(),
     source: |b| {
         let lake_source = lake_source_of(b)?;

@@ -334,8 +334,9 @@ fn capture(
     live_stream::capture_lines(BufReader::new(stream), &mut writer, Duration::from_secs(1))
 }
 
-/// `stage --parser hyprland SPOOL`: Hyprland's event socket, captured into SPOOL.
-super::input_format! { pub FORMAT = "hyprland" {
+super::input_format! {
+    /// `stage --parser hyprland SPOOL`: Hyprland's event socket, captured into SPOOL.
+    pub FORMAT = "hyprland" {
     specs: [SPEC],
     parser: |_b| HyprlandParser,
     discovery: DiscoverySpec {

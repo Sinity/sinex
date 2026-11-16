@@ -190,8 +190,9 @@ pub fn capture(
     dbus::capture(MATCHES, &snapshot_until(stop), spool, stop)
 }
 
-/// `stage --parser players SPOOL`: media players (MPRIS), captured into SPOOL.
-super::input_format! { pub FORMAT = "players" {
+super::input_format! {
+    /// `stage --parser players SPOOL`: media players (MPRIS), captured into SPOOL.
+    pub FORMAT = "players" {
     specs: [SPEC],
     parser: |_b| MprisParser,
     discovery: DiscoverySpec {

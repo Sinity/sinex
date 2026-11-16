@@ -1,5 +1,4 @@
 //! Source reader outcomes stored as JSON-line materials.
-use crate::sources::input_format;
 use serde_json::{Map, Value, json};
 use sinex_model::{
     InputRef, MaterialId, ObservationFacts, ReadingOrder, RevisionChange,

@@ -157,8 +157,9 @@ pub fn driver(path: PathBuf, host: String) -> AppendFile {
     }
 }
 
-/// `stage --parser fish PATH`: a fish history file.
-super::input_format! { pub FORMAT = "fish" {
+super::input_format! {
+    /// `stage --parser fish PATH`: a fish history file.
+    pub FORMAT = "fish" {
     specs: [SPEC],
     parser: |b| FishParser { host: b.settings.host.clone() },
     discovery: DiscoverySpec::system(&[Location::new("data", "fish/fish_history")]),

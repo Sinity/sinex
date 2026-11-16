@@ -819,7 +819,7 @@ fn plaintext_positions_and_unacknowledged_frames_require_draining() {
     assert!(error.contains("invalid encoded producer state"), "{error}");
     assert_eq!(std::fs::read(&position).unwrap(), bytes);
     // Missing optional fields still default inside the current encoded format.
-    write_synced(&position, &serde_json::from_slice::<Value>(bytes).unwrap()).unwrap();
+    store_state(&position, &serde_json::from_slice::<Value>(bytes).unwrap()).unwrap();
     let loaded = Position::load(dir.path(), "binding").unwrap();
     assert_eq!(loaded.cursor, json!({"segment":4}));
     assert_eq!(loaded.carry, json!({"partial":"synthetic"}));

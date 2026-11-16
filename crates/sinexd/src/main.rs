@@ -351,6 +351,9 @@ async fn main() -> std::process::ExitCode {
             .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))
             .ok_or_else(|| Error::not_configured("library cache requires XDG_CACHE_HOME or HOME"))?
             .join("sinex/library");
+        if !cache.is_absolute() {
+            return Err(Error::bad_value("library cache directory must be absolute"));
+        }
         Ok((recipient, cache))
     })();
     let (class_recipient, library_cache) = match configured {

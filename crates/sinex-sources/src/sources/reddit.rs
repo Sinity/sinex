@@ -249,8 +249,9 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
     }
 }
 
-/// `stage --parser reddit PATH`: each Reddit export ZIP in PATH.
-super::input_format! { pub FORMAT = "reddit" {
+super::input_format! {
+    /// `stage --parser reddit PATH`: each Reddit export ZIP in PATH.
+    pub FORMAT = "reddit" {
     specs: [SPEC],
     parser: |_b| RedditParser,
     discovery: DiscoverySpec::system(&[Location::new("input", "reddit")]),

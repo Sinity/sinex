@@ -8,14 +8,13 @@
 //! the request and response facts in its manifest; the parser turns it into
 //! `page.fetched`. A failed fetch is a fact too: it is stored with status 0
 //! and the error, so the page is not silently missing.
-use crate::sources::input_format;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sinex_model::event_types::session::PageFetched;
 use sinex_model::{
     Class, InputRef, MaterialId, ObservationFacts, RevisionChange, Timestamp, json::JsonExt,
 };
-use sinex_source_core::discovery::{DiscoverySpec, Location};
+use sinex_source_core::discovery::DiscoverySpec;
 use sinex_source_core::drivers::{Acquired, DriverError, NewMaterial};
 use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{RecordContext, RecordError, RecordResult, Stateless, StatelessParser};
@@ -373,8 +372,9 @@ impl StatelessParser for PageParser {
     }
 }
 
-/// Crawl materials are replayed with the parser; URLs reach the command's reader in memory.
-input_format! { pub FORMAT = "page-crawl" {
+input_format! {
+    /// Crawl materials are replayed with the parser; URLs reach the command's reader in memory.
+    pub FORMAT = "page-crawl" {
     specs: [SPEC],
     parser: |_b| Stateless(PageParser),
     discovery: DiscoverySpec::system(&[]),

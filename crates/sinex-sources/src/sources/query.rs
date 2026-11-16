@@ -1,5 +1,4 @@
 //! Authenticated moment marks and saved queries stored as JSON-line materials.
-use crate::sources::input_format;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sinex_model::{

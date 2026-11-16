@@ -120,8 +120,9 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
     }
 }
 
-/// `stage --parser goodreads PATH`: each Goodreads export in PATH.
-super::input_format! { pub FORMAT = "goodreads" {
+super::input_format! {
+    /// `stage --parser goodreads PATH`: each Goodreads export in PATH.
+    pub FORMAT = "goodreads" {
     specs: [SPEC],
     parser: |_b| GoodreadsParser,
     discovery: DiscoverySpec::system(&[Location::new("input", "goodreads")]),

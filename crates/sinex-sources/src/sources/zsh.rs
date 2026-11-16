@@ -161,8 +161,9 @@ pub fn extended_line(line: &[u8]) -> bool {
     colon < semicolon && digits(&header[..colon]) && digits(&header[colon + 1..semicolon])
 }
 
-/// `stage --parser zsh PATH`: a zsh history file.
-super::input_format! { pub FORMAT = "zsh" {
+super::input_format! {
+    /// `stage --parser zsh PATH`: a zsh history file.
+    pub FORMAT = "zsh" {
     specs: [SPEC],
     source: |b| Ok(Box::new(source(b.settings.host.clone()))),
     discovery: DiscoverySpec::system(&[Location::new("environment", "ZSH_HISTFILE")]),

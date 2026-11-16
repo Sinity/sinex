@@ -9,7 +9,6 @@
 //! both are newer readings of the same key. Times are microseconds since
 //! 1601-01-01; 0 means "none".
 use super::fields;
-use crate::sources::input_format;
 use serde_json::{Map, Value};
 use sinex_model::event_types::browser::{BrowserUrl, BrowserVisit};
 use sinex_model::json::JsonExt;
@@ -246,9 +245,10 @@ fn profiles(user_data: &Path) -> Result<Vec<(String, PathBuf)>, String> {
     Ok(out)
 }
 
-/// `stage --parser chromium PATH`: every profile under a browser's user-data
-/// directory, its visits and its URLs each a binding.
-input_format! { pub FORMAT = "chromium" {
+input_format! {
+    /// `stage --parser chromium PATH`: every profile under a browser's user-data
+    /// directory, its visits and its URLs each a binding.
+    pub FORMAT = "chromium" {
     specs: [VISITS, URLS],
     source: |b| {
         if b.source == VISITS.name {

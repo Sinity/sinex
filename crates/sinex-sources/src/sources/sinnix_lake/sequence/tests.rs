@@ -100,7 +100,11 @@ fn an_unreadable_record_invalidates_continuity_through_the_real_drainer() {
     };
     let bytes = (line(1) + "unreadable JSON\n" + &line(4)).into_bytes();
     let records = sinex_source_core::drivers::append_file::lines(&bytes).0;
-    let source = super::super::source(super::super::lake_source("desktop.clipboard").unwrap());
+    let lake_source = super::super::lake_source("desktop.clipboard").unwrap();
+    let source = sinex_source_core::DeclaredSource {
+        spec: lake_source.spec.clone(),
+        parser: super::super::EnvelopeParser { lake_source },
+    };
     let manifest = sinex_model::Manifest::default();
     let output = source
         .drain(DrainInput {
