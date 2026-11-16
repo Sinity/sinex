@@ -67,7 +67,9 @@ pub(crate) async fn run(
         commits.borrow_and_update();
         let from = positions.iter().copied().min().unwrap_or(0);
         let read_started = std::time::Instant::now();
-        let page = read_page(&mut conn, from).await?;
+        let page =
+            commit_log::after_in_one_snapshot(&mut conn, from, PAGE, sinex_store::PAGE_BYTES)
+                .await?;
         let Some(up_to) = page.up_to else {
             tokio::select! {
                 _ = commits.changed() => {}
@@ -127,20 +129,6 @@ pub(crate) async fn run(
             }
         }
     }
-}
-
-/// Read one page in a single repeatable-read snapshot. Its statements are
-/// planned after that snapshot is taken, so the chunks they scan include every
-/// chunk holding rows the snapshot sees; a statement planned before a commit
-/// and run after it could otherwise miss that commit's new chunk.
-async fn read_page(conn: &mut PgConnection, from: i64) -> Result<commit_log::Page> {
-    let mut snapshot = conn.begin().await?;
-    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-        .execute(&mut *snapshot)
-        .await?;
-    let page = commit_log::after(&mut snapshot, from, PAGE, sinex_store::PAGE_BYTES).await?;
-    snapshot.commit().await?;
-    Ok(page)
 }
 
 /// A table kept only to make reads fast, maintained from committed events:

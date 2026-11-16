@@ -128,6 +128,25 @@ pub async fn after(conn: &mut PgConnection, after: i64, limit: i64, bytes: i64) 
     Ok(Page { events, up_to })
 }
 
+/// [`after`], read in one repeatable-read snapshot of its own. Its statements
+/// are planned after that snapshot is taken, so the chunks they scan include
+/// every chunk holding rows the snapshot sees; a read-committed statement
+/// planned before a commit and run after it could miss that commit's new chunk.
+pub async fn after_in_one_snapshot(
+    conn: &mut PgConnection,
+    from: i64,
+    limit: i64,
+    bytes: i64,
+) -> Result<Page> {
+    let mut snapshot = sqlx::Connection::begin(&mut *conn).await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        .execute(&mut *snapshot)
+        .await?;
+    let page = after(&mut snapshot, from, limit, bytes).await?;
+    snapshot.commit().await?;
+    Ok(page)
+}
+
 /// Fill each event's replacement rule and search mode from its stored kind
 /// declaration.
 pub(crate) async fn add_declarations(
