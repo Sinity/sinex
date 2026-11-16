@@ -76,8 +76,11 @@ fn journal_from(secs: i64, priority: u8, from_sinex: bool) -> Event {
     .unwrap()
 }
 
-fn key(metric: &str) -> Value {
-    json!({"metric": metric, "day": "2024-06-15"})
+fn key(metric: &str) -> MetricDayKey {
+    MetricDayKey {
+        metric: metric.into(),
+        day: "2024-06-15".parse().unwrap(),
+    }
 }
 
 fn env(now: i64) -> Env {
@@ -243,7 +246,10 @@ fn a_command_fused_across_a_day_start_counts_on_the_fused_record_day_only() {
         payload: &fused.payload,
     };
     let keys = HourlyMetrics.keys_for(&view, &env(100_000));
-    assert!(keys.contains(&json!({"metric": "shell.commands", "day": "2024-06-14"})));
+    assert!(keys.contains(&MetricDayKey {
+        metric: "shell.commands".into(),
+        day: "2024-06-14".parse().unwrap()
+    }));
     assert!(keys.contains(&key("shell.commands")));
     let today = hourly("shell.commands", &inputs, 100_000);
     let counted: f64 = today
@@ -253,7 +259,10 @@ fn a_command_fused_across_a_day_start_counts_on_the_fused_record_day_only() {
         .sum();
     assert_eq!(counted, 1.0);
     let env = env(100_000);
-    let yesterday = json!({"metric": "shell.commands", "day": "2024-06-14"});
+    let yesterday = MetricDayKey {
+        metric: "shell.commands".into(),
+        day: "2024-06-14".parse().unwrap(),
+    };
     let q = HourlyMetrics.inputs(&yesterday, &env).unwrap();
     let window: Vec<Event> = inputs.iter().filter(|e| q.admits(e)).cloned().collect();
     assert!(
@@ -322,12 +331,12 @@ fn a_long_interval_dirties_every_day_it_covers() {
         payload: &e.payload,
     };
     let keys = HourlyMetrics.keys_for(&view, &env(3 * 86_400));
-    let seconds: Vec<&Value> = keys
+    let seconds: Vec<&MetricDayKey> = keys
         .iter()
-        .filter(|k| k["metric"] == "focus.seconds")
+        .filter(|k| k.metric == "focus.seconds")
         .collect();
     assert_eq!(seconds.len(), 3);
-    let switches = keys.iter().filter(|k| k["metric"] == "focus.switches");
+    let switches = keys.iter().filter(|k| k.metric == "focus.switches");
     assert_eq!(switches.count(), 1, "a switch is counted on its day only");
 }
 
@@ -473,4 +482,138 @@ fn activity_seconds_use_supported_presence_and_keep_afk_claims_as_inputs_only() 
     .unwrap();
     let out = hourly("activity.active_seconds", &[present, report], 100_000);
     assert_eq!(total_at(&out, 0).value, Some(20.0));
+}
+
+#[devkit::test]
+fn a_day_with_an_unknown_hour_has_an_unknown_sum() {
+    let env = env(100_000);
+    let inputs = [command(10, "/a", Some(1)), command(3700, "/a", Some(0))];
+    for (metric, unknown) in [
+        ("shell.commands", "value"),
+        ("shell.failed_ratio", "value"),
+        ("shell.failed_ratio", "numerator"),
+        ("shell.failed_ratio", "denominator"),
+    ] {
+        let key = key(metric);
+        let mut hours = HourlyMetrics.compute(&key, &inputs, &env).outputs;
+        for hour in &mut hours {
+            if hour.payload_as::<MetricFigure>().unwrap().period_start == at(3600) {
+                hour.payload[unknown] = Value::Null;
+            }
+        }
+        let day = DailyMetrics.compute(&key, &hours, &env);
+        assert_eq!(
+            day.outputs.len(),
+            if metric == "shell.commands" { 3 } else { 1 }
+        );
+        for output in day.outputs {
+            let figure = output.payload_as::<MetricFigure>().unwrap();
+            assert_eq!(figure.value, None, "{metric}: {unknown}");
+            match unknown {
+                "numerator" => assert_eq!(figure.numerator, None),
+                "denominator" => assert_eq!(figure.denominator, None),
+                _ => {}
+            }
+            assert_eq!(figure.rows, 2);
+        }
+    }
+}
+
+// Keys recompute their entire output set, so a late hour does not reopen a bucket.
+#[devkit::test]
+fn late_hour_does_not_reopen_finished_day() {
+    let env = env(100_000);
+    let key = key("shell.commands");
+    let first = [command(3700, "/a", Some(0))];
+    let mut hours = HourlyMetrics.compute(&key, &first, &env).outputs;
+    assert_eq!(DailyMetrics.key_state(&key, &env), KeyState::Closed);
+    let before = DailyMetrics.compute(&key, &hours, &env);
+    assert_eq!(before.outputs.len(), 3);
+
+    let earlier = [command(10, "/b", Some(0))];
+    let late = HourlyMetrics.compute(&key, &earlier, &env).outputs;
+    assert!(!late.is_empty());
+    let input = &late[0];
+    assert_eq!(
+        DailyMetrics.keys_for(
+            &KeyView {
+                event_type: &input.event_type,
+                ts_orig: input.ts_orig.at,
+                payload: &input.payload
+            },
+            &env,
+        ),
+        vec![key.clone()],
+    );
+    hours.extend(late);
+    let after = DailyMetrics.compute(&key, &hours, &env);
+    assert_eq!(DailyMetrics.key_state(&key, &env), KeyState::Closed);
+    let figures: Vec<_> = after
+        .outputs
+        .iter()
+        .map(|event| event.payload_as::<MetricFigure>().unwrap())
+        .collect();
+    let dimensions: std::collections::BTreeSet<_> = figures
+        .iter()
+        .map(|figure| (&figure.dimension, &figure.dimension_value))
+        .collect();
+    assert_eq!(figures.len(), 4);
+    assert_eq!(dimensions.len(), figures.len());
+    let total = figures
+        .iter()
+        .find(|figure| figure.dimension.is_empty())
+        .unwrap();
+    assert_eq!(total.value, Some(2.0));
+    assert_eq!(total.rows, 2);
+    for cwd in ["/a", "/b"] {
+        assert_eq!(
+            figures
+                .iter()
+                .find(|figure| figure.dimension_value == cwd)
+                .unwrap()
+                .value,
+            Some(1.0)
+        );
+    }
+}
+
+#[devkit::test]
+fn short_dst_day_completes() {
+    let settings = sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 0, 0).unwrap();
+    let day = "2024-03-31".parse().unwrap();
+    let start = settings.day_start(day).unwrap();
+    let end = settings.day_end(day).unwrap();
+    assert_eq!(end.unix_ns() - start.unix_ns(), 23 * 3600 * 1_000_000_000);
+    let env = Env::at(end, settings);
+    let key = MetricDayKey {
+        metric: "focus.seconds".into(),
+        day,
+    };
+    let focus = crate::observed::tests::hyprland(
+        "editor",
+        "",
+        start.unix_ns() as f64 / 1e9,
+        Some(end.unix_ns() as f64 / 1e9),
+    );
+    let hours = HourlyMetrics.compute(&key, &[focus], &env).outputs;
+    let totals: Vec<_> = hours
+        .iter()
+        .filter_map(|event| {
+            let figure = event.payload_as::<MetricFigure>()?;
+            figure.dimension.is_empty().then_some(figure)
+        })
+        .collect();
+    assert_eq!(totals.len(), 23);
+    assert!(totals.iter().all(|figure| figure.value == Some(3600.0)));
+    assert_eq!(HourlyMetrics.key_state(&key, &env), KeyState::Closed);
+    assert_eq!(DailyMetrics.key_state(&key, &env), KeyState::Closed);
+    let daily = DailyMetrics.compute(&key, &hours, &env);
+    let total = daily
+        .outputs
+        .iter()
+        .filter_map(|event| event.payload_as::<MetricFigure>())
+        .find(|figure| figure.dimension.is_empty())
+        .unwrap();
+    assert_eq!(total.value, Some(23.0 * 3600.0));
+    assert_eq!((total.period_start, total.period_end), (start, end));
 }

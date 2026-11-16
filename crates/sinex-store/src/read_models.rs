@@ -45,19 +45,19 @@ pub async fn apply_search_text(conn: &mut PgConnection, events: &[Committed]) ->
     let mut ids = Vec::with_capacity(events.len());
     let mut texts = Vec::with_capacity(events.len());
     let mut trigram = Vec::with_capacity(events.len());
-    for e in events.iter().filter(|e| e.class != "sealed") {
+    for e in events.iter().filter(|e| e.row.class != "sealed") {
         if e.search == sinex_model::kinds::Search::None {
             continue;
         }
-        let text = payload_text(&e.payload);
+        let text = payload_text(&e.row.payload);
         if !text.is_empty() {
-            ids.push(e.id);
+            ids.push(e.row.id);
             texts.push(text);
             // Bundled high-volume kinds keep their declared opt-out even
             // for historical readings whose declaration predates that policy.
             trigram.push(
                 e.search == sinex_model::kinds::Search::WordsAndTrigram
-                    && sinex_model::event_types::find(&e.event_type).is_none_or(|kind| {
+                    && sinex_model::event_types::find(&e.row.event_type).is_none_or(|kind| {
                         kind.search == sinex_model::kinds::Search::WordsAndTrigram
                     }),
             );

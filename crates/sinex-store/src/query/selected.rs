@@ -87,7 +87,7 @@ pub(super) async fn capture(
     grants.dedup();
     let mut stored_selection = selection.to_stored(&query.source)?;
     stored_selection["_query"] = json!(format!("{query:?}"));
-    stored_selection["_template"] = template.identity()?;
+    stored_selection["_template"] = sinex_query::template::identity(template)?;
     stored_selection["_fingerprint"] = json!(
         blake3::hash(
             serde_json::to_vec(&json!([rows, account]))

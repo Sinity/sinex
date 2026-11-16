@@ -65,8 +65,8 @@ impl ReadModel for Counter {
         Box::pin(async move {
             for e in events {
                 sqlx::query("INSERT INTO test_counter (seq, command) VALUES ($1, $2)")
-                    .bind(e.commit_seq)
-                    .bind(e.payload["command"].as_str())
+                    .bind(e.row.commit_seq)
+                    .bind(e.row.payload["command"].as_str())
                     .execute(&mut *tx)
                     .await?;
             }
@@ -217,12 +217,12 @@ async fn tombstoned_events_never_reach_consumers(db: devkit::pg::TestDatabase) {
         "the event reader covers the tombstone's lifecycle positions even though its removed payload is absent"
     );
     assert_eq!(page.events.len(), 1);
-    assert_eq!(page.events[0].id, keep_id.0);
+    assert_eq!(page.events[0].row.id, keep_id.0);
     assert_eq!(
-        page.events[0].payload,
+        page.events[0].row.payload,
         json!({"command": "keep", "hostname": "h", "started_at": "2023-11-14T22:13:21Z", "header_elapsed": 0, "n": 0})
     );
-    let event = page.events[0].to_event().unwrap();
+    let event = sinex_model::Event::try_from(page.events[0].row.clone()).unwrap();
     assert_eq!(event.event_type, "command.imported");
     assert!(event.location().is_some());
 }
@@ -396,7 +396,7 @@ async fn maintenance_byte_budget_accepts_oversized_first_event_and_commit_gaps(
         .unwrap();
     assert_eq!(first.events.len(), 1);
     assert_eq!(
-        first.events[0].payload["command"].as_str(),
+        first.events[0].row.payload["command"].as_str(),
         Some(command.as_str())
     );
     let tail = commit_log::after(

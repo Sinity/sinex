@@ -174,6 +174,7 @@ async fn time_citations_follow_replaced_spans_and_recall_includes_states_already
             host: "synthetic".into(),
             started_at: start,
             ended_at: end,
+            end_is_lower_bound: false,
             day: "2026-09-14".into(),
             commands: 1,
             failed: 0,

@@ -33,12 +33,20 @@ use std::collections::BTreeMap;
 pub enum Interruption {
     /// The operator went AFK.
     Afk,
+    /// The host suspended.
+    Suspend,
 }
 
 impl Interruption {
     /// The neighbour query that finds the next interruption of this kind.
     fn neighbour(self) -> Neighbour {
         match self {
+            Self::Suspend => Neighbour {
+                kinds: vec![Kind::all("sleep.started")],
+                per: Some("host"),
+                count: 1,
+                lifetime: None,
+            },
             Self::Afk => Neighbour {
                 kinds: vec![Kind::only("presence.span", &[("status", "afk")])],
                 per: Some("scope"),
@@ -49,7 +57,7 @@ impl Interruption {
     }
 
     fn of(event_type: &str, payload: &Value) -> Option<Self> {
-        [Self::Afk].into_iter().find(|stop| {
+        [Self::Afk, Self::Suspend].into_iter().find(|stop| {
             stop.neighbour()
                 .kinds
                 .iter()
@@ -119,7 +127,7 @@ pub const RULES: &[IntervalRule] = &[
         ],
         label: |p| app_and_title(p, "class", "title"),
         attributes: &["window", "class", "title", "scope", "host"],
-        ended_by: &[Interruption::Afk],
+        ended_by: &[Interruption::Afk, Interruption::Suspend],
     },
     IntervalRule {
         state_kind: "desktop.workspace",
@@ -141,7 +149,7 @@ pub const RULES: &[IntervalRule] = &[
                 .or_else(|| scalar(p, "workspace_id"))
         },
         attributes: &["workspace_id", "workspace_name", "scope", "host"],
-        ended_by: &[Interruption::Afk],
+        ended_by: &[Interruption::Afk, Interruption::Suspend],
     },
     IntervalRule {
         state_kind: "desktop.activitywatch.afk",
@@ -361,12 +369,34 @@ fn scope_key(event: &Event) -> String {
 }
 
 fn fold<'a>(rule: &IntervalRule, events: &[&'a Event]) -> Vec<PendingInterval<'a>> {
-    // Each event is classified and scoped once: a scope's events are its
-    // transitions and the interruptions in the same scope.
+    // Each captured scope contains its transitions and matching interruptions.
     let mut scopes = BTreeMap::<String, Vec<&Event>>::new();
     for &event in events {
-        if rule.event_types.contains(&event.event_type.as_str()) || interrupts(rule, event) {
+        if rule.event_types.contains(&event.event_type.as_str()) {
             scopes.entry(scope_key(event)).or_default().push(event);
+        }
+    }
+    for &interruption in events.iter().filter(|event| interrupts(rule, event)) {
+        let scope = scope_key(interruption);
+        let per = Interruption::of(&interruption.event_type, &interruption.payload)
+            .and_then(|kind| kind.neighbour().per);
+        for (name, scoped) in &mut scopes {
+            let shared_value = per.is_some_and(|field| {
+                interruption
+                    .payload
+                    .get(field)
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| {
+                        scoped.iter().any(|event| {
+                            event.payload.get(field).and_then(Value::as_str) == Some(value)
+                        })
+                    })
+            });
+            if (*name == scope || shared_value)
+                && !scoped.iter().any(|event| event.id == interruption.id)
+            {
+                scoped.push(interruption);
+            }
         }
     }
     let mut result = Vec::new();
@@ -393,21 +423,26 @@ mod machine;
 
 pub struct StateIntervals;
 
-fn key_parts(key: &Value) -> Option<(&'static IntervalRule, jiff::civil::Date)> {
-    let r = rule(key.get("state")?.as_str()?)?;
-    let day = key.get("day")?.as_str()?.parse().ok()?;
-    Some((r, day))
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+pub enum StateKey {
+    Rule(crate::keys::RuleDayKey),
+    Machine(machine::MachineKey),
 }
 
 impl Keyed for StateIntervals {
+    type Key = StateKey;
     const NAME: &'static str = "state.intervals";
-    const VERSION: u32 = 3;
+    const VERSION: u32 = 4;
     const USES_TIME_SETTINGS: bool = true;
     const INPUTS: &'static [&'static str] = INPUT_TYPES;
     const OUTPUTS: &'static [&'static str] = &[StateInterval::EVENT_TYPE];
 
-    fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Value> {
-        let mut machine = machine::keys(input, env);
+    fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Self::Key> {
+        let mut machine: Vec<_> = machine::keys(input, env)
+            .into_iter()
+            .map(StateKey::Machine)
+            .collect();
         let Some(t) = input.ts_orig else {
             return vec![];
         };
@@ -422,20 +457,26 @@ impl Keyed for StateIntervals {
                     r.event_types.contains(&input.event_type)
                         || interruption.is_some_and(|f| r.ended_by.contains(&f))
                 })
-                .map(|r| json!({"state": r.state_kind, "day": day.to_string()}))
+                .map(|r| {
+                    StateKey::Rule(crate::keys::RuleDayKey {
+                        state: r.state_kind.into(),
+                        day,
+                    })
+                })
                 .collect::<Vec<_>>(),
         );
         machine
     }
 
-    fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery> {
-        if key["state"]
-            .as_str()
-            .is_some_and(|state| state.starts_with("machine."))
-        {
+    fn inputs(&self, key: &Self::Key, env: &Env) -> Option<InputQuery> {
+        let StateKey::Rule(key) = key else {
+            let StateKey::Machine(key) = key else {
+                unreachable!()
+            };
             return machine::inputs(key, env);
-        }
-        let (r, day) = key_parts(key)?;
+        };
+        let r = rule(&key.state)?;
+        let day = key.day;
         let start = env.time_settings.day_start(day).ok()?;
         let end = env.time_settings.day_end(day).ok()?;
         let mut types: Vec<String> = r.event_types.iter().map(|kind| (*kind).into()).collect();
@@ -455,11 +496,7 @@ impl Keyed for StateIntervals {
                     end,
                     kinds: r.event_types.iter().map(|kind| Kind::all(kind)).collect(),
                     subjects: r.subject,
-                    interruptions: r
-                        .ended_by
-                        .iter()
-                        .flat_map(|f| f.neighbour().kinds)
-                        .collect(),
+                    interruptions: r.ended_by.iter().map(|f| f.neighbour()).collect(),
                 })
             }
             Shape::Span { .. } => {}
@@ -472,16 +509,17 @@ impl Keyed for StateIntervals {
         Some(q)
     }
 
-    fn compute(&self, key: &Value, inputs: &[Event], env: &Env) -> Computed {
-        if key["state"]
-            .as_str()
-            .is_some_and(|state| state.starts_with("machine."))
-        {
+    fn compute(&self, key: &Self::Key, inputs: &[Event], env: &Env) -> Computed {
+        let StateKey::Rule(key) = key else {
+            let StateKey::Machine(key) = key else {
+                unreachable!()
+            };
             return machine::compute(key, inputs, env);
-        }
-        let Some((r, day)) = key_parts(key) else {
+        };
+        let Some(r) = rule(&key.state) else {
             return Computed::default();
         };
+        let day = key.day;
         let (Ok(start), Ok(end)) = (
             env.time_settings.day_start(day),
             env.time_settings.day_end(day),
@@ -494,9 +532,15 @@ impl Keyed for StateIntervals {
         let outputs = fold(r, &events)
             .into_iter()
             .filter(|l| l.open.at >= start && l.open.at < end)
-            .map(|l| {
-                waiting |= l.end.is_none();
-                to_event(r, l)
+            .map(|mut interval| {
+                if matches!(r.shape, Shape::Span { .. }) {
+                    waiting |= interval.end.is_some_and(|(end, _)| end > env.now);
+                    interval.end = interval
+                        .end
+                        .map(|(end, kind)| (end.min(env.now).max(interval.open.at), kind));
+                }
+                waiting |= interval.end.is_none();
+                to_event(r, interval)
             })
             .collect();
         Computed {
@@ -504,6 +548,46 @@ impl Keyed for StateIntervals {
             outputs,
             waiting,
         }
+    }
+
+    fn refresh_at(&self, inputs: &[Event], outputs: &[Event], env: &Env) -> Option<Timestamp> {
+        let by_id: std::collections::HashMap<_, _> =
+            inputs.iter().map(|input| (input.id, input)).collect();
+        let mut next = None;
+        for output in outputs {
+            let Some(interval) = output.payload_as::<StateInterval>() else {
+                continue;
+            };
+            if interval.ended_at != Some(env.now.max(interval.started_at)) {
+                continue;
+            }
+            let Some(rule) = rule(&interval.state_kind) else {
+                continue;
+            };
+            let Shape::Span { end } = rule.shape else {
+                continue;
+            };
+            let Origin::Derived { parents } = &output.origin else {
+                continue;
+            };
+            for parent in parents {
+                let Some(input) = by_id.get(parent) else {
+                    continue;
+                };
+                if !rule.event_types.contains(&input.event_type.as_str()) {
+                    continue;
+                }
+                let observed = input
+                    .payload
+                    .get(end)
+                    .and_then(|value| serde_json::from_value::<Timestamp>(value.clone()).ok());
+                if let Some(observed) = observed.filter(|observed| *observed > env.now) {
+                    next =
+                        Some(next.map_or(observed, |previous: Timestamp| previous.min(observed)));
+                }
+            }
+        }
+        next
     }
 
     fn affected_ranges(&self, input: &KeyView<'_>, _: &Env) -> Vec<AffectedRange> {
@@ -522,7 +606,7 @@ impl Keyed for StateIntervals {
             .unwrap_or_default()
     }
 
-    fn key_state(&self, _key: &Value, _env: &Env) -> KeyState {
+    fn key_state(&self, _key: &Self::Key, _env: &Env) -> KeyState {
         // A state can stay open for days; joins read `ended_at`, not the key.
         KeyState::Open
     }

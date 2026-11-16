@@ -94,10 +94,12 @@ fn stored_analysis_is_order_independent_and_refusals_remain_parented() {
         sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
             .expect("fixture day setting"),
     );
-    let first = Keyed::compute(&StoredProducts, &json!(request), &input, &env);
+    let first =
+        sinex_derivations::AnyKeyed::compute(&StoredProducts, &json!(request), &input, &env);
     assert!(first.error.is_none());
     let reversed: Vec<_> = input.iter().rev().cloned().collect();
-    let again = Keyed::compute(&StoredProducts, &json!(request), &reversed, &env);
+    let again =
+        sinex_derivations::AnyKeyed::compute(&StoredProducts, &json!(request), &reversed, &env);
     assert!(again.error.is_none());
     assert_eq!(first.outputs.len(), again.outputs.len());
     for (a, b) in first.outputs.iter().zip(&again.outputs) {
@@ -123,7 +125,7 @@ fn stored_analysis_is_order_independent_and_refusals_remain_parented() {
 fn an_empty_answer_cites_the_request_and_unknown_coverage_never_measures_zero() {
     let request = question();
     let inputs = vec![captured(&request)];
-    let output = Keyed::compute(
+    let output = sinex_derivations::AnyKeyed::compute(
         &StoredProducts,
         &json!(request),
         &inputs,
@@ -149,7 +151,7 @@ fn an_empty_answer_cites_the_request_and_unknown_coverage_never_measures_zero() 
         figure(&request),
         observation(&request, "unknown", CoverageState::RecordedUnknownCoverage),
     ];
-    let output = Keyed::compute(
+    let output = sinex_derivations::AnyKeyed::compute(
         &StoredProducts,
         &json!(request),
         &input,
@@ -180,7 +182,7 @@ fn figures_from_another_day_setting_are_incomparable() {
         other_period,
         observation(&request, "observed", CoverageState::Observed),
     ];
-    let output = Keyed::compute(
+    let output = sinex_derivations::AnyKeyed::compute(
         &StoredProducts,
         &json!(request),
         &inputs,
@@ -215,13 +217,13 @@ fn closed_day_replaces_provisional_value_at_evaluation() {
     let opened = Timestamp::from_unix_ns(request.ended_at.unix_ns() - 1_000_000_000).unwrap();
     let closed = Timestamp::from_unix_ns(request.ended_at.unix_ns() + 1_000_000_000).unwrap();
     let settings = TimeSettings::new("Europe/Warsaw", 4, 0).unwrap();
-    let before = Keyed::compute(
+    let before = sinex_derivations::AnyKeyed::compute(
         &StoredProducts,
         &json!(request),
         &inputs,
         &Env::at(opened, settings.clone()),
     );
-    let after = Keyed::compute(
+    let after = sinex_derivations::AnyKeyed::compute(
         &StoredProducts,
         &json!(request),
         &inputs,
@@ -262,7 +264,7 @@ fn daily_brief_keeps_failed_read_reason_and_citation() {
     failed.payload["events"] = json!(0);
     let citation = format!("sinex:ev/{}", failed.id);
     let inputs = vec![captured(&request), figure(&request), failed];
-    let output = Keyed::compute(
+    let output = sinex_derivations::AnyKeyed::compute(
         &StoredProducts,
         &json!(request),
         &inputs,

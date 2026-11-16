@@ -171,10 +171,10 @@ fn unavailable(parent: &Event, session: &str, reducer: Option<u32>, reason: &str
     }
 }
 
-pub(super) fn compute(key: &Value, inputs: &[Event]) -> Computed {
-    let Some(session) = key["session"].as_str().filter(|id| !id.is_empty()) else {
+pub(super) fn compute(session: &str, inputs: &[Event]) -> Computed {
+    if session.is_empty() {
         return Computed::default();
-    };
+    }
     let mut snapshots: Vec<_> = inputs
         .iter()
         .filter(|event| {

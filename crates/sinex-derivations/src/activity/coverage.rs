@@ -2,13 +2,21 @@
 use super::*;
 use sinex_model::event_types::activity::InputCoverageInterval;
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InputCoverageKey {
+    pub session: String,
+    pub scope: String,
+}
+
 pub struct InputCoverage;
 impl Keyed for InputCoverage {
+    type Key = InputCoverageKey;
     const NAME: &'static str = "input.coverage";
     const VERSION: u32 = 1;
     const INPUTS: &'static [&'static str] = &["input.logger"];
     const OUTPUTS: &'static [&'static str] = &["input.coverage"];
-    fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Value> {
+    fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Self::Key> {
         if !matches!(input.payload["event"].as_str(), Some("start" | "stop")) {
             return vec![];
         }
@@ -22,24 +30,22 @@ impl Keyed for InputCoverage {
         if serde_json::from_str::<Value>(&scope).is_ok_and(|scope| scope[0] == "unknown") {
             return vec![];
         }
-        vec![json!({"session": session, "scope": scope})]
+        vec![InputCoverageKey {
+            session: session.to_owned(),
+            scope,
+        }]
     }
-    fn inputs(&self, key: &Value, _: &Env) -> Option<InputQuery> {
+    fn inputs(&self, key: &Self::Key, _: &Env) -> Option<InputQuery> {
         Some(
             InputQuery::all(vec![
                 crate::Kind::only("input.logger", &[("event", "start")]),
                 crate::Kind::only("input.logger", &[("event", "stop")]),
             ])
-            .only("session", key.get("session")?.clone()),
+            .only("session", json!(key.session)),
         )
     }
-    fn key_state(&self, _: &Value, _: &Env) -> KeyState {
-        KeyState::Closed
-    }
-    fn compute(&self, key: &Value, inputs: &[Event], _: &Env) -> Computed {
-        let Some(captured_scope) = key["scope"].as_str() else {
-            return Computed::default();
-        };
+    fn compute(&self, key: &Self::Key, inputs: &[Event], _: &Env) -> Computed {
+        let captured_scope = key.scope.as_str();
         let mut events: Vec<_> = inputs
             .iter()
             .filter(|event| {

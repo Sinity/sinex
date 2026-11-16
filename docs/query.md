@@ -213,8 +213,10 @@ in an operation-local temporary relation under the input snapshot, streaming
 unbounded operands in batches. Grouped time fields are prepared from their
 preceding relation. Boundaries retain nanoseconds, including seconds in the day
 start; folds use the first shared boundary and gaps use the shared transition.
-The temporary relation holds calendar boundaries and is cleared before the next
-outer read snapshot. `hour()` continues to name the local clock hour.
+The temporary relations hold calendar boundaries and UTC offset spans from the
+daemon's zone rules, and are cleared before the next outer read snapshot.
+`hour()` names the local clock hour, from 0 to 23; both occurrences of a repeated
+autumn hour have the same number.
 
 Required word or phrase predicates before relation-changing stages select keys
 from the full-text index before fetching event rows. The full predicate and

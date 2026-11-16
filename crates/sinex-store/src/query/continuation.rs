@@ -23,8 +23,7 @@ pub fn identity(surface: &str, question: &Json, grants: &str) -> Result<Question
 }
 pub fn query_identity(text: &str, ctx: &Context) -> Result<Json> {
     if sinex_query::template::is_command(text) {
-        return sinex_query::template::parse(text, ctx)?
-            .identity()
+        return sinex_query::template::identity(&sinex_query::template::parse(text, ctx)?)
             .map_err(Error::Query);
     }
     let catalog = sinex_query::syntax::catalog(ctx);

@@ -56,6 +56,8 @@ Each derivation declares:
 - `materialize: at_admission` (the default) or `on_request` with its reason;
 - for each output label or detection: what it measures, its fields, its denominator and its agreement evidence.
 
+A supplied daemon configuration names every built derivation explicitly as enabled or disabled; missing names are refused together. With no configuration file the daemon runs no derivations. The NixOS deployment enables each derivation by default and writes every choice. Empty tag rules omit the tag applier from the running set.
+
 Registration is validated at start. Unknown types, dependency cycles and unimplemented operations refuse to start the runner, naming the derivation and the reason. Derivations run in dependency order.
 
 ## Reads outside a key's period
@@ -109,7 +111,7 @@ The states, archive, restore, replay and tombstone are defined in [the lifecycle
 - **One logical day.** Every day-grain product uses the one logical-day setting shared with Polylogue ([`DaySetting`](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/query-language/README.md); key and default in [operations](operations.md#logical-day)). Day- and hour-grain records state the boundary and zone they were cut with. Changing the setting is a version change of every day-grain derivation and recomputes them all under the one new setting.
 - **Periods are half-open UTC instants.** The two instances of a repeated autumn hour are distinct periods; a nonexistent spring hour is not invented.
 - **The wake view sits beside the logical day.** `day.wake` events ([rest and the wake view](higher-layer.md#rest-and-the-wake-view)) let Today, the brief and narratives offer "since you woke" and a wake-to-wake view. They never redefine the logical day, never partition calculation and never change `group by day`. The logical day is shown first; the wake view is offered beside it.
-- A malformed negative duration is a failed input with its evidence, never clamped to zero.
+- Malformed durations are parse failures. When a stored command has a negative duration, shell-session grouping treats it as a point at its recorded start; it does not move the session end backward.
 
 ## The common payload contract
 
@@ -210,6 +212,7 @@ One `state.interval` derivation, with declared rules for adjacent transitions, o
 - Genuine suspend or hibernate cuts open desktop intervals; resume alone does not establish a new focus. Transitions come from the source's typed journal and logind events, never from log text containing "Started".
 - Equal-time transitions order by recorded sequence, then stable record identity.
 - The `intervals` and `now` query aliases show an open end as unknown and the evidence's age separately.
+- A presence span with an observed end after the computation time ends at that current time. Its key stays waiting and schedules a refresh at the observed end, so the final span reaches its recorded end even without another input.
 - Repairs of malformed source records (ActivityWatch heartbeats, for example) belong to the source's parser, not to this derivation.
 
 Adjacent-transition range reads first find the day's touched scopes, then stream
@@ -221,18 +224,12 @@ string `scope` or `bucket`, including an empty string, then the captured record
 identity. Focus uses a nonempty window ID or `class:` plus the class; workspace
 uses `workspace:` plus the first non-null ID or name, preserving literal strings
 and serialized non-string JSON. Missing subjects never count as same-state refreshes.
-AFK observations participate in the same scope-normalized range rather than a
-separate field-based neighbour lookup. Every refresh through the first real
+Interruptions participate in this same range. Each interruption retains its
+declared matching field: AFK matches a scope, and suspend matches a host across
+that host's captured scopes. The reader and fold apply the same matching rule. Every refresh through the first real
 closer remains in reach, including stored evidence whose clock is later than
 the runner's clock. All observations at the closing microsecond reach the fold,
 which applies recorded sequence and stable record ordering to their parents.
-
-This corrects input selection for the existing version 3 fold; its full-input
-output identities and semantic version are unchanged. Runs record the new build
-identity. Dirty and waiting keys use the usual replacement, keeping superseded
-readings as history. Closed historical keys require explicit selective
-recomputation; deploying this reader does not repair them automatically or remove
-unrelated interval families. Original observations and their material remain intact.
 
 ## Documents and tags
 

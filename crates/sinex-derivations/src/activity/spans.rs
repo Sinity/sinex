@@ -5,21 +5,22 @@ use sinex_model::event_types::activity::{ActivitySpan, Agency};
 pub struct ActivitySpans;
 
 impl Keyed for ActivitySpans {
+    type Key = HourKey;
     const NAME: &'static str = "activity.spans";
     const VERSION: u32 = 6;
     const USES_TIME_SETTINGS: bool = true;
     const INPUTS: &'static [&'static str] = INPUTS;
     const OUTPUTS: &'static [&'static str] = &["activity.span"];
-    fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Value> {
+    fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Self::Key> {
         hours(input, env)
     }
-    fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery> {
+    fn inputs(&self, key: &Self::Key, env: &Env) -> Option<InputQuery> {
         inputs(key, env)
     }
-    fn key_state(&self, key: &Value, env: &Env) -> KeyState {
+    fn key_state(&self, key: &Self::Key, env: &Env) -> KeyState {
         key_state(key, env)
     }
-    fn compute(&self, key: &Value, inputs: &[Event], env: &Env) -> Computed {
+    fn compute(&self, key: &Self::Key, inputs: &[Event], env: &Env) -> Computed {
         let Some((from, until)) = partition(key, env) else {
             return Computed::default();
         };

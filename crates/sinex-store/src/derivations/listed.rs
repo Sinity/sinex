@@ -34,7 +34,8 @@ impl ListedInputs {
         if self.finished {
             return Ok(None);
         }
-        let rows = sqlx::query_file!(
+        let rows = sqlx::query_file_as!(
+            EventRow,
             "src/derivations/sql/listed_page.sql",
             &self.ids,
             self.after,
@@ -50,7 +51,7 @@ impl ListedInputs {
         }
         let mut page = Vec::with_capacity(rows.len());
         for row in rows {
-            page.push(committed!(row));
+            page.push(Committed::try_from(row)?);
         }
         let last = page.last().expect("nonempty");
         self.after = last.commit_seq;

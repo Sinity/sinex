@@ -36,7 +36,7 @@ struct ReadBatch {
 
 pub(crate) struct Builder {
     file: BufWriter<File>,
-    first: Option<Batch>,
+    identity: Option<(RunId, sinex_model::OperationId)>,
     batches: u64,
 }
 
@@ -46,16 +46,12 @@ impl Builder {
         std::fs::create_dir_all(&scratch)?;
         Ok(Self {
             file: BufWriter::new(tempfile::tempfile_in(scratch)?),
-            first: None,
+            identity: None,
             batches: 0,
         })
     }
 
     pub(crate) fn push(&mut self, batch: Batch) -> Result<()> {
-        if self.first.is_none() {
-            self.first = Some(batch);
-            return Ok(());
-        }
         let BatchKind::Replay {
             operation,
             source,
@@ -64,12 +60,11 @@ impl Builder {
         else {
             return Err(Error::internal("daemon replay prepared a non-replay batch"));
         };
-        let first = self.first.as_ref().expect("the replay scope is set");
-        if batch.run != first.run
-            || !matches!(first.kind, BatchKind::Replay { operation: first, .. } if first == operation)
-        {
+        let identity = (batch.run, operation);
+        if self.identity.is_some_and(|expected| expected != identity) {
             return Err(Error::internal("daemon replay changed its operation"));
         }
+        self.identity = Some(identity);
         if !batch.archive.is_empty() {
             return Err(Error::internal(
                 "daemon replay archives only its first batch",
@@ -88,14 +83,16 @@ impl Builder {
         Ok(())
     }
 
-    pub(crate) fn finish(mut self) -> Result<Batches> {
-        let first = self
-            .first
-            .take()
-            .ok_or_else(|| Error::internal("daemon replay prepared no archive scope"))?;
+    pub(crate) fn finish(mut self, first: Batch) -> Result<Batches> {
         let BatchKind::Replay { operation, .. } = first.kind else {
             return Err(Error::internal("daemon replay prepared a non-replay scope"));
         };
+        if self
+            .identity
+            .is_some_and(|expected| expected != (first.run, operation))
+        {
+            return Err(Error::internal("daemon replay changed its operation"));
+        }
         self.file.flush()?;
         let mut file = self.file.into_inner().map_err(|e| e.into_error())?;
         file.rewind()?;

@@ -376,8 +376,8 @@ fn every_built_in_source_declares_its_version_before_input() {
         }
     }
     let configured = config(json!({"derivations":{"metric.hourly":false}}));
-    assert!(!configured.runs("metric.hourly"));
-    assert!(configured.runs("command.fusion"));
+    assert_eq!(configured.runs("metric.hourly"), Some(false));
+    assert_eq!(configured.runs("command.fusion"), None);
 }
 
 #[devkit::test]
@@ -624,8 +624,11 @@ async fn saved_bindings_reconnect_after_the_database_connection_is_lost(
 
 #[devkit::test]
 fn tags_require_an_explicit_choice() {
-    assert!(!Config::default().runs("tag.applier"));
-    assert!(config(serde_json::json!({"derivations": {"tag.applier": true}})).runs("tag.applier"));
+    assert_eq!(Config::default().runs("tag.applier"), None);
+    assert_eq!(
+        config(serde_json::json!({"derivations": {"tag.applier": true}})).runs("tag.applier"),
+        Some(true)
+    );
 }
 
 #[devkit::test]
@@ -754,4 +757,26 @@ async fn an_input_not_present_yet_is_not_missing_coverage(db: devkit::pg::TestDa
     );
     coverage.end(&mut context.read_conn).await.unwrap();
     context.close().await.unwrap();
+}
+
+#[devkit::test]
+fn a_configuration_names_every_built_derivation() {
+    let names = crate::catalog::derivation_names();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("sources.json");
+    std::fs::write(&path, b"{}").unwrap();
+    let error = Config::load(&path).unwrap_err().to_string();
+    for name in &names {
+        assert!(error.contains(name), "missing {name}: {error}");
+    }
+    let derivations: BTreeMap<_, _> = names.into_iter().map(|name| (name, false)).collect();
+    std::fs::write(
+        &path,
+        serde_json::to_vec(&json!({"derivations":derivations})).unwrap(),
+    )
+    .unwrap();
+    let config = Config::load(&path).unwrap();
+    for name in crate::catalog::derivation_names() {
+        assert_eq!(config.runs(&name), Some(false));
+    }
 }

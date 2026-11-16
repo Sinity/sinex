@@ -5,10 +5,9 @@ use serde_json::json;
 fn cursors_bind_only_to_their_own_question_and_refuse_tampering() {
     let ctx = Context::utc("2026-09-14T12:00:00Z".parse().unwrap());
     let text = "trace sinex:ev/00000000-0000-4000-8000-000000000001";
-    let question = sinex_query::template::parse(text, &ctx)
-        .unwrap()
-        .identity()
-        .unwrap();
+    let question =
+        sinex_query::template::identity(&sinex_query::template::parse(text, &ctx).unwrap())
+            .unwrap();
     let seal = CursorSeal::new([7; 32]);
     let after = OrderPosition {
         values: vec![json!(4)],
@@ -41,10 +40,9 @@ fn cursors_bind_only_to_their_own_question_and_refuse_tampering() {
         ),
         (text, "guarded"),
     ] {
-        let other = sinex_query::template::parse(text, &ctx)
-            .unwrap()
-            .identity()
-            .unwrap();
+        let other =
+            sinex_query::template::identity(&sinex_query::template::parse(text, &ctx).unwrap())
+                .unwrap();
         let other = identity("query", &other, grants).unwrap();
         assert!(bind_authenticated(authenticate(&seal, &raw).unwrap(), other, &ctx).is_err());
     }

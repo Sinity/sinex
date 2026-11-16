@@ -4,13 +4,10 @@
 //! [`after`] is the event-only view used by internal event derivations.
 //! A tombstone keeps positions and payload-free lifecycle history; each
 //! event's stream sequences are tracked per stream instance for erasure.
+use crate::event_row::EventRow;
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use sinex_model::{
-    AdmissionCounts, Class, DbCheck, Event, EventId, FrameRefusal, KindRef, MaterialId,
-    OperationId, Origin, ReadingOrder, RecordLocation, RecordState, TimeQuality, Timestamp, TsOrig,
-};
+use sinex_model::{AdmissionCounts, EventId, FrameRefusal, KindRef, OperationId};
 use sqlx::PgConnection;
 use sqlx::types::Json;
 use time::OffsetDateTime;
@@ -53,42 +50,16 @@ pub async fn erased_reading(
     conn: &mut PgConnection,
     event: EventId,
 ) -> Result<Option<ErasedReading>> {
-    let row=sqlx::query!("SELECT event_type,class,commit_seq,original_commit_seq FROM core.event_tombstones WHERE event_id=$1",event.0)
+    let row=sqlx::query_as!(ErasedReading, "SELECT event_type,class,commit_seq,original_commit_seq FROM core.event_tombstones WHERE event_id=$1",event.0)
         .fetch_optional(conn).await?;
-    Ok(row.map(|row| ErasedReading {
-        event_type: row.event_type,
-        class: row.class,
-        commit_seq: row.commit_seq,
-        original_commit_seq: row.original_commit_seq,
-    }))
+    Ok(row)
 }
 
 /// One committed event as stored.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Committed {
-    pub commit_seq: i64,
-    pub id: Uuid,
-    pub event_type: String,
-    pub kind_version: i64,
-    pub validation: String,
+    pub row: EventRow,
     pub search: sinex_model::kinds::Search,
-    pub replace_rule: Option<String>,
-    pub source: String,
-    pub run_id: Uuid,
-    pub material_id: Option<Uuid>,
-    pub record_offset: Option<i64>,
-    pub output_index: i64,
-    pub parents: Option<Vec<Uuid>>,
-    pub ts_orig: Option<OffsetDateTime>,
-    pub ts_quality: String,
-    pub ts_coided: Option<OffsetDateTime>,
-    pub ts_persisted: OffsetDateTime,
-    pub payload: Value,
-    pub equivalence_key: Option<String>,
-    pub reading_order: i64,
-    pub record_hash: Vec<u8>,
-    pub record_state: String,
-    pub class: String,
 }
 
 /// A page of committed events and the commit position it covers.
@@ -123,7 +94,14 @@ pub async fn after(conn: &mut PgConnection, after: i64, limit: i64, bytes: i64) 
             }),
         })
         .collect();
-    let (mut events, up_to) = fetch_selected(conn, &selected, bytes).await?;
+    let (rows, up_to) = fetch_selected(conn, &selected, bytes).await?;
+    let mut events: Vec<_> = rows
+        .into_iter()
+        .map(|row| Committed {
+            row,
+            search: sinex_model::kinds::Search::None,
+        })
+        .collect();
     add_declarations(conn, &mut events).await?;
     Ok(Page { events, up_to })
 }
@@ -147,8 +125,7 @@ pub async fn after_in_one_snapshot(
     Ok(page)
 }
 
-/// Fill each event's replacement rule and search mode from its stored kind
-/// declaration.
+/// Fill each event's search mode from its stored kind declaration.
 pub(crate) async fn add_declarations(
     conn: &mut PgConnection,
     events: &mut [Committed],
@@ -156,8 +133,8 @@ pub(crate) async fn add_declarations(
     let references: Vec<_> = events
         .iter()
         .map(|e| sinex_model::KindRef {
-            name: e.event_type.clone(),
-            version: e.kind_version as u64,
+            name: e.row.event_type.clone(),
+            version: e.row.kind_version as u64,
         })
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
@@ -165,13 +142,12 @@ pub(crate) async fn add_declarations(
     let declarations = sinex_schema::kinds::load(conn, &references).await?;
     for e in events {
         let reference = sinex_model::KindRef {
-            name: e.event_type.clone(),
-            version: e.kind_version as u64,
+            name: e.row.event_type.clone(),
+            version: e.row.kind_version as u64,
         };
         let d = declarations
             .get(&reference)
             .ok_or_else(|| Error::Invalid(format!("missing stored declaration {reference:?}")))?;
-        e.replace_rule = d.replace_rule.map(|r| r.as_db().to_string());
         e.search = d.search;
     }
     Ok(())
@@ -202,7 +178,7 @@ pub(crate) async fn fetch_selected(
     conn: &mut PgConnection,
     selected: &[Selected],
     bytes: i64,
-) -> Result<(Vec<Committed>, Option<i64>)> {
+) -> Result<(Vec<EventRow>, Option<i64>)> {
     let mut events = Vec::new();
     let mut up_to = None;
     let mut read = 0i64;
@@ -230,10 +206,10 @@ pub(crate) async fn fetch_selected(
 /// The rows of one group's events. Inclusive ID and time bounds and the kinds
 /// let compressed batches be skipped by their order and segment columns; the
 /// ID list keeps exact membership.
-async fn read_rows(
+pub(crate) async fn read_rows(
     conn: &mut PgConnection,
     group: &[Selected],
-) -> Result<std::collections::HashMap<Uuid, Committed>> {
+) -> Result<std::collections::HashMap<Uuid, EventRow>> {
     let events: Vec<&SelectedEvent> = group.iter().filter_map(|p| p.event.as_ref()).collect();
     let mut rows = std::collections::HashMap::with_capacity(events.len());
     let kinds: Vec<String> = events
@@ -249,7 +225,7 @@ async fn read_rows(
         let times = timed.iter().filter_map(|e| e.ts_orig);
         let (earliest, latest) = (times.clone().min(), times.max());
         let found = sqlx::query_file_as!(
-            StoredRow,
+            EventRow,
             "src/commit_log/rows.sql",
             &ids,
             ids.iter().min().copied(),
@@ -261,13 +237,13 @@ async fn read_rows(
         .fetch_all(&mut *conn)
         .await?;
         for row in found {
-            rows.insert(row.id, row.into_committed());
+            rows.insert(row.id, row);
         }
     }
     if !untimed.is_empty() {
         let ids: Vec<Uuid> = untimed.iter().map(|e| e.id).collect();
         let found = sqlx::query_file_as!(
-            StoredRow,
+            EventRow,
             "src/commit_log/rows_without_time.sql",
             &ids,
             ids.iter().min().copied(),
@@ -277,116 +253,10 @@ async fn read_rows(
         .fetch_all(&mut *conn)
         .await?;
         for row in found {
-            rows.insert(row.id, row.into_committed());
+            rows.insert(row.id, row);
         }
     }
     Ok(rows)
-}
-
-/// One stored event row as the commit page reads it.
-struct StoredRow {
-    id: Uuid,
-    event_type: String,
-    kind_version: i64,
-    validation: String,
-    source: String,
-    run_id: Uuid,
-    material_id: Option<Uuid>,
-    record_offset: Option<i64>,
-    output_index: i64,
-    parents: Option<Vec<Uuid>>,
-    ts_orig: Option<OffsetDateTime>,
-    ts_quality: String,
-    ts_coided: Option<OffsetDateTime>,
-    ts_persisted: OffsetDateTime,
-    payload: Value,
-    equivalence_key: Option<String>,
-    reading_order: i64,
-    record_hash: Vec<u8>,
-    record_state: String,
-    class: String,
-}
-
-impl StoredRow {
-    fn into_committed(self) -> Committed {
-        Committed {
-            commit_seq: 0,
-            id: self.id,
-            event_type: self.event_type,
-            kind_version: self.kind_version,
-            validation: self.validation,
-            search: sinex_model::kinds::Search::None,
-            replace_rule: None,
-            source: self.source,
-            run_id: self.run_id,
-            material_id: self.material_id,
-            record_offset: self.record_offset,
-            output_index: self.output_index,
-            parents: self.parents,
-            ts_orig: self.ts_orig,
-            ts_quality: self.ts_quality,
-            ts_coided: self.ts_coided,
-            ts_persisted: self.ts_persisted,
-            payload: self.payload,
-            equivalence_key: self.equivalence_key,
-            reading_order: self.reading_order,
-            record_hash: self.record_hash,
-            record_state: self.record_state,
-            class: self.class,
-        }
-    }
-}
-
-impl Committed {
-    /// Reconstruct the stored reading, including outside kinds.
-    pub fn to_event(&self) -> Result<Event> {
-        let origin = match (&self.material_id, self.record_offset, &self.parents) {
-            (Some(material), Some(record_offset), _) => Origin::Record {
-                location: RecordLocation {
-                    material: MaterialId(*material),
-                    record_offset: u64::try_from(record_offset).map_err(|_| {
-                        Error::Invalid(format!("negative record offset on {}", self.id))
-                    })?,
-                },
-                output_index: u64::try_from(self.output_index)
-                    .map_err(|_| Error::Invalid(format!("negative output_index on {}", self.id)))?,
-            },
-            (_, _, Some(parents)) => Origin::Derived {
-                parents: parents.iter().map(|p| EventId(*p)).collect(),
-            },
-            _ => return Err(Error::Invalid(format!("event {} has no origin", self.id))),
-        };
-        let quality: TimeQuality = from_db(&self.ts_quality)?;
-        let record_hash: [u8; 32] =
-            self.record_hash.as_slice().try_into().map_err(|_| {
-                Error::Invalid(format!("record hash of {} is not 32 bytes", self.id))
-            })?;
-        Ok(Event {
-            id: EventId(self.id),
-            event_type: self.event_type.clone(),
-            kind_version: self.kind_version as u64,
-            validation: from_db(&self.validation)?,
-            source: self.source.clone(),
-            origin,
-            ts_orig: TsOrig::maybe(self.ts_orig.map(Timestamp), quality),
-            payload: self.payload.clone(),
-            equivalence_key: self
-                .equivalence_key
-                .clone()
-                .map(sinex_model::EquivalenceKey),
-            replace: self.replace_rule.as_deref().map(from_db).transpose()?,
-            reading_order: ReadingOrder(self.reading_order),
-            record_hash,
-            record_state: from_db::<RecordState>(&self.record_state)?,
-            class: from_db::<Class>(&self.class)?,
-            owned_blobs: Vec::new(),
-        })
-    }
-}
-
-fn from_db<T: serde::de::DeserializeOwned>(text: &str) -> Result<T> {
-    serde_json::from_value(Value::String(text.to_owned()))
-        .map_err(|e| Error::Invalid(format!("stored value {text:?}: {e}")))
 }
 
 /// A reading taken out of or put back into the live set.

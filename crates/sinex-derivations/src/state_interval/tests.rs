@@ -3,6 +3,7 @@
 //! ActivityWatch heartbeats are joined into spans by the ActivityWatch source,
 //! so its presence scenarios are span scenarios here.
 use super::*;
+use crate::AnyKeyed as Keyed;
 use sinex_model::{
     Class, EquivalenceKey, MaterialId, ReadingOrder, RecordLocation, ReplaceRule, TimeQuality,
     TsOrig,
@@ -265,6 +266,7 @@ fn inputs_ask_for_the_transitions_after_the_day() {
     assert!(
         interruptions
             .iter()
+            .flat_map(|neighbour| &neighbour.kinds)
             .any(|kind| kind.admits("presence.span", &json!({"status":"afk"}))),
         "scope-normalized interruptions bound the same range"
     );
@@ -329,4 +331,115 @@ fn desktop_transitions_require_the_same_captured_scope() {
     let output = lift("desktop.focus", &[first, other]);
     assert_eq!(output.len(), 2);
     assert!(output.iter().all(|interval| interval.ended_at.is_none()));
+}
+
+#[devkit::test]
+fn suspend_closes_open_focus_interval() {
+    let mut focused = focus(0, "window-a", "editor");
+    focused.payload["host"] = json!("box");
+    focused.payload["scope"] = json!("seat-a");
+    let mut suspend = input("sleep.started", 60, json!({"host":"box"}));
+    suspend.payload.as_object_mut().unwrap().remove("scope");
+    let env = Env::at(
+        at(120),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).unwrap(),
+    );
+    let output = StateIntervals.compute(
+        &key("desktop.focus"),
+        &[focused.clone(), suspend.clone()],
+        &env,
+    );
+    assert_eq!(output.outputs.len(), 1);
+    let interval = output.outputs[0].payload_as::<StateInterval>().unwrap();
+    assert_eq!(interval.started_at, at(0));
+    assert_eq!(interval.ended_at, Some(at(60)));
+    assert_eq!(interval.end_event_type.as_deref(), Some("sleep.started"));
+    assert_eq!(
+        output.outputs[0].origin,
+        Origin::Derived {
+            parents: vec![focused.id, suspend.id]
+        }
+    );
+}
+
+#[devkit::test]
+fn open_afk_span_clamped_at_creation() {
+    // Derivations receive no capture time, so their current time bounds the span.
+    let env = Env::at(
+        at(60),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).unwrap(),
+    );
+    let inputs = [presence(0, 300, "afk"), presence(-86_400, 90, "afk")];
+    let output = StateIntervals.compute(&key("desktop.activitywatch.afk"), &inputs, &env);
+    assert!(output.waiting);
+    assert_eq!(
+        StateIntervals.refresh_at(&inputs, &output.outputs, &env),
+        Some(at(300))
+    );
+    assert_eq!(output.outputs.len(), 1);
+    let interval = output.outputs[0].payload_as::<StateInterval>().unwrap();
+    assert_eq!(interval.started_at, at(0));
+    assert_eq!(interval.ended_at, Some(at(60)));
+    let later = Env {
+        now: at(180),
+        ..env.clone()
+    };
+    let refreshed = StateIntervals.compute(&key("desktop.activitywatch.afk"), &inputs, &later);
+    assert!(refreshed.waiting);
+    assert_eq!(
+        refreshed.outputs[0]
+            .payload_as::<StateInterval>()
+            .unwrap()
+            .ended_at,
+        Some(at(180))
+    );
+    let finished = Env {
+        now: at(300),
+        ..env
+    };
+    let completed = StateIntervals.compute(&key("desktop.activitywatch.afk"), &inputs, &finished);
+    assert!(!completed.waiting);
+    assert_eq!(
+        completed.outputs[0]
+            .payload_as::<StateInterval>()
+            .unwrap()
+            .ended_at,
+        Some(at(300))
+    );
+    assert_eq!(
+        StateIntervals.refresh_at(&inputs, &completed.outputs, &finished),
+        None
+    );
+    let before_start = Env {
+        now: at(60),
+        ..finished
+    };
+    let future_inputs = [presence(120, 300, "afk")];
+    let future = StateIntervals.compute(
+        &key("desktop.activitywatch.afk"),
+        &future_inputs,
+        &before_start,
+    );
+    assert!(future.waiting);
+    let interval = future.outputs[0].payload_as::<StateInterval>().unwrap();
+    assert_eq!(interval.started_at, at(120));
+    assert_eq!(interval.ended_at, Some(at(120)));
+    assert_eq!(
+        StateIntervals.refresh_at(&future_inputs, &future.outputs, &before_start),
+        Some(at(300))
+    );
+}
+
+#[devkit::test]
+fn start_after_start_closes_previous() {
+    let starts = [
+        machine::unit("unit.started", 0, "boot-a", "run-a"),
+        machine::unit("unit.started", 30, "boot-a", "run-b"),
+    ];
+    let output = machine::machine("machine.unit", &starts);
+    assert_eq!(output.len(), 2);
+    assert_eq!(output[0].started_at, at(0));
+    assert_eq!(output[0].ended_at, Some(at(30)));
+    assert_eq!(output[1].started_at, at(30));
+    assert_eq!(output[1].ended_at, None);
 }

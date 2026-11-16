@@ -35,9 +35,17 @@ fn selection_time(ns: i128) -> Timestamp {
     })
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ActivitySessionKey {
+    pub at: Timestamp,
+    pub scope: String,
+}
+
 pub struct ActivitySessions(pub ActivityProfile);
 
 impl Keyed for ActivitySessions {
+    type Key = ActivitySessionKey;
     const NAME: &'static str = "activity.sessions";
     const VERSION: u32 = 4;
     const USES_TIME_SETTINGS: bool = true;
@@ -56,15 +64,23 @@ impl Keyed for ActivitySessions {
         let bytes: [u8; 4] = hash.finalize().as_bytes()[..4].try_into().unwrap();
         1 + (u32::from_le_bytes(bytes) >> 2)
     }
-    fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Value> {
+    fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Self::Key> {
         if input.event_type != "activity.window" {
             return vec![];
         }
-        let (Some(at), Some(scope)) = (input.payload.get("started_at"), input.payload.get("scope"))
-        else {
+        let (Some(at), Some(scope)) = (
+            input
+                .payload
+                .get("started_at")
+                .and_then(|at| serde_json::from_value(at.clone()).ok()),
+            input.payload.get("scope").and_then(Value::as_str),
+        ) else {
             return vec![];
         };
-        vec![json!({"at":at,"scope":scope})]
+        vec![ActivitySessionKey {
+            at,
+            scope: scope.to_owned(),
+        }]
     }
     fn nearby_inputs(&self, input: &KeyView<'_>, _: &Env) -> Option<InputQuery> {
         if input.event_type != "activity.window" {
@@ -113,9 +129,9 @@ impl Keyed for ActivitySessions {
             })
             .unwrap_or_default()
     }
-    fn inputs(&self, key: &Value, _: &Env) -> Option<InputQuery> {
-        let at = serde_json::from_value::<Timestamp>(key.get("at")?.clone()).ok()?;
-        let scope = key.get("scope")?;
+    fn inputs(&self, key: &Self::Key, _: &Env) -> Option<InputQuery> {
+        let at = key.at;
+        let scope = json!(key.scope);
         let mut selected = crate::Kind::all("activity.window");
         selected.equal.push(("scope".into(), scope.clone()));
         let mut query = InputQuery::all(kinds(Self::INPUTS));
@@ -148,7 +164,7 @@ impl Keyed for ActivitySessions {
         Some(query)
     }
 
-    fn refresh_at(&self, outputs: &[Event], _: &Env) -> Option<Timestamp> {
+    fn refresh_at(&self, _: &[Event], outputs: &[Event], _: &Env) -> Option<Timestamp> {
         outputs
             .iter()
             .filter(|event| event.payload["provisional"] == true)
@@ -160,10 +176,10 @@ impl Keyed for ActivitySessions {
             })
             .min()
     }
-    fn key_state(&self, _: &Value, _: &Env) -> KeyState {
+    fn key_state(&self, _: &Self::Key, _: &Env) -> KeyState {
         KeyState::Open
     }
-    fn compute(&self, key: &Value, inputs: &[Event], env: &Env) -> Computed {
+    fn compute(&self, key: &Self::Key, inputs: &[Event], env: &Env) -> Computed {
         let threshold = i128::from(self.0.break_seconds) * SECOND;
         let mut by_scope = BTreeMap::<String, Vec<_>>::new();
         for (event, window) in inputs
@@ -205,9 +221,7 @@ impl Keyed for ActivitySessions {
             }
             for group in &groups {
                 let first = &group[0].1;
-                if key.get("at").is_some()
-                    && (key["at"] != json!(first.started_at) || key["scope"] != first.scope)
-                {
+                if key.at != first.started_at || key.scope != first.scope {
                     continue;
                 }
                 let end = group

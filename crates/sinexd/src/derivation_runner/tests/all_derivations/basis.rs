@@ -38,7 +38,7 @@ pub(super) async fn validate(w: &World) {
             "the reconstructed read must precede this pack reading's admission"
         );
         let key = json!({"episode":payload["episode"]});
-        let declared = Keyed::inputs(&ContextPacks, &key, &env).unwrap();
+        let declared = AnyKeyed::inputs(&ContextPacks, &key, &env).unwrap();
         // Translate only the declared inputs' captured, unbounded known-time shape.
         // An expanded declaration must extend the oracle, never lose scope.
         assert!(declared.range.is_none() && declared.window.is_none());
@@ -121,7 +121,7 @@ pub(super) async fn validate(w: &World) {
                 "historical compiler and transformed Event payload agree"
             );
         }
-        let computed = Keyed::compute(&ContextPacks, &key, &inputs, &env);
+        let computed = AnyKeyed::compute(&ContextPacks, &key, &inputs, &env);
         assert!(computed.error.is_none() && !computed.waiting);
         assert_eq!(computed.outputs.len(), 1);
         let mut rebuilt = computed.outputs.into_iter().next().unwrap();

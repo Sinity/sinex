@@ -28,6 +28,9 @@ pub(crate) async fn install_built_in_sources(conn: &mut PgConnection) -> Result<
 /// Every per-event derivation the build has, whatever the configuration.
 fn per_event() -> Vec<Box<dyn AnyPerEvent>> {
     let mut per_event = sinex_derivations::per_event();
+    per_event.push(Box::new(
+        sinex_derivations::tags::TagApplier::new(vec![]).expect("empty rules are valid"),
+    ));
     per_event.push(
         Box::new(crate::document_text::DocumentText { pdf_reader: None }) as Box<dyn AnyPerEvent>,
     );
@@ -51,7 +54,6 @@ pub(crate) fn catalog() -> Value {
     let keyed = crate::analysis::keyed().into_iter().map(|d| {
         json!({
             "name": d.name(),
-            "enabledByDefault": sinex_derivations::enabled_by_default(d.name()),
             "kind": "keyed",
             "history": d.history_policy(),
             "inputs": d.inputs_types(),
@@ -61,7 +63,6 @@ pub(crate) fn catalog() -> Value {
     let per_event = per_event().into_iter().map(|d| {
         json!({
             "name": d.name(),
-            "enabledByDefault": sinex_derivations::enabled_by_default(d.name()),
             "kind": "per-event",
             "history": d.history_policy(),
             "inputs": d.inputs_types(),

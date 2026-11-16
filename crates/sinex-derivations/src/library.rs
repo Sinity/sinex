@@ -1,6 +1,6 @@
 //! Library items and their original renditions computed from visible scans.
 use crate::derived_event::derived;
-use crate::{Computed, Env, Input, InputQuery, KeyState, KeyView, Keyed, PerEvent};
+use crate::{Computed, Env, Input, InputQuery, KeyView, Keyed, PerEvent};
 use serde_json::Value;
 use sinex_model::event_types::library::{FileCopy, FilenameHints, Item, Rendition, RenditionRole};
 use sinex_model::{Event, RecordState, Timestamp};
@@ -9,32 +9,34 @@ use std::collections::BTreeMap;
 pub struct LibraryItems;
 
 impl Keyed for LibraryItems {
+    type Key = String;
     const NAME: &'static str = "library.items";
     const VERSION: u32 = 2;
     const INPUTS: &'static [&'static str] = &["library.copy"];
     const OUTPUTS: &'static [&'static str] = &["library.item", "library.rendition"];
 
-    fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Value> {
-        input.payload.get("item").cloned().into_iter().collect()
+    fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Self::Key> {
+        input
+            .payload
+            .get("item")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .into_iter()
+            .collect()
     }
 
-    fn inputs(&self, key: &Value, _: &Env) -> Option<InputQuery> {
-        key.as_str()?;
+    fn inputs(&self, key: &Self::Key, _: &Env) -> Option<InputQuery> {
         Some(
             InputQuery::window(
                 Self::INPUTS,
                 Timestamp::from_unix_secs(-62_135_596_800).expect("year 1"),
                 Timestamp::from_unix_secs(253_402_300_799).expect("year 9999"),
             )
-            .only("item", key.clone()),
+            .only("item", serde_json::json!(key)),
         )
     }
 
-    fn key_state(&self, _: &Value, _: &Env) -> KeyState {
-        KeyState::Closed
-    }
-
-    fn compute(&self, _: &Value, inputs: &[Event], _: &Env) -> Computed {
+    fn compute(&self, _: &Self::Key, inputs: &[Event], _: &Env) -> Computed {
         let mut copies: Vec<(&Event, FileCopy)> = inputs
             .iter()
             .filter(|event| event.event_type == "library.copy")

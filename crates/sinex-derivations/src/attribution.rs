@@ -2,7 +2,8 @@
 //! Ambiguous owners conserve time as unallocated; titles never establish ownership.
 use crate::activity::cite;
 use crate::derived_event::derived;
-use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed};
+use crate::keys::HourKey;
+use crate::{Computed, Env, InputQuery, KeyView, Keyed};
 use serde_json::{Value, json};
 use sinex_model::event_types::activity::{ActivitySpan, Agency};
 use sinex_model::event_types::work::{ProjectShare, ProjectSpan, WorkAct};
@@ -95,6 +96,7 @@ fn owners(act: &WorkAct, registry: &[Value]) -> (Option<u8>, BTreeSet<String>) {
 }
 
 impl Keyed for ProjectSpans {
+    type Key = HourKey;
     const NAME: &'static str = "activity.projects";
     const VERSION: u32 = 1;
     const USES_TIME_SETTINGS: bool = true;
@@ -105,15 +107,15 @@ impl Keyed for ProjectSpans {
         let hash = blake3::hash(&bytes);
         1 + (u32::from_le_bytes(hash.as_bytes()[..4].try_into().unwrap()) >> 2)
     }
-    fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Value> {
+    fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Self::Key> {
         input
             .ts_orig
             .and_then(|at| env.time_settings.hour_start(at).ok())
-            .map(|hour| vec![json!({"hour":hour})])
+            .map(|hour| vec![HourKey { hour }])
             .unwrap_or_default()
     }
-    fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery> {
-        let hour = serde_json::from_value(key.get("hour")?.clone()).ok()?;
+    fn inputs(&self, key: &Self::Key, env: &Env) -> Option<InputQuery> {
+        let hour = key.hour;
         let mut query =
             InputQuery::window(Self::INPUTS, hour, env.time_settings.hour_end(hour).ok()?);
         query.intervals = vec![
@@ -128,10 +130,7 @@ impl Keyed for ProjectSpans {
         ];
         Some(query)
     }
-    fn key_state(&self, _: &Value, _: &Env) -> KeyState {
-        KeyState::Closed
-    }
-    fn compute(&self, _: &Value, inputs: &[Event], _: &Env) -> Computed {
+    fn compute(&self, _: &Self::Key, inputs: &[Event], _: &Env) -> Computed {
         let registry = &self.0.projects;
         let mut spans: Vec<_> = inputs
             .iter()

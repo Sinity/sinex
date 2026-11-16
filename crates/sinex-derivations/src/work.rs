@@ -45,31 +45,52 @@ fn objective(metadata: &Value) -> Option<Objective> {
 
 mod snapshot;
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SessionKey {
+    pub session: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EpisodeKey {
+    pub episode: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WakeKey {
+    pub start: Timestamp,
+}
+
 pub struct WorkActs;
 impl Keyed for WorkActs {
+    type Key = SessionKey;
     const NAME: &'static str = "work.acts";
     const VERSION: u32 = 7;
     const INPUTS: &'static [&'static str] = &["polylogue.work_snapshot"];
     const OUTPUTS: &'static [&'static str] = &["work.act", "work.coverage"];
-    fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Value> {
+    fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Self::Key> {
         input
             .payload
             .get("session")
-            .filter(|id| id.as_str().is_some_and(|id| !id.is_empty()))
-            .map(|id| vec![json!({"session":id})])
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+            .map(|id| {
+                vec![SessionKey {
+                    session: id.to_owned(),
+                }]
+            })
             .unwrap_or_default()
     }
-    fn inputs(&self, key: &Value, _: &Env) -> Option<InputQuery> {
+    fn inputs(&self, key: &Self::Key, _: &Env) -> Option<InputQuery> {
         let mut query = InputQuery::all(vec![Kind::all("polylogue.work_snapshot")])
-            .only("session", key.get("session")?.clone());
+            .only("session", json!(key.session));
         query.unknown_times = true;
         Some(query)
     }
-    fn key_state(&self, _: &Value, _: &Env) -> KeyState {
-        KeyState::Closed
-    }
-    fn compute(&self, key: &Value, inputs: &[Event], _: &Env) -> Computed {
-        snapshot::compute(key, inputs)
+    fn compute(&self, key: &Self::Key, inputs: &[Event], _: &Env) -> Computed {
+        snapshot::compute(&key.session, inputs)
     }
 }
 
@@ -81,20 +102,25 @@ fn episode_kind(episode: &Value) -> Kind {
 
 pub struct WorkEpisodes;
 impl Keyed for WorkEpisodes {
+    type Key = EpisodeKey;
     const NAME: &'static str = "work.episodes";
     const VERSION: u32 = 5;
     const INPUTS: &'static [&'static str] = &["work.act", "state.interval", "health.record"];
     const OUTPUTS: &'static [&'static str] =
         &["work.episode", "work.suspension", "work.resumption"];
-    fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Value> {
+    fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Self::Key> {
         if input.event_type != "work.act" {
             return vec![];
         }
         input
             .payload
             .get("episode")
-            .filter(|id| id.as_str().is_some())
-            .map(|id| vec![json!({"episode":id})])
+            .and_then(Value::as_str)
+            .map(|id| {
+                vec![EpisodeKey {
+                    episode: id.to_owned(),
+                }]
+            })
             .unwrap_or_default()
     }
     fn affected_ranges(&self, input: &KeyView<'_>, _: &Env) -> Vec<AffectedRange> {
@@ -121,12 +147,12 @@ impl Keyed for WorkEpisodes {
             })
             .unwrap_or_default()
     }
-    fn inputs(&self, key: &Value, _: &Env) -> Option<InputQuery> {
+    fn inputs(&self, key: &Self::Key, _: &Env) -> Option<InputQuery> {
         let mut kinds = vec![Kind::all("work.act"), Kind::all("state.interval")];
         kinds.extend(REST.kinds());
         let mut query = InputQuery::all(kinds);
         query.range = Some(InputRange::Extent {
-            kinds: vec![episode_kind(key.get("episode")?)],
+            kinds: vec![episode_kind(&json!(key.episode))],
         });
         query.after.push(crate::Neighbour {
             kinds: vec![Kind::only("work.act", &[("agency", "operator")])],
@@ -162,7 +188,7 @@ impl Keyed for WorkEpisodes {
         query.intervals.extend(REST.intervals());
         Some(query)
     }
-    fn refresh_at(&self, outputs: &[Event], _: &Env) -> Option<Timestamp> {
+    fn refresh_at(&self, _: &[Event], outputs: &[Event], _: &Env) -> Option<Timestamp> {
         outputs
             .iter()
             .filter_map(|event| event.payload_as::<WorkEpisode>())
@@ -172,10 +198,10 @@ impl Keyed for WorkEpisodes {
             })
             .min()
     }
-    fn key_state(&self, _: &Value, _: &Env) -> KeyState {
+    fn key_state(&self, _: &Self::Key, _: &Env) -> KeyState {
         KeyState::Open
     }
-    fn compute(&self, key: &Value, inputs: &[Event], env: &Env) -> Computed {
+    fn compute(&self, key: &Self::Key, inputs: &[Event], env: &Env) -> Computed {
         let mut acts: Vec<_> = inputs
             .iter()
             .filter_map(|event| Some((event, event.payload_as::<WorkAct>()?)))
@@ -184,7 +210,7 @@ impl Keyed for WorkEpisodes {
         let group: Vec<_> = acts
             .iter()
             .filter(|(_, act)| {
-                key["episode"].as_str() == act.episode.as_deref() && act.episode.is_some()
+                Some(key.episode.as_str()) == act.episode.as_deref() && act.episode.is_some()
             })
             .collect();
         let (Some((_, first)), Some(_)) = (group.first().copied(), group.last().copied()) else {
@@ -370,29 +396,31 @@ impl Keyed for WorkEpisodes {
 
 pub struct ContextPacks;
 impl Keyed for ContextPacks {
+    type Key = EpisodeKey;
     const NAME: &'static str = "context.packs";
     const VERSION: u32 = 3;
     const USES_TIME_SETTINGS: bool = true;
     const INPUTS: &'static [&'static str] = &["work.episode", "work.act"];
     const OUTPUTS: &'static [&'static str] = &["context.pack"];
-    fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Value> {
+    fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Self::Key> {
         input
             .payload
             .get("episode")
-            .filter(|id| id.as_str().is_some())
-            .map(|episode| vec![json!({"episode":episode})])
+            .and_then(Value::as_str)
+            .map(|episode| {
+                vec![EpisodeKey {
+                    episode: episode.to_owned(),
+                }]
+            })
             .unwrap_or_default()
     }
-    fn inputs(&self, key: &Value, _: &Env) -> Option<InputQuery> {
+    fn inputs(&self, key: &Self::Key, _: &Env) -> Option<InputQuery> {
         Some(
             InputQuery::all(Self::INPUTS.iter().map(|kind| Kind::all(kind)).collect())
-                .only("episode", key.get("episode")?.clone()),
+                .only("episode", json!(key.episode)),
         )
     }
-    fn key_state(&self, _: &Value, _: &Env) -> KeyState {
-        KeyState::Closed
-    }
-    fn compute(&self, _: &Value, inputs: &[Event], env: &Env) -> Computed {
+    fn compute(&self, _: &Self::Key, inputs: &[Event], env: &Env) -> Computed {
         let Some((episode_event, episode)) = inputs
             .iter()
             .find_map(|event| Some((event, event.payload_as::<WorkEpisode>()?)))
@@ -468,19 +496,20 @@ impl Keyed for ContextPacks {
 
 pub struct ActivityDays;
 impl Keyed for ActivityDays {
+    type Key = WakeKey;
     const NAME: &'static str = "activity.days";
     const VERSION: u32 = 2;
     const INPUTS: &'static [&'static str] = &["health.record", "activity.span"];
     const OUTPUTS: &'static [&'static str] = &["activity.day"];
-    fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Value> {
+    fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Self::Key> {
         if !is_sleep(input.event_type, input.payload) {
             return vec![];
         }
         input
             .payload
             .get("end")
-            .filter(|end| !end.is_null())
-            .map(|end| vec![json!({"start":end})])
+            .and_then(|end| serde_json::from_value::<Timestamp>(end.clone()).ok())
+            .map(|start| vec![WakeKey { start }])
             .unwrap_or_default()
     }
     fn affected_ranges(&self, input: &KeyView<'_>, _: &Env) -> Vec<AffectedRange> {
@@ -507,8 +536,8 @@ impl Keyed for ActivityDays {
             })
             .unwrap_or_default()
     }
-    fn inputs(&self, key: &Value, _: &Env) -> Option<InputQuery> {
-        let start = serde_json::from_value::<Timestamp>(key.get("start")?.clone()).ok()?;
+    fn inputs(&self, key: &Self::Key, _: &Env) -> Option<InputQuery> {
+        let start = key.start;
         let mut kinds = sleep_kinds();
         kinds.push(Kind::all("activity.span"));
         let mut query = InputQuery::all(kinds);
@@ -527,16 +556,11 @@ impl Keyed for ActivityDays {
         ];
         Some(query)
     }
-    fn key_state(&self, _: &Value, _: &Env) -> KeyState {
+    fn key_state(&self, _: &Self::Key, _: &Env) -> KeyState {
         KeyState::Open
     }
-    fn compute(&self, key: &Value, inputs: &[Event], env: &Env) -> Computed {
-        let Some(start_key) = key
-            .get("start")
-            .and_then(|value| serde_json::from_value::<Timestamp>(value.clone()).ok())
-        else {
-            return Computed::default();
-        };
+    fn compute(&self, key: &Self::Key, inputs: &[Event], env: &Env) -> Computed {
+        let start_key = key.start;
         // Providers record one night separately; overlapping sleep records are
         // one sleep, and its wake is their latest end.
         let mut sleeps: Vec<_> = inputs

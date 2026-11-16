@@ -946,3 +946,37 @@ mod follow;
 mod fields;
 
 mod temporal_selectors;
+
+#[devkit::test]
+async fn sql_hour_matches_the_daemon_zone_across_both_transitions(db: devkit::pg::TestDatabase) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let ctx = Context::new(
+        "2026-11-01T00:00:00Z".parse().unwrap(),
+        jiff::tz::TimeZone::get("Europe/Warsaw").unwrap(),
+        jiff::civil::Time::constant(4, 0, 0, 0),
+    );
+    let times = [
+        "2026-03-29T00:59:59Z",
+        "2026-03-29T01:00:00Z",
+        "2026-03-29T01:30:00Z",
+        "2026-10-25T00:30:00Z",
+        "2026-10-25T00:59:59Z",
+        "2026-10-25T01:00:00Z",
+        "2026-10-25T01:30:00Z",
+        "2026-10-25T02:00:00Z",
+        "1969-12-31T20:00:00Z",
+    ];
+    let mut expected = Vec::new();
+    for (i, time) in times.iter().enumerate() {
+        let name = format!("sql-hour-fixture-{i:02}");
+        calendar::point(&mut conn, &name, time).await;
+        let instant = time.parse::<jiff::Timestamp>().unwrap();
+        expected.push(json!({"producer":name,"hour":instant.to_zoned(ctx.zone.clone()).hour()}));
+    }
+    let answer = run(&mut conn,
+        "runs where producer ^ sql-hour-fixture | sort by producer | fields producer, hour(started)",
+        None, &ctx, &Page::default()).await.unwrap();
+    assert_eq!(answer.rows, expected);
+}

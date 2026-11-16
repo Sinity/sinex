@@ -272,7 +272,7 @@ in
         name = d.name;
         value.enable = mkOption {
           type = types.bool;
-          default = d.enabledByDefault;
+          default = true;
           description = "The ${d.kind} derivation ${d.name} (${concatStringsSep ", " d.inputs} → ${concatStringsSep ", " d.outputs}); analytics are on by default.";
         };
       })

@@ -1,6 +1,7 @@
 use super::*;
 use crate::{AdmissionContext, NoDerivations};
 use sinex_model::{Batch, BatchKind, RecordOutcome, RunId, event_types::operator::LogEntry};
+use sinex_model::{Class, MaterialId, Origin, ReadingOrder};
 fn document(text: &str) -> Event {
     Event::build(
         &LogEntry {

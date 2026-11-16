@@ -59,7 +59,7 @@ fn copy_at(path: &str, content: &str, part_index: u32, seconds: i64, original: &
 }
 
 fn compute(inputs: &[Event]) -> Vec<Event> {
-    Keyed::compute(
+    crate::AnyKeyed::compute(
         &LibraryItems,
         &inputs
             .first()

@@ -179,7 +179,7 @@ fn work_acts(inputs: &[Event], env: &Env) -> Vec<Event> {
     complete_snapshots(inputs)
         .into_iter()
         .flat_map(|snapshot| {
-            Keyed::compute(
+            crate::AnyKeyed::compute(
                 &WorkActs,
                 &json!({"session":snapshot.payload["session"]}),
                 &[snapshot],
@@ -215,7 +215,8 @@ fn compute(inputs: &[Event]) -> Vec<Event> {
     let mut outputs = Vec::new();
     for episode in keys {
         let mut result =
-            Keyed::compute(&WorkEpisodes, &json!({"episode":episode}), &acts, &env).outputs;
+            crate::AnyKeyed::compute(&WorkEpisodes, &json!({"episode":episode}), &acts, &env)
+                .outputs;
         let episode_event = result
             .iter()
             .find(|event| event.event_type == "work.episode")
@@ -228,7 +229,8 @@ fn compute(inputs: &[Event]) -> Vec<Event> {
             .collect();
         selected.push(episode_event);
         result.extend(
-            Keyed::compute(&ContextPacks, &json!({"episode":episode}), &selected, &env).outputs,
+            crate::AnyKeyed::compute(&ContextPacks, &json!({"episode":episode}), &selected, &env)
+                .outputs,
         );
         outputs.extend(result);
     }
@@ -388,7 +390,7 @@ fn wake_days_follow_rest_while_calculation_days_stay_fixed() {
     let output = [7 * 3600, 8 * 3600, 13 * 3600, 36 * 3600]
         .into_iter()
         .flat_map(|start| {
-            Keyed::compute(
+            crate::AnyKeyed::compute(
                 &ActivityDays,
                 &json!({"start":at(start)}),
                 &inputs,
@@ -413,7 +415,7 @@ fn wake_days_follow_rest_while_calculation_days_stay_fixed() {
     assert!(!days[0].provisional);
     assert!(days[1].provisional);
     assert!(
-        Keyed::compute(
+        crate::AnyKeyed::compute(
             &ActivityDays,
             &json!({}),
             &[],
@@ -454,16 +456,16 @@ fn work_queries_select_a_session_then_the_recorded_objective_range() {
             .expect("fixture day setting"),
     );
     let input = session("a", Some("task"));
-    let query = Keyed::inputs(&WorkActs, &json!({"session":"a"}), &env).unwrap();
+    let query = crate::AnyKeyed::inputs(&WorkActs, &json!({"session":"a"}), &env).unwrap();
     assert!(query.admits(&input));
     assert!(!query.admits(&session("b", Some("task"))));
-    let output = Keyed::compute(
+    let output = crate::AnyKeyed::compute(
         &WorkActs,
         &json!({"session":"a"}),
         &complete_snapshots(&[input, prompt("a", 0)]),
         &env,
     );
-    let key = Keyed::keys_for(
+    let key = crate::AnyKeyed::keys_for(
         &WorkEpisodes,
         &KeyView {
             event_type: "work.act",
@@ -473,13 +475,16 @@ fn work_queries_select_a_session_then_the_recorded_objective_range() {
         &env,
     )
     .remove(0);
-    let query = Keyed::inputs(&WorkEpisodes, &key, &env).unwrap();
+    let query = crate::AnyKeyed::inputs(&WorkEpisodes, &key, &env).unwrap();
     let Some(InputRange::Extent { kinds }) = query.range else {
         panic!("objective range")
     };
-    assert_eq!(kinds[0].equal, [("episode".into(), key["episode"].clone())]);
     assert_eq!(
-        Keyed::compute(&WorkEpisodes, &key, &output.outputs, &env).outputs[0].payload["agent_s"],
+        kinds[0].equal,
+        [("episode".into(), key.get("episode").cloned().unwrap())]
+    );
+    assert_eq!(
+        crate::AnyKeyed::compute(&WorkEpisodes, &key, &output.outputs, &env).outputs[0].payload["agent_s"],
         Value::Null
     );
 }
@@ -492,7 +497,7 @@ fn conflicting_recorded_objectives_do_not_choose_by_arrival_order() {
         prompt("a", 0),
     ];
     assert!(
-        Keyed::compute(
+        crate::AnyKeyed::compute(
             &WorkActs,
             &json!({"session":"a"}),
             &inputs,
@@ -509,7 +514,7 @@ fn act_instants_without_duration_never_extend_into_later_hour_queries() {
         sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
             .expect("fixture day setting"),
     );
-    let acts = Keyed::compute(
+    let acts = crate::AnyKeyed::compute(
         &WorkActs,
         &json!({"session":"a"}),
         &complete_snapshots(&[session("a", None), prompt("a", 0)]),
@@ -527,7 +532,8 @@ fn act_instants_without_duration_never_extend_into_later_hour_queries() {
     assert!(acts[0].payload["episode"].is_null());
     let hour = env.time_settings.hour_start(at(7200)).unwrap();
     let query =
-        Keyed::inputs(&crate::activity::ActivitySpans, &json!({"hour":hour}), &env).unwrap();
+        crate::AnyKeyed::inputs(&crate::activity::ActivitySpans, &json!({"hour":hour}), &env)
+            .unwrap();
     assert!(!query.admits(&acts[0]));
 }
 
@@ -552,7 +558,7 @@ fn a_recorded_objective_switch_stores_an_open_suspension_until_return() {
         .payload["episode"]
         .clone();
     let key = json!({"episode":target});
-    let initial = Keyed::compute(&WorkEpisodes, &key, &acts, &env);
+    let initial = crate::AnyKeyed::compute(&WorkEpisodes, &key, &acts, &env);
     let suspension = initial
         .outputs
         .iter()
@@ -577,7 +583,7 @@ fn a_recorded_objective_switch_stores_an_open_suspension_until_return() {
     );
     let mut returned = inputs;
     returned.push(prompt("a", 500));
-    let result = Keyed::compute(
+    let result = crate::AnyKeyed::compute(
         &WorkEpisodes,
         &key,
         &work_acts(
@@ -651,7 +657,7 @@ fn a_recorded_absence_interrupts_work_before_any_return() {
         100,
     );
     acts.push(absence.clone());
-    let result = Keyed::compute(&WorkEpisodes, &json!({"episode":episode}), &acts, &env);
+    let result = crate::AnyKeyed::compute(&WorkEpisodes, &json!({"episode":episode}), &acts, &env);
     let interruption = result
         .outputs
         .iter()
@@ -815,7 +821,7 @@ fn atomic_snapshot_entries_cite_only_the_snapshot_and_unknown_times_are_visible(
     snapshot.payload["record"]["snapshot"]["turns"] =
         json!([{"turn":"turn","session":"atomic","start":at(0),"end":at(3),"errors":1}]);
     qualify_fixture_times(&mut snapshot);
-    let computed = Keyed::compute(
+    let computed = crate::AnyKeyed::compute(
         &WorkActs,
         &json!({"session":"atomic"}),
         &[snapshot.clone()],
@@ -869,7 +875,7 @@ fn empty_snapshot_and_newer_unsupported_reducer_do_not_fall_back_to_old_acts() {
         sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).unwrap(),
     );
     let empty = session("atomic", Some("task"));
-    let outputs = Keyed::compute(
+    let outputs = crate::AnyKeyed::compute(
         &WorkActs,
         &json!({"session":"atomic"}),
         std::slice::from_ref(&empty),
@@ -890,14 +896,15 @@ fn empty_snapshot_and_newer_unsupported_reducer_do_not_fall_back_to_old_acts() {
     let mut invalid = empty.clone();
     invalid.payload["source_position"] = json!(-1);
     invalid.payload["record"]["snapshot"]["position"] = json!(-1);
-    let invalid = Keyed::compute(&WorkActs, &json!({"session":"atomic"}), &[invalid], &env).outputs;
+    let invalid =
+        crate::AnyKeyed::compute(&WorkActs, &json!({"session":"atomic"}), &[invalid], &env).outputs;
     assert_eq!(invalid[0].payload["state"], "unavailable");
     let old = complete_snapshots(&[empty, prompt("atomic", 0)]).remove(0);
     let mut unsupported = old.clone();
     unsupported.id = sinex_model::EventId::new();
     unsupported.payload["reducer_version"] = json!(3);
     unsupported.payload["record"]["snapshot"]["reducer_version"] = json!(3);
-    let outputs = Keyed::compute(
+    let outputs = crate::AnyKeyed::compute(
         &WorkActs,
         &json!({"session":"atomic"}),
         &[old, unsupported],
@@ -926,7 +933,7 @@ fn time_quality_sparse_sources_and_removal_stay_explicit() {
         json!({"quality":"intrinsic","precision":"day"});
     snapshot.payload["record"]["snapshot"]["sources"] =
         json!([{"selected":true,"projection":{"block_count":3,"block_ordinals":[0]}}]);
-    let computed = Keyed::compute(
+    let computed = crate::AnyKeyed::compute(
         &WorkActs,
         &json!({"session":"a"}),
         &[snapshot.clone()],
@@ -965,7 +972,8 @@ fn time_quality_sparse_sources_and_removal_stay_explicit() {
         snapshot.payload[field] = Value::Null;
     }
     snapshot.payload["objectives"] = json!([]);
-    let removed = Keyed::compute(&WorkActs, &json!({"session":"a"}), &[snapshot], &env).outputs;
+    let removed =
+        crate::AnyKeyed::compute(&WorkActs, &json!({"session":"a"}), &[snapshot], &env).outputs;
     assert_eq!(removed.len(), 1);
     let coverage = removed[0].payload_as::<WorkCoverage>().unwrap();
     assert_eq!(coverage.state, WorkCoverageState::Complete);
@@ -984,7 +992,7 @@ fn reused_provider_call_ids_stay_distinct_and_unknown() {
       {"entry_id":"redefinition:a:0","call":"display:same","session":"a","physical_session":"physical:one","native_call_id":"same","original_block":0,"unavailable":["ambiguous_native_call_id"],"action":"shell","at":at(1),"result_at":at(2),"outcome":null,"outcome_reason":"ambiguous_result_evidence"},
       {"entry_id":"redefinition:a:1","call":"display:same","session":"a","physical_session":"physical:one","native_call_id":"same","original_block":1,"unavailable":["ambiguous_native_call_id"],"action":"shell","at":at(3),"result_at":at(4),"outcome":null,"outcome_reason":"ambiguous_result_evidence"}]);
     qualify_fixture_times(&mut snapshot);
-    let computed = Keyed::compute(
+    let computed = crate::AnyKeyed::compute(
         &WorkActs,
         &json!({"session":"a"}),
         &[snapshot.clone()],
@@ -1014,7 +1022,7 @@ fn reused_provider_call_ids_stay_distinct_and_unknown() {
     assert_eq!(coverage.reasons["tool_entry_unavailable"], 2);
     snapshot.payload["record"]["snapshot"]["calls"][1]["entry_id"] =
         snapshot.payload["record"]["snapshot"]["calls"][0]["entry_id"].clone();
-    let invalid = Keyed::compute(&WorkActs, &json!({"session":"a"}), &[snapshot], &env);
+    let invalid = crate::AnyKeyed::compute(&WorkActs, &json!({"session":"a"}), &[snapshot], &env);
     assert_eq!(invalid.outputs.len(), 1);
     assert_eq!(invalid.outputs[0].payload["state"], "unavailable");
 }
@@ -1031,9 +1039,10 @@ fn highest_reducer_decides_removal_older_stays_citable() {
     old.kind_version = 3;
     old.payload["reducer_version"] = json!(1);
     old.payload["record"]["snapshot"]["reducer_version"] = json!(1);
-    let only_old = Keyed::compute(&WorkActs, &json!({"session":"a"}), &[old.clone()], &env);
+    let only_old =
+        crate::AnyKeyed::compute(&WorkActs, &json!({"session":"a"}), &[old.clone()], &env);
     assert_eq!(only_old.outputs[0].payload["state"], "unavailable");
-    let selected = Keyed::compute(
+    let selected = crate::AnyKeyed::compute(
         &WorkActs,
         &json!({"session":"a"}),
         &[old.clone(), current.clone()],
@@ -1066,7 +1075,8 @@ fn highest_reducer_decides_removal_older_stays_citable() {
         removed.payload[field] = Value::Null;
     }
     removed.payload["objectives"] = json!([]);
-    let cleared = Keyed::compute(&WorkActs, &json!({"session":"a"}), &[old, removed], &env);
+    let cleared =
+        crate::AnyKeyed::compute(&WorkActs, &json!({"session":"a"}), &[old, removed], &env);
     assert_eq!(cleared.outputs.len(), 1);
     assert_eq!(cleared.outputs[0].payload["eligible_entries"], 0);
     assert_eq!(cleared.outputs[0].payload["state"], "complete");

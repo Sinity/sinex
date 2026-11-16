@@ -1001,6 +1001,7 @@ async fn replay(
             events: readings.to_vec(),
         }],
         archive: vec![ArchiveRequest::Replay {
+            failed_records: vec![],
             scope: ReplayScope {
                 materials: vec![material],
                 ..ReplayScope::default()

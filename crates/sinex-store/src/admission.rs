@@ -276,8 +276,14 @@ pub(crate) async fn admit(
     outcome.timings.insert("registration", started.elapsed());
     let started = std::time::Instant::now();
     for request in &batch.archive {
-        if let ArchiveRequest::Replay { scope, operation } = request {
-            let (archived, dirty) = archive::replay_scope(conn, scope, *operation, keys).await?;
+        if let ArchiveRequest::Replay {
+            scope,
+            operation,
+            failed_records,
+        } = request
+        {
+            let (archived, dirty) =
+                archive::replay_scope(conn, scope, failed_records, *operation, keys).await?;
             outcome.replay_archived += archived;
             outcome.dirty_keys += dirty;
         }

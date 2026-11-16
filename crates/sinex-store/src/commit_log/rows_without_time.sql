@@ -3,7 +3,8 @@
 SELECT e.id, e.event_type, e.kind_version, e.validation, e.source, e.run_id, e.material_id,
        e.record_offset, e.output_index, e.parents, e.ts_orig, e.ts_quality, e.ts_coided,
        e.ts_persisted, e.payload, e.equivalence_key, e.reading_order, e.record_hash,
-       e.record_state, e.class
+       e.record_state, e.class, e.commit_seq,
+       (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule
 FROM core.events e
 WHERE e.id = ANY($1) AND e.id >= $2::uuid AND e.id <= $3::uuid AND e.event_type = ANY($4)
   AND e.ts_orig IS NULL

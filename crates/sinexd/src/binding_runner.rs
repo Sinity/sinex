@@ -70,16 +70,27 @@ impl Config {
         let bytes = std::fs::read(path).map_err(|error| Error::file(path, error))?;
         let config: Self = serde_json::from_slice(&bytes)
             .map_err(|error| Error::from(error).within(path.display()))?;
+        config.validate_derivations()?;
         if let Some(signals) = &config.signals {
             signals.validate()?;
         }
         Ok(config)
     }
-    pub(crate) fn runs(&self, name: &str) -> bool {
-        self.derivations
-            .get(name)
-            .copied()
-            .unwrap_or_else(|| sinex_derivations::enabled_by_default(name))
+    pub(crate) fn validate_derivations(&self) -> Result<()> {
+        let missing: Vec<_> = crate::catalog::derivation_names()
+            .into_iter()
+            .filter(|name| !self.derivations.contains_key(name))
+            .collect();
+        if !missing.is_empty() {
+            return Err(Error::bad_value(format!(
+                "derivations must name every built derivation; missing: {}",
+                missing.join(", ")
+            )));
+        }
+        Ok(())
+    }
+    pub(crate) fn runs(&self, name: &str) -> Option<bool> {
+        self.derivations.get(name).copied()
     }
     pub(crate) fn context(&self, host: &str) -> sinex_sources::discovery::DiscoveryContext {
         let mut context = self.discovery.clone();
@@ -98,7 +109,7 @@ impl Config {
 
     pub(crate) fn derivation_configuration(&self) -> sinex_derivations::Configuration {
         sinex_derivations::Configuration {
-            tags: if self.runs(sinex_derivations::tags::TagApplier::NAME) {
+            tags: if self.runs(sinex_derivations::tags::TagApplier::NAME) == Some(true) {
                 self.tags.clone()
             } else {
                 vec![]

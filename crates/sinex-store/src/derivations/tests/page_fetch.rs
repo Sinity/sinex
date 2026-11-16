@@ -161,7 +161,7 @@ async fn bounded_payload_pages_equal_window_and_keep_exact_membership(
     assert_eq!(
         page.events
             .iter()
-            .map(|r| EventId(r.id))
+            .map(|r| EventId(r.row.id))
             .collect::<Vec<_>>(),
         ids
     );
@@ -220,7 +220,7 @@ async fn bounded_payload_fetches_return_selected_rows_beside_many_compressed_row
     assert_eq!(
         page.events
             .iter()
-            .map(|r| EventId(r.id))
+            .map(|r| EventId(r.row.id))
             .collect::<Vec<_>>(),
         vec![ids[4], ids[5]]
     );

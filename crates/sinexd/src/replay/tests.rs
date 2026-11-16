@@ -484,3 +484,185 @@ async fn unavailable_parsers_leave_readings_live_and_persist_each_refusal(
     assert_eq!(count, 1);
     assert_eq!(report.to_json(false, true)["partial"], json!(true));
 }
+
+struct ReplayParser {
+    source: Box<dyn Source>,
+    empty: bool,
+}
+
+impl Source for ReplayParser {
+    fn spec(&self) -> &sinex_source_core::SourceSpec {
+        self.source.spec()
+    }
+
+    fn drainer<'a>(
+        &'a self,
+        input: DrainInput<'a>,
+    ) -> std::result::Result<
+        Box<
+            dyn Iterator<
+                    Item = std::result::Result<
+                        sinex_source_core::DrainOutput,
+                        sinex_source_core::RecordError,
+                    >,
+                > + Send
+                + 'a,
+        >,
+        sinex_source_core::RecordError,
+    > {
+        let chunks = self.source.drainer(input)?;
+        Ok(Box::new(chunks.map(move |chunk| {
+            let mut chunk = chunk?;
+            for outcome in &mut chunk.outcomes {
+                if let RecordOutcome::Events { location, events } = outcome {
+                    if self.empty {
+                        events.clear();
+                    } else if let Some(location) =
+                        location.filter(|location| location.record_offset == 0)
+                    {
+                        *outcome = RecordOutcome::Failure {
+                            location,
+                            reason: "synthetic parser failure".into(),
+                        };
+                    }
+                }
+            }
+            Ok(chunk)
+        })))
+    }
+}
+
+async fn changed_parser(context: &mut ReaderContext, empty: bool) -> (SequenceReader, Value) {
+    let (mut reader, scope) = preparation::reader(context).await;
+    reader.parsers = reader
+        .parsers
+        .into_iter()
+        .map(|parser| LocalReplaySource {
+            source: Box::new(ReplayParser {
+                source: parser.source,
+                empty,
+            }),
+            host: parser.host,
+        })
+        .collect();
+    (reader, scope)
+}
+
+async fn first_command_id(conn: &mut PgConnection) -> Uuid {
+    let events =
+        sinex_store::derivations::after_seq(conn, &["command.imported".into()], 0, 2, i64::MAX)
+            .await
+            .unwrap();
+    events
+        .into_iter()
+        .find(|row| row.event.payload["command"] == "first")
+        .unwrap()
+        .event
+        .id
+        .0
+}
+
+#[devkit::test]
+async fn a_record_that_fails_on_replay_keeps_its_old_reading(db: devkit::pg::TestDatabase) {
+    let mut f = fixture(db).await;
+    let path = history(&f.dir, ": 1:0;first\n: 2:0;second\n");
+    ingest(&mut f.ctx, &path, &mut AppendState::default()).await;
+    let before = live_ids(&mut f.ctx.read_conn).await;
+    let first = first_command_id(&mut f.ctx.read_conn).await;
+    let second = *before.iter().find(|id| **id != first).unwrap();
+    let (reader, scope) = changed_parser(&mut f.ctx, false).await;
+    let (read, outcomes, _) = reader
+        .replace(&f.ctx.writer, "test".into(), scope, false)
+        .await
+        .unwrap();
+    assert_eq!(read.failures, 1);
+    assert_eq!(
+        outcomes
+            .iter()
+            .map(|outcome| outcome.replay_archived)
+            .sum::<usize>(),
+        1
+    );
+    let after = live_ids(&mut f.ctx.read_conn).await;
+    assert!(
+        after.contains(&first),
+        "the failed record keeps its prior reading"
+    );
+    assert!(
+        !after.contains(&second),
+        "the successful record gets a new reading"
+    );
+    assert_eq!(
+        live_commands(&mut f.ctx.read_conn).await,
+        vec!["first", "second"]
+    );
+}
+
+#[devkit::test]
+async fn a_material_that_yields_nothing_keeps_its_readings(db: devkit::pg::TestDatabase) {
+    let mut f = fixture(db).await;
+    let path = history(&f.dir, ": 1:0;first\n: 2:0;second\n");
+    ingest(&mut f.ctx, &path, &mut AppendState::default()).await;
+    let before = live_ids(&mut f.ctx.read_conn).await;
+    let (reader, scope) = changed_parser(&mut f.ctx, true).await;
+    let materials: Vec<_> = reader.in_scope.iter().copied().map(MaterialId).collect();
+    let (read, outcomes, _) = reader
+        .replace(&f.ctx.writer, "test".into(), scope, false)
+        .await
+        .unwrap();
+    assert_eq!(read.materials_without_events, materials);
+    assert_eq!(
+        outcomes
+            .iter()
+            .map(|outcome| outcome.replay_archived)
+            .sum::<usize>(),
+        0
+    );
+    assert_eq!(live_ids(&mut f.ctx.read_conn).await, before);
+    let answer = Report {
+        materials_without_events: read.materials_without_events,
+        ..Report::default()
+    }
+    .to_json(false, false);
+    assert_eq!(answer["materials_without_events"], json!(materials));
+}
+
+#[devkit::test]
+async fn undo_after_a_partly_failed_replay_restores_the_prior_readings(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut f = fixture(db).await;
+    let path = history(&f.dir, ": 1:0;first\n: 2:0;second\n");
+    ingest(&mut f.ctx, &path, &mut AppendState::default()).await;
+    let before = live_ids(&mut f.ctx.read_conn).await;
+    let first = first_command_id(&mut f.ctx.read_conn).await;
+    let second = *before.iter().find(|id| **id != first).unwrap();
+    let (reader, scope) = changed_parser(&mut f.ctx, false).await;
+    let operation = reader.operation;
+    reader
+        .replace(&f.ctx.writer, "test".into(), scope, false)
+        .await
+        .unwrap();
+    let replaced = live_ids(&mut f.ctx.read_conn).await;
+    assert!(replaced.contains(&first));
+    assert!(!replaced.contains(&second));
+    let undone = crate::lifecycle::run(
+        &mut f.ctx.read_conn,
+        &f.ctx.writer,
+        sinex_model::lifecycle::Act::Undo,
+        "test",
+        sinex_model::lifecycle::Scope::Operation { operation },
+        false,
+    )
+    .await
+    .unwrap();
+    assert!(
+        matches!(undone, crate::lifecycle::Answer::Done(_)),
+        "{undone:?}"
+    );
+    assert_eq!(live_ids(&mut f.ctx.read_conn).await, before);
+    assert_eq!(
+        live_commands(&mut f.ctx.read_conn).await,
+        vec!["first", "second"]
+    );
+}

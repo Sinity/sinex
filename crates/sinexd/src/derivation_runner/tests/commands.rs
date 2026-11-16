@@ -4,26 +4,23 @@ use std::sync::atomic::{AtomicBool, Ordering};
 struct ObservedInputs(Arc<AtomicBool>);
 
 impl Keyed for ObservedInputs {
+    type Key = <sinex_derivations::library::LibraryItems as Keyed>::Key;
     const NAME: &'static str = "library.items";
     const VERSION: u32 = 1;
     const INPUTS: &'static [&'static str] = &["library.copy"];
     const OUTPUTS: &'static [&'static str] = &["library.item", "library.rendition"];
 
-    fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Value> {
+    fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Self::Key> {
         Keyed::keys_for(&sinex_derivations::library::LibraryItems, input, env)
     }
 
-    fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery> {
+    fn inputs(&self, key: &Self::Key, env: &Env) -> Option<InputQuery> {
         self.0.store(true, Ordering::SeqCst);
         Keyed::inputs(&sinex_derivations::library::LibraryItems, key, env)
     }
 
-    fn compute(&self, key: &Value, inputs: &[Event], env: &Env) -> Computed {
+    fn compute(&self, key: &Self::Key, inputs: &[Event], env: &Env) -> Computed {
         Keyed::compute(&sinex_derivations::library::LibraryItems, key, inputs, env)
-    }
-
-    fn key_state(&self, _: &Value, _: &Env) -> KeyState {
-        KeyState::Closed
     }
 }
 

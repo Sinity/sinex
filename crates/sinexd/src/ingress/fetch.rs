@@ -2,7 +2,7 @@
 use super::*;
 use crate::{Error, Result};
 use serde::Deserialize;
-use sinex_model::Class;
+use sinex_model::{Class, DbCheck};
 use sinex_protocol::{
     FetchEvent, FetchEventReply, FetchMaterial, FetchMaterialReply, FetchRefusalKind,
 };
@@ -164,13 +164,12 @@ impl Requests {
             if !grant.kind(&erased.event_type) {
                 return Err(denied());
             }
-            let class: Class =
-                serde_json::from_value(Value::String(erased.class.ok_or_else(|| {
-                    unavailable(
-                        "erased event has unknown historical class; confirmed history has a gap",
-                    )
-                })?))
-                .map_err(unavailable)?;
+            let class: Class = Class::from_db(&erased.class.ok_or_else(|| {
+                unavailable(
+                    "erased event has unknown historical class; confirmed history has a gap",
+                )
+            })?)
+            .ok_or_else(|| unavailable("unknown erased event class"))?;
             if !grant.class(class) {
                 return Err(denied());
             }
@@ -206,8 +205,8 @@ impl Requests {
             .await
             .map_err(unavailable)?
             .ok_or_else(missing)?;
-        let output_class: Class =
-            serde_json::from_value(Value::String(output.class)).map_err(unavailable)?;
+        let output_class: Class = Class::from_db(&output.class)
+            .ok_or_else(|| unavailable(format!("unknown event class {:?}", output.class)))?;
         if !grant.kind(&output.kind) || !grant.class(output_class) {
             return Err(denied());
         }
@@ -293,8 +292,8 @@ impl Requests {
                 return Err(denied());
             }
             for event in events {
-                let class: Class =
-                    serde_json::from_value(Value::String(event.class)).map_err(unavailable)?;
+                let class: Class = Class::from_db(&event.class)
+                    .ok_or_else(|| unavailable(format!("unknown event class {:?}", event.class)))?;
                 if !grant.kind(&event.kind) || !grant.class(class) {
                     return Err(denied());
                 }

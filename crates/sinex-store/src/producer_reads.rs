@@ -54,7 +54,7 @@ pub async fn material_classes(conn: &mut PgConnection, id: Uuid) -> Result<Vec<M
     .await?)
 }
 pub async fn material_input(conn: &mut PgConnection, id: Uuid) -> Result<Option<InputRef>> {
-    Ok(sqlx::query!("SELECT i.kind,i.locator,i.host FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id WHERE m.id=$1",id).fetch_optional(conn).await?.map(|row|InputRef{kind:row.kind,locator:row.locator,host:row.host}))
+    Ok(sqlx::query_as!(InputRef, "SELECT i.kind,i.locator,i.host FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id WHERE m.id=$1",id).fetch_optional(conn).await?)
 }
 /// Where held bytes are read from: one descriptor per extent, in order.
 pub async fn descriptors(conn: &mut PgConnection, hash: &str) -> Result<Option<Vec<Vec<u8>>>> {
@@ -88,15 +88,6 @@ pub async fn event_source(
     )>,
 > {
     Ok(sqlx::query_as("SELECT source,source_version,source_fingerprint,producer_family,producer_identity FROM core.events WHERE id=$1").bind(id).fetch_optional(conn).await?)
-}
-
-pub async fn materials_registered_by(
-    conn: &mut PgConnection,
-    producer: &str,
-    ids: &[Uuid],
-) -> Result<Vec<Uuid>> {
-    Ok(sqlx::query_scalar("SELECT material_id FROM core.ingress_frames WHERE producer=$1 AND material_id=ANY($2) AND refusal IS NULL")
-        .bind(producer).bind(ids).fetch_all(conn).await?)
 }
 
 #[cfg(test)]

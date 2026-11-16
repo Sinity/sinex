@@ -102,6 +102,8 @@ pub(crate) struct Report {
     pub sequences: usize,
     pub sequences_skipped: usize,
     pub materials: usize,
+    /// Materials that yielded no events and kept their readings.
+    pub materials_without_events: Vec<MaterialId>,
     pub events_read: usize,
     pub failures: usize,
     pub archived: usize,
@@ -125,6 +127,13 @@ impl std::fmt::Display for Report {
             self.admitted,
             self.refused.len()
         )?;
+        if !self.materials_without_events.is_empty() {
+            writeln!(
+                f,
+                "materials without events: {} (kept their readings)",
+                self.materials_without_events.len()
+            )?;
+        }
         write!(
             f,
             "live records: {} unchanged, {} changed, {} added, {} removed",
@@ -148,6 +157,7 @@ impl Report {
             "sequences": self.sequences,
             "sequences_skipped": self.sequences_skipped,
             "materials": self.materials,
+            "materials_without_events": self.materials_without_events,
             "readings": self.events_read,
             "failures": self.failures,
             "archived": self.archived,
@@ -331,6 +341,9 @@ pub(crate) async fn run(
         .await
         .map_err(|e| e.within(format!("sequence from material {root}")))?;
         report.materials += read.materials;
+        report
+            .materials_without_events
+            .extend(read.materials_without_events);
         report.events_read += read.events_read;
         report.failures += read.failures;
         report.sequences += 1;
@@ -441,6 +454,7 @@ fn sequences(stored: &[Stored]) -> Vec<Vec<&Stored>> {
 #[derive(Debug, Default)]
 struct Read {
     materials: usize,
+    materials_without_events: Vec<MaterialId>,
     events_read: usize,
     failures: usize,
 }
@@ -481,7 +495,7 @@ impl SequenceReader {
             });
             let mut prepared = prepared::Builder::new(self.blobs.root())?;
             let mut read = Read::default();
-            read_sequence_into(
+            let archive = read_sequence_into(
                 &self.blobs,
                 &self.sequence,
                 &self.parsers,
@@ -494,7 +508,7 @@ impl SequenceReader {
                 self.unlock.as_ref(),
                 &check,
             )?;
-            Ok((prepared.finish()?, read))
+            Ok((prepared.finish(archive)?, read))
         });
         let (batches, read) = reading.await??;
         drop(pending);
@@ -534,7 +548,7 @@ fn read_sequence_into(
     keys: &HashMap<Uuid, sinex_sealing::DataKey>,
     unlock: Option<&crate::material_access::sealing::Unlock>,
     check: &crate::writer::AdmissionCheck,
-) -> Result<()> {
+) -> Result<Batch> {
     let mut send = |batch: Batch| {
         check()?;
         if let Some(unlock) = unlock {
@@ -549,26 +563,8 @@ fn read_sequence_into(
         from: scope.from,
         until: scope.until,
     };
-    send(Batch {
-        run: RunId(operation.0),
-        kind: BatchKind::Replay {
-            operation,
-            source: None,
-            host: None,
-        },
-        records: Vec::new(),
-        archive: vec![ArchiveRequest::Replay {
-            scope: ReplayScope {
-                materials: sequence
-                    .iter()
-                    .filter(|m| in_scope.contains(&m.id))
-                    .map(|m| MaterialId(m.id))
-                    .collect(),
-                ..narrowing.clone()
-            },
-            operation,
-        }],
-    })?;
+    let mut failed_records = Vec::new();
+    let mut read_materials = Vec::new();
     let mut carry = Value::Null;
     for (position, (m, parser)) in sequence.iter().zip(parsers).enumerate() {
         let source = &parser.source;
@@ -635,6 +631,7 @@ fn read_sequence_into(
         if scoped {
             report.materials += 1;
         }
+        let mut yielded_events = false;
         for chunk in chunks {
             let chunk = chunk.map_err(|e| Error::internal(format!("material {}: {e}", m.id)))?;
             carry = chunk.carry.clone();
@@ -646,6 +643,7 @@ fn read_sequence_into(
                 .into_iter()
                 .filter_map(|outcome| match outcome {
                     RecordOutcome::Events { location, events } => {
+                        yielded_events |= !events.is_empty();
                         let events: Vec<_> = events
                             .into_iter()
                             .filter(|e| narrowing.includes(e))
@@ -653,11 +651,11 @@ fn read_sequence_into(
                         report.events_read += events.len();
                         (!events.is_empty()).then_some(RecordOutcome::Events { location, events })
                     }
-                    RecordOutcome::Failure { .. } if whole => {
+                    RecordOutcome::Failure { location, .. } => {
+                        failed_records.push(location);
                         report.failures += 1;
-                        Some(outcome)
+                        whole.then_some(outcome)
                     }
-                    RecordOutcome::Failure { .. } => None,
                 })
                 .collect();
             if records.is_empty() {
@@ -678,8 +676,31 @@ fn read_sequence_into(
                 archive: Vec::new(),
             })?;
         }
+        if scoped {
+            if yielded_events {
+                read_materials.push(MaterialId(m.id));
+            } else {
+                report.materials_without_events.push(MaterialId(m.id));
+            }
+        }
     }
-    Ok(())
+    Ok(Batch {
+        run: RunId(operation.0),
+        kind: BatchKind::Replay {
+            operation,
+            source: None,
+            host: None,
+        },
+        records: Vec::new(),
+        archive: vec![ArchiveRequest::Replay {
+            scope: ReplayScope {
+                materials: read_materials,
+                ..narrowing
+            },
+            operation,
+            failed_records,
+        }],
+    })
 }
 
 fn merge(into: &mut Diff, from: Diff) {

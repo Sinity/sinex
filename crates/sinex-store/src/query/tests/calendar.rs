@@ -1,6 +1,6 @@
 use super::*;
 
-async fn point(conn: &mut PgConnection, name: &str, at: &str) {
+pub(super) async fn point(conn: &mut PgConnection, name: &str, at: &str) {
     sqlx::query("INSERT INTO core.runs(id,name,host,started_at) VALUES(gen_random_uuid(),$1,'synthetic',$2::text::timestamptz)")
         .bind(name).bind(at).execute(conn).await.unwrap();
 }

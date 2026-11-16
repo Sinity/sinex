@@ -330,6 +330,7 @@ async fn spanning_session(conn: &mut crate::AdmissionContext) {
             host: "synthetic-list".into(),
             started_at: Timestamp::from_unix_secs(BASE - 86400).unwrap(),
             ended_at: Timestamp::from_unix_secs(BASE + 3600).unwrap(),
+            end_is_lower_bound: false,
             day: "2026-09-13".into(),
             commands: 1,
             failed: 0,

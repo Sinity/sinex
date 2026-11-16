@@ -25,6 +25,7 @@
 //! unknown length and counts no seconds.
 use crate::derived_event::derived;
 use crate::fusion::Family as FusionFamily;
+use crate::keys::MetricDayKey;
 use crate::observed::{FOCUS, Family, PLAYS, VISITS};
 use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed, Kind, Neighbour};
 use serde_json::{Value, json};
@@ -351,14 +352,8 @@ pub fn metric(name: &str) -> Option<&'static Metric> {
     METRICS.iter().find(|m| m.name == name)
 }
 
-fn key_parts(key: &Value) -> Option<(&'static Metric, jiff::civil::Date)> {
-    let m = metric(key.get("metric")?.as_str()?)?;
-    let day = key.get("day")?.as_str()?.parse().ok()?;
-    Some((m, day))
-}
-
-fn day_state(key: &Value, env: &Env) -> KeyState {
-    match key_parts(key).and_then(|(_, d)| env.time_settings.day_end(d).ok()) {
+fn day_state(key: &MetricDayKey, env: &Env) -> KeyState {
+    match metric(&key.metric).and_then(|_| env.time_settings.day_end(key.day).ok()) {
         Some(end) if env.now >= end => KeyState::Closed,
         Some(_) => KeyState::Open,
         None => KeyState::Closed,
@@ -408,6 +403,9 @@ struct Sum<'a> {
     value: f64,
     numerator: f64,
     denominator: f64,
+    unknown_value: bool,
+    unknown_numerator: bool,
+    unknown_denominator: bool,
     /// Seconds: the clipped spans, joined at the end.
     spans: Vec<(i128, i128)>,
     parents: Vec<&'a Event>,
@@ -426,7 +424,8 @@ impl Sum<'_> {
             Calculation::Count => (Some(self.value), None, None),
             Calculation::Seconds { .. } => (Some(self.value + union_secs(&self.spans)), None, None),
             Calculation::Ratio { .. } => (
-                (self.denominator > 0.0).then(|| self.numerator / self.denominator),
+                (!self.unknown_numerator && !self.unknown_denominator && self.denominator > 0.0)
+                    .then(|| self.numerator / self.denominator),
                 Some(self.numerator),
                 Some(self.denominator),
             ),
@@ -439,9 +438,9 @@ impl Sum<'_> {
             day: day.to_owned(),
             dimension: dimension.0.to_owned(),
             dimension_value: dimension.1.to_owned(),
-            value,
-            numerator,
-            denominator,
+            value: value.filter(|_| !self.unknown_value),
+            numerator: numerator.filter(|_| !self.unknown_numerator),
+            denominator: denominator.filter(|_| !self.unknown_denominator),
             rows: self.rows,
         }
     }
@@ -512,6 +511,7 @@ pub struct HourlyMetrics;
 pub struct DailyMetrics;
 
 impl Keyed for HourlyMetrics {
+    type Key = MetricDayKey;
     const NAME: &'static str = "metric.hourly";
     const VERSION: u32 = 3;
     const USES_TIME_SETTINGS: bool = true;
@@ -542,7 +542,7 @@ impl Keyed for HourlyMetrics {
     ];
     const OUTPUTS: &'static [&'static str] = &[MetricFigure::EVENT_TYPE];
 
-    fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Value> {
+    fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Self::Key> {
         let Some(start) = input.ts_orig else {
             return vec![];
         };
@@ -558,7 +558,10 @@ impl Keyed for HourlyMetrics {
                 continue;
             };
             loop {
-                keys.push(json!({"metric": m.name, "day": day.to_string()}));
+                keys.push(MetricDayKey {
+                    metric: m.name.into(),
+                    day,
+                });
                 let Ok(next_start) = env.time_settings.day_end(day) else {
                     break;
                 };
@@ -572,8 +575,9 @@ impl Keyed for HourlyMetrics {
         keys
     }
 
-    fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery> {
-        let (m, day) = key_parts(key)?;
+    fn inputs(&self, key: &Self::Key, env: &Env) -> Option<InputQuery> {
+        let m = metric(&key.metric)?;
+        let day = key.day;
         let kinds = m.kinds().to_vec();
         let margin = m.records.margin();
         let mut q = InputQuery::of(
@@ -596,10 +600,11 @@ impl Keyed for HourlyMetrics {
         Some(q)
     }
 
-    fn compute(&self, key: &Value, inputs: &[Event], env: &Env) -> Computed {
-        let Some((m, day)) = key_parts(key) else {
+    fn compute(&self, key: &Self::Key, inputs: &[Event], env: &Env) -> Computed {
+        let Some(m) = metric(&key.metric) else {
             return Computed::default();
         };
+        let day = key.day;
         let (Ok(start), Ok(end)) = (
             env.time_settings.day_start(day),
             env.time_settings.day_end(day),
@@ -643,31 +648,41 @@ impl Keyed for HourlyMetrics {
         }
     }
 
-    fn key_state(&self, key: &Value, env: &Env) -> KeyState {
+    fn key_state(&self, key: &Self::Key, env: &Env) -> KeyState {
         day_state(key, env)
     }
 }
 
 impl Keyed for DailyMetrics {
+    type Key = MetricDayKey;
     const NAME: &'static str = "metric.daily";
-    const VERSION: u32 = 1;
+    const VERSION: u32 = 2;
     const USES_TIME_SETTINGS: bool = true;
     const INPUTS: &'static [&'static str] = &[MetricFigure::EVENT_TYPE];
     const OUTPUTS: &'static [&'static str] = &[MetricFigure::EVENT_TYPE];
 
-    fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Value> {
+    fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Self::Key> {
         let p = input.payload;
         if p.get("grain").and_then(Value::as_str) != Some("hour") {
             return vec![];
         }
-        match (p.get("metric"), p.get("day")) {
-            (Some(metric), Some(day)) => vec![json!({"metric": metric, "day": day})],
-            _ => vec![],
-        }
+        let (Some(metric), Some(day)) = (
+            p.get("metric").and_then(Value::as_str),
+            p.get("day")
+                .and_then(Value::as_str)
+                .and_then(|day| day.parse().ok()),
+        ) else {
+            return vec![];
+        };
+        vec![MetricDayKey {
+            metric: metric.into(),
+            day,
+        }]
     }
 
-    fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery> {
-        let (m, day) = key_parts(key)?;
+    fn inputs(&self, key: &Self::Key, env: &Env) -> Option<InputQuery> {
+        let m = metric(&key.metric)?;
+        let day = key.day;
         Some(
             InputQuery::window(
                 &[MetricFigure::EVENT_TYPE],
@@ -679,10 +694,11 @@ impl Keyed for DailyMetrics {
         )
     }
 
-    fn compute(&self, key: &Value, inputs: &[Event], env: &Env) -> Computed {
-        let Some((m, day)) = key_parts(key) else {
+    fn compute(&self, key: &Self::Key, inputs: &[Event], env: &Env) -> Computed {
+        let Some(m) = metric(&key.metric) else {
             return Computed::default();
         };
+        let day = key.day;
         let (Ok(start), Ok(end)) = (
             env.time_settings.day_start(day),
             env.time_settings.day_end(day),
@@ -697,13 +713,22 @@ impl Keyed for DailyMetrics {
             let sum = sums.entry((f.dimension, f.dimension_value)).or_default();
             sum.rows += f.rows;
             sum.parents.push(hourly);
+            sum.unknown_value |= f.value.is_none();
+            sum.unknown_numerator |= f.numerator.is_none();
+            sum.unknown_denominator |= f.denominator.is_none();
             match m.calculation {
                 Calculation::Count | Calculation::Seconds { .. } => {
-                    sum.value += f.value.unwrap_or(0.0)
+                    if let Some(value) = f.value {
+                        sum.value += value;
+                    }
                 }
                 Calculation::Ratio { .. } => {
-                    sum.numerator += f.numerator.unwrap_or(0.0);
-                    sum.denominator += f.denominator.unwrap_or(0.0);
+                    if let Some(numerator) = f.numerator {
+                        sum.numerator += numerator;
+                    }
+                    if let Some(denominator) = f.denominator {
+                        sum.denominator += denominator;
+                    }
                 }
             }
         }
@@ -722,7 +747,7 @@ impl Keyed for DailyMetrics {
         }
     }
 
-    fn key_state(&self, key: &Value, env: &Env) -> KeyState {
+    fn key_state(&self, key: &Self::Key, env: &Env) -> KeyState {
         day_state(key, env)
     }
 }

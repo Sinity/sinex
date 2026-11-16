@@ -205,17 +205,16 @@ impl TagApplier {
 }
 
 impl AnyPerEvent for TagApplier {
-    fn name(&self) -> &'static str {
-        Self::NAME
+    fn spec(&self) -> crate::DerivationSpec {
+        crate::DerivationSpec {
+            name: Self::NAME,
+            history: sinex_model::DerivationHistory::Recompute,
+            inputs: taggable(),
+            outputs: &[TagApplied::EVENT_TYPE],
+        }
     }
     fn version(&self) -> u32 {
         self.version
-    }
-    fn inputs_types(&self) -> &'static [&'static str] {
-        taggable()
-    }
-    fn output_types(&self) -> &'static [&'static str] {
-        &[TagApplied::EVENT_TYPE]
     }
     fn reads(&self, _: &Event) -> Reads {
         Reads::Nothing

@@ -90,6 +90,7 @@ async fn diff_names_changed_added_removed_and_counts_unchanged(db: devkit::pg::T
                     reading(m, "born", "make"),
                 ],
                 vec![ArchiveRequest::Replay {
+                    failed_records: vec![],
                     scope: ReplayScope {
                         materials: vec![m],
                         ..ReplayScope::default()

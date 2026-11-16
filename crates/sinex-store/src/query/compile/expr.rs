@@ -111,18 +111,24 @@ impl Compiler<'_> {
     }
 
     pub(super) fn time_fn(&self, func: TimeFn, t: SqlFragment) -> Result<SqlFragment> {
-        if func == TimeFn::Hour {
-            let mut out = SqlFragment::text("extract(hour from (");
-            out.append(t)
-                .push(" AT TIME ZONE ")
-                .param(self.ctx.zone_name())
-                .push("))::bigint");
-            return Ok(out);
-        }
         let setting = self
             .calendar
             .as_ref()
             .ok_or_else(|| invalid("logical-day SQL requires shared boundary preparation"))?;
+        if func == TimeFn::Hour {
+            let mut ns = SqlFragment::text("(extract(epoch from ");
+            ns.append(t).push(")*1000000000)");
+            let mut out = SqlFragment::text("(SELECT floor(mod(mod(floor(");
+            out.append(ns.clone())
+                .push("/1000000000)::bigint + o.offset_seconds,86400)+86400,86400)/3600)::bigint FROM pg_temp.sinex_query_offsets o WHERE o.setting=")
+                .param(setting.clone())
+                .push(" AND o.from_ns<=")
+                .append(ns.clone())
+                .push(" AND ")
+                .append(ns)
+                .push("<o.until_ns ORDER BY o.from_ns DESC LIMIT 1)");
+            return Ok(out);
+        }
         let column = match func {
             TimeFn::Day => "day",
             TimeFn::Week => "week",

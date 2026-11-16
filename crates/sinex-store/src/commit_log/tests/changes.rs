@@ -56,7 +56,7 @@ async fn admit(conn: &mut crate::AdmissionContext, events: Vec<Event>) {
 }
 fn tuple(entry: &crate::commit_log::CommittedChange) -> Option<(i64, Uuid, &'static str)> {
     match &entry.change {
-        Change::Event(event) => Some((entry.position, event.id, "event")),
+        Change::Event(event) => Some((entry.position, event.row.id, "event")),
         Change::Archive(change) => Some((
             entry.position,
             change.archive.event_id,

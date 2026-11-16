@@ -1,4 +1,5 @@
 use super::*;
+use crate::AnyKeyed as Keyed;
 use sinex_model::{Class, MaterialId, Origin, ReadingOrder, RecordLocation};
 
 fn at(seconds: i64) -> Timestamp {
@@ -69,7 +70,11 @@ fn compute(events: &[Event], projects: Value) -> Vec<ProjectSpan> {
     ProjectSpans(AttributionProfile {
         projects: projects.as_array().unwrap().clone(),
     })
-    .compute(&Value::Null, events, &env)
+    .compute(
+        &json!({"hour":env.time_settings.hour_start(at(0)).unwrap()}),
+        events,
+        &env,
+    )
     .outputs
     .iter()
     .map(|event| event.payload_as::<ProjectSpan>().unwrap())

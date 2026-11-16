@@ -1,4 +1,5 @@
 use super::*;
+use crate::AnyKeyed as Keyed;
 use sinex_model::event_types::activity::{ActivitySession, ActivitySpan, ActivityWindow, Agency};
 use sinex_model::event_types::desktop::{PresenceSpan, WindowSpan};
 use sinex_model::event_types::input::KeyPressed;
@@ -182,17 +183,24 @@ fn session_events(events: &[Event], hours: &[i64]) -> Vec<Event> {
         .collect()
 }
 fn sessions(events: &[Event], profile: ActivityProfile) -> Vec<ActivitySession> {
-    let scope = events[0].payload["scope"].clone();
-    Keyed::compute(
-        &ActivitySessions(profile),
-        &json!({"scope": scope}),
-        events,
-        &env(),
-    )
-    .outputs
-    .iter()
-    .map(|event| event.payload_as().unwrap())
-    .collect()
+    let derivation = ActivitySessions(profile);
+    let mut keys = Vec::new();
+    for event in events {
+        let view = KeyView {
+            event_type: &event.event_type,
+            ts_orig: event.ts_orig.at,
+            payload: &event.payload,
+        };
+        for key in Keyed::keys_for(&derivation, &view, &env()) {
+            if !keys.contains(&key) {
+                keys.push(key);
+            }
+        }
+    }
+    keys.iter()
+        .flat_map(|key| Keyed::compute(&derivation, key, events, &env()).outputs)
+        .map(|event| event.payload_as().unwrap())
+        .collect()
 }
 
 #[devkit::test]
@@ -802,4 +810,33 @@ fn external(kind: &str, payload: Value) -> Event {
     );
     event.ts_orig = sinex_model::TsOrig::maybe(at, sinex_model::TimeQuality::Intrinsic);
     event
+}
+
+#[devkit::test]
+fn out_of_order_window_never_moves_end_backward() {
+    let reported = |start: i64, end: i64| {
+        let input = physical(start);
+        let payload = serde_json::from_value::<sinex_model::event_types::work::WorkAct>(json!({
+            "act":format!("act-{start}"), "session":"session", "machine":"box",
+            "label_source":cite(&input), "evidence":cite(&input),
+            "at":at(start), "at_evidence":{"quality":"intrinsic","precision":"instant","until":null},
+            "ended_at":at(end), "agency":"operator", "action":"prompt"
+        })).unwrap();
+        captured(&payload, start as u64)
+    };
+    let mut inputs = vec![reported(0, 100), reported(20, 30), reported(370, 390)];
+    let forward = windows(&inputs, 0);
+    inputs.reverse();
+    let backward = windows(&inputs, 0);
+    assert_eq!(forward, backward);
+    assert_eq!(forward.len(), 1);
+    assert_eq!(
+        (forward[0].started_at, forward[0].ended_at),
+        (at(0), at(390))
+    );
+    assert_eq!(
+        forward[0].operator_intervals,
+        vec![(at(0), at(100)), (at(370), at(390))]
+    );
+    assert_eq!(forward[0].operator_present_s, 120.0);
 }

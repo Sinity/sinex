@@ -1,6 +1,7 @@
 //! Physical input bouts and coverage-qualified daily workload.
 use crate::activity::{SECOND, union_seconds};
 use crate::derived_event::derived;
+use crate::keys::DayScopeKey;
 use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed};
 use serde_json::{Value, json};
 use sinex_model::event_types::portfolio::{InputBout, InputWorkload};
@@ -35,12 +36,13 @@ fn scope(payload: &Value, kind: &str) -> String {
 
 pub struct InputWorkloads;
 impl Keyed for InputWorkloads {
+    type Key = DayScopeKey;
     const NAME: &'static str = "input.workloads";
     const VERSION: u32 = 1;
     const USES_TIME_SETTINGS: bool = true;
     const INPUTS: &'static [&'static str] = KINDS;
     const OUTPUTS: &'static [&'static str] = &["input.bout", "input.workload"];
-    fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Value> {
+    fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Self::Key> {
         let Some(start) = input.ts_orig else {
             return vec![];
         };
@@ -54,7 +56,10 @@ impl Keyed for InputWorkloads {
         let scope = scope(input.payload, input.event_type);
         let mut keys = vec![];
         loop {
-            keys.push(json!({"day":day.to_string(),"scope":scope}));
+            keys.push(DayScopeKey {
+                day,
+                scope: scope.clone(),
+            });
             if day >= last {
                 break;
             }
@@ -63,8 +68,8 @@ impl Keyed for InputWorkloads {
         }
         keys
     }
-    fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery> {
-        let day = key["day"].as_str()?.parse().ok()?;
+    fn inputs(&self, key: &Self::Key, env: &Env) -> Option<InputQuery> {
+        let day = key.day;
         let start = env.time_settings.day_start(day).ok()?;
         let end = env.time_settings.day_end(day).ok()?;
         let mut query = InputQuery::window(
@@ -78,27 +83,18 @@ impl Keyed for InputWorkloads {
         )];
         Some(query)
     }
-    fn key_state(&self, key: &Value, env: &Env) -> KeyState {
-        let end = key["day"]
-            .as_str()
-            .and_then(|day| day.parse().ok())
-            .and_then(|day| env.time_settings.day_end(day).ok());
+    fn key_state(&self, key: &Self::Key, env: &Env) -> KeyState {
+        let end = env.time_settings.day_end(key.day).ok();
         if end.is_some_and(|end| end <= env.now) {
             KeyState::Closed
         } else {
             KeyState::Open
         }
     }
-    fn compute(&self, key: &Value, inputs: &[Event], env: &Env) -> Computed {
-        let Some(day) = key["day"].as_str() else {
-            return Computed::default();
-        };
-        let Some(captured_scope) = key["scope"].as_str() else {
-            return Computed::default();
-        };
-        let Ok(date) = day.parse() else {
-            return Computed::default();
-        };
+    fn compute(&self, key: &Self::Key, inputs: &[Event], env: &Env) -> Computed {
+        let day = key.day.to_string();
+        let captured_scope = key.scope.as_str();
+        let date = key.day;
         let (Ok(start), Ok(end)) = (
             env.time_settings.day_start(date),
             env.time_settings.day_end(date),
@@ -179,7 +175,7 @@ impl Keyed for InputWorkloads {
                 &InputBout {
                     bout: json!([captured_scope, day, stable(group[0].1)]).to_string(),
                     scope: captured_scope.into(),
-                    day: day.into(),
+                    day: day.clone(),
                     started_at: from,
                     ended_at: until,
                     key_presses: count,
@@ -214,7 +210,7 @@ impl Keyed for InputWorkloads {
         outputs.push(derived(
             &InputWorkload {
                 scope: captured_scope.into(),
-                day: day.into(),
+                day: day.clone(),
                 period_start: start,
                 period_end: end,
                 key_presses: keys,

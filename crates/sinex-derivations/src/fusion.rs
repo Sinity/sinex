@@ -1036,8 +1036,17 @@ fn considered_pair(family: &Family, c: &Considered, g: &Grouping<'_, '_>) -> Con
     }
 }
 
-fn hour_of(key: &Value) -> Option<i128> {
-    key.get("hour")?.as_i64().map(i128::from)
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+pub enum FusionKey {
+    Hour(FusionHourKey),
+    Identity(BTreeMap<String, String>),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FusionHourKey {
+    pub hour: i64,
 }
 
 fn hour_index(ns: i128) -> i64 {
@@ -1051,23 +1060,43 @@ impl Fusion {
     fn decision_kind(&self) -> Kind {
         Kind::only(Duplicate::EVENT_TYPE, &[("family", self.0.name)])
     }
+
+    fn decode_key(&self, key: &Value) -> Result<FusionKey, sinex_model::BuildError> {
+        let key: FusionKey = serde_json::from_value(key.clone())
+            .map_err(|error| sinex_model::BuildError::Key(error.to_string()))?;
+        let valid = match &key {
+            FusionKey::Hour(_) => self.0.keyed_by.is_empty(),
+            FusionKey::Identity(fields) => {
+                !self.0.keyed_by.is_empty()
+                    && fields.len() == self.0.keyed_by.len()
+                    && self
+                        .0
+                        .keyed_by
+                        .iter()
+                        .all(|name| fields.contains_key(*name))
+            }
+        };
+        if !valid {
+            return Err(sinex_model::BuildError::Key(
+                "key does not match the fusion family".into(),
+            ));
+        }
+        Ok(key)
+    }
 }
 
 impl AnyKeyed for Fusion {
-    fn name(&self) -> &'static str {
-        self.0.derivation
+    fn spec(&self) -> crate::DerivationSpec {
+        crate::DerivationSpec {
+            name: self.0.derivation,
+            history: sinex_model::DerivationHistory::Recompute,
+            inputs: self.0.input_types,
+            outputs: self.0.output_types,
+        }
     }
 
     fn version(&self) -> u32 {
         self.0.version
-    }
-
-    fn inputs_types(&self) -> &'static [&'static str] {
-        self.0.input_types
-    }
-
-    fn output_types(&self) -> &'static [&'static str] {
-        self.0.output_types
     }
 
     fn keys_for(&self, input: &KeyView<'_>, _env: &Env) -> Vec<Value> {
@@ -1098,13 +1127,17 @@ impl AnyKeyed for Fusion {
         };
         let ns = t.unix_ns();
         (hour_index(ns - family.reach())..=hour_index(ns + family.reach()))
-            .map(|h| json!({ "hour": h }))
+            .map(|hour| {
+                serde_json::to_value(FusionKey::Hour(FusionHourKey { hour }))
+                    .expect("derivation keys serialize")
+            })
             .collect()
     }
 
     fn inputs(&self, key: &Value, _env: &Env) -> Option<InputQuery> {
+        let key = self.decode_key(key).ok()?;
         let family = self.0;
-        if !family.keyed_by.is_empty() {
+        if let FusionKey::Identity(fields) = &key {
             // Every copy of this identity, whatever its time, and the
             // decisions made within it.
             let mut kinds: Vec<Kind> = Vec::new();
@@ -1112,7 +1145,7 @@ impl AnyKeyed for Fusion {
                 let mut equal = Vec::new();
                 for name in &family.keyed_by {
                     let field = member.fields.iter().find(|(f, _)| f == name)?.1.clone();
-                    equal.push((field.pointer[1..].to_owned(), key.get(*name)?.clone()));
+                    equal.push((field.pointer[1..].to_owned(), json!(fields.get(*name)?)));
                 }
                 let kind = Kind {
                     event_type: member.event_type.to_owned(),
@@ -1126,12 +1159,18 @@ impl AnyKeyed for Fusion {
                 event_type: Duplicate::EVENT_TYPE.to_owned(),
                 equal: vec![
                     ("family".to_owned(), json!(family.name)),
-                    ("family_key".to_owned(), key.clone()),
+                    (
+                        "family_key".to_owned(),
+                        serde_json::to_value(&key).expect("derivation keys serialize"),
+                    ),
                 ],
             });
             return Some(InputQuery::all(kinds));
         }
-        let start = hour_of(key)? * HOUR_NS;
+        let FusionKey::Hour(key) = key else {
+            return None;
+        };
+        let start = i128::from(key.hour) * HOUR_NS;
         let mut kinds = family.member_kinds();
         kinds.push(self.decision_kind());
         let mut query = InputQuery::of(
@@ -1190,16 +1229,25 @@ impl AnyKeyed for Fusion {
     }
 
     fn compute(&self, key: &Value, inputs: &[Event], _env: &Env) -> Computed {
+        let key = match self.decode_key(key) {
+            Ok(key) => key,
+            Err(error) => {
+                return Computed {
+                    error: Some(error),
+                    outputs: vec![],
+                    waiting: false,
+                };
+            }
+        };
         let family = self.0;
         // An hour key emits what starts in its hour; an identity key emits
         // all of its identity's groups.
-        let hour = if family.keyed_by.is_empty() {
-            let Some(start) = hour_of(key).map(|h| h * HOUR_NS) else {
-                return Computed::default();
-            };
-            start..start + HOUR_NS
-        } else {
-            i128::MIN..i128::MAX
+        let hour = match key {
+            FusionKey::Hour(key) => {
+                let start = i128::from(key.hour) * HOUR_NS;
+                start..start + HOUR_NS
+            }
+            FusionKey::Identity(_) => i128::MIN..i128::MAX,
         };
         let mut seen: Vec<Seen<'_>> = inputs.iter().filter_map(|e| observe(family, e)).collect();
         // Equal times order by member, then record: never by reading ID or
@@ -1269,13 +1317,10 @@ impl AnyKeyed for Fusion {
     }
 
     fn key_state(&self, key: &Value, env: &Env) -> KeyState {
-        if !self.0.keyed_by.is_empty() {
-            // Another copy can arrive at any time; it dirties the key again.
-            return KeyState::Closed;
-        }
-        let Some(hour) = hour_of(key) else {
+        let Ok(FusionKey::Hour(key)) = self.decode_key(key) else {
             return KeyState::Closed;
         };
+        let hour = i128::from(key.hour);
         let closes_at = (hour + 1) * HOUR_NS + self.0.reach() + LATE_FILL_NS;
         if env.now.unix_ns() >= closes_at {
             KeyState::Closed

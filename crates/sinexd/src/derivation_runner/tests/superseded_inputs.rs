@@ -33,6 +33,7 @@ async fn replay(w: &World, event: &Event) -> Event {
                         ..Default::default()
                     },
                     operation,
+                    failed_records: vec![],
                 }],
             },
         )
@@ -61,7 +62,7 @@ async fn a_key_computed_from_an_input_archived_meanwhile_is_computed_again(
 
     // Computed from the first reading, which a replay reads again before the
     // outputs reach the writer.
-    let stale = Keyed::compute(
+    let stale = AnyKeyed::compute(
         &Count::<1>,
         &json!("all"),
         std::slice::from_ref(&first),

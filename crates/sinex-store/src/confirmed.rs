@@ -41,7 +41,7 @@ pub async fn rows(conn: &mut sqlx::PgConnection, ids: &[Uuid]) -> Result<Vec<Row
     if ids.is_empty() {
         return Ok(Vec::new());
     }
-    let found = sqlx::query!(
+    let found = sqlx::query_as!(Row,
         r#"SELECT e.id AS "id!",e.commit_seq AS "commit_seq!",e.event_type AS "event_type!",
           e.kind_version AS "kind_version!",e.validation AS "validation!",e.source AS "source!",
           e.source_version,e.source_fingerprint,e.producer_family,e.producer_identity,
@@ -56,40 +56,6 @@ pub async fn rows(conn: &mut sqlx::PgConnection, ids: &[Uuid]) -> Result<Vec<Row
     )
     .fetch_all(conn)
     .await?;
-    let found: BTreeMap<_, _> = found
-        .into_iter()
-        .map(|row| {
-            (
-                row.id,
-                Row {
-                    id: row.id,
-                    commit_seq: row.commit_seq,
-                    event_type: row.event_type,
-                    kind_version: row.kind_version,
-                    validation: row.validation,
-                    source: row.source,
-                    source_version: row.source_version,
-                    source_fingerprint: row.source_fingerprint,
-                    producer_family: row.producer_family,
-                    producer_identity: row.producer_identity,
-                    run_id: row.run_id,
-                    material_id: row.material_id,
-                    record_offset: row.record_offset,
-                    output_index: row.output_index,
-                    parents: row.parents,
-                    ts_orig: row.ts_orig,
-                    ts_quality: row.ts_quality,
-                    ts_coided: row.ts_coided,
-                    ts_persisted: row.ts_persisted,
-                    payload: row.payload,
-                    equivalence_key: row.equivalence_key,
-                    reading_order: row.reading_order,
-                    record_hash: row.record_hash,
-                    record_state: row.record_state,
-                    class: row.class,
-                },
-            )
-        })
-        .collect();
+    let found: BTreeMap<_, _> = found.into_iter().map(|row| (row.id, row)).collect();
     Ok(ids.iter().filter_map(|id| found.get(id).cloned()).collect())
 }

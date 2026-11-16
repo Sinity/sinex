@@ -109,7 +109,7 @@ pub async fn diff(
     operation: OperationId,
     admitted: &[Uuid],
 ) -> Result<Diff> {
-    let rows = sqlx::query!(
+    let rows = sqlx::query_as!(Change,
         r#"WITH old AS (
              SELECT e.source, e.event_type,
                coalesce(e.equivalence_key, e.material_id::text || ':' || e.record_offset || ':' || e.output_index) AS record,
@@ -136,13 +136,7 @@ pub async fn diff(
     .fetch_all(&mut *conn)
     .await?;
     let mut diff = Diff::default();
-    for r in rows {
-        let change = Change {
-            event_type: r.event_type,
-            record: r.record,
-            before: r.before,
-            after: r.after,
-        };
+    for change in rows {
         match (&change.before, &change.after) {
             (Some(a), Some(b)) if a == b => diff.unchanged += 1,
             (Some(_), Some(_)) => diff.changed.push(change),

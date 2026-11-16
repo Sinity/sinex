@@ -3,11 +3,9 @@
 //! through admission (`DerivedScope`), never from here, except the registry
 //! rows written at daemon start and the comparisons a recompute command keeps.
 use crate::Result;
+use crate::event_row::EventRow;
 use serde_json::Value;
-use sinex_model::{
-    Class, EquivalenceKey, Event, EventId, MaterialId, Origin, ReadingOrder, RecordLocation,
-    RecordState, ReplaceRule, TimeQuality, Timestamp, TsOrig,
-};
+use sinex_model::{Event, EventId, RecordLocation, Timestamp};
 use sqlx::PgConnection;
 use std::collections::{BTreeMap, HashSet};
 use time::OffsetDateTime;
@@ -95,7 +93,7 @@ pub enum InputRange {
         end: OffsetDateTime,
         kinds: Vec<Kind>,
         subjects: &'static [sinex_model::state_transition::SubjectField],
-        interruptions: Vec<Kind>,
+        interruptions: Vec<Nearest>,
     },
     UntilNext {
         start: OffsetDateTime,
@@ -114,98 +112,14 @@ pub struct DirtyKey {
     pub last_dirty_seq: i64,
 }
 
-fn text_enum<T: serde::de::DeserializeOwned>(value: &str, column: &str) -> Result<T> {
-    serde_json::from_value(Value::String(value.to_owned()))
-        .map_err(|_| crate::Error::Invalid(format!("unknown {column} {value:?}")))
-}
-
-#[allow(clippy::too_many_arguments)]
-fn event_from_row(
-    id: Uuid,
-    event_type: &str,
-    kind_version: i64,
-    validation: &str,
-    replace_rule: Option<&str>,
-    source: String,
-    material_id: Option<Uuid>,
-    record_offset: Option<i64>,
-    output_index: i64,
-    parents: Option<Vec<Uuid>>,
-    ts_orig: Option<OffsetDateTime>,
-    ts_quality: &str,
-    payload: Value,
-    equivalence_key: Option<String>,
-    reading_order: i64,
-    record_hash: Vec<u8>,
-    record_state: &str,
-    class: &str,
-) -> Result<Event> {
-    let origin = match (material_id, record_offset, parents) {
-        (Some(material), Some(record_offset), _) => Origin::Record {
-            location: RecordLocation {
-                material: MaterialId(material),
-                record_offset: u64::try_from(record_offset)
-                    .map_err(|_| crate::Error::Invalid("negative record offset".into()))?,
-            },
-            output_index: u64::try_from(output_index)
-                .map_err(|_| crate::Error::Invalid("negative output_index".into()))?,
-        },
-        (_, _, Some(parents)) => Origin::Derived {
-            parents: parents.into_iter().map(EventId).collect(),
-        },
-        _ => return Err(crate::Error::Invalid(format!("event {id} has no origin"))),
-    };
-    let quality: TimeQuality = text_enum(ts_quality, "time quality")?;
-    Ok(Event {
-        id: EventId(id),
-        event_type: event_type.into(),
-        kind_version: u64::try_from(kind_version)
-            .map_err(|_| crate::Error::Invalid("invalid kind version".into()))?,
-        validation: text_enum(validation, "validation")?,
-        source,
-        origin,
-        ts_orig: TsOrig::maybe(ts_orig.map(Timestamp), quality),
-        payload,
-        equivalence_key: equivalence_key.map(EquivalenceKey),
-        replace: replace_rule
-            .map(|r| text_enum::<ReplaceRule>(r, "replacement rule"))
-            .transpose()?,
-        reading_order: ReadingOrder(reading_order),
-        record_hash: record_hash
-            .try_into()
-            .map_err(|_| crate::Error::Invalid("record hash is not 32 bytes".into()))?,
-        record_state: text_enum::<RecordState>(record_state, "record state")?,
-        class: text_enum::<Class>(class, "class")?,
-        owned_blobs: Vec::new(),
-    })
-}
-
-macro_rules! committed {
-    ($r:expr) => {
-        Committed {
-            commit_seq: $r.commit_seq,
-            event: event_from_row(
-                $r.id,
-                &$r.event_type,
-                $r.kind_version,
-                &$r.validation,
-                $r.replace_rule.as_deref(),
-                $r.source,
-                $r.material_id,
-                $r.record_offset,
-                $r.output_index,
-                $r.parents,
-                $r.ts_orig,
-                &$r.ts_quality,
-                $r.payload,
-                $r.equivalence_key,
-                $r.reading_order,
-                $r.record_hash,
-                &$r.record_state,
-                &$r.class,
-            )?,
-        }
-    };
+impl TryFrom<EventRow> for Committed {
+    type Error = crate::Error;
+    fn try_from(row: EventRow) -> Result<Self> {
+        Ok(Self {
+            commit_seq: row.commit_seq,
+            event: Event::try_from(row)?,
+        })
+    }
 }
 
 async fn resolve_range(conn: &mut PgConnection, w: &Window) -> Result<Option<Window>> {
@@ -338,11 +252,7 @@ pub async fn read_window(conn: &mut PgConnection, w: &Window) -> Result<Vec<Comm
         end_fields.push(field.to_owned());
         durations.push(duration);
     }
-    let rows = sqlx::query!(
-        r#"SELECT e.id AS "id!", e.event_type AS "event_type!", e.source AS "source!", e.material_id, e.record_offset, e.output_index AS "output_index!", e.parents,
-             e.ts_orig, e.ts_quality AS "ts_quality!", e.payload AS "payload!", e.equivalence_key, e.reading_order AS "reading_order!", e.record_hash AS "record_hash!",
-             e.record_state AS "record_state!", e.class AS "class!", e.commit_seq AS "commit_seq!", e.kind_version AS "kind_version!", e.validation AS "validation!",
-             (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule
+    let rows = sqlx::query_as!(EventRow, r#"SELECT e.id AS "id!", e.event_type AS "event_type!", e.kind_version AS "kind_version!", e.validation AS "validation!", e.source AS "source!", e.run_id AS "run_id!", e.material_id, e.record_offset, e.output_index AS "output_index!", e.parents, e.ts_orig, e.ts_quality AS "ts_quality!", e.ts_coided, e.ts_persisted AS "ts_persisted!", e.payload AS "payload!", e.equivalence_key, e.reading_order AS "reading_order!", e.record_hash AS "record_hash!", e.record_state AS "record_state!", e.class AS "class!", e.commit_seq AS "commit_seq!", (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule
            FROM core.events e
            WHERE e.event_type = ANY($1) AND (e.ts_orig IS NOT NULL OR $8)
              AND ($3::timestamptz IS NULL OR e.ts_orig < $3)
@@ -370,7 +280,7 @@ pub async fn read_window(conn: &mut PgConnection, w: &Window) -> Result<Vec<Comm
     .await?;
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
-        out.push(committed!(r));
+        out.push(Committed::try_from(r)?);
     }
     let mut seen: HashSet<EventId> = out.iter().map(|c| c.event.id).collect();
     let mut extra = Vec::new();
@@ -418,10 +328,22 @@ async fn window_page(
     .fetch_all(&mut *conn)
     .await?;
     let matched = rows.first().map_or(0, |r| r.matched);
-    let mut out = Vec::with_capacity(rows.len());
-    for r in rows {
-        out.push(committed!(r));
-    }
+    let selected: Vec<_> = rows
+        .into_iter()
+        .map(|row| crate::commit_log::Selected {
+            commit_seq: row.commit_seq,
+            event: Some(crate::commit_log::SelectedEvent {
+                id: row.id,
+                event_type: row.event_type,
+                ts_orig: row.ts_orig,
+            }),
+        })
+        .collect();
+    let (events, _) = crate::commit_log::fetch_selected(conn, &selected, i64::MAX).await?;
+    let out = events
+        .into_iter()
+        .map(Committed::try_from)
+        .collect::<Result<_>>()?;
     Ok((out, matched))
 }
 
@@ -513,16 +435,35 @@ impl ValueGroup {
         .await?;
         let matched = rows.first().map_or(0, |row| row.matched);
         let finished = matched < page && rows.len() as i64 == matched;
+        let selected: Vec<_> = rows
+            .iter()
+            .map(|row| crate::commit_log::Selected {
+                commit_seq: row.commit_seq,
+                event: Some(crate::commit_log::SelectedEvent {
+                    id: row.id,
+                    event_type: row.event_type.clone(),
+                    ts_orig: row.ts_orig,
+                }),
+            })
+            .collect();
+        let (events, _) = crate::commit_log::fetch_selected(conn, &selected, i64::MAX).await?;
+        let mut events = events
+            .into_iter()
+            .map(|row| (row.id, row))
+            .collect::<std::collections::HashMap<_, _>>();
         for row in rows {
+            let Some(event) = events.remove(&row.id) else {
+                continue;
+            };
             self.after = Some((
                 row.value.clone(),
                 row.ts_orig.expect("window time"),
                 row.commit_seq,
             ));
             self.rows
-                .entry(row.value.clone())
+                .entry(row.value)
                 .or_default()
-                .push(committed!(row));
+                .push(Committed::try_from(event)?);
         }
         let complete: Vec<_> = self
             .open
@@ -733,12 +674,8 @@ async fn nearest(
     let mut out = Vec::new();
     match n.per {
         None => {
-            let rows = sqlx::query!(
-                r#"SELECT e.id AS "id!", e.event_type AS "event_type!", e.source AS "source!", e.material_id, e.record_offset, e.output_index AS "output_index!", e.parents,
-                     e.ts_orig, e.ts_quality AS "ts_quality!", e.payload AS "payload!", e.equivalence_key, e.reading_order AS "reading_order!", e.record_hash AS "record_hash!",
-                     e.record_state AS "record_state!", e.class AS "class!", e.commit_seq AS "commit_seq!", e.kind_version AS "kind_version!", e.validation AS "validation!",
-             (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule
-                   FROM core.events e
+            let rows = sqlx::query_as!(EventRow, r#"SELECT e.id AS "id!", e.event_type AS "event_type!", e.kind_version AS "kind_version!", e.validation AS "validation!", e.source AS "source!", e.run_id AS "run_id!", e.material_id, e.record_offset, e.output_index AS "output_index!", e.parents, e.ts_orig, e.ts_quality AS "ts_quality!", e.ts_coided, e.ts_persisted AS "ts_persisted!", e.payload AS "payload!", e.equivalence_key, e.reading_order AS "reading_order!", e.record_hash AS "record_hash!", e.record_state AS "record_state!", e.class AS "class!", e.commit_seq AS "commit_seq!", (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule
+           FROM core.events e
                    WHERE e.event_type = ANY($1)
                      AND (($2 AND e.ts_orig >= $3) OR (NOT $2 AND e.ts_orig < $3))
                      AND EXISTS (SELECT 1 FROM unnest($1::text[], $4::jsonb[]) AS k(event_type, contains)
@@ -755,7 +692,7 @@ async fn nearest(
             .fetch_all(&mut *conn)
             .await?;
             for r in rows {
-                out.push(committed!(r));
+                out.push(Committed::try_from(r)?);
             }
         }
         Some(per) => {
@@ -816,15 +753,8 @@ async fn nearest(
                     until.push(edge);
                 }
             }
-            let rows = sqlx::query!(
-                r#"SELECT x.id AS "id!", x.event_type AS "event_type!", x.source AS "source!",
-                     x.material_id, x.record_offset, x.output_index AS "output_index!", x.parents, x.ts_orig,
-                     x.ts_quality AS "ts_quality!", x.payload AS "payload!", x.equivalence_key,
-                     x.reading_order AS "reading_order!", x.record_hash AS "record_hash!",
-                     x.record_state AS "record_state!", x.class AS "class!",
-                     x.kind_version AS "kind_version!", x.validation AS "validation!", x.replace_rule,
-                     x.commit_seq AS "commit_seq!"
-                   FROM unnest($5::text[], $8::timestamptz[], $9::timestamptz[]) AS v(val, from_at, until_at) CROSS JOIN LATERAL (
+            let rows = sqlx::query_as!(EventRow, r#"SELECT x.id AS "id!", x.event_type AS "event_type!", x.kind_version AS "kind_version!", x.validation AS "validation!", x.source AS "source!", x.run_id AS "run_id!", x.material_id, x.record_offset, x.output_index AS "output_index!", x.parents, x.ts_orig, x.ts_quality AS "ts_quality!", x.ts_coided, x.ts_persisted AS "ts_persisted!", x.payload AS "payload!", x.equivalence_key, x.reading_order AS "reading_order!", x.record_hash AS "record_hash!", x.record_state AS "record_state!", x.class AS "class!", x.commit_seq AS "commit_seq!", (SELECT replace_rule FROM registry.event_types k WHERE k.name=x.event_type AND k.version=x.kind_version) AS replace_rule
+           FROM unnest($5::text[], $8::timestamptz[], $9::timestamptz[]) AS v(val, from_at, until_at) CROSS JOIN LATERAL (
                      SELECT e.*, (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule FROM core.events e
                      WHERE e.event_type = ANY($1)
                        AND e.ts_orig >= v.from_at AND e.ts_orig < v.until_at
@@ -848,7 +778,7 @@ async fn nearest(
             .fetch_all(&mut *conn)
             .await?;
             for r in rows {
-                out.push(committed!(r));
+                out.push(Committed::try_from(r)?);
             }
         }
     }
@@ -882,17 +812,8 @@ pub async fn after_seq(
         }),
     })
     .collect();
-    let (mut events, _) = crate::commit_log::fetch_selected(conn, &selected, bytes).await?;
-    crate::commit_log::add_declarations(conn, &mut events).await?;
-    events
-        .iter()
-        .map(|c| {
-            Ok(Committed {
-                commit_seq: c.commit_seq,
-                event: c.to_event()?,
-            })
-        })
-        .collect()
+    let (events, _) = crate::commit_log::fetch_selected(conn, &selected, bytes).await?;
+    events.into_iter().map(Committed::try_from).collect()
 }
 
 /// The live readings at these record locations, of any event type and output
@@ -906,11 +827,7 @@ pub(crate) async fn live_at(
         .iter()
         .map(|l| i64::try_from(l.record_offset).unwrap_or(i64::MAX))
         .collect();
-    let rows = sqlx::query!(
-        r#"SELECT e.id AS "id!", e.event_type AS "event_type!", e.source AS "source!", e.material_id, e.record_offset, e.output_index AS "output_index!", e.parents,
-             e.ts_orig, e.ts_quality AS "ts_quality!", e.payload AS "payload!", e.equivalence_key, e.reading_order AS "reading_order!", e.record_hash AS "record_hash!",
-             e.record_state AS "record_state!", e.class AS "class!", e.commit_seq AS "commit_seq!", e.kind_version AS "kind_version!", e.validation AS "validation!",
-             (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule
+    let rows = sqlx::query_as!(EventRow, r#"SELECT e.id AS "id!", e.event_type AS "event_type!", e.kind_version AS "kind_version!", e.validation AS "validation!", e.source AS "source!", e.run_id AS "run_id!", e.material_id, e.record_offset, e.output_index AS "output_index!", e.parents, e.ts_orig, e.ts_quality AS "ts_quality!", e.ts_coided, e.ts_persisted AS "ts_persisted!", e.payload AS "payload!", e.equivalence_key, e.reading_order AS "reading_order!", e.record_hash AS "record_hash!", e.record_state AS "record_state!", e.class AS "class!", e.commit_seq AS "commit_seq!", (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule
            FROM unnest($1::uuid[], $2::bigint[]) AS l(material_id, record_offset)
            JOIN core.events e ON e.material_id = l.material_id AND e.record_offset = l.record_offset
            WHERE EXISTS (SELECT 1 FROM core.live_locations c WHERE c.event_id = e.id)
@@ -923,7 +840,7 @@ pub(crate) async fn live_at(
     .await?;
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
-        out.push(committed!(r).event);
+        out.push(Event::try_from(r)?);
     }
     Ok(out)
 }
@@ -964,7 +881,8 @@ pub async fn dirty(
     derivations: &[String],
     limit: i64,
 ) -> Result<Vec<DirtyKey>> {
-    let rows = sqlx::query!(
+    let rows = sqlx::query_as!(
+        DirtyKey,
         r#"SELECT derivation, key, last_dirty_seq FROM derivation.dirty
            WHERE derivation = ANY($1) AND held_by IS NULL
            ORDER BY first_dirty_seq, derivation LIMIT $2"#,
@@ -973,14 +891,7 @@ pub async fn dirty(
     )
     .fetch_all(&mut *conn)
     .await?;
-    Ok(rows
-        .into_iter()
-        .map(|r| DirtyKey {
-            derivation: r.derivation,
-            key: r.key,
-            last_dirty_seq: r.last_dirty_seq,
-        })
-        .collect())
+    Ok(rows)
 }
 
 /// Keys of `derivation` waiting on inputs outside their window, with when
@@ -1015,11 +926,7 @@ pub async fn output_keys(conn: &mut PgConnection, derivation: &str) -> Result<Ve
 
 /// The live outputs a key last produced.
 pub async fn outputs(conn: &mut PgConnection, derivation: &str, key: &Value) -> Result<Vec<Event>> {
-    let rows = sqlx::query!(
-        r#"SELECT e.id AS "id!", e.event_type AS "event_type!", e.source AS "source!", e.material_id, e.record_offset, e.output_index AS "output_index!", e.parents,
-             e.ts_orig, e.ts_quality AS "ts_quality!", e.payload AS "payload!", e.equivalence_key, e.reading_order AS "reading_order!", e.record_hash AS "record_hash!",
-             e.record_state AS "record_state!", e.class AS "class!", e.commit_seq AS "commit_seq!", e.kind_version AS "kind_version!", e.validation AS "validation!",
-             (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule
+    let rows = sqlx::query_as!(EventRow, r#"SELECT e.id AS "id!", e.event_type AS "event_type!", e.kind_version AS "kind_version!", e.validation AS "validation!", e.source AS "source!", e.run_id AS "run_id!", e.material_id, e.record_offset, e.output_index AS "output_index!", e.parents, e.ts_orig, e.ts_quality AS "ts_quality!", e.ts_coided, e.ts_persisted AS "ts_persisted!", e.payload AS "payload!", e.equivalence_key, e.reading_order AS "reading_order!", e.record_hash AS "record_hash!", e.record_state AS "record_state!", e.class AS "class!", e.commit_seq AS "commit_seq!", (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule
            FROM derivation.outputs o JOIN core.events e ON e.id = o.event_id
            WHERE o.derivation = $1 AND o.key = $2
              AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)
@@ -1031,7 +938,7 @@ pub async fn outputs(conn: &mut PgConnection, derivation: &str, key: &Value) -> 
     .await?;
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
-        out.push(committed!(r).event);
+        out.push(Event::try_from(r)?);
     }
     Ok(out)
 }
@@ -1043,11 +950,7 @@ pub async fn children_outputs(
     derivation: &str,
     input: sinex_model::EventId,
 ) -> Result<Vec<Event>> {
-    let rows = sqlx::query!(
-        r#"SELECT e.id AS "id!", e.event_type AS "event_type!", e.source AS "source!", e.material_id, e.record_offset, e.output_index AS "output_index!", e.parents,
-             e.ts_orig, e.ts_quality AS "ts_quality!", e.payload AS "payload!", e.equivalence_key, e.reading_order AS "reading_order!", e.record_hash AS "record_hash!",
-             e.record_state AS "record_state!", e.class AS "class!", e.commit_seq AS "commit_seq!", e.kind_version AS "kind_version!", e.validation AS "validation!",
-             (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule
+    let rows = sqlx::query_as!(EventRow, r#"SELECT e.id AS "id!", e.event_type AS "event_type!", e.kind_version AS "kind_version!", e.validation AS "validation!", e.source AS "source!", e.run_id AS "run_id!", e.material_id, e.record_offset, e.output_index AS "output_index!", e.parents, e.ts_orig, e.ts_quality AS "ts_quality!", e.ts_coided, e.ts_persisted AS "ts_persisted!", e.payload AS "payload!", e.equivalence_key, e.reading_order AS "reading_order!", e.record_hash AS "record_hash!", e.record_state AS "record_state!", e.class AS "class!", e.commit_seq AS "commit_seq!", (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule
            FROM core.events e
            WHERE e.source=$1 AND e.parents IS NOT NULL AND e.parents @> ARRAY[$2]::uuid[]
              AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)
@@ -1055,7 +958,7 @@ pub async fn children_outputs(
         .fetch_all(conn).await?;
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
-        out.push(committed!(row).event);
+        out.push(Event::try_from(row)?);
     }
     Ok(out)
 }

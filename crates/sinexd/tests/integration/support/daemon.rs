@@ -109,6 +109,20 @@ pub(crate) fn query(binary: &Path, database: &str, store: &Path, text: &str) -> 
     .unwrap()
 }
 
+pub(crate) fn derivations() -> serde_json::Map<String, Value> {
+    let catalog: Value =
+        serde_json::from_str(include_str!("../../../../../nix/catalog.json")).unwrap();
+    catalog["derivations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|derivation| {
+            let name = derivation["name"].as_str().unwrap();
+            (name.to_owned(), serde_json::json!(name != "tag.applier"))
+        })
+        .collect()
+}
+
 pub(crate) fn sources(path: &Path, allowed: &[&str]) {
     let excluded: serde_json::Map<String, Value> = sinex_sources::sources::specs()
         .iter()
@@ -122,7 +136,8 @@ pub(crate) fn sources(path: &Path, allowed: &[&str]) {
         .collect();
     std::fs::write(
         path,
-        serde_json::to_vec(&serde_json::json!({"exclude": excluded})).unwrap(),
+        serde_json::to_vec(&serde_json::json!({"exclude": excluded, "derivations": derivations()}))
+            .unwrap(),
     )
     .unwrap();
 }

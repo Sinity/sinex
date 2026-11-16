@@ -925,6 +925,33 @@ impl Resolver<'_> {
 
     async fn act(&mut self, conn: &mut Conn, act: usize, request: &Act) -> Result<(), PlanError> {
         match request {
+            Act::Tag { .. } | Act::Reject { .. } | Act::Untag { .. } => {
+                self.tag_act(conn, act, request).await
+            }
+            Act::Set { .. } => self.set_act(conn, act, request).await,
+            Act::Note { .. } => self.note_act(conn, act, request).await,
+            Act::Rate { .. } => self.rate_act(conn, act, request).await,
+            Act::Collect { .. } | Act::Uncollect { .. } | Act::Move { .. } => {
+                self.collection_act(conn, act, request).await
+            }
+            Act::Judge { .. } => self.judge_act(conn, act, request).await,
+            Act::DefineScale { .. } | Act::DefineProperty { .. } | Act::DefineTag { .. } => {
+                self.define_act(conn, act, request).await
+            }
+            Act::Relate { .. } => self.relate_act(conn, act, request).await,
+            Act::Dismiss { .. } => self.dismiss_act(conn, act, request).await,
+            Act::Withdraw { .. } => self.withdraw_act(conn, act, request).await,
+            Act::Undo { .. } => self.undo_act(conn, act, request).await,
+        }
+    }
+
+    async fn tag_act(
+        &mut self,
+        conn: &mut Conn,
+        act: usize,
+        request: &Act,
+    ) -> Result<(), PlanError> {
+        match request {
             Act::Tag {
                 target,
                 tag,
@@ -994,6 +1021,18 @@ impl Resolver<'_> {
                     applied.into_keys().map(Withdrawn::Root).collect(),
                 ));
             }
+            _ => unreachable!("tag act"),
+        }
+        Ok(())
+    }
+
+    async fn set_act(
+        &mut self,
+        conn: &mut Conn,
+        act: usize,
+        request: &Act,
+    ) -> Result<(), PlanError> {
+        match request {
             Act::Set {
                 target,
                 property,
@@ -1038,6 +1077,18 @@ impl Resolver<'_> {
                     ..Draft::authored(CurationKind::Property)
                 });
             }
+            _ => unreachable!("set act"),
+        }
+        Ok(())
+    }
+
+    async fn note_act(
+        &mut self,
+        conn: &mut Conn,
+        act: usize,
+        request: &Act,
+    ) -> Result<(), PlanError> {
+        match request {
             Act::Note { target, text } => {
                 if text.trim().is_empty() {
                     return Err(invalid(act, "a note needs text"));
@@ -1049,6 +1100,18 @@ impl Resolver<'_> {
                     ..Draft::authored(CurationKind::Note)
                 });
             }
+            _ => unreachable!("note act"),
+        }
+        Ok(())
+    }
+
+    async fn rate_act(
+        &mut self,
+        conn: &mut Conn,
+        act: usize,
+        request: &Act,
+    ) -> Result<(), PlanError> {
+        match request {
             Act::Rate {
                 target,
                 scale,
@@ -1079,6 +1142,18 @@ impl Resolver<'_> {
                     ..Draft::authored(CurationKind::Rating)
                 });
             }
+            _ => unreachable!("rate act"),
+        }
+        Ok(())
+    }
+
+    async fn collection_act(
+        &mut self,
+        conn: &mut Conn,
+        act: usize,
+        request: &Act,
+    ) -> Result<(), PlanError> {
+        match request {
             Act::Collect {
                 target,
                 collection,
@@ -1155,6 +1230,18 @@ impl Resolver<'_> {
                 entries.sort();
                 self.entries.insert(key, entries);
             }
+            _ => unreachable!("collection act"),
+        }
+        Ok(())
+    }
+
+    async fn judge_act(
+        &mut self,
+        conn: &mut Conn,
+        act: usize,
+        request: &Act,
+    ) -> Result<(), PlanError> {
+        match request {
             Act::Judge {
                 scale,
                 order,
@@ -1188,6 +1275,32 @@ impl Resolver<'_> {
                     ..Draft::authored(CurationKind::Comparison)
                 });
             }
+            _ => unreachable!("judge act"),
+        }
+        Ok(())
+    }
+
+    async fn define_act(
+        &mut self,
+        conn: &mut Conn,
+        act: usize,
+        request: &Act,
+    ) -> Result<(), PlanError> {
+        match request {
+            Act::DefineScale { .. } => self.define_scale_act(conn, act, request).await,
+            Act::DefineProperty { .. } => self.define_property_act(conn, act, request).await,
+            Act::DefineTag { .. } => self.define_tag_act(act, request),
+            _ => unreachable!("definition act"),
+        }
+    }
+
+    async fn define_scale_act(
+        &mut self,
+        conn: &mut Conn,
+        act: usize,
+        request: &Act,
+    ) -> Result<(), PlanError> {
+        match request {
             Act::DefineScale {
                 name,
                 question,
@@ -1243,6 +1356,18 @@ impl Resolver<'_> {
                 });
                 self.scales.insert(name, scale);
             }
+            _ => unreachable!("define scale act"),
+        }
+        Ok(())
+    }
+
+    async fn define_property_act(
+        &mut self,
+        conn: &mut Conn,
+        act: usize,
+        request: &Act,
+    ) -> Result<(), PlanError> {
+        match request {
             Act::DefineProperty {
                 name,
                 value_type,
@@ -1292,6 +1417,13 @@ impl Resolver<'_> {
                     ..Draft::authored(CurationKind::PropertyDefinition)
                 });
             }
+            _ => unreachable!("define property act"),
+        }
+        Ok(())
+    }
+
+    fn define_tag_act(&mut self, act: usize, request: &Act) -> Result<(), PlanError> {
+        match request {
             Act::DefineTag {
                 tag,
                 namespace,
@@ -1304,6 +1436,18 @@ impl Resolver<'_> {
                     ..Draft::authored(CurationKind::TagDefinition)
                 });
             }
+            _ => unreachable!("define tag act"),
+        }
+        Ok(())
+    }
+
+    async fn relate_act(
+        &mut self,
+        conn: &mut Conn,
+        act: usize,
+        request: &Act,
+    ) -> Result<(), PlanError> {
+        match request {
             Act::Relate {
                 relation,
                 tag,
@@ -1370,6 +1514,18 @@ impl Resolver<'_> {
                     ..Draft::authored(CurationKind::TagRelation)
                 });
             }
+            _ => unreachable!("relate act"),
+        }
+        Ok(())
+    }
+
+    async fn dismiss_act(
+        &mut self,
+        conn: &mut Conn,
+        act: usize,
+        request: &Act,
+    ) -> Result<(), PlanError> {
+        match request {
             Act::Dismiss {
                 collection,
                 target,
@@ -1387,6 +1543,18 @@ impl Resolver<'_> {
                     ..Draft::authored(CurationKind::Dismissal)
                 });
             }
+            _ => unreachable!("dismiss act"),
+        }
+        Ok(())
+    }
+
+    async fn withdraw_act(
+        &mut self,
+        conn: &mut Conn,
+        act: usize,
+        request: &Act,
+    ) -> Result<(), PlanError> {
+        match request {
             Act::Withdraw { record, expects } => {
                 let target = Withdrawn::parse(record).map_err(|e| invalid(act, e.to_string()))?;
                 self.snapshot
@@ -1408,6 +1576,18 @@ impl Resolver<'_> {
                 }
                 self.drafts.push(draft);
             }
+            _ => unreachable!("withdraw act"),
+        }
+        Ok(())
+    }
+
+    async fn undo_act(
+        &mut self,
+        conn: &mut Conn,
+        act: usize,
+        request: &Act,
+    ) -> Result<(), PlanError> {
+        match request {
             Act::Undo { request } => {
                 let roots = self
                     .snapshot
@@ -1453,6 +1633,7 @@ impl Resolver<'_> {
                     written.into_iter().map(Withdrawn::Revision).collect(),
                 ));
             }
+            _ => unreachable!("undo act"),
         }
         Ok(())
     }

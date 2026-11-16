@@ -44,12 +44,12 @@ async fn commit_pages_follow_commit_order_and_byte_bounds(db: devkit::pg::TestDa
         assert_eq!(all.events.len(), 16);
         for (offset, event) in all.events.iter().enumerate() {
             let n = 8193 + offset as i64;
-            assert_eq!(event.commit_seq, n);
-            assert_eq!(event.payload["n"], n);
-            assert_eq!(event.record_offset, (n % 2 == 0).then_some(n));
-            assert_eq!(event.output_index, n % 3);
+            assert_eq!(event.row.commit_seq, n);
+            assert_eq!(event.row.payload["n"], n);
+            assert_eq!(event.row.record_offset, (n % 2 == 0).then_some(n));
+            assert_eq!(event.row.output_index, n % 3);
             assert_eq!(
-                event.class,
+                event.row.class,
                 match n % 3 {
                     0 => "open",
                     1 => "guarded",
@@ -57,7 +57,7 @@ async fn commit_pages_follow_commit_order_and_byte_bounds(db: devkit::pg::TestDa
                 }
             );
         }
-        let payload_size = crate::payload_bytes(&all.events[0].payload);
+        let payload_size = crate::payload_bytes(&all.events[0].row.payload);
         assert_eq!(
             after(&mut tx, 8192, 16, payload_size)
                 .await
@@ -79,7 +79,10 @@ async fn commit_pages_follow_commit_order_and_byte_bounds(db: devkit::pg::TestDa
         // The last event is followed by two commits without events.
         let tail = after(&mut tx, 8447, 16, i64::MAX).await.unwrap();
         assert_eq!(
-            tail.events.iter().map(|e| e.commit_seq).collect::<Vec<_>>(),
+            tail.events
+                .iter()
+                .map(|e| e.row.commit_seq)
+                .collect::<Vec<_>>(),
             [8448]
         );
         assert_eq!(tail.up_to, Some(8450));
@@ -137,7 +140,7 @@ async fn a_page_ends_at_the_last_position_it_read_a_row_for(db: devkit::pg::Test
         later
             .events
             .iter()
-            .map(|e| e.commit_seq)
+            .map(|e| e.row.commit_seq)
             .collect::<Vec<_>>(),
         [3, 4]
     );

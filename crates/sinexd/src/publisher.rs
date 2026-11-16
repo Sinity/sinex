@@ -10,6 +10,7 @@
 use crate::{Error, Result};
 use async_nats::HeaderMap;
 use async_nats::jetstream::{self, stream};
+use sinex_model::DbCheck;
 use sinex_model::{EventId, OperationId};
 use sinex_protocol::{Archived, Confirmed, Restored, Subjects, WithheldReason};
 use sinex_store::commit_log::{self, ArchiveChange};
@@ -620,13 +621,12 @@ fn message_limit(js: &jetstream::Context) -> usize {
 }
 
 fn archived_message(n: &ArchiveChange) -> Result<Archived> {
-    let reason =
-        serde_json::from_value(serde_json::Value::String(n.reason.clone())).map_err(|err| {
-            Error::internal(format!(
-                "event {}: archive reason {:?}: {err}",
-                n.event_id, n.reason
-            ))
-        })?;
+    let reason = sinex_model::ArchiveReason::from_db(&n.reason).ok_or_else(|| {
+        Error::internal(format!(
+            "event {}: unknown archive reason {:?}",
+            n.event_id, n.reason
+        ))
+    })?;
     Ok(Archived {
         change_seq: n.change_seq,
         event: EventId(n.event_id),

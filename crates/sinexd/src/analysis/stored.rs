@@ -6,13 +6,13 @@ use super::{
     recipes::{self, Recipe},
 };
 use crate::{Error, Result};
-use serde_json::{Value, json};
+use serde_json::json;
 use sinex_analysis::Eligibility;
 use sinex_analysis::coverage::Coverage;
 use sinex_analysis::panel::{self, DayFigure};
 use sinex_derivations::derived_event::derived;
 use sinex_derivations::figures::{METRICS, Metric};
-use sinex_derivations::{AffectedRange, Computed, Env, InputQuery, KeyState, KeyView, Keyed, Kind};
+use sinex_derivations::{AffectedRange, Computed, Env, InputQuery, KeyView, Keyed, Kind};
 use sinex_model::Event;
 use sinex_model::event_types::analysis::*;
 use sinex_model::event_types::coverage::{CoverageState, SourceCoverage};
@@ -21,6 +21,7 @@ use sinex_model::time_settings::TimeSettings;
 
 pub(crate) struct StoredProducts;
 impl Keyed for StoredProducts {
+    type Key = AnalysisRequest;
     const NAME: &'static str = "analysis.products";
     const VERSION: u32 = 1;
     const INPUTS: &'static [&'static str] =
@@ -48,23 +49,26 @@ impl Keyed for StoredProducts {
                 .expect("four bytes"),
         ) >> 2)
     }
-    fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Value> {
+    fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Self::Key> {
         if input.event_type == "analysis.request" && input.payload["operation"] != "recall" {
-            vec![input.payload.clone()]
+            serde_json::from_value(input.payload.clone())
+                .ok()
+                .into_iter()
+                .collect()
         } else {
             vec![]
         }
     }
-    fn inputs(&self, key: &Value, _: &Env) -> Option<InputQuery> {
-        let request: AnalysisRequest = serde_json::from_value(key.clone()).ok()?;
-        let metrics = metrics(&request);
+    fn inputs(&self, key: &Self::Key, _: &Env) -> Option<InputQuery> {
+        let request = key;
+        let metrics = metrics(request);
         let mut kinds = vec![Kind {
             event_type: "analysis.request".into(),
             equal: vec![("request".into(), json!(request.request))],
         }];
         let from = super::parse_day(&request.from).ok()?;
         let to = super::parse_day(&request.to).ok()?;
-        let settings = settings(&request).ok()?;
+        let settings = settings(request).ok()?;
         let days = panel::days(&settings.time_settings, from, to).ok()?;
         for metric in &metrics {
             for day in &days {
@@ -115,7 +119,12 @@ impl Keyed for StoredProducts {
             end,
         }]
     }
-    fn refresh_at(&self, outputs: &[Event], env: &Env) -> Option<sinex_model::Timestamp> {
+    fn refresh_at(
+        &self,
+        _: &[Event],
+        outputs: &[Event],
+        env: &Env,
+    ) -> Option<sinex_model::Timestamp> {
         outputs
             .iter()
             .filter(|event| event.event_type == "analysis.panel")
@@ -127,10 +136,7 @@ impl Keyed for StoredProducts {
             .filter(|end| *end > env.now)
             .min()
     }
-    fn key_state(&self, _: &Value, _: &Env) -> KeyState {
-        KeyState::Closed
-    }
-    fn compute(&self, key: &Value, inputs: &[Event], env: &Env) -> Computed {
+    fn compute(&self, key: &Self::Key, inputs: &[Event], env: &Env) -> Computed {
         match compute(key, inputs, env) {
             Ok(outputs) => Computed {
                 outputs,
@@ -298,15 +304,14 @@ fn panel(
         as_of: 0,
     })
 }
-fn compute(key: &Value, inputs: &[Event], env: &Env) -> Result<Vec<Event>> {
-    let request: AnalysisRequest = serde_json::from_value(key.clone())?;
+fn compute(request: &AnalysisRequest, inputs: &[Event], env: &Env) -> Result<Vec<Event>> {
     let Some(request_event) = inputs
         .iter()
         .find(|e| e.event_type == "analysis.request" && e.payload["request"] == request.request)
     else {
         return Ok(vec![]);
     };
-    let settings = settings(&request)?;
+    let settings = settings(request)?;
     let from = super::parse_day(&request.from)?;
     let to = super::parse_day(&request.to)?;
     let requested_days: std::collections::BTreeSet<_> =
@@ -316,7 +321,7 @@ fn compute(key: &Value, inputs: &[Event], env: &Env) -> Result<Vec<Event>> {
             .collect();
     let visible: Vec<_> = inputs
         .iter()
-        .filter(|event| visible(event, &request))
+        .filter(|event| visible(event, request))
         .collect();
     let mut latest = std::collections::BTreeMap::new();
     for event in visible
@@ -360,7 +365,7 @@ fn compute(key: &Value, inputs: &[Event], env: &Env) -> Result<Vec<Event>> {
     if !parents.iter().any(|e| e.id == request_event.id) {
         parents.push(request_event);
     }
-    let p = panel(&request, &settings, &selected, from, to)?;
+    let p = panel(request, &settings, &selected, from, to)?;
     let coverage_evidence = p.coverage_observations.clone();
     let parent_citations: Vec<String> = parents
         .iter()
@@ -436,7 +441,7 @@ fn compute(key: &Value, inputs: &[Event], env: &Env) -> Result<Vec<Event>> {
         }
     }
     if request.operation == "brief" {
-        let today = panel(&request, &settings, &selected, to, to)?;
+        let today = panel(request, &settings, &selected, to, to)?;
         let day_end = settings.time_settings.day_end(to)?;
         let mut sections = super::brief::sections(&today, &p, &settings, to, env.now < day_end)?;
         for finding in sections

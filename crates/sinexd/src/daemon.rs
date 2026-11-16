@@ -246,11 +246,11 @@ async fn serve(
     }
     let keyed: Vec<_> = keyed
         .into_iter()
-        .filter(|d| sources.runs(d.name()))
+        .filter(|d| sources.runs(d.name()) == Some(true))
         .collect();
     let per_event: Vec<_> = per_event
         .into_iter()
-        .filter(|d| d.name() == sinex_derivations::tags::TagApplier::NAME || sources.runs(d.name()))
+        .filter(|d| sources.runs(d.name()) == Some(true))
         .collect();
     for (name, _) in sources.derivations.iter().filter(|(_, runs)| !**runs) {
         eprintln!("sinexd: derivation {name} is turned off by the configuration");
@@ -259,7 +259,7 @@ async fn serve(
         sinex_model::time_settings::TimeSettings::from_parts(o.api.zone.clone(), o.api.day_start);
     let writer_derivations = crate::analysis::keyed_with(&configuration)
         .into_iter()
-        .filter(|d| sources.runs(d.name()))
+        .filter(|d| sources.runs(d.name()) == Some(true))
         .collect();
     let writer_settings = time_settings.clone();
     let url = o.database.clone();

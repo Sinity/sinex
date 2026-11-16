@@ -87,7 +87,7 @@ async fn work_reads_the_objective_and_next_boundary_with_unknown_time_metadata(
         sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
             .expect("fixture day setting"),
     );
-    let query = Keyed::inputs(&WorkEpisodes, &json!({"episode": first.episode}), &env).unwrap();
+    let query = AnyKeyed::inputs(&WorkEpisodes, &json!({"episode": first.episode}), &env).unwrap();
     let mut conn = PgConnection::connect(&w.url).await.unwrap();
     let selected = derivations::read_window(&mut conn, &to_window(&query, env.now))
         .await
@@ -202,14 +202,14 @@ async fn wake_day_reads_stop_at_the_next_recorded_wake(db: devkit::pg::TestDatab
         sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
             .expect("fixture day setting"),
     );
-    let query = Keyed::inputs(&ActivityDays, &json!({"start":at(100)}), &env).unwrap();
+    let query = AnyKeyed::inputs(&ActivityDays, &json!({"start":at(100)}), &env).unwrap();
     let mut conn = PgConnection::connect(&w.url).await.unwrap();
     let selected = derivations::read_window(&mut conn, &to_window(&query, env.now))
         .await
         .unwrap();
     assert_eq!(selected.len(), 2);
     let input: Vec<_> = selected.into_iter().map(|event| event.event).collect();
-    let output = Keyed::compute(&ActivityDays, &json!({"start":at(100)}), &input, &env);
+    let output = AnyKeyed::compute(&ActivityDays, &json!({"start":at(100)}), &input, &env);
     assert_eq!(output.outputs.len(), 1);
     assert_eq!(output.outputs[0].payload["ended_at"], json!(at(1000)));
     assert_eq!(output.outputs[0].payload["provisional"], false);

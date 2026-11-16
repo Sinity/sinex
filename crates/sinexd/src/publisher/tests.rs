@@ -587,8 +587,8 @@ async fn acknowledgment_before_database_rollback_is_recorded_on_retry(
     let committed = &page.events[0];
     let ack = publish(
         &js,
-        subjects.confirmed_event(&committed.class, &committed.event_type),
-        format!("event-{}", committed.commit_seq),
+        subjects.confirmed_event(&committed.row.class, &committed.row.event_type),
+        format!("event-{}", committed.row.commit_seq),
         &withheld_copy(committed),
     )
     .await
@@ -606,7 +606,7 @@ async fn acknowledgment_before_database_rollback_is_recorded_on_retry(
     commit_log::set_consumer_position(
         &mut tx,
         &consumer_for(&instance(&js, &subjects).await),
-        committed.commit_seq,
+        committed.row.commit_seq,
         0,
     )
     .await
@@ -664,7 +664,7 @@ async fn unrecorded_published_references_are_recorded_at_start(db: devkit::pg::T
         .events[0];
     let stray = publish(
         &js,
-        subjects.confirmed_event(&committed.class, &committed.event_type),
+        subjects.confirmed_event(&committed.row.class, &committed.row.event_type),
         "copy-after-the-duplicate-window".into(),
         &withheld_copy(committed),
     )
@@ -728,7 +728,7 @@ async fn repeated_erasure_keeps_other_copies_until_their_acknowledgment(
     // A redelivery after deduplication expired can acknowledge another copy.
     let ack = publish(
         &js,
-        subjects.confirmed_event(&committed.class, &committed.event_type),
+        subjects.confirmed_event(&committed.row.class, &committed.row.event_type),
         "another-copy".into(),
         &withheld_copy(committed),
     )
@@ -775,9 +775,9 @@ async fn repeated_erasure_keeps_other_copies_until_their_acknowledgment(
 /// A body-free copy of a committed event, as a stray resend would carry it.
 fn withheld_copy(committed: &commit_log::Committed) -> Confirmed {
     Confirmed::Withheld(sinex_protocol::WithheldEvent {
-        commit_seq: committed.commit_seq,
-        event: EventId(committed.id),
-        event_type: committed.event_type.clone(),
+        commit_seq: committed.row.commit_seq,
+        event: EventId(committed.row.id),
+        event_type: committed.row.event_type.clone(),
         class: Class::Open,
         reason: WithheldReason::Size,
     })

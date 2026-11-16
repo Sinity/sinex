@@ -58,7 +58,14 @@ fn facts(host: &str, rows: &[(i64, &str, Option<i64>)], class: Class) -> Vec<Eve
             .expect("fixture day setting"),
     );
     let sessions = ShellSessions
-        .compute(&json!({"host":host,"day":"2026-09-14"}), &fused, &env)
+        .compute(
+            &sinex_derivations::keys::HostDayKey {
+                host: host.into(),
+                day: "2026-09-14".parse().unwrap(),
+            },
+            &fused,
+            &env,
+        )
         .outputs;
     events.extend(fused);
     events.extend(sessions);

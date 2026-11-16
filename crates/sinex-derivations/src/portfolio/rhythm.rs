@@ -1,7 +1,8 @@
 //! Prior-only rhythm comparisons over coverage-qualified daily input products.
 use crate::derived_event::derived;
-use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed};
-use serde_json::{Value, json};
+use crate::keys::DayScopeKey;
+use crate::{Computed, Env, InputQuery, KeyView, Keyed};
+use serde_json::json;
 use sinex_model::Event;
 use sinex_model::event_types::portfolio::{InputWorkload, RhythmDeviation};
 use std::collections::BTreeMap;
@@ -35,6 +36,7 @@ fn value(workload: &InputWorkload, measure: &str) -> Option<f64> {
     }
 }
 impl Keyed for RhythmDeviations {
+    type Key = DayScopeKey;
     const NAME: &'static str = "rhythm.deviations";
     const VERSION: u32 = 1;
     const USES_TIME_SETTINGS: bool = true;
@@ -44,7 +46,7 @@ impl Keyed for RhythmDeviations {
         let hash = blake3::hash(&serde_json::to_vec(&(Self::VERSION, &self.0)).unwrap());
         1 + (u32::from_le_bytes(hash.as_bytes()[..4].try_into().unwrap()) >> 2)
     }
-    fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Value> {
+    fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Self::Key> {
         let Some(scope) = input.payload["scope"].as_str() else {
             return vec![];
         };
@@ -62,14 +64,17 @@ impl Keyed for RhythmDeviations {
             if day > today {
                 break;
             }
-            keys.push(json!({"scope":scope,"day":day.to_string()}));
+            keys.push(DayScopeKey {
+                day,
+                scope: scope.to_owned(),
+            });
             let Ok(next) = day.tomorrow() else { break };
             day = next;
         }
         keys
     }
-    fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery> {
-        let day = key["day"].as_str()?.parse().ok()?;
+    fn inputs(&self, key: &Self::Key, env: &Env) -> Option<InputQuery> {
+        let day = key.day;
         let first = earlier(day, self.0.window_days)?;
         Some(
             InputQuery::window(
@@ -77,22 +82,13 @@ impl Keyed for RhythmDeviations {
                 env.time_settings.day_start(first).ok()?,
                 env.time_settings.day_end(day).ok()?,
             )
-            .only("scope", key.get("scope")?.clone()),
+            .only("scope", json!(key.scope)),
         )
     }
-    fn key_state(&self, _: &Value, _: &Env) -> KeyState {
-        KeyState::Closed
-    }
-    fn compute(&self, key: &Value, inputs: &[Event], env: &Env) -> Computed {
-        let Some(day) = key["day"].as_str() else {
-            return Computed::default();
-        };
-        let Some(scope) = key["scope"].as_str() else {
-            return Computed::default();
-        };
-        let Ok(date) = day.parse() else {
-            return Computed::default();
-        };
+    fn compute(&self, key: &Self::Key, inputs: &[Event], env: &Env) -> Computed {
+        let day = key.day.to_string();
+        let scope = key.scope.as_str();
+        let date = key.day;
         let Some(first) = earlier(date, self.0.window_days) else {
             return Computed::default();
         };
@@ -160,7 +156,7 @@ impl Keyed for RhythmDeviations {
             outputs.push(derived(
                 &RhythmDeviation {
                     scope: scope.into(),
-                    day: day.into(),
+                    day: day.clone(),
                     measure: measure.into(),
                     period_start: start,
                     period_end: end,

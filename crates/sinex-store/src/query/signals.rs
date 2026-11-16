@@ -42,7 +42,7 @@ pub async fn standing_query(
         let definitions = saved::saved_definitions(conn, &name).await?;
         sinex_query::saved::bind_saved(text, &ctx, &definitions)?
     } else {
-        sinex_query::template::parse(text, &ctx)?.bind(&ctx)?
+        sinex_query::template::bind(&sinex_query::template::parse(text, &ctx)?, &ctx)?
     };
     ctx.catalog
         .as_ref()

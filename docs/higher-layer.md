@@ -51,7 +51,7 @@ Each elementary segment of the boundary sweep ([attention](#attention)) gets `ag
 - **`activity.session`** is a presence envelope. It joins windows across gaps shorter than the break threshold (profile default 15 min) and closes on explicit absence: lock, suspend or a rest interval. Breaks of 2 to 15 min inside it are `short_break` members and never count as focus. It carries `operator_present_s`, short breaks, seconds by agency, and `delegated_overlap_s`; multi-source counts are context counts, not a measure of activity.
 - A session's identity is its first stable window; its owning day is the logical day of that start; it may cross any number of hours and days.
 - **Episode boundaries come from semantic keys ([episodes](#work-episodes)), never from session gaps**, because fixed time-outs cap at about 70% precision on task boundaries.
-- `shell.session` (commands in one terminal, partitioned by host and the shell's or terminal's own session identity where captured), `activity.session` and `work.episode` are three different things. `recall last` keeps the shell-session meaning; the cross-source selector is explicit ([recall](recall.md)).
+- `shell.session` (commands in one terminal, partitioned by host and the shell's or terminal's own session identity where captured), `activity.session` and `work.episode` are three different things. A shell session sets `end_is_lower_bound` when its latest-ending member command has no recorded duration, so the session may end later. `recall last` keeps the shell-session meaning; the cross-source selector is explicit ([recall](recall.md)).
 
 ## Attention
 
@@ -160,7 +160,7 @@ Resume packs are recomputed on suspension and on new evidence. The session-start
 
 - `metric.figure` and `health.figure`: a metric declares its input kinds, its measure (event count, interval-union seconds, ratio, typed numeric or map sum), units, dimensions and observing sources.
 - Hourly figures hold period and day, metric and dimension identity, a nullable value, numerator and denominator, counted and supporting rows, and exact parents. **Daily figures read hourly figures only.** (ruling 2026-10-11, cc:e3e37f29-2490-47ae-89ef-fd40b6242e9a:d716993a-f5d6-4422-aa5e-97d91e430d93).
-- Counts are attributed once, at original starts; durations clip the interval union into every overlapping hour. Daily ratios sum numerators and denominators; averages derive from sums and known counts, never means of hourly means. Distinct sources per day come from dimension identities. Overlap reads include every interval that began before the period.
+- Counts are attributed once, at original starts; durations clip the interval union into every overlapping hour. Daily ratios sum numerators and denominators; averages derive from sums and known counts, never means of hourly means. Any unknown hourly value, numerator or denominator leaves the corresponding daily sum unknown. Distinct sources per day come from dimension identities. Overlap reads include every interval that began before the period.
 - Every cell has a state and no default ([figure cells](evidence.md#figure-cells)). Sparse positive-event exports never turn silent days into observed zeros.
 - Each metric declares the construct it operationalizes, its role and validity ([the metric catalog](evidence.md#constructs-and-the-metric-catalog)).
 - Biological health figures and component status are separate kinds.

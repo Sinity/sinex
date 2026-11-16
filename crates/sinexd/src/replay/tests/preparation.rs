@@ -54,7 +54,7 @@ async fn context(db: &devkit::pg::TestDatabase) -> (tempfile::TempDir, ReaderCon
     (directory, context)
 }
 
-async fn reader(context: &mut ReaderContext) -> (SequenceReader, Value) {
+pub(super) async fn reader(context: &mut ReaderContext) -> (SequenceReader, Value) {
     let scope = Scope {
         batch_events: Some(1),
         ..whole_binding()

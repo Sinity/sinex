@@ -1,7 +1,6 @@
 {
   "derivations": [
     {
-      "enabledByDefault": true,
       "history": "recompute",
       "inputs": [
         "command.reported",
@@ -18,7 +17,6 @@
       ]
     },
     {
-      "enabledByDefault": true,
       "history": "recompute",
       "inputs": [
         "mail.message",
@@ -32,7 +30,6 @@
       ]
     },
     {
-      "enabledByDefault": true,
       "history": "recompute",
       "inputs": [
         "library.copy"
@@ -45,7 +42,6 @@
       ]
     },
     {
-      "enabledByDefault": true,
       "history": "recompute",
       "inputs": [
         "command.fused",
@@ -61,7 +57,6 @@
       ]
     },
     {
-      "enabledByDefault": true,
       "history": "recompute",
       "inputs": [
         "input.logger"
@@ -73,7 +68,6 @@
       ]
     },
     {
-      "enabledByDefault": true,
       "history": "recompute",
       "inputs": [
         "key.pressed",
@@ -90,7 +84,6 @@
       ]
     },
     {
-      "enabledByDefault": true,
       "history": "recompute",
       "inputs": [
         "input.workload"
@@ -102,7 +95,6 @@
       ]
     },
     {
-      "enabledByDefault": true,
       "history": "recompute",
       "inputs": [
         "polylogue.work_snapshot"
@@ -115,7 +107,6 @@
       ]
     },
     {
-      "enabledByDefault": true,
       "history": "recompute",
       "inputs": [
         "key.pressed",
@@ -148,7 +139,6 @@
       ]
     },
     {
-      "enabledByDefault": true,
       "history": "recompute",
       "inputs": [
         "activity.span",
@@ -161,7 +151,6 @@
       ]
     },
     {
-      "enabledByDefault": true,
       "history": "recompute",
       "inputs": [
         "key.pressed",
@@ -194,7 +183,6 @@
       ]
     },
     {
-      "enabledByDefault": true,
       "history": "recompute",
       "inputs": [
         "activity.window",
@@ -210,7 +198,6 @@
       ]
     },
     {
-      "enabledByDefault": true,
       "history": "recompute",
       "inputs": [
         "chat.message",
@@ -225,7 +212,6 @@
       ]
     },
     {
-      "enabledByDefault": true,
       "history": "recompute",
       "inputs": [
         "window.focused",
@@ -244,7 +230,6 @@
       ]
     },
     {
-      "enabledByDefault": true,
       "history": "recompute",
       "inputs": [
         "command.fused",
@@ -276,7 +261,6 @@
       ]
     },
     {
-      "enabledByDefault": true,
       "history": "recompute",
       "inputs": [
         "metric.figure"
@@ -288,7 +272,6 @@
       ]
     },
     {
-      "enabledByDefault": true,
       "history": "recompute",
       "inputs": [
         "activity.span"
@@ -300,7 +283,6 @@
       ]
     },
     {
-      "enabledByDefault": true,
       "history": "recompute",
       "inputs": [
         "work.act",
@@ -316,7 +298,6 @@
       ]
     },
     {
-      "enabledByDefault": true,
       "history": "recompute",
       "inputs": [
         "work.episode",
@@ -329,7 +310,6 @@
       ]
     },
     {
-      "enabledByDefault": true,
       "history": "recompute",
       "inputs": [
         "health.record",
@@ -342,7 +322,6 @@
       ]
     },
     {
-      "enabledByDefault": true,
       "history": "recompute",
       "inputs": [
         "health.record"
@@ -354,7 +333,6 @@
       ]
     },
     {
-      "enabledByDefault": true,
       "history": "recompute",
       "inputs": [
         "health.figure"
@@ -366,7 +344,6 @@
       ]
     },
     {
-      "enabledByDefault": true,
       "history": "recompute",
       "inputs": [
         "calendar.event"
@@ -378,7 +355,6 @@
       ]
     },
     {
-      "enabledByDefault": true,
       "history": "recompute",
       "inputs": [
         "operator.mark",
@@ -399,7 +375,6 @@
       ]
     },
     {
-      "enabledByDefault": true,
       "history": "recompute",
       "inputs": [
         "analysis.request",
@@ -416,7 +391,6 @@
       ]
     },
     {
-      "enabledByDefault": true,
       "history": "recompute",
       "inputs": [
         "embedding.supplied"
@@ -428,7 +402,6 @@
       ]
     },
     {
-      "enabledByDefault": true,
       "history": "recompute",
       "inputs": [
         "library.copy"
@@ -440,7 +413,6 @@
       ]
     },
     {
-      "enabledByDefault": false,
       "history": "recompute",
       "inputs": [
         "account.row",
@@ -618,7 +590,6 @@
       ]
     },
     {
-      "enabledByDefault": true,
       "history": "recompute",
       "inputs": [
         "library.copy"
@@ -630,7 +601,6 @@
       ]
     },
     {
-      "enabledByDefault": true,
       "history": "recompute",
       "inputs": [
         "media.segment"

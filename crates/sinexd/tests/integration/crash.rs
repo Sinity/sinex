@@ -290,7 +290,7 @@ impl Target {
         let config = inputs.dir.join("sources.json");
         std::fs::write(
             &config,
-            serde_json::to_vec(&serde_json::json!({"exclude": excluded})).unwrap(),
+            serde_json::to_vec(&serde_json::json!({"exclude": excluded, "derivations": crate::support::daemon::derivations()})).unwrap(),
         )
         .unwrap();
         c.arg("--tokens")

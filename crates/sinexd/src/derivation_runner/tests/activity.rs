@@ -168,7 +168,7 @@ async fn sessions_select_connected_windows_and_split_after_removal(db: devkit::p
         sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
             .expect("fixture day setting"),
     );
-    let query = Keyed::inputs(
+    let query = AnyKeyed::inputs(
         &sinex_derivations::activity::ActivitySessions(Default::default()),
         &json!({"at":first.started_at,"scope":first.scope}),
         &env,
@@ -189,7 +189,7 @@ async fn sessions_select_connected_windows_and_split_after_removal(db: devkit::p
             break_seconds: u64::MAX,
         },
     );
-    let query = Keyed::inputs(
+    let query = AnyKeyed::inputs(
         &largest_break,
         &json!({"at":first.started_at,"scope":first.scope}),
         &env,

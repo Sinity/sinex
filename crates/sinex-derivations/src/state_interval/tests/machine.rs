@@ -20,7 +20,7 @@ fn journal_event(kind: &str, seconds: i64, mut payload: Value) -> Event {
     )
     .unwrap()
 }
-fn unit(kind: &str, seconds: i64, boot: &str, invocation: &str) -> Event {
+pub(super) fn unit(kind: &str, seconds: i64, boot: &str, invocation: &str) -> Event {
     journal_event(
         kind,
         seconds,
@@ -28,7 +28,7 @@ fn unit(kind: &str, seconds: i64, boot: &str, invocation: &str) -> Event {
     "unit":"example.service","manager":"system","uid":0,"invocation_id":invocation,"outcome":"stopped"}),
     )
 }
-fn machine(kind: &str, events: &[Event]) -> Vec<StateInterval> {
+pub(super) fn machine(kind: &str, events: &[Event]) -> Vec<StateInterval> {
     let env = Env::at(
         at(10 * 86400),
         sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)

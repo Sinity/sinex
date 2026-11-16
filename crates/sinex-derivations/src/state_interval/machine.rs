@@ -5,7 +5,16 @@ use sinex_model::record::stable;
 const UNIT: &[&str] = &["unit.started", "unit.stopped", "boot.started"];
 const SLEEP: &[&str] = &["sleep.started", "sleep.ended", "boot.started"];
 
-pub(super) fn keys(input: &KeyView<'_>, env: &Env) -> Vec<Value> {
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MachineKey {
+    pub state: String,
+    pub day: jiff::civil::Date,
+    pub host: Option<String>,
+    pub unknown_record: Option<String>,
+}
+
+pub(super) fn keys(input: &KeyView<'_>, env: &Env) -> Vec<MachineKey> {
     let states: &[&str] = match input.event_type {
         "unit.started" | "unit.stopped" => &["machine.unit"],
         "boot.started" => &["machine.boot", "machine.unit", "machine.suspend"],
@@ -18,21 +27,43 @@ pub(super) fn keys(input: &KeyView<'_>, env: &Env) -> Vec<Value> {
     let Ok(day) = env.time_settings.day(at) else {
         return vec![];
     };
-    states.iter().map(|state|json!({"state":state,"day":day.to_string(),"host":input.payload["host"],
-        "unknown_record":if input.payload["host"].is_string(){Value::Null}else{input.payload["cursor"].clone()}})).collect()
+    let host = input
+        .payload
+        .get("host")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let unknown_record = host
+        .is_none()
+        .then(|| {
+            input
+                .payload
+                .get("cursor")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .flatten();
+    states
+        .iter()
+        .map(|state| MachineKey {
+            state: (*state).into(),
+            day,
+            host: host.clone(),
+            unknown_record: unknown_record.clone(),
+        })
+        .collect()
 }
-pub(super) fn inputs(key: &Value, env: &Env) -> Option<InputQuery> {
-    let day = key["day"].as_str()?.parse().ok()?;
+pub(super) fn inputs(key: &MachineKey, env: &Env) -> Option<InputQuery> {
+    let day = key.day;
     let start = env.time_settings.day_start(day).ok()?;
     let end = env.time_settings.day_end(day).ok()?;
-    let kinds = match key["state"].as_str()? {
+    let kinds = match key.state.as_str() {
         "machine.unit" => UNIT,
         "machine.suspend" => SLEEP,
         "machine.boot" => &["boot.started"],
         _ => return None,
     };
     let mut query = InputQuery::window(kinds, start, end);
-    if let Some(host) = key["host"].as_str() {
+    if let Some(host) = key.host.as_deref() {
         query = query.only("host", json!(host));
         query.range = Some(InputRange::UntilNext {
             start,
@@ -60,7 +91,7 @@ pub(super) fn inputs(key: &Value, env: &Env) -> Option<InputQuery> {
                     equal: vec![("host".into(), json!(host))],
                 })
                 .collect(),
-            per: if key["state"] == "machine.unit" {
+            per: if key.state == "machine.unit" {
                 Some("unit")
             } else {
                 None
@@ -68,7 +99,7 @@ pub(super) fn inputs(key: &Value, env: &Env) -> Option<InputQuery> {
             count: 1,
             lifetime: None,
         });
-    } else if let Some(cursor) = key["unknown_record"].as_str() {
+    } else if let Some(cursor) = key.unknown_record.as_deref() {
         query = query.only("cursor", json!(cursor));
     }
     Some(query)
@@ -142,13 +173,9 @@ fn interval(start: &Event, end: Option<&Event>, fence: Option<&Event>, state: &s
         [start].into_iter().chain(end).chain(fence),
     )
 }
-pub(super) fn compute(key: &Value, inputs: &[Event], env: &Env) -> Computed {
-    let Some(state) = key["state"].as_str() else {
-        return Computed::default();
-    };
-    let Some(day) = key["day"].as_str().and_then(|day| day.parse().ok()) else {
-        return Computed::default();
-    };
+pub(super) fn compute(key: &MachineKey, inputs: &[Event], env: &Env) -> Computed {
+    let state = key.state.as_str();
+    let day = key.day;
     let (Ok(from), Ok(until)) = (
         env.time_settings.day_start(day),
         env.time_settings.day_end(day),
@@ -159,15 +186,18 @@ pub(super) fn compute(key: &Value, inputs: &[Event], env: &Env) -> Computed {
         .iter()
         .filter(|event| {
             event.ts_orig.at.is_some()
-                && (key["host"].is_null() || event.payload["host"] == key["host"])
+                && (key.host.is_none()
+                    || event.payload.get("host").and_then(Value::as_str) == key.host.as_deref())
         })
         .filter(|event| {
-            key["unknown_record"].is_null() || event.payload["cursor"] == key["unknown_record"]
+            key.unknown_record.is_none()
+                || event.payload.get("cursor").and_then(Value::as_str)
+                    == key.unknown_record.as_deref()
         })
         .collect();
     events.sort_by_cached_key(|event| (event.ts_orig.at, event.reading_order, stable(event)));
     let mut outputs = vec![];
-    if key["host"].is_null() {
+    if key.host.is_none() {
         for event in &events {
             if (state == "machine.unit" && event.event_type == "unit.started")
                 || (state == "machine.boot" && event.event_type == "boot.started")

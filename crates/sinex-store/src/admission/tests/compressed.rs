@@ -89,6 +89,7 @@ async fn operations_on_compressed_history_decompress_nothing(db: devkit::pg::Tes
             host: None,
         },
         archive: vec![ArchiveRequest::Replay {
+            failed_records: vec![],
             scope: sinex_model::ReplayScope {
                 materials: vec![material_of(&history[7])],
                 ..Default::default()

@@ -1,4 +1,5 @@
 use super::*;
+use sinex_model::{Class, MaterialId, Origin, ReadingOrder, RecordState};
 
 #[devkit::test]
 fn ten_thousand_field_values_share_one_paged_read() {

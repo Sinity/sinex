@@ -168,7 +168,7 @@ impl crate::EventPayload for CommandImported {
 /// from fused commands; identified by host and start (its end moves as it
 /// grows; its start does not), so a session that grows replaces its earlier reading.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2,
+#[event(version = 3,
     type = "shell.session",
     key = ["host", "started_at"],
     replace = newer,
@@ -181,6 +181,8 @@ pub struct ShellSession {
     /// The latest recorded end of any member command (a command without a
     /// duration counts as a point).
     pub ended_at: Timestamp,
+    /// The last member command has no recorded duration, so the session may end later.
+    pub end_is_lower_bound: bool,
     /// The logical day the session belongs to (`YYYY-MM-DD`).
     pub day: String,
     pub commands: u32,

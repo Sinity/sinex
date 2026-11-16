@@ -94,7 +94,7 @@ fn a_point_dirties_its_civil_hour_and_only_fit_points_count() {
     let other = point("samsung-health", "raw:heart", 1_800, json!([]));
     assert!(keys(&HourlyFigures, &other).is_empty());
     let query = HourlyFigures
-        .inputs(&json!({"hour": "2024-06-15T01:00:00Z"}), &env())
+        .inputs(&HourKey { hour: at(0) }, &env())
         .unwrap();
     assert_eq!(query.window, Some((at(0), at(3_600))));
     assert_eq!(

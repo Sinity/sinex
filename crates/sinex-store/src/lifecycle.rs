@@ -642,7 +642,7 @@ async fn plan(
     // already carries the type, so archiving need not read event history.
     match phase {
         Phase::Archive | Phase::ArchiveMadeLive => {
-            let rows = sqlx::query!(
+            let rows = sqlx::query_as!(Member,
                 r#"WITH RECURSIVE chain(id) AS (
                      SELECT unnest($1::uuid[])
                      UNION
@@ -659,13 +659,7 @@ async fn plan(
             .fetch_all(&mut *conn)
             .await?;
             Ok(Plan {
-                members: rows
-                    .into_iter()
-                    .map(|r| Member {
-                        id: r.id,
-                        event_type: r.event_type,
-                    })
-                    .collect(),
+                members: rows,
                 derived_again: vec![],
                 refusals: vec![],
             })

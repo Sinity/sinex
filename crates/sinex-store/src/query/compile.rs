@@ -111,6 +111,49 @@ enum Cols {
     },
 }
 
+struct NeededColumns {
+    output: Vec<FieldRef>,
+    withheld_columns: Vec<String>,
+    needed: Vec<FieldRef>,
+    snippet_requested: bool,
+}
+
+struct SearchColumns<'a> {
+    indexed: Option<&'a Words>,
+    ranked: bool,
+    words: &'a [String],
+    similar: Option<uuid::Uuid>,
+    snippet_requested: bool,
+}
+
+struct CompileState {
+    table: Table,
+    ranked: bool,
+    rel: SqlFragment,
+    columns: Vec<String>,
+    withheld_columns: Vec<String>,
+    renamed: BTreeMap<String, String>,
+    ordinal: Option<String>,
+    group_order: Vec<String>,
+    is_grouped: bool,
+    sort: Option<Vec<sinex_query::SortKey>>,
+    limit: Option<u64>,
+    internal: Vec<String>,
+    join_count: usize,
+}
+
+impl CompileState {
+    fn cols(&self, r: &str) -> Cols {
+        Cols::Named {
+            r: r.into(),
+            table: self.table,
+            grouped: self.is_grouped,
+            renamed: self.renamed.clone(),
+            ordinal: self.ordinal.clone(),
+        }
+    }
+}
+
 /// What kind of value an operand yields, for choosing comparisons.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -297,6 +340,47 @@ impl<'c> Compiler<'c> {
 
     /// Compile a whole query into its numbered answer.
     pub(crate) fn compile(&mut self, q: &Query) -> Result<Compiled> {
+        let (table, alias, similar) = self.check_source(q)?;
+        let t = self.alias("t");
+        let a = self.alias("a");
+        let base = Cols::Base { table, alias, t, a };
+        let (search, words) = self.word_search(q, table);
+        let needed = self.needed_columns(q, table, alias);
+        let search = SearchColumns {
+            indexed: search,
+            ranked: q.ranked && table.is_events(),
+            words: &words,
+            similar,
+            snippet_requested: needed.snippet_requested,
+        };
+        let mut state = self.base_relation(&base, needed, &search)?;
+        let source_filter = q
+            .filter
+            .as_ref()
+            .map(|expression| Stage::Where(expression.clone()));
+        for stage in source_filter.iter().chain(q.stages.iter()) {
+            match stage {
+                Stage::Where(e) => self.where_stage(&mut state, e)?,
+                Stage::Sort(keys) => self.sort_stage(&mut state, keys)?,
+                Stage::Limit(n) => self.limit_stage(&mut state, n)?,
+                Stage::GroupFirst { keys, count } => {
+                    self.group_first_stage(&mut state, keys, count)?
+                }
+                Stage::Group(g) => self.group_stage(&mut state, g)?,
+                Stage::Join(join) => self.join_stage(&mut state, join)?,
+                Stage::Fields(operands) => self.fields_stage(&mut state, operands)?,
+                Stage::AsOf(_) => {
+                    self.alias("r");
+                }
+            }
+        }
+        self.numbered_answer(state)
+    }
+
+    fn check_source(
+        &self,
+        q: &Query,
+    ) -> Result<(Table, Option<&'static Alias>, Option<uuid::Uuid>)> {
         let Source::Table { table, alias } = &q.source else {
             return Err(invalid(
                 "walks and recall are answered by their own readers",
@@ -313,15 +397,10 @@ impl<'c> Compiler<'c> {
                 table.name()
             )));
         }
-        let t = self.alias("t");
-        let a = self.alias("a");
-        let base = Cols::Base {
-            table,
-            alias: *alias,
-            t,
-            a,
-        };
+        Ok((table, *alias, similar))
+    }
 
+    fn word_search<'a>(&mut self, q: &'a Query, table: Table) -> (Option<&'a Words>, Vec<String>) {
         let search = (table == Table::Events)
             .then(|| {
                 q.filter.as_ref().and_then(required_words).or_else(|| {
@@ -356,7 +435,15 @@ impl<'c> Compiler<'c> {
             }
         }
 
-        // Which row fields later stages and the output need as columns.
+        (search, words)
+    }
+
+    fn needed_columns(
+        &self,
+        q: &Query,
+        table: Table,
+        alias: Option<&'static Alias>,
+    ) -> NeededColumns {
         let mut output: Vec<FieldRef> = Vec::new();
         for name in table.default_fields() {
             if alias.is_some() && *name == "payload" {
@@ -369,7 +456,7 @@ impl<'c> Compiler<'c> {
         if let Some(a) = alias {
             output.extend(a.fields.iter().map(FieldRef::Field));
         }
-        let mut withheld_columns: Vec<String> = alias
+        let withheld_columns: Vec<String> = alias
             .into_iter()
             .flat_map(|a| a.fields.iter().map(|f| f.name.to_owned()))
             .collect();
@@ -425,39 +512,154 @@ impl<'c> Compiler<'c> {
         let mut seen = std::collections::HashSet::new();
         needed.retain(|f| seen.insert(column_name(f)));
 
-        // Source conditions use the same relation and matched-column semantics
-        // as later filters. PostgreSQL can push scalar filters into this base.
-        let conds = self.base_conditions(&base);
-        let source_filter = q
-            .filter
-            .as_ref()
-            .map(|expression| Stage::Where(expression.clone()));
-        let stages = source_filter.iter().chain(q.stages.iter());
+        NeededColumns {
+            output,
+            withheld_columns,
+            needed,
+            snippet_requested,
+        }
+    }
+
+    fn base_relation(
+        &mut self,
+        base: &Cols,
+        needed: NeededColumns,
+        search: &SearchColumns<'_>,
+    ) -> Result<CompileState> {
+        let NeededColumns {
+            output,
+            withheld_columns,
+            needed,
+            ..
+        } = needed;
+        let table = Self::table_of(base);
+        let ranked = search.ranked;
+        let conds = self.base_conditions(base);
+        let (select, renamed) = self.base_select(base, table, &needed, search)?;
+        let from = self.base_from(base, table, search.indexed, search.words);
+        let mut rel = SqlFragment::text("SELECT ");
+        rel.append(SqlFragment::join(select, ", "))
+            .push(" FROM ")
+            .append(from);
+        if table == Table::Gaps {
+            rel.push(Self::template(base, " {t}"));
+        }
+        if !conds.is_empty() {
+            rel.push(" WHERE ")
+                .append(SqlFragment::join(conds, " AND "));
+        }
+
+        let mut columns: Vec<String> = output.iter().map(column_name).collect();
+        if ranked {
+            columns.push("snippet".into());
+        }
+        let group_order = Vec::new();
+        let is_grouped = false;
+        let sort: Option<Vec<sinex_query::SortKey>> = None;
+        let limit: Option<u64> = None;
+        let mut internal: Vec<String> = vec![
+            "_withheld".into(),
+            "_id".into(),
+            "_event_id".into(),
+            "_t".into(),
+            "_s".into(),
+            "_e".into(),
+            "_inclusive".into(),
+            "_has_span".into(),
+            "_parents".into(),
+        ];
+        if ranked {
+            internal.push("_rank".into());
+        }
+
+        if self.indexed_words {
+            internal.push("_search_tsv".into());
+        }
+
+        Ok(CompileState {
+            table,
+            ranked,
+            rel,
+            columns,
+            withheld_columns,
+            renamed,
+            ordinal: None,
+            group_order,
+            is_grouped,
+            sort,
+            limit,
+            internal,
+            join_count: 0,
+        })
+    }
+
+    fn base_select(
+        &mut self,
+        base: &Cols,
+        table: Table,
+        needed: &[FieldRef],
+        search: &SearchColumns<'_>,
+    ) -> Result<(Vec<SqlFragment>, BTreeMap<String, String>)> {
         let mut renamed = BTreeMap::new();
-        let mut ordinal = None;
         let mut select = Vec::new();
-        for f in &needed {
-            let (sql, _) = self.field(&base, f)?;
+        for f in needed {
+            let (sql, _) = self.field(base, f)?;
             let mut c = sql;
             let alias = self.alias("c");
             renamed.insert(column_name(f), alias.clone());
             c.push(format!(" AS {}", quote(&alias)));
             select.push(c);
         }
+        self.base_metadata(base, table, &mut select)?;
+        if search.ranked {
+            let mut r = if let Some(reference) = search.similar {
+                crate::vectors::rank_sql(&Self::template(base, "{t}.id"), reference, self.seq)
+            } else {
+                self.rank(base, search.words)
+            };
+            r.push(" AS \"_rank\"");
+            select.push(r);
+        }
+        if search.ranked || search.snippet_requested {
+            let mut snippet = if search.ranked {
+                self.snippet(base, search.words)
+            } else {
+                SqlFragment::text("NULL::text")
+            };
+            let alias = self.alias("c");
+            renamed.insert("snippet".into(), alias.clone());
+            snippet.push(format!(" AS {}", quote(&alias)));
+            select.push(snippet);
+        }
+        if self.indexed_words {
+            select.push(SqlFragment::text(Self::template(
+                base,
+                "{t}._search_tsv AS \"_search_tsv\"",
+            )));
+        }
+        Ok((select, renamed))
+    }
+
+    fn base_metadata(
+        &self,
+        base: &Cols,
+        table: Table,
+        select: &mut Vec<SqlFragment>,
+    ) -> Result<()> {
         let withheld = if table.is_events() {
             Self::template(
-                &base,
+                base,
                 "CASE WHEN {t}.payload ? 'withheld' THEN {t}.payload END",
             )
         } else {
             "NULL::jsonb".into()
         };
         select.push(SqlFragment::text(format!("{withheld} AS \"_withheld\"")));
-        let mut id = SqlFragment::text(Self::template(&base, fields::tiebreak(table)));
+        let mut id = SqlFragment::text(Self::template(base, fields::tiebreak(table)));
         id.push(" AS \"_id\"");
         select.push(id);
         let event_id = if table.is_events() {
-            Self::template(&base, fields::tiebreak(table))
+            Self::template(base, fields::tiebreak(table))
         } else {
             "NULL::uuid".into()
         };
@@ -475,7 +677,7 @@ impl<'c> Compiler<'c> {
         let parents = if table.is_events() {
             format!(
                 "ARRAY[{}]::uuid[]",
-                Self::template(&base, fields::tiebreak(table))
+                Self::template(base, fields::tiebreak(table))
             )
         } else {
             "ARRAY[]::uuid[]".into()
@@ -483,35 +685,18 @@ impl<'c> Compiler<'c> {
         let mut parents = SqlFragment::text(parents);
         parents.push(" AS \"_parents\"");
         select.push(parents);
-        let ranked = q.ranked && table.is_events();
-        if ranked {
-            let mut r = if let Some(reference) = similar {
-                crate::vectors::rank_sql(&Self::template(&base, "{t}.id"), reference, self.seq)
-            } else {
-                self.rank(&base, &words)
-            };
-            r.push(" AS \"_rank\"");
-            select.push(r);
-        }
-        if ranked || snippet_requested {
-            let mut snippet = if ranked {
-                self.snippet(&base, &words)
-            } else {
-                SqlFragment::text("NULL::text")
-            };
-            let alias = self.alias("c");
-            renamed.insert("snippet".into(), alias.clone());
-            snippet.push(format!(" AS {}", quote(&alias)));
-            select.push(snippet);
-        }
-        if self.indexed_words {
-            select.push(SqlFragment::text(Self::template(
-                &base,
-                "{t}._search_tsv AS \"_search_tsv\"",
-            )));
-        }
+        Ok(())
+    }
+
+    fn base_from(
+        &mut self,
+        base: &Cols,
+        table: Table,
+        search: Option<&Words>,
+        words: &[String],
+    ) -> SqlFragment {
         let words_for_rank = &words;
-        let mut from = self.positioned(&base, fields::from(table));
+        let mut from = self.positioned(base, fields::from(table));
         if let Some(words) = search {
             let hits = self.alias("words");
             let event = self.alias("event");
@@ -532,30 +717,259 @@ impl<'c> Compiler<'c> {
                 .push(format!(")) AS _search_rank, ts_headline('simple', {hits}.text, plainto_tsquery('simple', "))
                 .param(words_for_rank.join(" "))
                 .push(format!("), 'MaxFragments=2, MaxWords=24, MinWords=6, StartSel=[, StopSel=]') AS _search_snippet FROM core.visible_events {event} WHERE {event}.id={hits}.event_id AND core.class_visible({event}.class) OFFSET 0) "))
-                .push(Self::template(&base, "{t}"));
+                .push(Self::template(base, "{t}"));
         }
-        let mut rel = SqlFragment::text("SELECT ");
-        rel.append(SqlFragment::join(select, ", "))
-            .push(" FROM ")
-            .append(from);
-        if table == Table::Gaps {
-            rel.push(Self::template(&base, " {t}"));
-        }
-        if !conds.is_empty() {
-            rel.push(" WHERE ")
-                .append(SqlFragment::join(conds, " AND "));
-        }
+        from
+    }
 
-        let mut columns: Vec<String> = output.iter().map(column_name).collect();
-        if ranked {
-            columns.push("snippet".into());
+    fn where_stage(&mut self, state: &mut CompileState, e: &Expr) -> Result<()> {
+        let r = self.alias("r");
+        let cols = state.cols(&r);
+
+        let Some(e) = e.predicate() else {
+            return Ok(());
+        };
+        state.rel = self.wrap(state, &r, &cols, false)?;
+        let matched = self.matched_rows(&cols, &e)?;
+        let condition_cols = cols.clone();
+        if !matched.is_empty() {
+            let order = self.order(
+                &cols,
+                state.sort.as_deref(),
+                state.is_grouped,
+                state.ranked,
+                &state.group_order,
+            )?;
+            let next_ordinal = self.alias("o");
+            let mut ordered =
+                SqlFragment::text(format!("SELECT {r}.*, row_number() OVER (ORDER BY "));
+            ordered
+                .append(order)
+                .push(format!(") AS {} FROM (", quote(&next_ordinal)))
+                .append(std::mem::take(&mut state.rel))
+                .push(format!(") {r}"));
+            state.rel = ordered;
+            state.ordinal = Some(next_ordinal);
+            state.sort = None;
         }
-        let mut group_order = Vec::new();
-        let mut is_grouped = false;
-        let mut sort: Option<Vec<sinex_query::SortKey>> = None;
-        let mut limit: Option<u64> = None;
-        let mut internal: Vec<String> = vec![
-            "_withheld".into(),
+        for row in matched {
+            let mut select = vec![SqlFragment::text(format!("{r}.*"))];
+            for (visible, (name, value)) in row
+                .columns
+                .into_iter()
+                .map(|column| (true, column))
+                .chain(row.hidden_columns.into_iter().map(|column| (false, column)))
+            {
+                let alias = self.alias("c");
+                select.push(SqlFragment::text(format!("{value} AS {}", quote(&alias))));
+                if visible && !state.columns.contains(&name) {
+                    state.columns.push(name.clone());
+                }
+                state.renamed.insert(name, alias);
+            }
+            let mut with_matched = SqlFragment::text("SELECT ");
+            with_matched
+                .append(SqlFragment::join(select, ", "))
+                .push(" FROM (")
+                .append(std::mem::take(&mut state.rel))
+                .push(format!(") {r} "))
+                .append(row.lateral);
+            state.rel = with_matched;
+        }
+        let cond = self.expr(&condition_cols, &e)?;
+        let mut f = if exposes_matched_row(&e) {
+            let match_parents = self.predicate_parents(&condition_cols, &e)?;
+            let mut kept: Vec<_> = state
+                .renamed
+                .values()
+                .cloned()
+                .chain(
+                    state
+                        .internal
+                        .iter()
+                        .filter(|name| name.as_str() != "_parents")
+                        .cloned(),
+                )
+                .chain(state.ordinal.iter().cloned())
+                .collect();
+            kept.sort();
+            kept.dedup();
+            let mut out = SqlFragment::text("SELECT ");
+            out.push(
+                kept.iter()
+                    .map(|name| format!("{r}.{}", quote(name)))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            )
+            .push(format!(
+                ", ARRAY(SELECT DISTINCT unnest({r}.\"_parents\" || "
+            ))
+            .append(match_parents)
+            .push(")) AS \"_parents\" FROM (");
+            out
+        } else {
+            SqlFragment::text("SELECT * FROM (")
+        };
+        f.append(std::mem::take(&mut state.rel))
+            .push(format!(") {r} WHERE "))
+            .append(cond);
+        state.rel = f;
+        Ok(())
+    }
+
+    fn sort_stage(
+        &mut self,
+        state: &mut CompileState,
+        keys: &[sinex_query::SortKey],
+    ) -> Result<()> {
+        let r = self.alias("r");
+        let cols = state.cols(&r);
+
+        if state.limit.is_some() {
+            state.rel = self.wrap(state, &r, &cols, false)?;
+        }
+        state.sort = Some(keys.to_vec());
+        Ok(())
+    }
+
+    fn limit_stage(&mut self, state: &mut CompileState, n: &u64) -> Result<()> {
+        let r = self.alias("r");
+        let cols = state.cols(&r);
+
+        if state.limit.is_some() {
+            state.rel = self.wrap(state, &r, &cols, false)?;
+        }
+        state.limit = Some(*n);
+        Ok(())
+    }
+
+    fn group_first_stage(
+        &mut self,
+        state: &mut CompileState,
+        keys: &[Operand],
+        count: &u64,
+    ) -> Result<()> {
+        let r = self.alias("r");
+        let cols = state.cols(&r);
+
+        state.rel = self.wrap(state, &r, &cols, false)?;
+        let order = self.order(
+            &cols,
+            state.sort.as_deref(),
+            state.is_grouped,
+            state.ranked,
+            &state.group_order,
+        )?;
+        let partition = keys
+            .iter()
+            .map(|key| self.operand(&cols, key).map(|(sql, _)| sql))
+            .collect::<Result<Vec<_>>>()?;
+        let rank = self.alias("group_rank");
+        let next_ordinal = self.alias("o");
+        let selected = self.alias("selected");
+        let mut ranked_rows = SqlFragment::text(format!("SELECT {r}.*, row_number() OVER ("));
+        if !partition.is_empty() {
+            ranked_rows
+                .push("PARTITION BY ")
+                .append(SqlFragment::join(partition, ", "))
+                .push(" ");
+        }
+        ranked_rows
+            .push("ORDER BY ")
+            .append(order.clone())
+            .push(format!(
+                ") AS {}, row_number() OVER (ORDER BY ",
+                quote(&rank)
+            ))
+            .append(order)
+            .push(format!(") AS {} FROM (", quote(&next_ordinal)))
+            .append(std::mem::take(&mut state.rel))
+            .push(format!(") {r}"));
+        let mut survivors = SqlFragment::text("SELECT * FROM (");
+        survivors
+            .append(ranked_rows)
+            .push(format!(
+                ") {selected} WHERE {selected}.{} <= ",
+                quote(&rank)
+            ))
+            .param(i64::try_from(*count).unwrap_or(i64::MAX));
+        state.rel = survivors;
+        state.ordinal = Some(next_ordinal);
+        state.sort = None;
+        Ok(())
+    }
+
+    fn group_stage(&mut self, state: &mut CompileState, g: &sinex_query::Group) -> Result<()> {
+        let r = self.alias("r");
+        let cols = state.cols(&r);
+
+        state.rel = self.wrap(state, &r, &cols, true)?;
+        let gr = self.alias("g");
+        let gcols = Cols::Named {
+            r: gr.clone(),
+            table: state.table,
+            grouped: state.is_grouped,
+            renamed: state.renamed.clone(),
+            ordinal: state.ordinal.clone(),
+        };
+        let mut keys = Vec::new();
+        let mut select = Vec::new();
+        let mut names = Vec::new();
+        let mut group_names = BTreeMap::new();
+        for k in &g.keys {
+            let (sql, _) = self.operand(&gcols, k)?;
+            keys.push(sql.clone());
+            let mut c = sql;
+            let alias = self.alias("c");
+            group_names.insert(k.column(), alias.clone());
+            c.push(format!(" AS {}", quote(&alias)));
+            select.push(c);
+            names.push(k.column());
+        }
+        for agg in &g.aggregates {
+            let mut c = self.aggregate(&gcols, agg)?;
+            let alias = self.alias("c");
+            group_names.insert(agg.column(), alias.clone());
+            c.push(format!(" AS {}", quote(&alias)));
+            select.push(c);
+            names.push(agg.column());
+        }
+        select.push(SqlFragment::text(format!(
+    "ARRAY(SELECT DISTINCT parent::uuid FROM jsonb_array_elements(jsonb_agg(to_jsonb({gr}.\"_parents\"))) a(parents) CROSS JOIN LATERAL jsonb_array_elements_text(a.parents) p(parent) ORDER BY parent::uuid) AS \"_parents\""
+)));
+        let mut f = SqlFragment::text("SELECT ");
+        f.append(SqlFragment::join(select, ", "))
+            .push(" FROM (")
+            .append(std::mem::take(&mut state.rel))
+            .push(format!(") {gr}"));
+        // By position: a key's parameters (zone, day start) are
+        // separate placeholders each time they are written.
+        if !keys.is_empty() {
+            let positions: Vec<String> = (1..=keys.len()).map(|i| i.to_string()).collect();
+            f.push(" GROUP BY ").push(positions.join(", "));
+        }
+        if let Some(fill) = &g.fill {
+            f = self.fill(f, g, fill, &group_names)?;
+            group_names.insert("coverage".into(), "coverage".into());
+            names.push("coverage".into());
+        }
+        let identity_keys = g
+            .keys
+            .iter()
+            .map(|k| format!("g_identity.{}", quote(&group_names[&k.column()])))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut identified = SqlFragment::text(format!(
+            "SELECT g_identity.*, jsonb_build_array({identity_keys})::text AS \"_id\", NULL::uuid AS \"_event_id\", NULL::timestamptz AS \"_t\", NULL::timestamptz AS \"_s\", NULL::timestamptz AS \"_e\", true AS \"_inclusive\", false AS \"_has_span\" FROM ("
+        ));
+        identified.append(f).push(") g_identity");
+        state.rel = identified;
+        state.withheld_columns.clear();
+        state.columns = names;
+        state.renamed = group_names;
+        state.ordinal = None;
+        state.group_order = state.columns.clone();
+        state.internal = vec![
             "_id".into(),
             "_event_id".into(),
             "_t".into(),
@@ -565,454 +979,210 @@ impl<'c> Compiler<'c> {
             "_has_span".into(),
             "_parents".into(),
         ];
-        if ranked {
-            internal.push("_rank".into());
-        }
+        state.is_grouped = true;
+        Ok(())
+    }
 
-        if self.indexed_words {
-            internal.push("_search_tsv".into());
-        }
+    fn join_stage(&mut self, state: &mut CompileState, join: &Join) -> Result<()> {
+        let r = self.alias("r");
+        let cols = state.cols(&r);
 
-        // Later stages wrap the relation.
-        let mut join_count = 0;
-        for stage in stages {
-            let r = self.alias("r");
-            let cols = Cols::Named {
-                r: r.clone(),
-                table,
-                grouped: is_grouped,
-                renamed: renamed.clone(),
-                ordinal: ordinal.clone(),
-            };
-            match stage {
-                Stage::Where(e) => {
-                    let Some(e) = e.predicate() else {
-                        continue;
-                    };
-                    rel = self.wrap(
-                        rel,
-                        &r,
-                        &cols,
-                        sort.clone(),
-                        limit.take(),
-                        is_grouped,
-                        ranked,
-                        &group_order,
-                    )?;
-                    let matched = self.matched_rows(&cols, &e)?;
-                    let condition_cols = cols.clone();
-                    if !matched.is_empty() {
-                        let order =
-                            self.order(&cols, sort.as_deref(), is_grouped, ranked, &group_order)?;
-                        let next_ordinal = self.alias("o");
-                        let mut ordered = SqlFragment::text(format!(
-                            "SELECT {r}.*, row_number() OVER (ORDER BY "
-                        ));
-                        ordered
-                            .append(order)
-                            .push(format!(") AS {} FROM (", quote(&next_ordinal)))
-                            .append(rel)
-                            .push(format!(") {r}"));
-                        rel = ordered;
-                        ordinal = Some(next_ordinal);
-                        sort = None;
-                    }
-                    for row in matched {
-                        let mut select = vec![SqlFragment::text(format!("{r}.*"))];
-                        for (visible, (name, value)) in row
-                            .columns
-                            .into_iter()
-                            .map(|column| (true, column))
-                            .chain(row.hidden_columns.into_iter().map(|column| (false, column)))
-                        {
-                            let alias = self.alias("c");
-                            select.push(SqlFragment::text(format!("{value} AS {}", quote(&alias))));
-                            if visible && !columns.contains(&name) {
-                                columns.push(name.clone());
-                            }
-                            renamed.insert(name, alias);
-                        }
-                        let mut with_matched = SqlFragment::text("SELECT ");
-                        with_matched
-                            .append(SqlFragment::join(select, ", "))
-                            .push(" FROM (")
-                            .append(rel)
-                            .push(format!(") {r} "))
-                            .append(row.lateral);
-                        rel = with_matched;
-                    }
-                    let cond = self.expr(&condition_cols, &e)?;
-                    let mut f = if exposes_matched_row(&e) {
-                        let match_parents = self.predicate_parents(&condition_cols, &e)?;
-                        let mut kept: Vec<_> = renamed
-                            .values()
-                            .cloned()
-                            .chain(
-                                internal
-                                    .iter()
-                                    .filter(|name| name.as_str() != "_parents")
-                                    .cloned(),
-                            )
-                            .chain(ordinal.iter().cloned())
-                            .collect();
-                        kept.sort();
-                        kept.dedup();
-                        let mut out = SqlFragment::text("SELECT ");
-                        out.push(
-                            kept.iter()
-                                .map(|name| format!("{r}.{}", quote(name)))
-                                .collect::<Vec<_>>()
-                                .join(", "),
-                        )
-                        .push(format!(
-                            ", ARRAY(SELECT DISTINCT unnest({r}.\"_parents\" || "
-                        ))
-                        .append(match_parents)
-                        .push(")) AS \"_parents\" FROM (");
-                        out
-                    } else {
-                        SqlFragment::text("SELECT * FROM (")
-                    };
-                    f.append(rel).push(format!(") {r} WHERE ")).append(cond);
-                    rel = f;
-                }
-                Stage::Sort(keys) => {
-                    if limit.is_some() {
-                        rel = self.wrap(
-                            rel,
-                            &r,
-                            &cols,
-                            sort.clone(),
-                            limit.take(),
-                            is_grouped,
-                            ranked,
-                            &group_order,
-                        )?;
-                    }
-                    sort = Some(keys.clone());
-                }
-                Stage::Limit(n) => {
-                    if limit.is_some() {
-                        rel = self.wrap(
-                            rel,
-                            &r,
-                            &cols,
-                            sort.clone(),
-                            limit.take(),
-                            is_grouped,
-                            ranked,
-                            &group_order,
-                        )?;
-                    }
-                    limit = Some(*n);
-                }
-                Stage::GroupFirst { keys, count } => {
-                    rel = self.wrap(
-                        rel,
-                        &r,
-                        &cols,
-                        sort.clone(),
-                        limit.take(),
-                        is_grouped,
-                        ranked,
-                        &group_order,
-                    )?;
-                    let order =
-                        self.order(&cols, sort.as_deref(), is_grouped, ranked, &group_order)?;
-                    let partition = keys
-                        .iter()
-                        .map(|key| self.operand(&cols, key).map(|(sql, _)| sql))
-                        .collect::<Result<Vec<_>>>()?;
-                    let rank = self.alias("group_rank");
-                    let next_ordinal = self.alias("o");
-                    let selected = self.alias("selected");
-                    let mut ranked_rows =
-                        SqlFragment::text(format!("SELECT {r}.*, row_number() OVER ("));
-                    if !partition.is_empty() {
-                        ranked_rows
-                            .push("PARTITION BY ")
-                            .append(SqlFragment::join(partition, ", "))
-                            .push(" ");
-                    }
-                    ranked_rows
-                        .push("ORDER BY ")
-                        .append(order.clone())
-                        .push(format!(
-                            ") AS {}, row_number() OVER (ORDER BY ",
-                            quote(&rank)
-                        ))
-                        .append(order)
-                        .push(format!(") AS {} FROM (", quote(&next_ordinal)))
-                        .append(rel)
-                        .push(format!(") {r}"));
-                    let mut survivors = SqlFragment::text("SELECT * FROM (");
-                    survivors
-                        .append(ranked_rows)
-                        .push(format!(
-                            ") {selected} WHERE {selected}.{} <= ",
-                            quote(&rank)
-                        ))
-                        .param(i64::try_from(*count).unwrap_or(i64::MAX));
-                    rel = survivors;
-                    ordinal = Some(next_ordinal);
-                    sort = None;
-                }
-                Stage::Group(g) => {
-                    rel = self.wrap(
-                        rel,
-                        &r,
-                        &cols,
-                        sort.take(),
-                        limit.take(),
-                        is_grouped,
-                        ranked,
-                        &group_order,
-                    )?;
-                    let gr = self.alias("g");
-                    let gcols = Cols::Named {
-                        r: gr.clone(),
-                        table,
-                        grouped: is_grouped,
-                        renamed: renamed.clone(),
-                        ordinal: ordinal.clone(),
-                    };
-                    let mut keys = Vec::new();
-                    let mut select = Vec::new();
-                    let mut names = Vec::new();
-                    let mut group_names = BTreeMap::new();
-                    for k in &g.keys {
-                        let (sql, _) = self.operand(&gcols, k)?;
-                        keys.push(sql.clone());
-                        let mut c = sql;
-                        let alias = self.alias("c");
-                        group_names.insert(k.column(), alias.clone());
-                        c.push(format!(" AS {}", quote(&alias)));
-                        select.push(c);
-                        names.push(k.column());
-                    }
-                    for agg in &g.aggregates {
-                        let mut c = match (&agg.function, &agg.argument) {
-                            (AggFn::Count, None) => SqlFragment::text("count(*)"),
-                            (func, Some(f)) => {
-                                let (arg, kind) = self.operand(&gcols, f)?;
-                                let arg = if kind == Kind::Typed(FieldType::Json)
-                                    && matches!(func, AggFn::Sum | AggFn::Avg)
-                                {
-                                    Self::json_as(arg, &Value::Number(0.0))
-                                } else {
-                                    arg
-                                };
-                                let mut c = SqlFragment::text(match func {
-                                    AggFn::Count => "count(",
-                                    AggFn::Sum => "sum(",
-                                    AggFn::Min => "min(",
-                                    AggFn::Max => "max(",
-                                    AggFn::Avg => "avg(",
-                                    AggFn::CountDistinct => "count(DISTINCT ",
-                                });
-                                c.append(arg).push(")");
-                                c
-                            }
-                            (_, None) => return Err(invalid("this aggregate needs a field")),
-                        };
-                        let alias = self.alias("c");
-                        group_names.insert(agg.column(), alias.clone());
-                        c.push(format!(" AS {}", quote(&alias)));
-                        select.push(c);
-                        names.push(agg.column());
-                    }
-                    select.push(SqlFragment::text(format!(
-                        "ARRAY(SELECT DISTINCT parent::uuid FROM jsonb_array_elements(jsonb_agg(to_jsonb({gr}.\"_parents\"))) a(parents) CROSS JOIN LATERAL jsonb_array_elements_text(a.parents) p(parent) ORDER BY parent::uuid) AS \"_parents\""
-                    )));
-                    let mut f = SqlFragment::text("SELECT ");
-                    f.append(SqlFragment::join(select, ", "))
-                        .push(" FROM (")
-                        .append(rel)
-                        .push(format!(") {gr}"));
-                    // By position: a key's parameters (zone, day start) are
-                    // separate placeholders each time they are written.
-                    if !keys.is_empty() {
-                        let positions: Vec<String> =
-                            (1..=keys.len()).map(|i| i.to_string()).collect();
-                        f.push(" GROUP BY ").push(positions.join(", "));
-                    }
-                    if let Some(fill) = &g.fill {
-                        f = self.fill(f, g, fill, &group_names)?;
-                        group_names.insert("coverage".into(), "coverage".into());
-                        names.push("coverage".into());
-                    }
-                    let identity_keys = g
-                        .keys
-                        .iter()
-                        .map(|k| format!("g_identity.{}", quote(&group_names[&k.column()])))
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    let mut identified = SqlFragment::text(format!(
-                        "SELECT g_identity.*, jsonb_build_array({identity_keys})::text AS \"_id\", NULL::uuid AS \"_event_id\", NULL::timestamptz AS \"_t\", NULL::timestamptz AS \"_s\", NULL::timestamptz AS \"_e\", true AS \"_inclusive\", false AS \"_has_span\" FROM ("
-                    ));
-                    identified.append(f).push(") g_identity");
-                    rel = identified;
-                    withheld_columns.clear();
-                    columns = names;
-                    renamed = group_names;
-                    ordinal = None;
-                    group_order = columns.clone();
-                    internal = vec![
-                        "_id".into(),
-                        "_event_id".into(),
-                        "_t".into(),
-                        "_s".into(),
-                        "_e".into(),
-                        "_inclusive".into(),
-                        "_has_span".into(),
-                        "_parents".into(),
-                    ];
-                    is_grouped = true;
-                }
-                Stage::Join(join) => {
-                    // Materialize the outer order before a match can replace
-                    // names used by a preceding sort or fields stage.
-                    let order =
-                        self.order(&cols, sort.as_deref(), is_grouped, ranked, &group_order)?;
-                    let next_ordinal = self.alias("o");
-                    let mut ordered =
-                        SqlFragment::text(format!("SELECT {r}.*, row_number() OVER (ORDER BY "));
-                    ordered
-                        .append(order.clone())
-                        .push(format!(") AS {} FROM (", quote(&next_ordinal)))
-                        .append(rel)
-                        .push(format!(") {r}"));
-                    if let Some(n) = limit.take() {
-                        ordered
-                            .push(" ORDER BY ")
-                            .append(order)
-                            .push(" LIMIT ")
-                            .param(n as i64);
-                    }
-                    ordinal = Some(next_ordinal.clone());
-                    sort = None;
-                    let joined = self.join(&cols, join, join_count)?;
-                    join_count += 1;
-                    let mut kept: Vec<String> = renamed.values().cloned().collect();
-                    kept.extend(
-                        internal
-                            .iter()
-                            .filter(|name| !matches!(name.as_str(), "_id" | "_parents"))
-                            .cloned(),
-                    );
-                    kept.push(next_ordinal.clone());
-                    kept.sort();
-                    kept.dedup();
-                    let mut select: Vec<_> = kept
-                        .iter()
-                        .map(|name| SqlFragment::text(format!("{r}.{}", quote(name))))
-                        .collect();
-                    let identity = joined.identity.unwrap_or_else(|| format!("{r}.\"_id\""));
-                    select.push(SqlFragment::text(format!("{identity} AS \"_id\"")));
-                    let parents = joined
-                        .parents
-                        .unwrap_or_else(|| format!("{r}.\"_parents\""));
-                    select.push(SqlFragment::text(format!("{parents} AS \"_parents\"")));
-                    if let Some(child_ordinal) = joined.ordinal {
-                        let pair_ordinal = self.alias("o");
-                        select.push(SqlFragment::text(format!(
-                            "row_number() OVER (ORDER BY {r}.{}, {child_ordinal}) AS {}",
-                            quote(&next_ordinal),
-                            quote(&pair_ordinal)
-                        )));
-                        ordinal = Some(pair_ordinal);
-                    }
-                    for (visible, (name, value)) in joined
-                        .columns
-                        .into_iter()
-                        .map(|column| (true, column))
-                        .chain(
-                            joined
-                                .hidden_columns
-                                .into_iter()
-                                .map(|column| (false, column)),
-                        )
-                    {
-                        let alias = self.alias("c");
-                        select.push(SqlFragment::text(format!("{value} AS {}", quote(&alias))));
-                        if visible && !columns.contains(&name) {
-                            columns.push(name.clone());
-                        }
-                        renamed.insert(name, alias);
-                    }
-                    let mut combined = SqlFragment::text("SELECT ");
-                    combined
-                        .append(SqlFragment::join(select, ", "))
-                        .push(" FROM (")
-                        .append(ordered)
-                        .push(format!(") {r} "))
-                        .append(joined.lateral);
-                    rel = combined;
-                }
-                Stage::Fields(operands) => {
-                    let order =
-                        self.order(&cols, sort.as_deref(), is_grouped, ranked, &group_order)?;
-                    let mut selected_fields = SqlFragment::text(format!("SELECT {r}.*"));
-                    let next_ordinal = self.alias("o");
-                    selected_fields
-                        .push(", row_number() OVER (ORDER BY ")
-                        .append(order)
-                        .push(format!(") AS {}", quote(&next_ordinal)));
-                    let mut selected_names = BTreeMap::new();
-                    for operand in operands {
-                        let (value, _) = self.operand(&cols, operand)?;
-                        let alias = self.alias("c");
-                        selected_fields
-                            .push(", ")
-                            .append(value)
-                            .push(format!(" AS {}", quote(&alias)));
-                        selected_names.insert(operand.column(), alias);
-                    }
-                    selected_fields
-                        .push(" FROM (")
-                        .append(rel)
-                        .push(format!(") {r}"));
-                    if let Some(n) = limit.take() {
-                        let order =
-                            self.order(&cols, sort.as_deref(), is_grouped, ranked, &group_order)?;
-                        selected_fields
-                            .push(" ORDER BY ")
-                            .append(order)
-                            .push(" LIMIT ")
-                            .param(n as i64);
-                    }
-                    rel = selected_fields;
-                    withheld_columns = operands
-                        .iter()
-                        .filter_map(|operand| {
-                            let mut fields = Vec::new();
-                            operand_fields(operand, &mut fields);
-                            fields
-                                .iter()
-                                .any(|field| withheld_columns.contains(&column_name(field)))
-                                .then(|| operand.column())
-                        })
-                        .collect();
-                    columns = operands.iter().map(Operand::column).collect();
-                    renamed = selected_names;
-                    ordinal = Some(next_ordinal);
-                    sort = None;
-                }
-                Stage::AsOf(_) => {}
+        // Materialize the outer order before a match can replace
+        // names used by a preceding sort or fields stage.
+        let order = self.order(
+            &cols,
+            state.sort.as_deref(),
+            state.is_grouped,
+            state.ranked,
+            &state.group_order,
+        )?;
+        let next_ordinal = self.alias("o");
+        let mut ordered = SqlFragment::text(format!("SELECT {r}.*, row_number() OVER (ORDER BY "));
+        ordered
+            .append(order.clone())
+            .push(format!(") AS {} FROM (", quote(&next_ordinal)))
+            .append(std::mem::take(&mut state.rel))
+            .push(format!(") {r}"));
+        if let Some(n) = state.limit.take() {
+            ordered
+                .push(" ORDER BY ")
+                .append(order)
+                .push(" LIMIT ")
+                .param(n as i64);
+        }
+        state.ordinal = Some(next_ordinal.clone());
+        state.sort = None;
+        let joined = self.join(&cols, join, state.join_count)?;
+        state.join_count += 1;
+        let mut kept: Vec<String> = state.renamed.values().cloned().collect();
+        kept.extend(
+            state
+                .internal
+                .iter()
+                .filter(|name| !matches!(name.as_str(), "_id" | "_parents"))
+                .cloned(),
+        );
+        kept.push(next_ordinal.clone());
+        kept.sort();
+        kept.dedup();
+        let mut select: Vec<_> = kept
+            .iter()
+            .map(|name| SqlFragment::text(format!("{r}.{}", quote(name))))
+            .collect();
+        let identity = joined.identity.unwrap_or_else(|| format!("{r}.\"_id\""));
+        select.push(SqlFragment::text(format!("{identity} AS \"_id\"")));
+        let parents = joined
+            .parents
+            .unwrap_or_else(|| format!("{r}.\"_parents\""));
+        select.push(SqlFragment::text(format!("{parents} AS \"_parents\"")));
+        if let Some(child_ordinal) = joined.ordinal {
+            let pair_ordinal = self.alias("o");
+            select.push(SqlFragment::text(format!(
+                "row_number() OVER (ORDER BY {r}.{}, {child_ordinal}) AS {}",
+                quote(&next_ordinal),
+                quote(&pair_ordinal)
+            )));
+            state.ordinal = Some(pair_ordinal);
+        }
+        for (visible, (name, value)) in joined
+            .columns
+            .into_iter()
+            .map(|column| (true, column))
+            .chain(
+                joined
+                    .hidden_columns
+                    .into_iter()
+                    .map(|column| (false, column)),
+            )
+        {
+            let alias = self.alias("c");
+            select.push(SqlFragment::text(format!("{value} AS {}", quote(&alias))));
+            if visible && !state.columns.contains(&name) {
+                state.columns.push(name.clone());
             }
+            state.renamed.insert(name, alias);
         }
+        let mut combined = SqlFragment::text("SELECT ");
+        combined
+            .append(SqlFragment::join(select, ", "))
+            .push(" FROM (")
+            .append(ordered)
+            .push(format!(") {r} "))
+            .append(joined.lateral);
+        state.rel = combined;
+        Ok(())
+    }
 
-        // The answer: numbered in order, limited by the query's own limit.
+    fn fields_stage(&mut self, state: &mut CompileState, operands: &[Operand]) -> Result<()> {
+        let r = self.alias("r");
+        let cols = state.cols(&r);
+
+        let order = self.order(
+            &cols,
+            state.sort.as_deref(),
+            state.is_grouped,
+            state.ranked,
+            &state.group_order,
+        )?;
+        let mut selected_fields = SqlFragment::text(format!("SELECT {r}.*"));
+        let next_ordinal = self.alias("o");
+        selected_fields
+            .push(", row_number() OVER (ORDER BY ")
+            .append(order)
+            .push(format!(") AS {}", quote(&next_ordinal)));
+        let mut selected_names = BTreeMap::new();
+        for operand in operands {
+            let (value, _) = self.operand(&cols, operand)?;
+            let alias = self.alias("c");
+            selected_fields
+                .push(", ")
+                .append(value)
+                .push(format!(" AS {}", quote(&alias)));
+            selected_names.insert(operand.column(), alias);
+        }
+        selected_fields
+            .push(" FROM (")
+            .append(std::mem::take(&mut state.rel))
+            .push(format!(") {r}"));
+        if let Some(n) = state.limit.take() {
+            let order = self.order(
+                &cols,
+                state.sort.as_deref(),
+                state.is_grouped,
+                state.ranked,
+                &state.group_order,
+            )?;
+            selected_fields
+                .push(" ORDER BY ")
+                .append(order)
+                .push(" LIMIT ")
+                .param(n as i64);
+        }
+        state.rel = selected_fields;
+        state.withheld_columns = operands
+            .iter()
+            .filter_map(|operand| {
+                let mut fields = Vec::new();
+                operand_fields(operand, &mut fields);
+                fields
+                    .iter()
+                    .any(|field| state.withheld_columns.contains(&column_name(field)))
+                    .then(|| operand.column())
+            })
+            .collect();
+        state.columns = operands.iter().map(Operand::column).collect();
+        state.renamed = selected_names;
+        state.ordinal = Some(next_ordinal);
+        state.sort = None;
+        Ok(())
+    }
+
+    fn aggregate(&self, gcols: &Cols, agg: &sinex_query::Aggregate) -> Result<SqlFragment> {
+        let c = match (&agg.function, &agg.argument) {
+            (AggFn::Count, None) => SqlFragment::text("count(*)"),
+            (func, Some(f)) => {
+                let (arg, kind) = self.operand(gcols, f)?;
+                let arg = if kind == Kind::Typed(FieldType::Json)
+                    && matches!(func, AggFn::Sum | AggFn::Avg)
+                {
+                    Self::json_as(arg, &Value::Number(0.0))
+                } else {
+                    arg
+                };
+                let mut c = SqlFragment::text(match func {
+                    AggFn::Count => "count(",
+                    AggFn::Sum => "sum(",
+                    AggFn::Min => "min(",
+                    AggFn::Max => "max(",
+                    AggFn::Avg => "avg(",
+                    AggFn::CountDistinct => "count(DISTINCT ",
+                });
+                c.append(arg).push(")");
+                c
+            }
+            (_, None) => return Err(invalid("this aggregate needs a field")),
+        };
+        Ok(c)
+    }
+
+    fn numbered_answer(&mut self, mut state: CompileState) -> Result<Compiled> {
         let r = self.alias("z");
         let cols = Cols::Named {
             r: r.clone(),
-            table,
-            grouped: is_grouped,
-            renamed,
-            ordinal,
+            table: state.table,
+            grouped: state.is_grouped,
+            renamed: state.renamed,
+            ordinal: state.ordinal,
         };
-        let order = self.order(&cols, sort.as_deref(), is_grouped, ranked, &group_order)?;
-        let mut out_cols: Vec<String> = columns
+        let order = self.order(
+            &cols,
+            state.sort.as_deref(),
+            state.is_grouped,
+            state.ranked,
+            &state.group_order,
+        )?;
+        let mut out_cols: Vec<String> = state
+            .columns
             .iter()
             .enumerate()
             .map(|(index, c)| {
@@ -1023,20 +1193,26 @@ impl<'c> Compiler<'c> {
                 )
             })
             .collect();
-        out_cols.extend(internal.iter().map(|c| format!("{r}.{}", quote(c))));
+        out_cols.extend(state.internal.iter().map(|c| format!("{r}.{}", quote(c))));
         let mut count = SqlFragment::text("SELECT count(*) FROM (");
-        match limit {
+        match state.limit {
             Some(n) => count
                 .push("SELECT 1 FROM (")
-                .append(rel.clone())
+                .append(state.rel.clone())
                 .push(format!(") {r} ORDER BY "))
                 .append(order.clone())
                 .push(" LIMIT ")
                 .param(n as i64),
-            None => count.append(rel.clone()),
+            None => count.append(state.rel.clone()),
         };
         count.push(") c");
-        let terms = self.order_terms(&cols, sort.as_deref(), is_grouped, ranked, &group_order)?;
+        let terms = self.order_terms(
+            &cols,
+            state.sort.as_deref(),
+            state.is_grouped,
+            state.ranked,
+            &state.group_order,
+        )?;
         let mut keys = Vec::new();
         let mut key_columns = Vec::new();
         let mut types = Vec::new();
@@ -1064,38 +1240,45 @@ impl<'c> Compiler<'c> {
             .push(", ")
             .append(SqlFragment::join(key_columns, ", "))
             .push(" FROM (")
-            .append(rel)
+            .append(std::mem::take(&mut state.rel))
             .push(format!(") {r} ORDER BY "))
             .append(order);
-        if let Some(n) = limit {
+        if let Some(n) = state.limit {
             answer.push(" LIMIT ").param(n as i64);
         }
         Ok(Compiled {
             answer,
             count,
-            columns,
+            columns: state.columns,
             keys,
-            withheld_columns,
+            withheld_columns: state.withheld_columns,
         })
     }
 
     /// Apply a pending sort and limit by wrapping the relation.
-    #[allow(clippy::too_many_arguments)]
     fn wrap(
         &mut self,
-        rel: SqlFragment,
+        state: &mut CompileState,
         r: &str,
         cols: &Cols,
-        sort: Option<Vec<sinex_query::SortKey>>,
-        limit: Option<u64>,
-        grouped: bool,
-        ranked: bool,
-        group_columns: &[String],
+        take_sort: bool,
     ) -> Result<SqlFragment> {
-        let Some(n) = limit else {
+        let rel = std::mem::take(&mut state.rel);
+        let sort = if take_sort {
+            state.sort.take()
+        } else {
+            state.sort.clone()
+        };
+        let Some(n) = state.limit.take() else {
             return Ok(rel);
         };
-        let order = self.order(cols, sort.as_deref(), grouped, ranked, group_columns)?;
+        let order = self.order(
+            cols,
+            sort.as_deref(),
+            state.is_grouped,
+            state.ranked,
+            &state.group_order,
+        )?;
         let mut f = SqlFragment::text("SELECT * FROM (");
         f.append(rel)
             .push(format!(") {r} ORDER BY "))

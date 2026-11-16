@@ -14,6 +14,7 @@ pub(crate) use history::{archive_at, position, restore_at};
 pub(super) async fn replay_scope(
     conn: &mut PgConnection,
     scope: &ReplayScope,
+    failed_records: &[sinex_model::RecordLocation],
     operation: OperationId,
     keys: &dyn DirtyKeys,
 ) -> Result<(usize, usize)> {
@@ -38,6 +39,17 @@ pub(super) async fn replay_scope(
             }
         )));
     }
+    let failed_materials: Vec<Uuid> = failed_records
+        .iter()
+        .map(|record| record.material.0)
+        .collect();
+    let failed_offsets: Vec<i64> = failed_records
+        .iter()
+        .map(|record| {
+            i64::try_from(record.record_offset)
+                .map_err(|_| crate::Error::Invalid("record offset exceeds database integer".into()))
+        })
+        .collect::<Result<_>>()?;
     let types: Option<Vec<String>> = scope.event_types.clone();
     let live: Vec<Uuid> = sqlx::query_scalar!(
         r#"WITH RECURSIVE read_here AS (
@@ -46,7 +58,10 @@ pub(super) async fn replay_scope(
                AND ($2::text[] IS NULL OR e.event_type = ANY($2))
                AND ($3::timestamptz IS NULL OR e.ts_orig >= $3)
                AND ($4::timestamptz IS NULL OR e.ts_orig < $4)
-               AND ($3::timestamptz IS NULL AND $4::timestamptz IS NULL OR e.ts_orig IS NOT NULL)),
+               AND ($3::timestamptz IS NULL AND $4::timestamptz IS NULL OR e.ts_orig IS NOT NULL)
+               AND NOT EXISTS (
+                 SELECT 1 FROM unnest($5::uuid[], $6::bigint[]) failed(material_id, record_offset)
+                 WHERE failed.material_id = e.material_id AND failed.record_offset = e.record_offset)),
            descendants AS (
              SELECT id FROM read_here
              UNION
@@ -58,6 +73,8 @@ pub(super) async fn replay_scope(
         types.as_deref(),
         scope.from.map(|t| t.0),
         scope.until.map(|t| t.0),
+        &failed_materials,
+        &failed_offsets,
     )
     .fetch_all(&mut *conn)
     .await?;

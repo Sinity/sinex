@@ -10,6 +10,7 @@
 //! never the points: the hours of a logical day run from its start to its end,
 //! so each hourly figure belongs to exactly one day.
 use crate::derived_event::derived;
+use crate::keys::{DayKey, HourKey};
 use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed};
 use serde_json::{Value, json};
 use sinex_model::event_types::health::HealthRecord;
@@ -82,14 +83,6 @@ fn figure(
     }
 }
 
-fn hour_of(key: &Value) -> Option<Timestamp> {
-    serde_json::from_value(key.get("hour")?.clone()).ok()
-}
-
-fn day_of(key: &Value) -> Option<jiff::civil::Date> {
-    key.get("day")?.as_str()?.parse().ok()
-}
-
 fn closed_after(end: Option<Timestamp>, env: &Env) -> KeyState {
     match end {
         Some(end) if env.now < end => KeyState::Open,
@@ -98,26 +91,27 @@ fn closed_after(end: Option<Timestamp>, env: &Env) -> KeyState {
 }
 
 impl Keyed for HourlyFigures {
+    type Key = HourKey;
     const NAME: &'static str = "health.hourly";
     const VERSION: u32 = 1;
     const USES_TIME_SETTINGS: bool = true;
     const INPUTS: &'static [&'static str] = &[HealthRecord::EVENT_TYPE];
     const OUTPUTS: &'static [&'static str] = &[HealthFigure::EVENT_TYPE];
 
-    fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Value> {
+    fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Self::Key> {
         if input.payload.get("provider").and_then(Value::as_str) != Some(PROVIDER) {
             return vec![];
         }
         input
             .ts_orig
             .and_then(|t| env.time_settings.hour_start(t).ok())
-            .map(|hour| json!({"hour": hour}))
+            .map(|hour| HourKey { hour })
             .into_iter()
             .collect()
     }
 
-    fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery> {
-        let hour = hour_of(key)?;
+    fn inputs(&self, key: &Self::Key, env: &Env) -> Option<InputQuery> {
+        let hour = key.hour;
         if env.time_settings.hour_start(hour).ok()? != hour {
             return None;
         }
@@ -131,10 +125,8 @@ impl Keyed for HourlyFigures {
         )
     }
 
-    fn compute(&self, key: &Value, inputs: &[Event], env: &Env) -> Computed {
-        let Some(hour) = hour_of(key) else {
-            return Computed::default();
-        };
+    fn compute(&self, key: &Self::Key, inputs: &[Event], env: &Env) -> Computed {
+        let hour = key.hour;
         let (Ok(end), Ok(day)) = (
             env.time_settings.hour_end(hour),
             env.time_settings.day(hour),
@@ -178,35 +170,34 @@ impl Keyed for HourlyFigures {
         }
     }
 
-    fn key_state(&self, key: &Value, env: &Env) -> KeyState {
-        closed_after(
-            hour_of(key).and_then(|h| env.time_settings.hour_end(h).ok()),
-            env,
-        )
+    fn key_state(&self, key: &Self::Key, env: &Env) -> KeyState {
+        closed_after(env.time_settings.hour_end(key.hour).ok(), env)
     }
 }
 
 impl Keyed for DailyFigures {
+    type Key = DayKey;
     const NAME: &'static str = "health.daily";
     const VERSION: u32 = 1;
     const USES_TIME_SETTINGS: bool = true;
     const INPUTS: &'static [&'static str] = &[HealthFigure::EVENT_TYPE];
     const OUTPUTS: &'static [&'static str] = &[HealthFigure::EVENT_TYPE];
 
-    fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Value> {
+    fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Self::Key> {
         let p = input.payload;
         if p.get("grain").and_then(Value::as_str) != Some("hour") {
             return vec![];
         }
         p.get("day")
             .and_then(Value::as_str)
-            .map(|day| json!({"day": day}))
+            .and_then(|day| day.parse().ok())
+            .map(|day| DayKey { day })
             .into_iter()
             .collect()
     }
 
-    fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery> {
-        let day = day_of(key)?;
+    fn inputs(&self, key: &Self::Key, env: &Env) -> Option<InputQuery> {
+        let day = key.day;
         Some(
             InputQuery::window(
                 &[HealthFigure::EVENT_TYPE],
@@ -218,10 +209,8 @@ impl Keyed for DailyFigures {
         )
     }
 
-    fn compute(&self, key: &Value, inputs: &[Event], env: &Env) -> Computed {
-        let Some(day) = day_of(key) else {
-            return Computed::default();
-        };
+    fn compute(&self, key: &Self::Key, inputs: &[Event], env: &Env) -> Computed {
+        let day = key.day;
         let (Ok(start), Ok(end)) = (
             env.time_settings.day_start(day),
             env.time_settings.day_end(day),
@@ -256,11 +245,8 @@ impl Keyed for DailyFigures {
         }
     }
 
-    fn key_state(&self, key: &Value, env: &Env) -> KeyState {
-        closed_after(
-            day_of(key).and_then(|d| env.time_settings.day_end(d).ok()),
-            env,
-        )
+    fn key_state(&self, key: &Self::Key, env: &Env) -> KeyState {
+        closed_after(env.time_settings.day_end(key.day).ok(), env)
     }
 }
 

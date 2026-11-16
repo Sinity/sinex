@@ -34,7 +34,10 @@ fn sessions(inputs: &[Event]) -> Vec<ShellSession> {
         sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
             .expect("fixture day setting"),
     );
-    let key = json!({"host": "box", "day": "2024-06-15"});
+    let key = HostDayKey {
+        host: "box".into(),
+        day: "2024-06-15".parse().unwrap(),
+    };
     ShellSessions
         .compute(&key, inputs, &env)
         .outputs
@@ -78,7 +81,13 @@ fn key_is_host_and_logical_day() {
         },
         &env,
     );
-    assert_eq!(keys, vec![json!({"host": "box", "day": "2024-06-15"})]);
+    assert_eq!(
+        keys,
+        vec![HostDayKey {
+            host: "box".into(),
+            day: "2024-06-15".parse().unwrap()
+        }]
+    );
     // 03:30 local belongs to the previous logical day.
     let early = command(T - 6 * 3600 - 1800, None, 0);
     let keys = ShellSessions.keys_for(
@@ -89,7 +98,7 @@ fn key_is_host_and_logical_day() {
         },
         &env,
     );
-    assert_eq!(keys[0]["day"], "2024-06-14");
+    assert_eq!(keys[0].day.to_string(), "2024-06-14");
 }
 
 #[devkit::test]
@@ -100,7 +109,14 @@ fn every_member_is_a_parent() {
             .expect("fixture day setting"),
     );
     let inputs = [command(T, None, 0), command(T + 10, None, 0)];
-    let out = ShellSessions.compute(&json!({"host": "box", "day": "2024-06-15"}), &inputs, &env);
+    let out = ShellSessions.compute(
+        &HostDayKey {
+            host: "box".into(),
+            day: "2024-06-15".parse().unwrap(),
+        },
+        &inputs,
+        &env,
+    );
     match &out.outputs[0].origin {
         sinex_model::Origin::Derived { parents } => {
             assert_eq!(parents, &vec![inputs[0].id, inputs[1].id]);
@@ -128,7 +144,14 @@ fn a_command_both_shells_saw_is_one_member() {
         sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
             .expect("fixture day setting"),
     );
-    let out = ShellSessions.compute(&json!({"host": "box", "day": "2024-06-15"}), &inputs, &env);
+    let out = ShellSessions.compute(
+        &HostDayKey {
+            host: "box".into(),
+            day: "2024-06-15".parse().unwrap(),
+        },
+        &inputs,
+        &env,
+    );
     assert_eq!(out.outputs.len(), 1);
     let session: ShellSession = out.outputs[0].payload_as().unwrap();
     assert_eq!(session.commands, 1);
@@ -137,4 +160,36 @@ fn a_command_both_shells_saw_is_one_member() {
         sinex_model::Origin::Derived { parents } => assert_eq!(parents, &vec![fused_id]),
         other => panic!("{other:?}"),
     }
+}
+
+#[devkit::test]
+fn unknown_last_duration_leaves_end_a_lower_bound() {
+    let result = sessions(&[command(T, Some(100), 0), command(T + 120, None, 0)]);
+    assert_eq!(result.len(), 1);
+    assert_eq!(
+        result[0].ended_at,
+        Timestamp::from_unix_secs(T + 120).unwrap()
+    );
+    assert!(result[0].end_is_lower_bound);
+
+    let covered = sessions(&[command(T, Some(200), 0), command(T + 120, None, 0)]);
+    assert_eq!(covered.len(), 1);
+    assert_eq!(
+        covered[0].ended_at,
+        Timestamp::from_unix_secs(T + 200).unwrap()
+    );
+    assert!(!covered[0].end_is_lower_bound);
+}
+
+#[devkit::test]
+fn negative_duration_counts_as_a_point() {
+    let result = sessions(&[command(T, Some(-300), 0), command(T + 200, Some(5), 0)]);
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].commands, 2);
+    assert_eq!(result[0].started_at, Timestamp::from_unix_secs(T).unwrap());
+    assert_eq!(
+        result[0].ended_at,
+        Timestamp::from_unix_secs(T + 205).unwrap()
+    );
+    assert!(!result[0].end_is_lower_bound);
 }

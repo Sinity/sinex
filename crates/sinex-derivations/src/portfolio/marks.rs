@@ -3,9 +3,10 @@
 use crate::activity::cite;
 use crate::derived_event::derived;
 use crate::fusion::commands;
+use crate::keys::DayKey;
 use crate::observed::FOCUS;
-use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed, Kind};
-use serde_json::{Value, json};
+use crate::{Computed, Env, InputQuery, KeyView, Keyed, Kind};
+use serde_json::Value;
 use sinex_model::event_types::portfolio::MarkLink;
 use sinex_model::record::identity as record_identity;
 use sinex_model::record::stable;
@@ -25,6 +26,7 @@ fn host(payload: &Value) -> Option<String> {
         .flatten()
 }
 impl Keyed for MarkLinks {
+    type Key = DayKey;
     const NAME: &'static str = "reference.marks";
     const VERSION: u32 = 2;
     const USES_TIME_SETTINGS: bool = true;
@@ -41,7 +43,7 @@ impl Keyed for MarkLinks {
         "activity.session",
     ];
     const OUTPUTS: &'static [&'static str] = &["reference.about"];
-    fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Value> {
+    fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Self::Key> {
         let Some(at) = input.ts_orig else {
             return vec![];
         };
@@ -62,7 +64,7 @@ impl Keyed for MarkLinks {
         };
         let mut keys = vec![];
         loop {
-            keys.push(json!({"day":day.to_string()}));
+            keys.push(DayKey { day });
             if day >= last {
                 break;
             }
@@ -71,8 +73,8 @@ impl Keyed for MarkLinks {
         }
         keys
     }
-    fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery> {
-        let day = key["day"].as_str()?.parse().ok()?;
+    fn inputs(&self, key: &Self::Key, env: &Env) -> Option<InputQuery> {
+        let day = key.day;
         let margin = commands().margin();
         let mut kinds = vec![
             Kind::all("operator.mark"),
@@ -101,10 +103,7 @@ impl Keyed for MarkLinks {
         query.intervals.extend(FOCUS.intervals());
         Some(query)
     }
-    fn key_state(&self, _: &Value, _: &Env) -> KeyState {
-        KeyState::Closed
-    }
-    fn compute(&self, key: &Value, inputs: &[Event], env: &Env) -> Computed {
+    fn compute(&self, key: &Self::Key, inputs: &[Event], env: &Env) -> Computed {
         let commands: Vec<_> = commands()
             .occurrences(inputs)
             .into_iter()
@@ -124,14 +123,7 @@ impl Keyed for MarkLinks {
             .filter(|event| event.event_type == "operator.mark")
         {
             let Some(at) = mark.ts_orig.at else { continue };
-            if env
-                .time_settings
-                .day(at)
-                .ok()
-                .map(|day| day.to_string())
-                .as_deref()
-                != key["day"].as_str()
-            {
+            if env.time_settings.day(at).ok() != Some(key.day) {
                 continue;
             }
             let by_record = records.iter().filter_map(|(target, field)| {

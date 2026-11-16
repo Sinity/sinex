@@ -51,24 +51,23 @@ fn preparation_preserves_valid_deep_payloads_and_unknown_source_time() {
         "the default preparation decoder rejects this otherwise valid payload"
     );
     let mut preparation = Builder::new(directory.path()).unwrap();
-    preparation
-        .push(Batch {
-            run: RunId(operation.0),
-            kind: BatchKind::Replay {
-                operation,
-                source: None,
-                host: None,
+    let archive = Batch {
+        run: RunId(operation.0),
+        kind: BatchKind::Replay {
+            operation,
+            source: None,
+            host: None,
+        },
+        records: vec![],
+        archive: vec![ArchiveRequest::Replay {
+            operation,
+            failed_records: vec![],
+            scope: ReplayScope {
+                materials: vec![material],
+                ..ReplayScope::default()
             },
-            records: vec![],
-            archive: vec![ArchiveRequest::Replay {
-                operation,
-                scope: ReplayScope {
-                    materials: vec![material],
-                    ..ReplayScope::default()
-                },
-            }],
-        })
-        .unwrap();
+        }],
+    };
     preparation
         .push(Batch {
             run: RunId(operation.0),
@@ -81,7 +80,7 @@ fn preparation_preserves_valid_deep_payloads_and_unknown_source_time() {
             archive: vec![],
         })
         .unwrap();
-    let mut prepared = preparation.finish().unwrap();
+    let mut prepared = preparation.finish(archive).unwrap();
     prepared.next().unwrap().unwrap();
     let recovered = prepared.next().unwrap().unwrap();
     let RecordOutcome::Events { events, .. } = &recovered.records[0] else {

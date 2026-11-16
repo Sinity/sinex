@@ -99,7 +99,7 @@ trait EventRows: Sized + Send {
 impl EventRows for Committed {
     const PAYLOAD: bool = true;
     fn id(&self) -> Uuid {
-        self.id
+        self.row.id
     }
     async fn load(conn: &mut PgConnection, ids: &[Uuid]) -> Result<Vec<Self>> {
         load_events(conn, ids).await
@@ -111,7 +111,8 @@ impl EventRows for EventHeader {
         self.id
     }
     async fn load(conn: &mut PgConnection, ids: &[Uuid]) -> Result<Vec<Self>> {
-        let rows = sqlx::query!(
+        let rows = sqlx::query_as!(
+            EventHeader,
             "SELECT e.commit_seq,e.id,e.event_type,e.class FROM core.events e
             WHERE e.id=ANY($1)
               AND NOT EXISTS(SELECT 1 FROM core.event_tombstones t WHERE t.event_id=e.id)",
@@ -119,20 +120,7 @@ impl EventRows for EventHeader {
         )
         .fetch_all(conn)
         .await?;
-        let headers: BTreeMap<_, _> = rows
-            .into_iter()
-            .map(|row| {
-                (
-                    row.id,
-                    Self {
-                        commit_seq: row.commit_seq,
-                        id: row.id,
-                        event_type: row.event_type,
-                        class: row.class,
-                    },
-                )
-            })
-            .collect();
+        let headers: BTreeMap<_, _> = rows.into_iter().map(|row| (row.id, row)).collect();
         // The batch lookup may reorder or deduplicate keys; callers keep
         // their requested order and multiplicity, with missing rows omitted.
         Ok(ids
@@ -333,8 +321,8 @@ async fn read_page<E: EventRows>(
         .filter(|row| row.kind == 2)
         .map(|row| row.event_id)
         .collect();
-    let mut erased:BTreeMap<_,_>=sqlx::query!(r#"SELECT event_id,operation_id,original_commit_seq AS "original_commit_seq!",source,event_type,class AS "class!" FROM core.event_tombstones WHERE event_id=ANY($1)"#,&erased_ids)
-        .fetch_all(&mut *conn).await?.into_iter().map(|row|(row.event_id,Tombstone{event_id:row.event_id,operation_id:row.operation_id,original_commit_seq:row.original_commit_seq,source:row.source,event_type:row.event_type,class:row.class})).collect();
+    let mut erased:BTreeMap<_,_>=sqlx::query_as!(Tombstone, r#"SELECT event_id,operation_id,original_commit_seq AS "original_commit_seq!",source,event_type,class AS "class!" FROM core.event_tombstones WHERE event_id=ANY($1)"#,&erased_ids)
+        .fetch_all(&mut *conn).await?.into_iter().map(|row|(row.event_id,row)).collect();
     let mut page = ChangePage::default();
     for row in rows {
         let cursor = ChangeCursor {
@@ -367,61 +355,19 @@ async fn read_page<E: EventRows>(
 }
 
 async fn load_events(conn: &mut PgConnection, ids: &[Uuid]) -> Result<Vec<Committed>> {
-    let rows=sqlx::query!(r#"SELECT e.commit_seq,e.id,e.event_type,e.kind_version,e.validation,e.source,e.run_id,e.material_id,e.record_offset,
-      e.output_index,e.parents,e.ts_orig,e.ts_quality,e.ts_coided,e.ts_persisted AS "ts_persisted!",e.payload,
-      e.equivalence_key,e.reading_order,e.record_hash,e.record_state,e.class FROM unnest($1::uuid[]) selected(id) CROSS JOIN LATERAL (
-        SELECT e.* FROM core.events e WHERE e.id=selected.id OFFSET 0) e WHERE true
-        AND NOT EXISTS(SELECT 1 FROM core.event_tombstones t WHERE t.event_id=e.id)"#,ids)
+    let rows = sqlx::query_as!(EventRow, r#"SELECT e.id AS "id!", e.event_type AS "event_type!", e.kind_version AS "kind_version!", e.validation AS "validation!", e.source AS "source!", e.run_id AS "run_id!", e.material_id, e.record_offset, e.output_index AS "output_index!", e.parents, e.ts_orig, e.ts_quality AS "ts_quality!", e.ts_coided, e.ts_persisted AS "ts_persisted!", e.payload AS "payload!", e.equivalence_key, e.reading_order AS "reading_order!", e.record_hash AS "record_hash!", e.record_state AS "record_state!", e.class AS "class!", e.commit_seq AS "commit_seq!", (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule
+      FROM unnest($1::uuid[]) selected(id) CROSS JOIN LATERAL (
+        SELECT e.* FROM core.events e WHERE e.id=selected.id OFFSET 0) e
+      WHERE NOT EXISTS(SELECT 1 FROM core.event_tombstones t WHERE t.event_id=e.id)"#, ids)
       .fetch_all(&mut *conn).await?;
     let mut events: Vec<_> = rows
         .into_iter()
         .map(|row| Committed {
-            commit_seq: row.commit_seq,
-            id: row.id,
-            event_type: row.event_type,
-            kind_version: row.kind_version,
-            validation: row.validation,
+            row,
             search: sinex_model::kinds::Search::None,
-            replace_rule: None,
-            source: row.source,
-            run_id: row.run_id,
-            material_id: row.material_id,
-            record_offset: row.record_offset,
-            output_index: row.output_index,
-            parents: row.parents,
-            ts_orig: row.ts_orig,
-            ts_quality: row.ts_quality,
-            ts_coided: row.ts_coided,
-            ts_persisted: row.ts_persisted,
-            payload: row.payload,
-            equivalence_key: row.equivalence_key,
-            reading_order: row.reading_order,
-            record_hash: row.record_hash,
-            record_state: row.record_state,
-            class: row.class,
         })
         .collect();
-    let references: Vec<_> = events
-        .iter()
-        .map(|event| sinex_model::KindRef {
-            name: event.event_type.clone(),
-            version: event.kind_version as u64,
-        })
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    let declarations = sinex_schema::kinds::load(conn, &references).await?;
-    for event in &mut events {
-        let key = sinex_model::KindRef {
-            name: event.event_type.clone(),
-            version: event.kind_version as u64,
-        };
-        let declaration = declarations
-            .get(&key)
-            .ok_or_else(|| Error::Invalid(format!("missing stored declaration {key:?}")))?;
-        event.replace_rule = declaration.replace_rule.map(|rule| rule.as_db().into());
-        event.search = declaration.search;
-    }
+    add_declarations(conn, &mut events).await?;
     Ok(events)
 }
 

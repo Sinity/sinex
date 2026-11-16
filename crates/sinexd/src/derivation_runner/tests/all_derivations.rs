@@ -671,20 +671,21 @@ async fn every_derivation_gives_the_same_outputs_at_once_and_piece_by_piece(
 struct ChangedHourlyMetrics;
 
 impl Keyed for ChangedHourlyMetrics {
+    type Key = <sinex_derivations::figures::HourlyMetrics as Keyed>::Key;
     const NAME: &'static str = sinex_derivations::figures::HourlyMetrics::NAME;
     const VERSION: u32 = sinex_derivations::figures::HourlyMetrics::VERSION + 1;
     const INPUTS: &'static [&'static str] = sinex_derivations::figures::HourlyMetrics::INPUTS;
     const OUTPUTS: &'static [&'static str] = sinex_derivations::figures::HourlyMetrics::OUTPUTS;
 
-    fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Value> {
+    fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Self::Key> {
         Keyed::keys_for(&sinex_derivations::figures::HourlyMetrics, input, env)
     }
 
-    fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery> {
+    fn inputs(&self, key: &Self::Key, env: &Env) -> Option<InputQuery> {
         Keyed::inputs(&sinex_derivations::figures::HourlyMetrics, key, env)
     }
 
-    fn compute(&self, key: &Value, inputs: &[Event], env: &Env) -> Computed {
+    fn compute(&self, key: &Self::Key, inputs: &[Event], env: &Env) -> Computed {
         let mut computed =
             Keyed::compute(&sinex_derivations::figures::HourlyMetrics, key, inputs, env);
         for event in &mut computed.outputs {
@@ -705,7 +706,7 @@ impl Keyed for ChangedHourlyMetrics {
         computed
     }
 
-    fn key_state(&self, key: &Value, env: &Env) -> KeyState {
+    fn key_state(&self, key: &Self::Key, env: &Env) -> KeyState {
         Keyed::key_state(&sinex_derivations::figures::HourlyMetrics, key, env)
     }
 }

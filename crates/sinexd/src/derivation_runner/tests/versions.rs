@@ -41,6 +41,7 @@ impl<const V: u32> Days<V> {
 }
 
 impl<const V: u32> Keyed for Days<V> {
+    type Key = Value;
     const NAME: &'static str = "test.days";
     const VERSION: u32 = V;
     const HISTORY: sinex_model::DerivationHistory = if V == 3 {
@@ -51,18 +52,18 @@ impl<const V: u32> Keyed for Days<V> {
     const INPUTS: &'static [&'static str] = &["command.imported"];
     const OUTPUTS: &'static [&'static str] = &["command.fused"];
 
-    fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Value> {
+    fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Self::Key> {
         input
             .ts_orig
             .map(|t| Self::key(t, env))
             .into_iter()
             .collect()
     }
-    fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery> {
+    fn inputs(&self, key: &Self::Key, env: &Env) -> Option<InputQuery> {
         let (start, end) = Self::window(key, env)?;
         Some(InputQuery::window(Self::INPUTS, start, end))
     }
-    fn compute(&self, key: &Value, inputs: &[Event], _: &Env) -> Computed {
+    fn compute(&self, key: &Self::Key, inputs: &[Event], _: &Env) -> Computed {
         if inputs.is_empty() {
             return Computed::default();
         }
@@ -91,9 +92,6 @@ impl<const V: u32> Keyed for Days<V> {
             waiting: false,
             error: None,
         }
-    }
-    fn key_state(&self, _: &Value, _: &Env) -> KeyState {
-        KeyState::Closed
     }
 }
 

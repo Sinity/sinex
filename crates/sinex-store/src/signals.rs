@@ -264,8 +264,7 @@ pub async fn reports(
         .map(|row| {
             Ok(Report {
                 event: EventId(row.id),
-                class: serde_json::from_value(serde_json::Value::String(row.class))
-                    .map_err(|error| Error::Invalid(format!("report class: {error}")))?,
+                class: crate::event_row::stored(&row.class, "report class")?,
                 payload: row.payload,
             })
         })

@@ -87,7 +87,7 @@ pub(crate) async fn run(
             let mine: Vec<Committed> = page
                 .events
                 .iter()
-                .filter(|e| e.commit_seq > *position && consumer.wants(&e.event_type))
+                .filter(|e| e.row.commit_seq > *position && consumer.wants(&e.row.event_type))
                 .cloned()
                 .collect();
             let started = std::time::Instant::now();

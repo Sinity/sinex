@@ -6,6 +6,7 @@
 //! them ([`crate::observed`]); commands as fused commands plus the command
 //! records no fused command joins, so a command two shells saw counts once.
 use crate::derived_event::derived;
+use crate::keys::HourKey;
 use crate::observed::{FOCUS, PLAYS, REST};
 use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed};
 use serde_json::{Value, json};
@@ -16,12 +17,12 @@ use sinex_model::{Event, Timestamp};
 use std::collections::BTreeMap;
 
 mod coverage;
-pub use coverage::InputCoverage;
+pub use coverage::{InputCoverage, InputCoverageKey};
 mod sessions;
 mod signals;
 mod spans;
 mod windows;
-pub use sessions::{ActivityProfile, ActivitySessions};
+pub use sessions::{ActivityProfile, ActivitySessionKey, ActivitySessions};
 pub use spans::ActivitySpans;
 pub use windows::ActivityWindows;
 
@@ -157,7 +158,7 @@ fn kinds(types: &[&'static str]) -> Vec<crate::Kind> {
         .collect()
 }
 
-fn hours(input: &KeyView<'_>, env: &Env) -> Vec<Value> {
+fn hours(input: &KeyView<'_>, env: &Env) -> Vec<HourKey> {
     if !relevant(input.event_type, input.payload) {
         return vec![];
     }
@@ -176,7 +177,7 @@ fn hours(input: &KeyView<'_>, env: &Env) -> Vec<Value> {
     let last = until + GAP_NS;
     let mut keys = Vec::new();
     while hour.unix_ns() <= last {
-        keys.push(json!({"hour": hour}));
+        keys.push(HourKey { hour });
         let Ok(next) = env.time_settings.hour_end(hour) else {
             break;
         };
@@ -188,8 +189,8 @@ fn hours(input: &KeyView<'_>, env: &Env) -> Vec<Value> {
     keys
 }
 
-fn partition(key: &Value, env: &Env) -> Option<(i128, i128)> {
-    let start: Timestamp = serde_json::from_value(key.get("hour")?.clone()).ok()?;
+fn partition(key: &HourKey, env: &Env) -> Option<(i128, i128)> {
+    let start = key.hour;
     if env.time_settings.hour_start(start).ok()? != start {
         return None;
     }
@@ -199,7 +200,7 @@ fn partition(key: &Value, env: &Env) -> Option<(i128, i128)> {
     ))
 }
 
-fn inputs(key: &Value, env: &Env) -> Option<InputQuery> {
+fn inputs(key: &HourKey, env: &Env) -> Option<InputQuery> {
     let (from, until) = partition(key, env)?;
     let mut query = InputQuery::of(
         kinds(INPUTS),
@@ -213,7 +214,7 @@ fn inputs(key: &Value, env: &Env) -> Option<InputQuery> {
     Some(query)
 }
 
-fn key_state(key: &Value, env: &Env) -> KeyState {
+fn key_state(key: &HourKey, env: &Env) -> KeyState {
     match partition(key, env) {
         Some((_, until)) if env.now.unix_ns() >= until + GAP_NS => KeyState::Closed,
         Some(_) => KeyState::Open,

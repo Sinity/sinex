@@ -17,7 +17,8 @@ pub async fn initialize(conn: &mut sqlx::PgConnection) -> Result<()> {
     )
     .execute(&mut *conn)
     .await?;
-    sqlx::query("TRUNCATE pg_temp.sinex_query_days")
+    sqlx::query("CREATE TEMP TABLE IF NOT EXISTS sinex_query_offsets (setting text NOT NULL, from_ns numeric NOT NULL, until_ns numeric NOT NULL, offset_seconds integer NOT NULL, PRIMARY KEY(setting,from_ns)) ON COMMIT PRESERVE ROWS").execute(&mut *conn).await?;
+    sqlx::query("TRUNCATE pg_temp.sinex_query_days, pg_temp.sinex_query_offsets")
         .execute(conn)
         .await?;
     Ok(())
@@ -36,7 +37,7 @@ pub(crate) fn setting(ctx: &Context) -> String {
 
 fn calendar_operands(operand: &Operand, out: &mut Vec<(TimeFn, FieldRef)>) {
     query_language::depth::deeper(|| match operand {
-        Operand::TimeFn(func, field) if *func != TimeFn::Hour => out.push((*func, field.clone())),
+        Operand::TimeFn(func, field) => out.push((*func, field.clone())),
         Operand::Arithmetic { left, right, .. } | Operand::Glob { left, right } => {
             calendar_operands(left, out);
             calendar_operands(right, out);
@@ -255,6 +256,12 @@ struct Boundary {
     from_ns: String,
     until_ns: String,
 }
+#[derive(serde::Serialize)]
+struct OffsetSpan {
+    from_ns: String,
+    until_ns: String,
+    offset_seconds: i32,
+}
 struct Preparation<'a> {
     ctx: &'a Context,
     seq: i64,
@@ -302,8 +309,38 @@ impl Preparation<'_> {
             return Ok(());
         }
         self.stats.max_boundary_batch = self.stats.max_boundary_batch.max(rows.len());
+        let mut offsets = Vec::new();
+        for row in &rows {
+            self.offset_spans(row, &mut offsets)?;
+        }
+        let offsets = serde_json::to_string(&offsets).map_err(|e| invalid(e.to_string()))?;
+        sqlx::query("INSERT INTO pg_temp.sinex_query_offsets(setting,from_ns,until_ns,offset_seconds) SELECT $1,r.* FROM jsonb_to_recordset($2::jsonb) AS r(from_ns numeric,until_ns numeric,offset_seconds integer) ON CONFLICT(setting,from_ns) DO NOTHING").bind(&self.setting).bind(offsets).execute(&mut *conn).await?;
         let rows = serde_json::to_string(&rows).map_err(|e| invalid(e.to_string()))?;
         sqlx::query("INSERT INTO pg_temp.sinex_query_days(setting,ordinal,day,week,weekday,month,year,month_day,week_from_ns,month_from_ns,from_ns,until_ns) SELECT $1,r.* FROM jsonb_to_recordset($2::jsonb) AS r(ordinal bigint,day text,week text,weekday text,month text,year bigint,month_day text,week_from_ns numeric,month_from_ns numeric,from_ns numeric,until_ns numeric) ON CONFLICT(setting,ordinal) DO NOTHING").bind(&self.setting).bind(rows).execute(conn).await?;
+        Ok(())
+    }
+    fn offset_spans(&self, row: &Boundary, out: &mut Vec<OffsetSpan>) -> Result<()> {
+        let instant = |ns: &str| -> Result<jiff::Timestamp> {
+            let ns = ns.parse::<i128>().map_err(|e| invalid(e.to_string()))?;
+            jiff::Timestamp::from_nanosecond(ns).map_err(|e| invalid(e.to_string()))
+        };
+        let mut from = instant(&row.from_ns)?;
+        let until = instant(&row.until_ns)?;
+        for end in self
+            .ctx
+            .zone
+            .following(from)
+            .map(|transition| transition.timestamp())
+            .take_while(|at| *at < until)
+            .chain(std::iter::once(until))
+        {
+            out.push(OffsetSpan {
+                from_ns: from.as_nanosecond().to_string(),
+                until_ns: end.as_nanosecond().to_string(),
+                offset_seconds: self.ctx.zone.to_offset(from).seconds(),
+            });
+            from = end;
+        }
         Ok(())
     }
     async fn interval(

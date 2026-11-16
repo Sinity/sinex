@@ -147,7 +147,7 @@ pub(crate) fn to_window(q: &InputQuery, now: Timestamp) -> Window {
                 end: end.0,
                 kinds: kinds(selected),
                 subjects,
-                interruptions: kinds(interruptions),
+                interruptions: interruptions.iter().map(nearest).collect(),
             },
             sinex_derivations::InputRange::UntilNext {
                 start,
@@ -1146,16 +1146,9 @@ pub(crate) fn per_event_with(
     Ok(all)
 }
 
-/// Derivations enabled without configuration.
+/// Every available per-event derivation with empty rules.
 pub(crate) fn per_event() -> Vec<Box<dyn AnyPerEvent>> {
-    per_event_with(&sinex_derivations::Configuration::default())
-        .expect("empty rules are valid")
-        .into_iter()
-        .filter(|d| {
-            d.name() == sinex_derivations::tags::TagApplier::NAME
-                || sinex_derivations::enabled_by_default(d.name())
-        })
-        .collect()
+    per_event_with(&sinex_derivations::Configuration::default()).expect("empty rules are valid")
 }
 
 /// Key computations serialize before reading, so a command and the
@@ -1451,7 +1444,11 @@ async fn compute_one(
         key: key.clone(),
         dirty_seq: *dirty_seq,
         waiting: computed.waiting,
-        refresh_at: derivation.refresh_at(&computed.outputs, env),
+        refresh_at: derivation.refresh_at(
+            inputs.as_deref().unwrap_or_default(),
+            &computed.outputs,
+            env,
+        ),
     });
     segment.records.push(RecordOutcome::Events {
         location: None,

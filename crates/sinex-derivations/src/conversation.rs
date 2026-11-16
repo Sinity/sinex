@@ -11,6 +11,7 @@
 //! active.
 use crate::derived_event::derived;
 use crate::fusion::{Mail, mail};
+use crate::keys::DayKey;
 use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed, Kind};
 use serde_json::{Value, json};
 use sinex_model::event_types::ConversationDay;
@@ -70,11 +71,8 @@ fn message(e: &Event, payload: &Value) -> Option<(&'static str, String, String, 
     }
 }
 
-fn day_of(key: &Value) -> Option<jiff::civil::Date> {
-    key.get("day")?.as_str()?.parse().ok()
-}
-
 impl Keyed for ConversationDays {
+    type Key = DayKey;
     const NAME: &'static str = "conversation.days";
     const VERSION: u32 = 4;
     const USES_TIME_SETTINGS: bool = true;
@@ -86,7 +84,7 @@ impl Keyed for ConversationDays {
     ];
     const OUTPUTS: &'static [&'static str] = &[ConversationDay::EVENT_TYPE];
 
-    fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Value> {
+    fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Self::Key> {
         let Some(t) = input.ts_orig else {
             return vec![];
         };
@@ -96,7 +94,7 @@ impl Keyed for ConversationDays {
         } else {
             0
         };
-        let mut keys: Vec<Value> = Vec::new();
+        let mut keys: Vec<Self::Key> = Vec::new();
         for ns in [t.unix_ns() - margin, t.unix_ns() + margin] {
             let Some(day) = Timestamp::from_unix_ns(ns)
                 .ok()
@@ -104,7 +102,7 @@ impl Keyed for ConversationDays {
             else {
                 continue;
             };
-            let key = json!({ "day": day.to_string() });
+            let key = DayKey { day };
             if !keys.contains(&key) {
                 keys.push(key);
             }
@@ -112,8 +110,8 @@ impl Keyed for ConversationDays {
         keys
     }
 
-    fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery> {
-        let day = day_of(key)?;
+    fn inputs(&self, key: &Self::Key, env: &Env) -> Option<InputQuery> {
+        let day = key.day;
         let margin = mail().margin();
         let mut kinds = vec![
             Kind::only(ChatMessage::EVENT_TYPE, &[("kind", "message")]),
@@ -130,10 +128,8 @@ impl Keyed for ConversationDays {
         ))
     }
 
-    fn compute(&self, key: &Value, inputs: &[Event], env: &Env) -> Computed {
-        let Some(day) = day_of(key) else {
-            return Computed::default();
-        };
+    fn compute(&self, key: &Self::Key, inputs: &[Event], env: &Env) -> Computed {
+        let day = key.day;
         let (Ok(day_start), Ok(day_end)) = (
             env.time_settings.day_start(day),
             env.time_settings.day_end(day),
@@ -199,8 +195,8 @@ impl Keyed for ConversationDays {
         }
     }
 
-    fn key_state(&self, key: &Value, env: &Env) -> KeyState {
-        match day_of(key).and_then(|day| env.time_settings.day_end(day).ok()) {
+    fn key_state(&self, key: &Self::Key, env: &Env) -> KeyState {
+        match env.time_settings.day_end(key.day).ok() {
             Some(end) if env.now.unix_ns() >= end.unix_ns() => KeyState::Closed,
             _ => KeyState::Open,
         }

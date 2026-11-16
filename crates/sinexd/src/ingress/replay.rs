@@ -457,24 +457,9 @@ impl Ingest {
         run: RunId,
     ) -> Result<crate::writer::ReplaySequence, Check> {
         let s = &request.sequence;
-        let mut batches = vec![Batch {
-            run,
-            kind: BatchKind::Replay {
-                operation: s.operation,
-                source: None,
-                host: None,
-            },
-            records: vec![],
-            archive: vec![ArchiveRequest::Replay {
-                operation: s.operation,
-                scope: ReplayScope {
-                    materials: s.materials.iter().map(|m| m.id).collect(),
-                    event_types: s.event_types.clone(),
-                    from: s.from,
-                    until: s.until,
-                },
-            }],
-        }];
+        let mut batches = Vec::new();
+        let mut read_materials = BTreeSet::new();
+        let mut failed_records = Vec::new();
         for batch in &s.batches {
             let records = self
                 .events(
@@ -485,6 +470,18 @@ impl Ingest {
                     true,
                 )
                 .await?;
+            for record in &records {
+                match record {
+                    RecordOutcome::Events {
+                        location: Some(location),
+                        events,
+                    } if !events.is_empty() => {
+                        read_materials.insert(location.material);
+                    }
+                    RecordOutcome::Failure { location, .. } => failed_records.push(*location),
+                    _ => {}
+                }
+            }
             let assign_orders = batch
                 .events
                 .iter()
@@ -523,6 +520,28 @@ impl Ingest {
                 archive: vec![],
             });
         }
+        batches.insert(
+            0,
+            Batch {
+                run,
+                kind: BatchKind::Replay {
+                    operation: s.operation,
+                    source: None,
+                    host: None,
+                },
+                records: vec![],
+                archive: vec![ArchiveRequest::Replay {
+                    operation: s.operation,
+                    failed_records,
+                    scope: ReplayScope {
+                        materials: read_materials.into_iter().collect(),
+                        event_types: s.event_types.clone(),
+                        from: s.from,
+                        until: s.until,
+                    },
+                }],
+            },
+        );
         let content =
             serde_json::to_vec(s).map_err(|_| Check::Refused("invalid replay scope".into()))?;
         let mut scope = serde_json::json!({"root":s.root,"materials":s.materials,"event_types":s.event_types,"from":s.from,"until":s.until,

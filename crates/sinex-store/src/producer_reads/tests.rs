@@ -9,12 +9,10 @@ async fn reads(conn: &mut PgConnection, ids: &[Uuid]) -> serde_json::Value {
     let family = material_family(conn, ids[0]).await.unwrap();
     let mut sources = material_sources(conn, ids).await.unwrap();
     sources.sort();
-    let mut registered = materials_registered_by(conn, "p", ids).await.unwrap();
-    registered.sort();
     let refusals = crate::diagnostics::ingress_refusals(conn).await.unwrap();
     let errors = crate::diagnostics::producer_errors(conn).await.unwrap();
     serde_json::json!({"families":families,"unknown":unknown,"family":family,
-        "sources":sources,"registered":registered,"refusals":refusals,"errors":errors})
+        "sources":sources,"refusals":refusals,"errors":errors})
 }
 
 #[devkit::test]
@@ -64,7 +62,6 @@ async fn ack_lookups_and_diagnostics_report_only_relevant_frames(db: devkit::pg:
             [ids[1], null, null]
         ])
     );
-    assert_eq!(found["registered"], serde_json::json!([ids[0]]));
     assert_eq!(
         found["refusals"],
         serde_json::json!([

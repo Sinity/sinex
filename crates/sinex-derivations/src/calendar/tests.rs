@@ -54,20 +54,20 @@ fn stored(payload: &CalendarEvent) -> Event {
 }
 
 fn compute(inputs: &[Event], now: &str) -> Vec<CalendarInstance> {
-    let mut out: Vec<CalendarInstance> = Instances
-        .compute(
-            &Value::Null,
-            inputs,
-            &Env::at(
-                at(now),
-                sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
-                    .expect("fixture day setting"),
-            ),
-        )
-        .outputs
-        .iter()
-        .map(|e| e.payload_as::<CalendarInstance>().unwrap())
-        .collect();
+    let mut out: Vec<CalendarInstance> = crate::AnyKeyed::compute(
+        &Instances,
+        &json!({"calendar":"calendar","uid":"series"}),
+        inputs,
+        &Env::at(
+            at(now),
+            sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+                .expect("fixture day setting"),
+        ),
+    )
+    .outputs
+    .iter()
+    .map(|e| e.payload_as::<CalendarInstance>().unwrap())
+    .collect();
     out.sort_by_key(|i| i.series_start);
     out
 }
@@ -146,17 +146,17 @@ fn excluded_added_and_changed_instances() {
     assert!(changed.changed);
     assert_eq!(changed.start, at("2024-04-02T15:00:00Z"));
     assert_eq!(changed.summary.as_deref(), Some("Moved"));
-    let parents = |i: usize| match &Instances
-        .compute(
-            &Value::Null,
-            &inputs,
-            &Env::at(
-                at("2024-03-01T00:00:00Z"),
-                sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
-                    .expect("fixture day setting"),
-            ),
-        )
-        .outputs[i]
+    let parents = |i: usize| match &crate::AnyKeyed::compute(
+        &Instances,
+        &json!({"calendar":"calendar","uid":"series"}),
+        &inputs,
+        &Env::at(
+            at("2024-03-01T00:00:00Z"),
+            sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+                .expect("fixture day setting"),
+        ),
+    )
+    .outputs[i]
         .origin
     {
         Origin::Derived { parents } => parents.len(),
@@ -239,7 +239,8 @@ fn a_series_is_one_key_read_whole() {
         sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
             .expect("fixture day setting"),
     );
-    let keys = Instances.keys_for(
+    let keys = crate::AnyKeyed::keys_for(
+        &Instances,
         &KeyView {
             event_type: e.event_type.as_str(),
             ts_orig: e.ts_orig.at,
@@ -248,7 +249,7 @@ fn a_series_is_one_key_read_whole() {
         &env,
     );
     assert_eq!(keys, [json!({"calendar": "me@example.org", "uid": "w"})]);
-    let query = Instances.inputs(&keys[0], &env).unwrap();
+    let query = crate::AnyKeyed::inputs(&Instances, &keys[0], &env).unwrap();
     assert!(query.admits(&e));
 }
 

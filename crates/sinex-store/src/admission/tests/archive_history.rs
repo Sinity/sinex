@@ -273,12 +273,12 @@ async fn a_commit_page_ends_once_its_payloads_pass_the_byte_bound(db: devkit::pg
     // Any payload passes one byte: each page holds just its first event.
     let first = commit_log::after(&mut conn, 0, 10, 1).await.unwrap();
     assert_eq!(first.events.len(), 1);
-    assert_eq!(first.up_to, Some(first.events[0].commit_seq));
+    assert_eq!(first.up_to, Some(first.events[0].row.commit_seq));
     let second = commit_log::after(&mut conn, first.up_to.unwrap(), 10, 1)
         .await
         .unwrap();
     assert_eq!(second.events.len(), 1);
-    assert!(second.events[0].commit_seq > first.events[0].commit_seq);
+    assert!(second.events[0].row.commit_seq > first.events[0].row.commit_seq);
     let all = commit_log::after(&mut conn, 0, 10, crate::PAGE_BYTES)
         .await
         .unwrap();

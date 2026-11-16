@@ -5,7 +5,7 @@ use serde_json::Value;
 pub async fn apply(conn: &mut PgConnection, events: &[Committed]) -> Result<()> {
     let entries: Vec<_> = events
         .iter()
-        .filter(|event| event.event_type == TextEmbedding::EVENT_TYPE)
+        .filter(|event| event.row.event_type == TextEmbedding::EVENT_TYPE)
         .collect();
     if entries.is_empty() {
         return Ok(());
@@ -14,7 +14,7 @@ pub async fn apply(conn: &mut PgConnection, events: &[Committed]) -> Result<()> 
         .execute(&mut *conn)
         .await?;
     for event in entries {
-        apply_one(conn, event.id, &event.payload, &event.class).await?;
+        apply_one(conn, event.row.id, &event.row.payload, &event.row.class).await?;
     }
     Ok(())
 }

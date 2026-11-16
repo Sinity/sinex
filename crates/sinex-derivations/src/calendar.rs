@@ -14,7 +14,7 @@
 //! Until one is supplied, its recorded record is kept with the reason
 //! the rule was not expanded.
 use crate::derived_event::derived;
-use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed};
+use crate::{Computed, Env, InputQuery, KeyView, Keyed};
 use jiff::civil::DateTime;
 use jiff::tz::TimeZone;
 use serde_json::{Value, json};
@@ -25,8 +25,11 @@ pub mod rule;
 
 pub struct Instances;
 
-fn series_of(key: &Value) -> Option<(&str, &str)> {
-    Some((key.get("calendar")?.as_str()?, key.get("uid")?.as_str()?))
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CalendarKey {
+    pub calendar: String,
+    pub uid: String,
 }
 
 fn timestamp(at: jiff::Timestamp) -> Option<Timestamp> {
@@ -148,21 +151,28 @@ fn live(event: &Event) -> Option<CalendarEvent> {
 }
 
 impl Keyed for Instances {
+    type Key = CalendarKey;
     const NAME: &'static str = "calendar.instances";
     const VERSION: u32 = 2;
     const INPUTS: &'static [&'static str] = &[CalendarEvent::EVENT_TYPE];
     const OUTPUTS: &'static [&'static str] = &[CalendarInstance::EVENT_TYPE];
 
-    fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Value> {
+    fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Self::Key> {
         let p = input.payload;
-        match (p.get("calendar"), p.get("uid")) {
-            (Some(calendar), Some(uid)) => vec![json!({"calendar": calendar, "uid": uid})],
+        match (
+            p.get("calendar").and_then(Value::as_str),
+            p.get("uid").and_then(Value::as_str),
+        ) {
+            (Some(calendar), Some(uid)) => vec![CalendarKey {
+                calendar: calendar.to_owned(),
+                uid: uid.to_owned(),
+            }],
             _ => vec![],
         }
     }
 
-    fn inputs(&self, key: &Value, _: &Env) -> Option<InputQuery> {
-        let (calendar, uid) = series_of(key)?;
+    fn inputs(&self, key: &Self::Key, _: &Env) -> Option<InputQuery> {
+        let CalendarKey { calendar, uid } = key;
         // Every reading of the series, whenever it starts: years 1 to 9999.
         let earliest = Timestamp::from_unix_secs(-62_135_596_800).ok()?;
         let latest = Timestamp::from_unix_secs(253_402_300_799).ok()?;
@@ -173,7 +183,7 @@ impl Keyed for Instances {
         )
     }
 
-    fn compute(&self, _: &Value, inputs: &[Event], _: &Env) -> Computed {
+    fn compute(&self, _: &Self::Key, inputs: &[Event], _: &Env) -> Computed {
         let series = inputs
             .iter()
             .find(|e| e.payload.get("recurrence_id").is_none_or(Value::is_null));
@@ -249,10 +259,6 @@ impl Keyed for Instances {
             waiting: false,
             error: None,
         }
-    }
-
-    fn key_state(&self, _: &Value, _: &Env) -> KeyState {
-        KeyState::Closed
     }
 }
 

@@ -1,4 +1,5 @@
 use super::*;
+use sinex_model::{Class, MaterialId, Origin, ReadingOrder};
 const FOCUS: &[SubjectField] = &[
     SubjectField::Text {
         field: "window",
@@ -277,4 +278,80 @@ async fn set_bounds_cover_many_scopes_and_leave_an_empty_day_unchanged(
             expected
         );
     }
+}
+
+#[devkit::test]
+async fn transition_window_stops_at_a_suspend_for_the_same_host(db: devkit::pg::TestDatabase) {
+    let mut conn = AdmissionContext::connect(&db.url(None)).await.unwrap();
+    let on_host = |mut event: Event| {
+        event.payload["host"] = serde_json::json!("box");
+        event
+    };
+    let suspend = |seconds, host: &str| {
+        let cursor = format!("sleep-{seconds}-{host}");
+        Event::build(
+            &sinex_model::event_types::system::SleepStarted {
+                host: Some(host.into()),
+                boot_id: None,
+                cursor: cursor.clone(),
+                logged_at: Some(Timestamp(at(seconds))),
+                state: Some("suspend".into()),
+            },
+            "fixture.transition-bounds",
+            Origin::Record {
+                location: RecordLocation {
+                    material: MaterialId::new(),
+                    record_offset: 0,
+                },
+                output_index: 0,
+            },
+            ReadingOrder(seconds.max(0)),
+            *blake3::hash(cursor.as_bytes()).as_bytes(),
+            Class::Open,
+        )
+        .unwrap()
+    };
+    let prior = on_host(focus(-20, Some("seat-a"), Some("first"), None));
+    let prior_stop = suspend(-10, "box");
+    let current = on_host(focus(100, Some("seat-a"), Some("current"), None));
+    let other_stop = suspend(DAY + 5, "other-box");
+    let current_stop = suspend(DAY + 10, "box");
+    let later = on_host(focus(DAY + 20, Some("seat-a"), Some("later"), None));
+    let expected = vec![prior_stop.id, current.id, other_stop.id, current_stop.id];
+    admit(
+        &mut conn,
+        vec![prior, prior_stop, current, other_stop, current_stop, later],
+    )
+    .await;
+    let mut selected = kinds(None);
+    selected.push(Kind {
+        event_type: "sleep.started".into(),
+        contains: serde_json::json!({}),
+    });
+    let window = Window {
+        range: Some(InputRange::StateTransitions {
+            start: at(0),
+            end: at(DAY),
+            kinds: kinds(None),
+            subjects: FOCUS,
+            interruptions: vec![Nearest {
+                kinds: vec![selected[1].clone()],
+                per: Some("host"),
+                count: 1,
+                lifetime: None,
+            }],
+        }),
+        unknown_times: false,
+        kinds: selected,
+        start: Some(at(0)),
+        end: Some(at(DAY)),
+        before: vec![],
+        intervals: vec![],
+        after: vec![],
+    };
+    let rows = read_window(&mut conn, &window).await.unwrap();
+    assert_eq!(
+        rows.into_iter().map(|row| row.event.id).collect::<Vec<_>>(),
+        expected
+    );
 }

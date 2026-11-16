@@ -11,8 +11,9 @@
 //! the rule says nothing about attention or real task boundaries.
 use crate::derived_event::derived;
 use crate::fusion::{Command, commands};
+use crate::keys::HostDayKey;
 use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed};
-use serde_json::{Value, json};
+use serde_json::Value;
 use sinex_model::event_types::{CommandFused, ShellSession};
 use sinex_model::{Event, EventPayload, Timestamp};
 
@@ -22,15 +23,10 @@ const GAP_NS: i128 = 300 * 1_000_000_000;
 
 pub struct ShellSessions;
 
-fn key_parts(key: &Value) -> Option<(String, jiff::civil::Date)> {
-    let host = key.get("host")?.as_str()?.to_owned();
-    let day = key.get("day")?.as_str()?.parse().ok()?;
-    Some((host, day))
-}
-
 impl Keyed for ShellSessions {
+    type Key = HostDayKey;
     const NAME: &'static str = "shell.sessions";
-    const VERSION: u32 = 2;
+    const VERSION: u32 = 3;
     const USES_TIME_SETTINGS: bool = true;
     const INPUTS: &'static [&'static str] = &[
         CommandFused::EVENT_TYPE,
@@ -41,7 +37,7 @@ impl Keyed for ShellSessions {
     ];
     const OUTPUTS: &'static [&'static str] = &[ShellSession::EVENT_TYPE];
 
-    fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Value> {
+    fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Self::Key> {
         let host = commands().field_of(input.event_type, input.payload, "host");
         let (Some(Value::String(host)), Some(t)) = (host, input.ts_orig) else {
             return vec![];
@@ -52,9 +48,12 @@ impl Keyed for ShellSessions {
             .into_iter()
             .filter_map(|ns| Timestamp::from_unix_ns(ns).ok())
             .filter_map(|at| env.time_settings.day(at).ok());
-        let mut keys: Vec<Value> = Vec::new();
+        let mut keys: Vec<Self::Key> = Vec::new();
         for day in days {
-            let key = json!({"host": host, "day": day.to_string()});
+            let key = HostDayKey {
+                host: host.clone(),
+                day,
+            };
             if !keys.contains(&key) {
                 keys.push(key);
             }
@@ -62,8 +61,8 @@ impl Keyed for ShellSessions {
         keys
     }
 
-    fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery> {
-        let (_, day) = key_parts(key)?;
+    fn inputs(&self, key: &Self::Key, env: &Env) -> Option<InputQuery> {
+        let day = key.day;
         let margin = commands().margin();
         Some(InputQuery::of(
             commands().kinds(),
@@ -74,10 +73,8 @@ impl Keyed for ShellSessions {
         ))
     }
 
-    fn compute(&self, key: &Value, inputs: &[Event], env: &Env) -> Computed {
-        let Some((host, day)) = key_parts(key) else {
-            return Computed::default();
-        };
+    fn compute(&self, key: &Self::Key, inputs: &[Event], env: &Env) -> Computed {
+        let (host, day) = (&key.host, key.day);
         let (Ok(day_start), Ok(day_end)) = (
             env.time_settings.day_start(day),
             env.time_settings.day_end(day),
@@ -91,7 +88,7 @@ impl Keyed for ShellSessions {
                 let command = serde_json::from_value::<Command>(o.payload.into_owned()).ok()?;
                 Some((o.event, command))
             })
-            .filter(|(_, c)| c.host == host && day_start <= c.started_at && c.started_at < day_end)
+            .filter(|(_, c)| c.host == *host && day_start <= c.started_at && c.started_at < day_end)
             .collect();
         commands.sort_by_key(|(e, c)| (c.started_at, e.id));
 
@@ -120,6 +117,9 @@ impl Keyed for ShellSessions {
                     })
                     .max()
                     .unwrap_or_else(|| started_at.unix_ns());
+                let end_is_lower_bound = g.iter().any(|(_, command)| {
+                    command.duration_ns.is_none() && command.started_at.unix_ns() == ended_ns
+                });
                 let mut cwds: Vec<String> = Vec::new();
                 for (_, c) in g {
                     if let Some(cwd) = &c.cwd
@@ -129,9 +129,10 @@ impl Keyed for ShellSessions {
                     }
                 }
                 let payload = ShellSession {
-                    host: host.clone(),
+                    host: key.host.clone(),
                     started_at,
                     ended_at: Timestamp::from_unix_ns(ended_ns).unwrap_or(started_at),
+                    end_is_lower_bound,
                     day: day.to_string(),
                     commands: u32::try_from(g.len()).unwrap_or(u32::MAX),
                     failed: u32::try_from(
@@ -152,8 +153,8 @@ impl Keyed for ShellSessions {
         }
     }
 
-    fn key_state(&self, key: &Value, env: &Env) -> KeyState {
-        match key_parts(key).and_then(|(_, day)| env.time_settings.day_end(day).ok()) {
+    fn key_state(&self, key: &Self::Key, env: &Env) -> KeyState {
+        match env.time_settings.day_end(key.day).ok() {
             Some(end) if env.now.unix_ns() >= end.unix_ns() + GAP_NS => KeyState::Closed,
             Some(_) => KeyState::Open,
             None => KeyState::Closed,

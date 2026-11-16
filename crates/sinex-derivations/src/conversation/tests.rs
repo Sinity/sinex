@@ -63,7 +63,9 @@ fn mail_in(
 fn days(inputs: &[Event]) -> Vec<ConversationDay> {
     ConversationDays
         .compute(
-            &json!({"day": "2024-06-15"}),
+            &DayKey {
+                day: "2024-06-15".parse().unwrap(),
+            },
             inputs,
             &Env::at(
                 at(86_400 * 3),
@@ -182,7 +184,9 @@ fn equal_time_messages_use_record_identity_instead_of_reading_ids() {
     messages.reverse();
     let output = ConversationDays
         .compute(
-            &json!({"day":"2024-06-15"}),
+            &DayKey {
+                day: "2024-06-15".parse().unwrap(),
+            },
             &messages,
             &Env::at(
                 at(86_400),

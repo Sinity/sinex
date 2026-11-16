@@ -347,18 +347,19 @@ async fn an_open_interval_waits_and_closes_on_the_next_transition(db: devkit::pg
 struct Waiting;
 
 impl Keyed for Waiting {
+    type Key = Value;
     const NAME: &'static str = "test.waiting";
     const VERSION: u32 = 1;
     const INPUTS: &'static [&'static str] = &["command.imported"];
     const OUTPUTS: &'static [&'static str] = &["command.fused"];
 
-    fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Value> {
+    fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Self::Key> {
         vec![input.payload["command"].clone()]
     }
-    fn inputs(&self, key: &Value, _: &Env) -> Option<InputQuery> {
+    fn inputs(&self, key: &Self::Key, _: &Env) -> Option<InputQuery> {
         Some(InputQuery::window(Self::INPUTS, at(-86_400), at(86_400)).only("command", key.clone()))
     }
-    fn compute(&self, key: &Value, inputs: &[Event], _: &Env) -> Computed {
+    fn compute(&self, key: &Self::Key, inputs: &[Event], _: &Env) -> Computed {
         let record = key.as_str().unwrap_or_default().to_owned();
         let payload = CommandFused {
             record: record.clone(),
@@ -386,7 +387,7 @@ impl Keyed for Waiting {
             waiting: true,
         }
     }
-    fn key_state(&self, _: &Value, _: &Env) -> KeyState {
+    fn key_state(&self, _: &Self::Key, _: &Env) -> KeyState {
         KeyState::Open
     }
 }
@@ -484,22 +485,20 @@ async fn a_key_dirtied_again_stays_dirty(db: devkit::pg::TestDatabase) {
 struct Count<const V: u32>;
 
 impl<const V: u32> Keyed for Count<V> {
+    type Key = Value;
     const NAME: &'static str = "test.count";
     const VERSION: u32 = V;
     const INPUTS: &'static [&'static str] = &["command.imported"];
     const OUTPUTS: &'static [&'static str] = &["command.fused"];
 
-    fn keys_for(&self, _: &KeyView<'_>, _: &Env) -> Vec<Value> {
+    fn keys_for(&self, _: &KeyView<'_>, _: &Env) -> Vec<Self::Key> {
         vec![json!("all")]
     }
-    fn inputs(&self, _: &Value, _: &Env) -> Option<InputQuery> {
+    fn inputs(&self, _: &Self::Key, _: &Env) -> Option<InputQuery> {
         Some(InputQuery::window(Self::INPUTS, at(-86_400), at(86_400)))
     }
-    fn compute(&self, _: &Value, inputs: &[Event], _: &Env) -> Computed {
+    fn compute(&self, _: &Self::Key, inputs: &[Event], _: &Env) -> Computed {
         counted(Self::NAME, format!("v{V}:{}", inputs.len()), inputs)
-    }
-    fn key_state(&self, _: &Value, _: &Env) -> KeyState {
-        KeyState::Closed
     }
 }
 
@@ -537,25 +536,23 @@ struct Paused {
 }
 
 impl Keyed for Paused {
+    type Key = Value;
     const NAME: &'static str = "test.paused";
     const VERSION: u32 = 1;
     const INPUTS: &'static [&'static str] = &["command.imported"];
     const OUTPUTS: &'static [&'static str] = &["command.fused"];
 
-    fn keys_for(&self, _: &KeyView<'_>, _: &Env) -> Vec<Value> {
+    fn keys_for(&self, _: &KeyView<'_>, _: &Env) -> Vec<Self::Key> {
         vec![json!("all")]
     }
-    fn inputs(&self, _: &Value, _: &Env) -> Option<InputQuery> {
+    fn inputs(&self, _: &Self::Key, _: &Env) -> Option<InputQuery> {
         Some(InputQuery::window(Self::INPUTS, at(-86_400), at(86_400)))
     }
-    fn compute(&self, _: &Value, inputs: &[Event], _: &Env) -> Computed {
+    fn compute(&self, _: &Self::Key, inputs: &[Event], _: &Env) -> Computed {
         if let Some(pause) = &self.pause {
             pause();
         }
         counted(Self::NAME, inputs.len().to_string(), inputs)
-    }
-    fn key_state(&self, _: &Value, _: &Env) -> KeyState {
-        KeyState::Closed
     }
 }
 

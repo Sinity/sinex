@@ -1,7 +1,7 @@
 //! Build the wire form of committed events, for the confirmed stream, a
 //! snapshot page and a fetch by ID alike.
 use crate::{Error, Result};
-use sinex_model::{Class, EventId, KindRef, MaterialId, RecordLocation, RunId, Timestamp};
+use sinex_model::{Class, DbCheck, EventId, KindRef, MaterialId, RecordLocation, RunId, Timestamp};
 use sinex_protocol::{ConfirmedEvent, PayloadIdentity, WithheldEvent, WithheldReason};
 use sinex_store::confirmed::Row;
 use std::collections::BTreeMap;
@@ -45,7 +45,7 @@ fn kind(row: &Row) -> Result<KindRef> {
 }
 
 fn class(name: &str) -> Result<Class> {
-    serde_json::from_value(serde_json::Value::String(name.into())).map_err(Error::from)
+    Class::from_db(name).ok_or_else(|| Error::bad_value(format!("unknown class {name:?}")))
 }
 
 fn event(row: Row, kind_definition_hash: String) -> Result<ConfirmedEvent> {
@@ -72,7 +72,8 @@ fn event(row: Row, kind_definition_hash: String) -> Result<ConfirmedEvent> {
         producer_identity: row.producer_identity,
         kind_version: u64::try_from(row.kind_version)?,
         kind_definition_hash,
-        validation: serde_json::from_value(serde_json::Value::String(row.validation))?,
+        validation: sinex_model::Validation::from_db(&row.validation)
+            .ok_or_else(|| Error::bad_value(format!("unknown validation {:?}", row.validation)))?,
         commit_seq: row.commit_seq,
         id: EventId(row.id),
         event_type: row.event_type,

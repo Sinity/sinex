@@ -31,7 +31,7 @@ pub(super) async fn internal(conn: &mut PgConnection) -> Vec<Tuple> {
         }
         for entry in &page.entries {
             let data = match &entry.change {
-                commit_log::Change::Event(e) => Some((EventId(e.id), "event")),
+                commit_log::Change::Event(e) => Some((EventId(e.row.id), "event")),
                 commit_log::Change::Archive(a) => Some((
                     EventId(a.archive.event_id),
                     if a.archive.archived {
@@ -332,7 +332,9 @@ async fn giant_event_metadata_travels_by_id_and_completes(db: devkit::pg::TestDa
     admit(&mut conn, batch(vec![event])).await;
     let page = commit_log::after(&mut conn, 1, 1, i64::MAX).await.unwrap();
     assert!(
-        serde_json::to_vec(&page.events[0].parents).unwrap().len()
+        serde_json::to_vec(&page.events[0].row.parents)
+            .unwrap()
+            .len()
             > js.client().server_info().max_payload
     );
     let transfer = commit_log::changes_page(

@@ -3,20 +3,21 @@ struct ExactTargets {
     ids: Vec<sinex_model::EventId>,
 }
 impl Keyed for ExactTargets {
+    type Key = Value;
     const NAME: &'static str = "fixture.exact_targets";
     const VERSION: u32 = 1;
     const INPUTS: &'static [&'static str] = &["operator_log.entry"];
     const OUTPUTS: &'static [&'static str] = &["command.fused"];
-    fn keys_for(&self, _: &KeyView<'_>, _: &Env) -> Vec<Value> {
+    fn keys_for(&self, _: &KeyView<'_>, _: &Env) -> Vec<Self::Key> {
         vec![json!("all")]
     }
-    fn exact_inputs(&self, _: &Value, _: &Env) -> Option<Vec<sinex_model::EventId>> {
+    fn exact_inputs(&self, _: &Self::Key, _: &Env) -> Option<Vec<sinex_model::EventId>> {
         Some(self.ids.clone())
     }
-    fn inputs(&self, _: &Value, _: &Env) -> Option<InputQuery> {
+    fn inputs(&self, _: &Self::Key, _: &Env) -> Option<InputQuery> {
         None
     }
-    fn compute(&self, _: &Value, inputs: &[Event], _: &Env) -> Computed {
+    fn compute(&self, _: &Self::Key, inputs: &[Event], _: &Env) -> Computed {
         assert_eq!(
             inputs.len(),
             2,
@@ -52,9 +53,6 @@ impl Keyed for ExactTargets {
                 inputs,
             )],
         }
-    }
-    fn key_state(&self, _: &Value, _: &Env) -> KeyState {
-        KeyState::Closed
     }
 }
 #[devkit::test]
