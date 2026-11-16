@@ -1,9 +1,5 @@
 //! Sync file contents before publishing a replacement name.
-use std::{
-    fs::{File, OpenOptions},
-    io,
-    path::Path,
-};
+use std::{fs::File, io, path::Path};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReplaceStep {
@@ -18,7 +14,10 @@ pub fn write_replacing(
     mode: u32,
     write: impl FnOnce(&mut File) -> io::Result<()>,
 ) -> Result<(), (ReplaceStep, io::Error)> {
-    let directory = path.parent().unwrap_or(Path::new("."));
+    let directory = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
     let mut temporary = tempfile::NamedTempFile::with_prefix_in(".replace-", directory)
         .map_err(|error| (ReplaceStep::Write, error))?;
     temporary
@@ -38,9 +37,14 @@ pub fn write_replacing(
 
 /// Sync `from`, rename it to `to`, sync the directory.
 pub fn place(from: &Path, to: &Path) -> io::Result<()> {
-    OpenOptions::new().write(true).open(from)?.sync_all()?;
+    File::open(from)?.sync_all()?;
     std::fs::rename(from, to)?;
-    File::open(to.parent().unwrap_or(Path::new(".")))?.sync_all()
+    File::open(
+        to.parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or(Path::new(".")),
+    )?
+    .sync_all()
 }
 
 #[cfg(test)]

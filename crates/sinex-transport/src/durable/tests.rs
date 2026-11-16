@@ -15,4 +15,10 @@ fn library_media_write_is_synced_before_rename() {
     assert_eq!(std::fs::read(&path).unwrap(), b"old media");
     write_replacing(&path, 0o600, |file| file.write_all(b"new media")).unwrap();
     assert_eq!(std::fs::read(&path).unwrap(), b"new media");
+    let staged = directory.path().join("recording");
+    std::fs::write(&staged, b"read only media").unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o400)).unwrap();
+    place(&staged, &path).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), b"read only media");
 }
