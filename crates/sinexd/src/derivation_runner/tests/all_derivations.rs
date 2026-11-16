@@ -295,6 +295,7 @@ fn world() -> Vec<Event> {
                 reason_end: None,
                 shuffle: None,
                 skipped: None,
+                skipped_inferred: false,
                 offline: None,
                 incognito_mode: None,
                 extra: Default::default(),

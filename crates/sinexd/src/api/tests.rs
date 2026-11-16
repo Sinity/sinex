@@ -211,6 +211,7 @@ async fn world_with_api(
         unlock: Default::default(),
         host: "h".into(),
         library_roots: Vec::new(),
+        library_cache: store.join("library-cache"),
     };
     configure(&mut api);
     let (commits, rx) = watch::channel(0u64);

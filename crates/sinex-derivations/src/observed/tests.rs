@@ -120,6 +120,7 @@ pub(crate) fn spotify(track: &str, artist: &str, from: f64, to: f64) -> Event {
             reason_end: None,
             shuffle: None,
             skipped: None,
+            skipped_inferred: (((to - from) * 1e3) as i64) < 30_000,
             offline: None,
             incognito_mode: None,
             extra: Default::default(),
