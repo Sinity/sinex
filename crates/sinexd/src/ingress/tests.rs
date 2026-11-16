@@ -757,13 +757,13 @@ async fn polylogue_session_reads_like_other_events(db: devkit::pg::TestDatabase)
 
     let mut conn = PgConnection::connect(&h.url).await.unwrap();
     let text = "events where event_type = polylogue.session AND payload.origin = claude-code";
-    let mut ctx = sinex_model::query::Context::new(
+    let mut ctx = sinex_query::Context::new(
         jiff::Timestamp::now(),
         jiff::tz::TimeZone::get("UTC").unwrap(),
         jiff::civil::Time::constant(4, 0, 0, 0),
     );
-    ctx.catalog = Some(sinex_model::query::QueryCatalog::new(declarations));
-    let bound = sinex_model::query::bind(text, &ctx).unwrap();
+    ctx.catalog = Some(sinex_query::QueryCatalog::new(declarations));
+    let bound = sinex_query::bind(text, &ctx).unwrap();
     let answer = sinex_store::query::run(
         &mut conn,
         text,
@@ -1564,12 +1564,12 @@ async fn a_refused_event_between_good_frames_is_queryable_and_requires_producer_
     );
     assert_eq!(h.stored(material).await, bytes.as_bytes());
     let mut conn = PgConnection::connect(&h.url).await.unwrap();
-    let context = sinex_model::query::Context::new(
+    let context = sinex_query::Context::new(
         jiff::Timestamp::now(),
         jiff::tz::TimeZone::get("UTC").unwrap(),
         jiff::civil::Time::constant(4, 0, 0, 0),
     );
-    let bound = sinex_model::query::bind("failures", &context).unwrap();
+    let bound = sinex_query::bind("failures", &context).unwrap();
     let answer = sinex_store::query::run(
         &mut conn,
         "failures",

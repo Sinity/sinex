@@ -1546,7 +1546,7 @@ async fn as_of_reads_match_the_live_set_at_each_position(db: devkit::pg::TestDat
         "commit positions are dense"
     );
 
-    let at = sinex_model::query::Context::utc("2023-11-15T00:00:00Z".parse().unwrap());
+    let at = sinex_query::Context::utc("2023-11-15T00:00:00Z".parse().unwrap());
     for (position, live) in (start..=end).zip(&expected) {
         let answer = crate::query::run(
             &mut conn,

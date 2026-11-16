@@ -64,6 +64,8 @@ source ──► stage ──► material (segment log) ──► parse ──�
 
 **Clients and producers.** `sinexctl` is the CLI and the MCP server, a client of the daemon with no store dependency; offline diagnostics invoke the sibling `sinexd admin diagnostics` command while the daemon is stopped. `sinex-session` captures the desktop session as the operator's user, and `sinex-capture` runs capture on a host or for a stream outside the daemon; both are outside producers with their own spools, built on the one producer client. `sinex-schema` creates and upgrades the schema. CLI, MCP and HTTP are generated from one operation table. See [interfaces.md](interfaces.md) and [producers.md](producers.md).
 
+**The query language, `sinex-query`,** parses, binds and completes queries against the model declarations. Stored query definitions remain in `sinex-model`; the store compiles bound queries to SQL.
+
 **Declarations.** Kinds (with field hints and search participation), sources, derivations, consumers and streams are each declared once in Rust; The NixOS module already uses the generated catalog.
 
 ## Durability order

@@ -1,7 +1,7 @@
 use super::*;
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
-use sinex_model::query::cursor::{OrderPosition, compare_positions};
+use sinex_query::cursor::{OrderPosition, compare_positions};
 use sqlx::Connection;
 
 #[derive(Serialize, Deserialize)]
@@ -99,7 +99,7 @@ impl Api {
         let mut rows = vec![];
         for declaration in declarations.values() {
             if fields {
-                for field in sinex_model::query::QueryCatalog::new([declaration.clone()])
+                for field in sinex_query::QueryCatalog::new([declaration.clone()])
                     .fields
                     .into_values()
                 {
@@ -146,7 +146,7 @@ impl Api {
             };
             if let Some(prior) = &prior
                 && !compare_positions(&here, &prior.after, &[])
-                    .map_err(sinex_model::query::QueryError::from)?
+                    .map_err(sinex_query::QueryError::from)?
                     .is_gt()
             {
                 continue;

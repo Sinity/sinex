@@ -1,10 +1,10 @@
 //! The SQL each field of each table lowers to, matched on the field
-//! identities `sinex_model::query::tables` declares.
+//! identities `sinex_query::tables` declares.
 //!
 //! Templates name the table's table alias `{t}` and, for the archive, the
 //! archive row `{a}`; the compiler substitutes a distinct alias per nesting
 //! level, so an inner query of a time join never shadows the outer one.
-use sinex_model::query::{
+use sinex_query::{
     ArchiveField, EventField, FailureField, FieldId, GapField, MaterialField, OperationField,
     RunField, SourceField, Table,
 };

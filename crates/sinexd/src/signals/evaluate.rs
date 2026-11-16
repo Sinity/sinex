@@ -206,7 +206,7 @@ pub(super) fn rule_reference(name: &str) -> String {
         &serde_json::json!({ "name": name }),
     )
     .expect("rule name is present");
-    sinex_model::query::citation(
+    sinex_query::citation(
         "key",
         &format!(
             "{}/{}/{}",

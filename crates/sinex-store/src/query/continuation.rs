@@ -22,13 +22,13 @@ pub fn identity(surface: &str, question: &Json, grants: &str) -> Result<Question
     Ok(QuestionId(*blake3::hash(&bytes).as_bytes()))
 }
 pub fn query_identity(text: &str, ctx: &Context) -> Result<Json> {
-    if sinex_model::query::template::is_command(text) {
-        return sinex_model::query::template::parse(text, ctx)?
+    if sinex_query::template::is_command(text) {
+        return sinex_query::template::parse(text, ctx)?
             .identity()
             .map_err(Error::Query);
     }
-    let catalog = sinex_model::query::syntax::catalog(ctx);
-    let parsed = sinex_model::query::syntax::parse(text, ctx)?;
+    let catalog = sinex_query::syntax::catalog(ctx);
+    let parsed = sinex_query::syntax::parse(text, ctx)?;
     query_language::identity::normal_form(&parsed, &catalog)
         .map_err(|e| Error::Invalid(e.to_string()))
 }

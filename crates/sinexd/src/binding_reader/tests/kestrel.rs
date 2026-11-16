@@ -1,5 +1,5 @@
 use super::*;
-use sinex_model::query::Context;
+use sinex_query::Context;
 use sinex_sources::sources::{activitywatch, atuin, goodreads, zsh};
 use sinex_store::query::{self, Answer, Page};
 use std::path::{Path, PathBuf};

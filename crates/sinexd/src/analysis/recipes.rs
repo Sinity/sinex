@@ -19,7 +19,7 @@ use sinex_analysis::methods::correlation::family;
 use sinex_analysis::methods::fdr::bh_qvalues;
 use sinex_analysis::methods::{self, MethodInput};
 use sinex_derivations::figures::{METRICS, Metric};
-use sinex_model::query::Context;
+use sinex_query::Context;
 use sqlx::PgConnection;
 
 /// A shipped recipe.

@@ -23,7 +23,7 @@ pub struct SelectedAnswer {
 pub(super) async fn capture(
     conn: &mut PgConnection,
     text: &str,
-    template: &sinex_model::query::template::Template,
+    template: &sinex_model::query_definition::Template,
     query: &Query,
     ctx: &Context,
     seq: i64,
@@ -128,10 +128,10 @@ pub async fn selected_page(
     ctx: &Context,
     page: &Page,
 ) -> Result<SelectedAnswer> {
-    let template = if sinex_model::query::saved::reference_name(text).is_some() {
+    let template = if sinex_query::saved::reference_name(text).is_some() {
         None
     } else {
-        Some(sinex_model::query::template::parse(text, ctx)?)
+        Some(sinex_query::template::parse(text, ctx)?)
     };
     let selected = run_inner(conn, text, None, ctx, page, true, false, template.as_ref()).await?;
     let signature = selected

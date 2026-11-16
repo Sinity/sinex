@@ -820,7 +820,7 @@ impl Compiler<'_> {
             return Err(invalid("overlaps requires event spans"));
         }
         let mut parts = Vec::new();
-        for a in sinex_model::query::ALIASES
+        for a in sinex_query::ALIASES
             .iter()
             .filter(|a| a.spans && alias.is_none_or(|selected| selected.name == a.name))
         {
@@ -991,7 +991,7 @@ impl Compiler<'_> {
         let mut end = SqlFragment::text("CASE ");
         let mut inclusive = SqlFragment::text("CASE ");
         let mut spans = vec![];
-        for alias in sinex_model::query::ALIASES.iter().filter(|a| a.spans) {
+        for alias in sinex_query::ALIASES.iter().filter(|a| a.spans) {
             let Some((s, e, inc)) = fields::span(*table, Some(alias.name)) else {
                 continue;
             };

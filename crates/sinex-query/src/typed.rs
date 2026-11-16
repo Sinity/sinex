@@ -215,7 +215,7 @@ fn pattern_kinds(pattern: &str, ctx: Option<&Context>) -> BTreeSet<String> {
             .iter()
             .map(|(kind, _)| kind.name.clone())
             .collect::<BTreeSet<_>>(),
-        None => crate::event_types::ALL
+        None => sinex_model::event_types::ALL
             .iter()
             .map(|kind| kind.event_type.to_owned())
             .collect(),
@@ -1449,7 +1449,7 @@ fn check_schema(
     // Its definition must be valid for at least one declared event type.
     if ctx.catalog.is_none() && select_query_parameter(&mut q.clone(), "") {
         let mut first_error = None;
-        for kind in crate::event_types::ALL {
+        for kind in sinex_model::event_types::ALL {
             let mut trial = q.clone();
             select_query_parameter(&mut trial, kind.event_type);
             match check_schema(&mut trial, ctx, extra) {

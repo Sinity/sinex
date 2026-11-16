@@ -2,190 +2,139 @@
 //! The authored text is kept as written; a template is the executable definition.
 use super::*;
 use query_language::ast as syntax;
-use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Template {
-    pub relation: syntax::Query,
-    pub operation: Option<Operation>,
+pub(crate) use sinex_model::query_definition::{Direction, Operation, Subject, Template};
+
+pub fn bind(template: &Template, ctx: &Context) -> Result<Query, QueryError> {
+    bind_mode(template, ctx, false)
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum Operation {
-    Recall {
-        subject: Subject,
-    },
-    Walk {
-        direction: Direction,
-        reference: String,
-    },
+pub fn validate(template: &Template, ctx: &Context) -> Result<Query, QueryError> {
+    bind_mode(template, ctx, true)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Direction {
-    Trace,
-    Parents,
-    Descendants,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum Subject {
-    Time {
-        value: Option<syntax::Value>,
-        radius: Option<syntax::Value>,
-    },
-    Last {
-        selector: Box<syntax::Query>,
-    },
-    Mark {
-        number: syntax::Value,
-        radius: Option<syntax::Value>,
-    },
-}
-
-impl Template {
-    pub fn query(relation: syntax::Query) -> Self {
-        Self {
-            relation,
-            operation: None,
+fn bind_mode(template: &Template, ctx: &Context, validating: bool) -> Result<Query, QueryError> {
+    let bind = |relation| {
+        if validating {
+            super::parse::validate_syntax(relation, ctx)
+        } else {
+            super::parse::bind_syntax(relation, ctx)
         }
-    }
-
-    pub fn bind(&self, ctx: &Context) -> Result<Query, QueryError> {
-        self.bind_mode(ctx, false)
-    }
-
-    pub fn validate(&self, ctx: &Context) -> Result<Query, QueryError> {
-        self.bind_mode(ctx, true)
-    }
-
-    fn bind_mode(&self, ctx: &Context, validating: bool) -> Result<Query, QueryError> {
-        let bind = |relation| {
-            if validating {
-                super::parse::validate_syntax(relation, ctx)
+    };
+    let source = match &template.operation {
+        None => return bind(template.relation.clone()),
+        Some(Operation::Walk {
+            direction,
+            reference,
+        }) => {
+            if !template.relation.transforms.is_empty()
+                || !template.relation.attach.is_empty()
+                || !matches!(&template.relation.source, syntax::Source::Unit { unit, condition: None, .. } if unit == "events")
+            {
+                return Err(QueryError::new(
+                    "provenance walks do not support query transforms",
+                ));
+            }
+            Source::Walk {
+                walk: match direction {
+                    Direction::Trace => Walk::Trace,
+                    Direction::Parents => Walk::Parents,
+                    Direction::Descendants => Walk::Descendants,
+                },
+                reference: parse_reference(reference)?,
+            }
+        }
+        Some(Operation::Recall {
+            subject: Subject::Last { selector },
+        }) => {
+            let selector = bind((**selector).clone())?;
+            if selector.source.alias().map(|alias| alias.name) != Some("shell-sessions")
+                || !selector.stages.is_empty()
+            {
+                return Err(QueryError::new(
+                    "last selects a shell-sessions relation without transforms",
+                ));
+            }
+            Source::RecallLast {
+                filter: selector.filter,
+            }
+        }
+        Some(Operation::Recall {
+            subject: Subject::Mark { number, radius },
+        }) => {
+            let number = scalar(number)?
+                .parse::<u64>()
+                .map_err(|_| QueryError::new("mark number must be a positive integer"))?;
+            if number == 0 {
+                return Err(QueryError::new("mark number starts at one"));
+            }
+            Source::RecallMark {
+                number,
+                window: seconds(radius.as_ref())?,
+            }
+        }
+        Some(Operation::Recall {
+            subject: Subject::Time { value, radius },
+        }) => {
+            let (from, to) = if let Some(value) = value
+                && scalar(value)?.starts_with("sinex:window/")
+            {
+                match parse_reference(scalar(value)?)? {
+                    Reference::Window { from, to } => (from, to),
+                    _ => unreachable!(),
+                }
             } else {
-                super::parse::bind_syntax(relation, ctx)
-            }
-        };
-        let source = match &self.operation {
-            None => return bind(self.relation.clone()),
-            Some(Operation::Walk {
-                direction,
-                reference,
-            }) => {
-                if !self.relation.transforms.is_empty()
-                    || !self.relation.attach.is_empty()
-                    || !matches!(&self.relation.source, syntax::Source::Unit { unit, condition: None, .. } if unit == "events")
+                let resolved = value
+                    .as_ref()
+                    .map(|value| {
+                        query_language::time::resolve(scalar(value)?, &ctx.clock()?)
+                            .map_err(QueryError::from)
+                    })
+                    .transpose()?;
+                if radius.is_none()
+                    && let Some(range) = resolved.as_ref().and_then(|value| value.value.range())
                 {
-                    return Err(QueryError::new(
-                        "provenance walks do not support query transforms",
-                    ));
-                }
-                Source::Walk {
-                    walk: match direction {
-                        Direction::Trace => Walk::Trace,
-                        Direction::Parents => Walk::Parents,
-                        Direction::Descendants => Walk::Descendants,
-                    },
-                    reference: parse_reference(reference)?,
-                }
-            }
-            Some(Operation::Recall {
-                subject: Subject::Last { selector },
-            }) => {
-                let selector = bind((**selector).clone())?;
-                if selector.source.alias().map(|alias| alias.name) != Some("shell-sessions")
-                    || !selector.stages.is_empty()
-                {
-                    return Err(QueryError::new(
-                        "last selects a shell-sessions relation without transforms",
-                    ));
-                }
-                Source::RecallLast {
-                    filter: selector.filter,
-                }
-            }
-            Some(Operation::Recall {
-                subject: Subject::Mark { number, radius },
-            }) => {
-                let number = scalar(number)?
-                    .parse::<u64>()
-                    .map_err(|_| QueryError::new("mark number must be a positive integer"))?;
-                if number == 0 {
-                    return Err(QueryError::new("mark number starts at one"));
-                }
-                Source::RecallMark {
-                    number,
-                    window: seconds(radius.as_ref())?,
-                }
-            }
-            Some(Operation::Recall {
-                subject: Subject::Time { value, radius },
-            }) => {
-                let (from, to) = if let Some(value) = value
-                    && scalar(value)?.starts_with("sinex:window/")
-                {
-                    match parse_reference(scalar(value)?)? {
-                        Reference::Window { from, to } => (from, to),
-                        _ => unreachable!(),
-                    }
+                    (range.start, range.end)
                 } else {
-                    let resolved = value
-                        .as_ref()
-                        .map(|value| {
-                            query_language::time::resolve(scalar(value)?, &ctx.clock()?)
-                                .map_err(QueryError::from)
-                        })
-                        .transpose()?;
-                    if radius.is_none()
-                        && let Some(range) = resolved.as_ref().and_then(|value| value.value.range())
-                    {
-                        (range.start, range.end)
-                    } else {
-                        let centre = resolved.map_or(ctx.now, |value| value.value.start());
-                        let radius = jiff::SignedDuration::from_secs_f64(seconds(radius.as_ref())?);
-                        (
-                            centre
-                                .checked_sub(radius)
-                                .map_err(|e| QueryError::new(e.to_string()))?,
-                            centre
-                                .checked_add(radius)
-                                .map_err(|e| QueryError::new(e.to_string()))?,
-                        )
-                    }
-                };
-                Source::Recall { from, to }
-            }
-        };
-        super::parse::bind_template(self.relation.clone(), ctx, source, validating)
-    }
-
-    /// Spans locate authored text, and do not identify a question.
-    pub fn identity(&self) -> Result<serde_json::Value, QueryError> {
-        let mut value = serde_json::to_value(self).map_err(|e| QueryError::new(e.to_string()))?;
-        fn strip(value: &mut serde_json::Value) {
-            match value {
-                serde_json::Value::Object(fields) => {
-                    fields.remove("span");
-                    for value in fields.values_mut() {
-                        strip(value);
-                    }
+                    let centre = resolved.map_or(ctx.now, |value| value.value.start());
+                    let radius = jiff::SignedDuration::from_secs_f64(seconds(radius.as_ref())?);
+                    (
+                        centre
+                            .checked_sub(radius)
+                            .map_err(|e| QueryError::new(e.to_string()))?,
+                        centre
+                            .checked_add(radius)
+                            .map_err(|e| QueryError::new(e.to_string()))?,
+                    )
                 }
-                serde_json::Value::Array(values) => {
-                    for value in values {
-                        strip(value);
-                    }
-                }
-                _ => {}
-            }
+            };
+            Source::Recall { from, to }
         }
-        strip(&mut value);
-        Ok(value)
+    };
+    super::parse::bind_template(template.relation.clone(), ctx, source, validating)
+}
+
+/// Spans locate authored text, and do not identify a question.
+pub fn identity(template: &Template) -> Result<serde_json::Value, QueryError> {
+    let mut value = serde_json::to_value(template).map_err(|e| QueryError::new(e.to_string()))?;
+    fn strip(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Object(fields) => {
+                fields.remove("span");
+                for value in fields.values_mut() {
+                    strip(value);
+                }
+            }
+            serde_json::Value::Array(values) => {
+                for value in values {
+                    strip(value);
+                }
+            }
+            _ => {}
+        }
     }
+    strip(&mut value);
+    Ok(value)
 }
 
 fn scalar(value: &syntax::Value) -> Result<&str, QueryError> {

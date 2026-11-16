@@ -77,7 +77,7 @@ pub fn payload_bytes(payload: &serde_json::Value) -> i64 {
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
-    Query(#[from] sinex_model::query::QueryError),
+    Query(#[from] sinex_query::QueryError),
     #[error(transparent)]
     Schema(#[from] sinex_schema::Error),
     #[error(transparent)]

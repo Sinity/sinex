@@ -11,7 +11,7 @@ use sinex_analysis::methods::correlation::family;
 use sinex_analysis::panel::PanelCell;
 use sinex_analysis::presentation::{self, Context as Presented, Presentation, Section};
 use sinex_derivations::figures::{METRICS, Metric};
-use sinex_model::query::Context;
+use sinex_query::Context;
 use sqlx::PgConnection;
 
 /// Days before the brief's day the departures and associations look back.

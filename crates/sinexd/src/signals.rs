@@ -37,7 +37,7 @@ fn timestamp(at: i64) -> Result<Timestamp> {
 pub(crate) async fn query(
     conn: &mut sqlx::PgConnection,
     text: &str,
-    ctx: &sinex_model::query::Context,
+    ctx: &sinex_query::Context,
     seq: i64,
 ) -> Result<sinex_store::query::signals::SignalAnswer> {
     sinex_store::query::signals::standing_query(

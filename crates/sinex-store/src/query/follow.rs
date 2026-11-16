@@ -1,6 +1,6 @@
 //! Follow reads advance only through materialized, bounded commit ranges.
 use super::*;
-use sinex_model::query::{Op, SortBy, SortKey};
+use sinex_query::{Op, SortBy, SortKey};
 
 /// Safe upper position for event subscriptions. Requiring the search read model
 /// for every event query also covers text fields selected or used by joins.
@@ -24,12 +24,12 @@ pub fn follow_query(query: &Query, after: i64, through: i64) -> Query {
         Box::new(Expr::Compare {
             lhs: Operand::Field(field()),
             op: Op::Gt,
-            rhs: sinex_model::query::Value::Integer(after),
+            rhs: sinex_query::Value::Integer(after),
         }),
         Box::new(Expr::Compare {
             lhs: Operand::Field(field()),
             op: Op::Le,
-            rhs: sinex_model::query::Value::Integer(through),
+            rhs: sinex_query::Value::Integer(through),
         }),
     );
     let mut query = query.clone();

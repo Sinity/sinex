@@ -291,7 +291,7 @@ fn effective_time_settings(
     zone: Option<&str>,
     day_start: &str,
 ) -> Result<sinex_model::time_settings::TimeSettings> {
-    let start = sinex_model::query::time::clock(day_start).ok_or_else(|| {
+    let start = sinex_query::time::clock(day_start).ok_or_else(|| {
         Error::bad_request(format!("day start `{day_start}` is not a clock time"))
     })?;
     let day = match zone {

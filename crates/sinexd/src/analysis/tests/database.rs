@@ -7,11 +7,11 @@ use crate::dirty_keys::Registered as Keys;
 use crate::writer::{self, Priority};
 use sinex_analysis::{Cell, Eligibility};
 use sinex_model::event_types::code::GitCommit;
-use sinex_model::query::Context;
 use sinex_model::{
     Batch, BatchKind, Class, Event, MaterialId, Origin, ReadingOrder, RecordLocation,
     RecordOutcome, RunId,
 };
+use sinex_query::Context;
 use sqlx::Connection;
 use sqlx::PgConnection;
 use std::sync::Arc;

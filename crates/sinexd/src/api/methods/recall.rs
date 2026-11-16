@@ -134,7 +134,8 @@ async fn reads_history(conn: &mut sqlx::PgConnection, text: &str, ctx: &Context)
         let definitions = queries::definitions(conn, &name).await?;
         query::saved::bind_saved(text, ctx, &definitions)?
     } else {
-        query::template::parse(text, ctx).and_then(|operation| operation.bind(ctx))?
+        query::template::parse(text, ctx)
+            .and_then(|operation| query::template::bind(&operation, ctx))?
     };
     Ok(bound
         .stages

@@ -58,12 +58,14 @@ fn allowed(name: &str) -> Result<&'static [&'static str], String> {
     match name {
         "sinex-macros" | "xtask" => Ok(&[]),
         "sinex-model" => Ok(&["sinex-macros"]),
+        "sinex-query" => Ok(&["sinex-model"]),
         "sinex-protocol" | "sinex-schema" | "sinex-derivations" => Ok(&["sinex-model"]),
         // Statistics over derived events read the metric declarations.
         "sinex-analysis" => Ok(&["sinex-model", "sinex-derivations"]),
         "sinex-transport" => Ok(&["sinex-model", "sinex-protocol"]),
         // Source capture uses transport helpers; shared drivers own producer frames.
         "sinex-sources" => Ok(&[
+            "sinex-query",
             "sinex-model",
             "sinex-protocol",
             "sinex-transport",
@@ -71,9 +73,15 @@ fn allowed(name: &str) -> Result<&'static [&'static str], String> {
         ]),
         "sinex-source-core" => Ok(&["sinex-model", "sinex-protocol", "sinex-transport"]),
         "sinex-sealing" => Ok(&["sinex-model"]),
-        "sinex-store" => Ok(&["sinex-model", "sinex-schema", "sinex-sealing"]),
+        "sinex-store" => Ok(&[
+            "sinex-query",
+            "sinex-model",
+            "sinex-schema",
+            "sinex-sealing",
+        ]),
         "sinex-library" => Ok(&["sinex-model", "sinex-store"]),
         "sinexd" => Ok(&[
+            "sinex-query",
             "sinex-model",
             "sinex-protocol",
             "sinex-transport",
@@ -101,7 +109,12 @@ fn allowed(name: &str) -> Result<&'static [&'static str], String> {
         ]),
         "sinexctl" => Ok(&["sinex-model", "sinex-protocol", "sinex-transport"]),
         // Fuzz properties drive the real serialization boundaries.
-        "sinex-fuzz" => Ok(&["sinex-model", "sinex-protocol", "sinex-store"]),
+        "sinex-fuzz" => Ok(&[
+            "sinex-query",
+            "sinex-model",
+            "sinex-protocol",
+            "sinex-store",
+        ]),
         _ => Err(format!("unassigned workspace package: {name}")),
     }
 }
@@ -113,6 +126,7 @@ enum RuntimeRule {
 }
 const RUNTIME_RULES: &[(&str, RuntimeRule)] = &[
     ("sinex-model", RuntimeRule::NoIo),
+    ("sinex-query", RuntimeRule::NoIo),
     ("sinex-protocol", RuntimeRule::NoIo),
     ("sinex-derivations", RuntimeRule::NoIo),
     ("sinex-analysis", RuntimeRule::NoIo),

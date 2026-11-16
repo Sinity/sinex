@@ -15,13 +15,13 @@ fn q(text: &str) -> Query {
 
 fn parse_query(text: &str) -> Query {
     template::parse(text, &ctx())
-        .and_then(|template| template.bind(&ctx()))
+        .and_then(|template| crate::template::bind(&template, &ctx()))
         .unwrap_or_else(|e| panic!("{text}: {e}"))
 }
 
 fn template_err(text: &str) -> QueryError {
     template::parse(text, &ctx())
-        .and_then(|template| template.bind(&ctx()))
+        .and_then(|template| crate::template::bind(&template, &ctx()))
         .expect_err(text)
 }
 
@@ -211,7 +211,7 @@ fn closed_sets_refuse_outside_values_naming_where_they_belong() {
 
 #[devkit::test]
 fn every_written_archive_reason_can_be_asked_for() {
-    for reason in <crate::ArchiveReason as crate::DbCheck>::VALUES {
+    for reason in <sinex_model::ArchiveReason as sinex_model::DbCheck>::VALUES {
         q(&format!("archive where reason = {reason}"));
     }
     err("archive where reason = unknown_reason");
@@ -579,7 +579,7 @@ fn every_alias_reads_registered_event_types() {
     for alias in ALIASES {
         for kind in alias.kinds {
             assert!(
-                crate::event_types::find(kind).is_some(),
+                sinex_model::event_types::find(kind).is_some(),
                 "{} reads {kind}, which no type declares",
                 alias.name
             );

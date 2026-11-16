@@ -3,7 +3,8 @@ use super::*;
 use crate::{Error, Result};
 use sinex_model::Timestamp;
 use sinex_model::event_types::query::{Mark, QueryRecord, Saved};
-use sinex_model::query::saved::{SavedQuery, parameter};
+use sinex_model::query_definition::SavedQuery;
+use sinex_query::saved::parameter;
 use std::collections::BTreeMap;
 
 pub(super) async fn list(conn: &mut sqlx::PgConnection) -> Result<Vec<Saved>> {
@@ -71,8 +72,7 @@ impl Api {
                 };
                 definitions.insert(name.clone(), definition.clone());
                 definitions.insert(format!("{name}@{}", caller.actor), definition.clone());
-                definition
-                    .validate_with(&self.context(), &definitions)
+                query::saved::validate_with(&definition, &self.context(), &definitions)
                     .map_err(|error| error.failure(&query))?;
                 QueryRecord::Saved(Saved {
                     template: definition.template,

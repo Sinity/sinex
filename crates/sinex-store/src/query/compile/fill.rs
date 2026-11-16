@@ -1,6 +1,6 @@
 //! Fill the requested calendar buckets in SQL, before later filters and paging.
 use super::*;
-use sinex_model::query::{Fill, Group};
+use sinex_query::{Fill, Group};
 
 impl Compiler<'_> {
     pub(super) fn fill(

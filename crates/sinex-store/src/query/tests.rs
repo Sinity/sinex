@@ -5,11 +5,11 @@ use crate::NoDerivations;
 use crate::read_models::tests::catch_up_search_text;
 use serde_json::json;
 use sinex_model::event_types::{CommandExecuted, CommandFused};
-use sinex_model::query::{Context, bind};
 use sinex_model::{
     Batch, BatchKind, Class, Event, EventId, MaterialId, OperationId, Origin, ReadingOrder,
     RecordLocation, RecordOutcome, RunId, Timestamp,
 };
+use sinex_query::{Context, bind};
 use sqlx::Connection;
 use uuid::Uuid;
 
@@ -139,8 +139,8 @@ async fn ask(conn: &mut PgConnection, text: &str) -> Answer {
 
 async fn ask_page(conn: &mut PgConnection, text: &str, page: Page) -> Answer {
     let ctx = ctx();
-    let result = if sinex_model::query::template::is_command(text) {
-        let operation = sinex_model::query::template::parse(text, &ctx).unwrap();
+    let result = if sinex_query::template::is_command(text) {
+        let operation = sinex_query::template::parse(text, &ctx).unwrap();
         run_operation(conn, text, &operation, &ctx, &page).await
     } else {
         run(conn, text, None, &ctx, &page).await
@@ -558,7 +558,7 @@ async fn walks_follow_provenance(db: devkit::pg::TestDatabase) {
     assert_eq!(column(&a, "id"), [json!(observed.to_string())]);
     let a = ask(&mut conn, &format!("descendants {observed}")).await;
     assert_eq!(column(&a, "id"), [json!(fused.to_string())]);
-    let shown = show(&mut conn, &sinex_model::query::Reference::Event(fused))
+    let shown = show(&mut conn, &sinex_query::Reference::Event(fused))
         .await
         .unwrap();
     assert_eq!(shown["state"], json!("live"));

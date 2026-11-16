@@ -144,12 +144,12 @@ impl World {
 
 /// How many rows a query answers.
 async fn rows(conn: &mut PgConnection, text: &str) -> usize {
-    let ctx = sinex_model::query::Context::new(
+    let ctx = sinex_query::Context::new(
         jiff::Timestamp::now(),
         jiff::tz::TimeZone::UTC,
         jiff::civil::Time::constant(4, 0, 0, 0),
     );
-    let bound = sinex_model::query::bind(text, &ctx).unwrap_or_else(|e| panic!("{text}: {e:?}"));
+    let bound = sinex_query::bind(text, &ctx).unwrap_or_else(|e| panic!("{text}: {e:?}"));
     let page = sinex_store::query::Page {
         size: Some(100),
         cursor: None,

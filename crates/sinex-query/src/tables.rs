@@ -3,7 +3,7 @@
 //! cannot disagree. The SQL each field lowers to lives in `sinex-store::query`,
 //! matched exhaustively on its [`FieldId`], so a field without SQL fails the
 //! build.
-use crate::{ArchiveReason, Class, DbCheck, RecordState, TimeQuality};
+use sinex_model::{ArchiveReason, Class, DbCheck, RecordState, TimeQuality};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FieldType {
@@ -93,7 +93,7 @@ macro_rules! event_fields {
             Id = ("id", FieldType::Id, "event ID"),
             EventType = ("event_type", FieldType::Text, "event type"),
             KindVersion = ("kind_version", FieldType::Integer, "kind version"),
-            Validation = ("validation", FieldType::Enum(crate::Validation::VALUES), "validation"),
+            Validation = ("validation", FieldType::Enum(sinex_model::Validation::VALUES), "validation"),
             Source = ("source", FieldType::Text, "source"),
             Host = ("host", FieldType::Text, "host"),
             When = ("when", FieldType::Time, "time it happened"),
@@ -174,7 +174,7 @@ table!(SOURCES, SourceField, Source, [] {
     Version = ("version", FieldType::Integer, "version"),
     EventTypes = ("event_types", FieldType::Text, "event types"),
     Purpose = ("purpose", FieldType::Text, "purpose"),
-    Expectation = ("expectation", FieldType::Enum(crate::source::Expectation::NAMES), "when it should have something"),
+    Expectation = ("expectation", FieldType::Enum(sinex_model::source::Expectation::NAMES), "when it should have something"),
     SilentAfter = ("silent_after", FieldType::Integer, "seconds without a record after which a continuous source is suspicious"),
     Every = ("every", FieldType::Integer, "seconds without a read after which a scheduled source is suspicious"),
     ExpiresAfter = ("expires_after", FieldType::Integer, "seconds the provider keeps its own records"),
@@ -696,38 +696,3 @@ pub const COMMAND_WORDS: &[&str] = &[
     "walk",
     "duplicates",
 ];
-
-/// Every word that names a table, alias or command, for typo suggestions.
-pub fn table_like_words() -> impl Iterator<Item = &'static str> {
-    Table::ALL
-        .iter()
-        .map(|u| u.name())
-        .chain(ALIASES.iter().map(|a| a.name))
-        .chain(COMMAND_WORDS.iter().copied())
-}
-
-/// Every table whose closed-set field accepts `value`, as `table.field`, so a
-/// refusal can say where the value belongs.
-pub fn tables_accepting(value: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    for table in Table::ALL {
-        for field in table.fields() {
-            if let FieldType::Enum(values) = field.ty
-                && values.contains(&value)
-            {
-                out.push(format!("{}.{}", table.name(), field.name));
-            }
-        }
-    }
-    for alias in ALIASES {
-        for field in alias.fields {
-            if let FieldType::Enum(values) = field.ty
-                && values.contains(&value)
-            {
-                out.push(format!("{}.{}", alias.name, field.name));
-            }
-        }
-    }
-    out.dedup();
-    out
-}

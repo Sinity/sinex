@@ -125,7 +125,7 @@ async fn one_record_keeps_more_than_65535_outputs_and_their_citations(
     );
     for ordinal in [0, 32_767, 32_768, 65_535, 65_536, count - 1] {
         let text = format!("sinex:record/{}/0/command.imported/{ordinal}", material.0);
-        let reference = sinex_model::query::parse_reference(&text).unwrap();
+        let reference = sinex_query::parse_reference(&text).unwrap();
         let id = sinex_store::query::resolve(&mut conn, &reference)
             .await
             .unwrap();

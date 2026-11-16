@@ -9,9 +9,9 @@ use serde_json::Value;
 pub struct QuerySelection {
     pub query: String,
     /// Executable definition; authored query text remains unchanged evidence.
-    pub template: crate::query::template::Template,
+    pub template: crate::query_definition::Template,
     /// The saved definitions the question used, as they were when it was asked.
-    pub definitions: std::collections::BTreeMap<String, crate::query::saved::SavedQuery>,
+    pub definitions: std::collections::BTreeMap<String, crate::query_definition::SavedQuery>,
     pub now: Timestamp,
     /// Only an explicitly historical question fixes the producer position.
     pub read_as: Option<i64>,

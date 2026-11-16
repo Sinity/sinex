@@ -6,9 +6,9 @@ use crate::{Error, Result};
 use serde_json::{Value, json};
 use sinex_model::event_types::telemetry::SinexTelemetry;
 use sinex_model::lifecycle::Act;
-use sinex_model::query::{self, Context, QueryError, Source};
 use sinex_model::{EventId, EventPayload, OperationId, RunId};
 use sinex_protocol::{Access, DATA_NOTICE, Reply, Request};
+use sinex_query::{self as query, Context, QueryError, Source};
 use sinex_store::query::{Answer, Page};
 use sqlx::PgPool;
 

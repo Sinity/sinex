@@ -9,7 +9,7 @@ use sinex_analysis::methods::Point;
 use sinex_analysis::panel::{PanelCell, Unit};
 use sinex_analysis::{Cell, Span};
 use sinex_derivations::figures::Metric;
-use sinex_model::query::Context;
+use sinex_query::Context;
 use sqlx::PgConnection;
 
 /// Coverage reads use the admitted source observations that can parent products.

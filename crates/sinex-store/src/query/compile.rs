@@ -6,8 +6,8 @@
 use super::fields;
 use super::sql::{Param, SqlFragment};
 use crate::{Error, Result};
-use sinex_model::query::text::{like_escape, regex_escape};
-use sinex_model::query::{
+use sinex_query::text::{like_escape, regex_escape};
+use sinex_query::{
     AggFn, Alias, BuiltInField, Context, Expr, FieldRef, FieldType, Join, JoinKind, JoinOn, Op,
     Operand, OrderingOp, Query, SortBy, Source, Stage, Table, TimeFn, TimePoint, Value, Words,
 };
@@ -552,7 +552,7 @@ impl<'c> Compiler<'c> {
         }
         let mut group_order = Vec::new();
         let mut is_grouped = false;
-        let mut sort: Option<Vec<sinex_model::query::SortKey>> = None;
+        let mut sort: Option<Vec<sinex_query::SortKey>> = None;
         let mut limit: Option<u64> = None;
         let mut internal: Vec<String> = vec![
             "_withheld".into(),
@@ -1086,7 +1086,7 @@ impl<'c> Compiler<'c> {
         rel: SqlFragment,
         r: &str,
         cols: &Cols,
-        sort: Option<Vec<sinex_model::query::SortKey>>,
+        sort: Option<Vec<sinex_query::SortKey>>,
         limit: Option<u64>,
         grouped: bool,
         ranked: bool,
@@ -1110,7 +1110,7 @@ impl<'c> Compiler<'c> {
     fn order(
         &self,
         cols: &Cols,
-        sort: Option<&[sinex_model::query::SortKey]>,
+        sort: Option<&[sinex_query::SortKey]>,
         grouped: bool,
         ranked: bool,
         group_columns: &[String],
@@ -1134,7 +1134,7 @@ impl<'c> Compiler<'c> {
     fn order_terms(
         &self,
         cols: &Cols,
-        sort: Option<&[sinex_model::query::SortKey]>,
+        sort: Option<&[sinex_query::SortKey]>,
         grouped: bool,
         ranked: bool,
         group_columns: &[String],

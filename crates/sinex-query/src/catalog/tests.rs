@@ -1,5 +1,5 @@
 use super::*;
-use crate::query::{Expr, FieldRef, FieldType, Operand, Stage, Value};
+use crate::{Expr, FieldRef, FieldType, Operand, Stage, Value};
 use serde_json::json;
 
 fn declaration(schema: Json) -> KindDeclaration {
@@ -129,7 +129,7 @@ fn each_query_and_join_binds_to_its_selected_saved_kinds() {
     number.kind.name = "example.number".into();
     let mut ctx = Context::utc("2026-10-27T15:00:00Z".parse().unwrap());
     ctx.catalog = Some(QueryCatalog::new([text, number]));
-    let query = crate::query::bind("events where event_type = example.text AND payload.value = 7 | join near (events where event_type = example.number AND payload.value = 7 | fields payload.value) within 5m | fields payload.value", &ctx).unwrap();
+    let query = crate::bind("events where event_type = example.text AND payload.value = 7 | join near (events where event_type = example.number AND payload.value = 7 | fields payload.value) within 5m | fields payload.value", &ctx).unwrap();
     assert!(query.stages.iter().any(|stage| matches!(stage, Stage::Fields(fields) if matches!(&fields[0], Operand::Field(FieldRef::TypedPayload { ty: FieldType::Text, .. })))));
     let inner = query
         .stages
@@ -144,7 +144,7 @@ fn each_query_and_join_binds_to_its_selected_saved_kinds() {
         .unwrap();
     assert!(inner.stages.iter().any(|stage| matches!(stage, Stage::Fields(fields) if matches!(&fields[0], Operand::Field(FieldRef::TypedPayload { ty: FieldType::Integer, .. })))));
     assert!(
-        crate::query::bind(
+        crate::bind(
             "events where event_type = example.number AND payload.value = wrong",
             &ctx
         )
@@ -157,7 +157,7 @@ fn schema_binding_rechecks_programmatic_payload_fields() {
     let first = declaration(json!({"type":"object","properties":{"value":{"type":"string"}}}));
     let mut ctx = Context::utc("2026-10-27T15:00:00Z".parse().unwrap());
     ctx.catalog = Some(QueryCatalog::new([first]));
-    let mut query = crate::query::bind(
+    let mut query = crate::bind(
         "events where event_type = example.reading | fields payload.value",
         &ctx,
     )
@@ -184,7 +184,7 @@ fn integer_and_number_unions_keep_numeric_fields_and_array_items() {
     let mut ctx = Context::utc("2026-10-27T15:00:00Z".parse().unwrap());
     ctx.catalog = Some(catalog);
     assert!(
-        crate::query::bind(
+        crate::bind(
             "events where event_type = example.reading sum(payload.value)",
             &ctx
         )

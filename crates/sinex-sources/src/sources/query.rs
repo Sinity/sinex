@@ -81,13 +81,14 @@ impl Parser for RequestParser {
                 x.written_at = at;
                 // Authoring resolves other saved questions. Replay checks the
                 // stored declarations independently of today's definitions.
-                sinex_model::query::saved::SavedQuery {
-                    name: x.name.clone(),
-                    query: x.query.clone(),
-                    template: x.template.clone(),
-                    parameters: x.parameters.clone(),
-                }
-                .validate_parameters()
+                sinex_query::saved::validate_parameters(
+                    &sinex_model::query_definition::SavedQuery {
+                        name: x.name.clone(),
+                        query: x.query.clone(),
+                        template: x.template.clone(),
+                        parameters: x.parameters.clone(),
+                    },
+                )
                 .map_err(|e| RecordError::new(e.to_string()))?;
                 QueryRecord::Saved(x)
             }

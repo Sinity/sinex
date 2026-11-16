@@ -2,7 +2,7 @@
 //! are fixed queries, checked at compile time.
 use crate::{Error, Result};
 use serde_json::{Value as Json, json};
-use sinex_model::query::{Reference, Stage, Walk};
+use sinex_query::{Reference, Stage, Walk};
 use sqlx::PgConnection;
 use std::collections::{BTreeMap, btree_map::Entry};
 use uuid::Uuid;
@@ -251,7 +251,7 @@ async fn lineage(
 
 /// What each source recorded in a recall window, and which sources had no
 /// data there: "no data", never "nothing happened".
-pub(super) fn recall_rows(rows: &sinex_model::query::Query) -> sinex_model::query::Query {
+pub(super) fn recall_rows(rows: &sinex_query::Query) -> sinex_query::Query {
     let mut selector = rows.clone();
     selector.stages = rows
         .stages
@@ -269,10 +269,10 @@ pub(crate) async fn recall_summary(
     to: jiff::Timestamp,
     seq: i64,
     inclusive_end: bool,
-    rows: &sinex_model::query::Query,
-    ctx: &sinex_model::query::Context,
+    rows: &sinex_query::Query,
+    ctx: &sinex_query::Context,
 ) -> Result<Json> {
-    use sinex_model::query::{AggFn, Aggregate, FieldRef, Group, Operand, Table};
+    use sinex_query::{AggFn, Aggregate, FieldRef, Group, Operand, Table};
     let field = |name| FieldRef::Field(Table::Events.field(name).expect("event field declared"));
     let selector = recall_rows(rows);
     let mut summary = selector.clone();
@@ -368,13 +368,12 @@ async fn resolve_at(
     at: jiff::Timestamp,
     event_type: &str,
 ) -> Result<Uuid> {
-    let alias = sinex_model::query::ALIASES
+    let alias = sinex_query::ALIASES
         .iter()
         .find(|a| a.spans && a.kinds.contains(&event_type))
         .ok_or_else(|| Error::Invalid(format!("{event_type} has no declared query span")))?;
-    let (start, end, inclusive) =
-        super::fields::span(sinex_model::query::Table::Events, Some(alias.name))
-            .ok_or_else(|| Error::Invalid("event type has no query span".into()))?;
+    let (start, end, inclusive) = super::fields::span(sinex_query::Table::Events, Some(alias.name))
+        .ok_or_else(|| Error::Invalid("event type has no query span".into()))?;
     let (start, end) = (start.replace("{t}", "e"), end.replace("{t}", "e"));
     let at = time::OffsetDateTime::from_unix_timestamp_nanos(at.as_nanosecond())
         .map_err(|e| Error::Invalid(e.to_string()))?;

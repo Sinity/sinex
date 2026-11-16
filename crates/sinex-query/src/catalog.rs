@@ -1,8 +1,8 @@
 //! Owned field descriptions from one immutable declaration snapshot.
 use super::{Context, Query, QueryError};
-use crate::{KindDeclaration, KindRef};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
+use sinex_model::{KindDeclaration, KindRef};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -44,7 +44,7 @@ impl QueryCatalog {
     /// descriptions and definition hashes are computed once for all queries.
     pub(super) fn bundled() -> &'static Self {
         static CATALOG: std::sync::OnceLock<QueryCatalog> = std::sync::OnceLock::new();
-        CATALOG.get_or_init(|| Self::new(crate::event_types::declarations().iter().cloned()))
+        CATALOG.get_or_init(|| Self::new(sinex_model::event_types::declarations().iter().cloned()))
     }
 
     pub fn new(declarations: impl IntoIterator<Item = KindDeclaration>) -> Self {

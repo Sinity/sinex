@@ -24,7 +24,7 @@ async fn output_beyond_sql_range_is_refused_before_any_event_is_written(
         .await
         .unwrap();
     assert_eq!(count, 0);
-    let invalid = sinex_model::query::Reference::Record {
+    let invalid = sinex_query::Reference::Record {
         material: uuid::Uuid::nil(),
         offset: 0,
         event_type: None,
@@ -147,7 +147,7 @@ async fn largest_stored_output_round_trips_through_live_lookup_and_show(
         crate::live::at(&mut conn, location, output).await.unwrap(),
         Some(id)
     );
-    let reference = sinex_model::query::Reference::Record {
+    let reference = sinex_query::Reference::Record {
         material: location.material.0,
         offset: 1,
         event_type: Some("command.imported".into()),

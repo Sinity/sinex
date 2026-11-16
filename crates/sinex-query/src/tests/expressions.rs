@@ -119,9 +119,9 @@ fn year_is_integer_and_commands_need_an_operation() {
 
 #[devkit::test]
 fn saved_text_does_not_replace_its_template() {
-    use crate::query::saved::{SavedQuery, bind_saved};
+    use crate::saved::bind_saved;
     use std::collections::BTreeMap;
-    let mut definition = SavedQuery::from_text(
+    let mut definition = crate::saved::from_text(
         "kept".into(),
         "events where source = synthetic".into(),
         vec![],

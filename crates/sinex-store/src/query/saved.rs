@@ -1,7 +1,7 @@
 //! Saved question resolution shared by query authoring and stored selections.
 use super::*;
 use sinex_model::event_types::query::Saved;
-use sinex_model::query::saved::SavedQuery;
+use sinex_model::query_definition::SavedQuery;
 use std::collections::BTreeMap;
 
 pub async fn saved_records(conn: &mut PgConnection) -> Result<Vec<Saved>> {

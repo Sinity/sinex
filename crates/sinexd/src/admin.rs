@@ -271,7 +271,7 @@ async fn admin_table(args: Vec<String>) -> Result<()> {
         None => jiff::tz::TimeZone::system(),
     };
     let day_start: &String = matches.get_one("day-start").expect("defaulted");
-    let day_start = sinex_model::query::time::clock(day_start).ok_or_else(|| {
+    let day_start = sinex_query::time::clock(day_start).ok_or_else(|| {
         Error::bad_request(format!(
             "day start `{day_start}` is not a clock time like 04:00"
         ))

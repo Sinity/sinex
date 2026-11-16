@@ -2,8 +2,8 @@ use super::*;
 
 async fn ask_at(conn: &mut PgConnection, text: &str, ctx: &Context, page: Page) -> Result<Answer> {
     let fixed = context_for_page(conn, ctx, &page, text).await?;
-    if sinex_model::query::template::is_command(text) {
-        let operation = sinex_model::query::template::parse(text, &fixed)
+    if sinex_query::template::is_command(text) {
+        let operation = sinex_query::template::parse(text, &fixed)
             .map_err(|error| crate::Error::Invalid(error.to_string()))?;
         run_operation(conn, text, &operation, &fixed, &page).await
     } else {

@@ -17,7 +17,7 @@ pub mod lifecycle;
 pub mod manifest;
 pub mod payload;
 pub mod privacy;
-pub mod query;
+pub mod query_definition;
 pub mod record;
 pub mod source;
 pub mod stage;

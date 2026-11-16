@@ -7,10 +7,8 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
-command-surface.workspace = true
 signals.workspace = true
 query-language.workspace = true
-references.workspace = true
 sinex-macros.workspace = true
 serde.workspace = true
 canonical-json.workspace = true
@@ -23,9 +21,6 @@ blake3.workspace = true
 thiserror.workspace = true
 schemars = { version = "1", features = ["uuid1"] }
 jiff.workspace = true
-caseless.workspace = true
-unicode-normalization.workspace = true
-unicode-segmentation.workspace = true
 
 [dev-dependencies]
 devkit.workspace = true

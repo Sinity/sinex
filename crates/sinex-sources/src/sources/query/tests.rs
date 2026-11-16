@@ -53,12 +53,12 @@ fn saved_query_records_parse_without_reading_referenced_definitions() {
     let record = QueryRecord::Saved(Saved {
         name: "indirect".into(),
         query: "query:shared@operator(source=$source)".into(),
-        template: sinex_model::query::template::parse(
+        template: sinex_query::template::parse(
             "query:shared@operator(source=$source)",
-            &sinex_model::query::Context::utc(jiff::Timestamp::UNIX_EPOCH),
+            &sinex_query::Context::utc(jiff::Timestamp::UNIX_EPOCH),
         )
         .unwrap(),
-        parameters: vec![sinex_model::query::saved::parameter("source:text").unwrap()],
+        parameters: vec![sinex_query::saved::parameter("source:text").unwrap()],
         by: "operator".into(),
         written_at: Timestamp::from_unix_secs(100).unwrap(),
     });
@@ -100,9 +100,9 @@ fn saved_query_records_carry_their_parsed_template() {
         name: "remember".into(),
         query: query.into(),
         parameters: vec![],
-        template: sinex_model::query::template::parse(
+        template: sinex_query::template::parse(
             query,
-            &sinex_model::query::Context::utc(jiff::Timestamp::UNIX_EPOCH),
+            &sinex_query::Context::utc(jiff::Timestamp::UNIX_EPOCH),
         )
         .unwrap(),
         by: "spoofed".into(),
@@ -136,7 +136,7 @@ fn saved_query_records_carry_their_parsed_template() {
     assert_eq!(saved.query, query);
     assert_eq!(saved.by, "operator");
     assert_eq!(saved.written_at, at);
-    let definition = sinex_model::query::saved::SavedQuery {
+    let definition = sinex_model::query_definition::SavedQuery {
         name: saved.name.clone(),
         query: saved.query.clone(),
         template: saved.template.clone(),
@@ -144,14 +144,14 @@ fn saved_query_records_carry_their_parsed_template() {
     };
     let definitions = std::collections::BTreeMap::from([(saved.name.clone(), definition)]);
     assert!(matches!(
-        sinex_model::query::saved::bind_saved(
+        sinex_query::saved::bind_saved(
             "query:remember",
-            &sinex_model::query::Context::utc(jiff::Timestamp::UNIX_EPOCH),
+            &sinex_query::Context::utc(jiff::Timestamp::UNIX_EPOCH),
             &definitions
         )
         .unwrap()
         .source,
-        sinex_model::query::Source::RecallLast { filter: Some(_) }
+        sinex_query::Source::RecallLast { filter: Some(_) }
     ));
     assert_eq!(events[0].location().unwrap().0.material, material.id);
 

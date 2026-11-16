@@ -3,43 +3,7 @@ use super::*;
 use query_language::ast as syntax;
 use std::collections::{BTreeMap, BTreeSet};
 
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Parameter {
-    pub name: String,
-    pub field_type: ParameterType,
-}
-#[derive(
-    Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum ParameterType {
-    Text,
-    Integer,
-    Number,
-    Bool,
-    Time,
-    Duration,
-}
-
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SavedQuery {
-    pub name: String,
-    pub query: String,
-    pub template: template::Template,
-    pub parameters: Vec<Parameter>,
-}
-
-impl SavedQuery {
-    /// The saved query this definition reads from, when it is built on one.
-    pub fn reference_name(&self) -> Option<String> {
-        match &self.template.relation.source {
-            syntax::Source::Saved { name, .. } => Some(name.clone()),
-            _ => None,
-        }
-    }
-}
+pub(crate) use sinex_model::query_definition::{Parameter, ParameterType, SavedQuery};
 
 pub fn valid_name(name: &str) -> bool {
     !name.is_empty()
@@ -110,60 +74,58 @@ fn sample(p: &Parameter) -> syntax::Value {
         ParameterType::Duration => syntax::Value::scalar("1h"),
     }
 }
-impl SavedQuery {
-    pub fn from_text(
-        name: String,
-        query: String,
-        parameters: Vec<Parameter>,
-        ctx: &Context,
-    ) -> Result<Self, QueryError> {
-        let template = template::parse(&query, ctx)?;
-        Ok(Self {
-            name,
-            query,
-            template,
-            parameters,
-        })
-    }
+pub fn from_text(
+    name: String,
+    query: String,
+    parameters: Vec<Parameter>,
+    ctx: &Context,
+) -> Result<SavedQuery, QueryError> {
+    let template = template::parse(&query, ctx)?;
+    Ok(SavedQuery {
+        name,
+        query,
+        template,
+        parameters,
+    })
+}
 
-    pub fn validate(&self, ctx: &Context) -> Result<(), QueryError> {
-        self.validate_with(ctx, &BTreeMap::new())
+pub fn validate(saved: &SavedQuery, ctx: &Context) -> Result<(), QueryError> {
+    validate_with(saved, ctx, &BTreeMap::new())
+}
+pub fn validate_with(
+    saved: &SavedQuery,
+    ctx: &Context,
+    definitions: &BTreeMap<String, SavedQuery>,
+) -> Result<(), QueryError> {
+    let input = validation_ast(saved)?;
+    let input = expand(
+        input,
+        ctx,
+        definitions,
+        &mut BTreeSet::new(),
+        &mut false,
+        true,
+    )?;
+    template::validate(&input, ctx).map(|_| ())
+}
+pub fn validate_parameters(saved: &SavedQuery) -> Result<(), QueryError> {
+    validation_ast(saved).map(|_| ())
+}
+fn validation_ast(saved: &SavedQuery) -> Result<template::Template, QueryError> {
+    if !valid_name(&saved.name) {
+        return Err(QueryError::new(
+            "saved query name uses letters, numbers, _ or -",
+        ));
     }
-    pub fn validate_with(
-        &self,
-        ctx: &Context,
-        definitions: &BTreeMap<String, SavedQuery>,
-    ) -> Result<(), QueryError> {
-        let input = self.validation_ast()?;
-        let input = expand(
-            input,
-            ctx,
-            definitions,
-            &mut BTreeSet::new(),
-            &mut false,
-            true,
-        )?;
-        input.validate(ctx).map(|_| ())
-    }
-    pub fn validate_parameters(&self) -> Result<(), QueryError> {
-        self.validation_ast().map(|_| ())
-    }
-    fn validation_ast(&self) -> Result<template::Template, QueryError> {
-        if !valid_name(&self.name) {
+    let mut args = BTreeMap::new();
+    for p in &saved.parameters {
+        if !valid_name(&p.name) || args.insert(p.name.clone(), sample(p)).is_some() {
             return Err(QueryError::new(
-                "saved query name uses letters, numbers, _ or -",
+                "parameter names must be valid and distinct",
             ));
         }
-        let mut args = BTreeMap::new();
-        for p in &self.parameters {
-            if !valid_name(&p.name) || args.insert(p.name.clone(), sample(p)).is_some() {
-                return Err(QueryError::new(
-                    "parameter names must be valid and distinct",
-                ));
-            }
-        }
-        substitute(self, &args, true)
     }
+    substitute(saved, &args, true)
 }
 fn substitute(
     saved: &SavedQuery,
@@ -317,7 +279,7 @@ pub fn bind_saved(
     saved: &BTreeMap<String, SavedQuery>,
 ) -> Result<Query, QueryError> {
     with_resolved(template::parse(text, ctx)?, ctx, saved, |template| {
-        template.bind(ctx)
+        template::bind(&template, ctx)
     })
 }
 

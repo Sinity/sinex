@@ -167,7 +167,7 @@ async fn pgvector_indexed_candidates_match_cosine_and_filtered_unembedded_rows_s
         assert!((score - cosine(&vector, &[1.0, 0.0, 0.0]).unwrap()).abs() < 1e-6);
     }
     assert_eq!(rank(&mut conn, ids[3], reference, head).await, None);
-    let context = sinex_model::query::Context::utc("2026-09-15T00:00:00Z".parse().unwrap());
+    let context = sinex_query::Context::utc("2026-09-15T00:00:00Z".parse().unwrap());
     let question = format!(
         "events where event_type = operator_log.entry AND similar:sinex:ev/{} | fields id",
         reference.0

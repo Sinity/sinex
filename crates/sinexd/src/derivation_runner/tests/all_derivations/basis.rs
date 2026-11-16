@@ -2,7 +2,7 @@
 use super::*;
 use sinex_derivations::work::ContextPacks;
 use sinex_model::EventId;
-use sinex_model::query::Context;
+use sinex_query::Context;
 use sinex_store::query::{self, Page};
 
 /// Reconstruct the complete declared input selection AS OF the stored read position.

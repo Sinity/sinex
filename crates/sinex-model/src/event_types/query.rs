@@ -1,6 +1,6 @@
 //! Moment marks and saved questions are authored records like any other.
 use crate::Timestamp;
-use crate::query::saved::Parameter;
+use crate::query_definition::Parameter;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -43,7 +43,7 @@ pub struct Saved {
     #[event(class = guarded)]
     pub query: String,
     #[event(class = guarded)]
-    pub template: crate::query::template::Template,
+    pub template: crate::query_definition::Template,
     #[event(class = guarded)]
     pub parameters: Vec<Parameter>,
     #[event(class = guarded)]

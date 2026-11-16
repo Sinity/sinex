@@ -17,7 +17,7 @@ fn a_file_error_keeps_its_kind_and_path() {
 #[test]
 fn a_query_error_is_placed_in_its_text_only_where_the_text_is_known() {
     let text = "events where nosuch = 1";
-    let error = sinex_model::query::QueryError::at(13, "no field `nosuch`");
+    let error = sinex_query::QueryError::at(13, "no field `nosuch`");
     let unplaced = Error::from(error.clone()).failure();
     assert_eq!(unplaced.kind, FailureKind::InvalidQuery);
     assert!(unplaced.caret().is_none());

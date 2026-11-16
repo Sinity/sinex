@@ -55,7 +55,7 @@ limit that compilation too:
 cargo xtask test -p sinex-store --lib -E 'test(query::)'
 # Store query behavior and the daemon API boundary together:
 cargo xtask test -p sinex-schema -p sinex-store -p sinexd --lib --bin sinexd -E 'test(query::tests::) or test(api::tests::queries::)'
-cargo xtask test -p sinex-model -p sinex-store -p sinex-sources -p sinexd --lib --bin sinexd -E 'test(query::) | test(sources::analysis::) | test(analysis::recall::)'
+cargo xtask test -p sinex-model -p sinex-query -p sinex-store -p sinex-sources -p sinexd --lib --bin sinexd -E 'package(sinex-query) | test(query::) | test(sources::analysis::) | test(analysis::recall::)'
 ```
 
 The daemon's unit tests live in its binary target, so `--lib` alone omits

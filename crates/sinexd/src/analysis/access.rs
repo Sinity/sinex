@@ -7,7 +7,8 @@ use sinex_derivations::Keyed;
 use sinex_derivations::figures::Metric;
 use sinex_model::event_types::analysis::AnalysisRequest;
 use sinex_model::event_types::work::ContextPack;
-use sinex_model::{EventPayload, Timestamp, query::Context};
+use sinex_model::{EventPayload, Timestamp};
+use sinex_query::Context;
 use sqlx::PgConnection;
 
 pub(crate) async fn question(

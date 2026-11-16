@@ -35,14 +35,14 @@ pub async fn standing_query(
     own_source: &str,
 ) -> Result<SignalAnswer> {
     let mut ctx = ctx.clone();
-    ctx.catalog = Some(sinex_model::query::QueryCatalog::new(
+    ctx.catalog = Some(sinex_query::QueryCatalog::new(
         sinex_schema::kinds::all(conn).await?.into_values(),
     ));
-    let mut bound = if let Some(name) = sinex_model::query::saved::reference_name(text) {
+    let mut bound = if let Some(name) = sinex_query::saved::reference_name(text) {
         let definitions = saved::saved_definitions(conn, &name).await?;
-        sinex_model::query::saved::bind_saved(text, &ctx, &definitions)?
+        sinex_query::saved::bind_saved(text, &ctx, &definitions)?
     } else {
-        sinex_model::query::template::parse(text, &ctx)?.bind(&ctx)?
+        sinex_query::template::parse(text, &ctx)?.bind(&ctx)?
     };
     ctx.catalog
         .as_ref()
@@ -89,12 +89,12 @@ pub async fn standing_query(
             lhs: Operand::Field(FieldRef::Field(
                 Table::Events.field("event_type").expect("event type field"),
             )),
-            op: sinex_model::query::Op::Prefix,
-            rhs: sinex_model::query::Value::Text("signal.".into()),
+            op: sinex_query::Op::Prefix,
+            rhs: sinex_query::Value::Text("signal.".into()),
         }));
         let product_delivery = Expr::Exists(Operand::Field(FieldRef::TypedPayload {
             path: vec!["extra".into(), "signal_origin".into()],
-            ty: sinex_model::query::tables::FieldType::Json,
+            ty: sinex_query::tables::FieldType::Json,
         }));
         let exclude = Expr::And(
             Box::new(exclude),
@@ -120,8 +120,8 @@ pub async fn standing_query(
                     .field(field)
                     .expect("declared metadata field"),
             )),
-            op: sinex_model::query::Op::Eq,
-            rhs: sinex_model::query::Value::Text(value.into()),
+            op: sinex_query::Op::Eq,
+            rhs: sinex_query::Value::Text(value.into()),
         }));
         bound.filter = Some(match bound.filter.take() {
             Some(filter) => Expr::And(Box::new(filter), Box::new(exclude)),

@@ -2,7 +2,7 @@
 //! Joins keep every matching pair; a single positive order predicate also
 //! exposes one deterministic nearest matching row without changing the outer grain.
 use super::*;
-use sinex_model::query::JoinOn;
+use sinex_query::JoinOn;
 
 pub(super) struct Joined {
     pub lateral: SqlFragment,
@@ -17,8 +17,7 @@ impl Compiler<'_> {
     fn inner_compiler(&self, query: &Query) -> Result<Compiler<'_>> {
         for stage in &query.stages {
             if let Stage::AsOf(context) = stage {
-                if !matches!(context,sinex_model::query::AsOf::Seq(position) if *position == self.seq)
-                {
+                if !matches!(context,sinex_query::AsOf::Seq(position) if *position == self.seq) {
                     return Err(invalid(
                         "an inner query's as of context must resolve to the outer read position",
                     ));
@@ -56,7 +55,7 @@ impl Compiler<'_> {
             } else if name == "snippet" {
                 fields.push(Operand::Named {
                     operand: Box::new(Operand::Field(FieldRef::TypedGroup(
-                        sinex_model::query::BoundColumn::generated("snippet", FieldType::Text),
+                        sinex_query::BoundColumn::generated("snippet", FieldType::Text),
                     ))),
                     name,
                 });

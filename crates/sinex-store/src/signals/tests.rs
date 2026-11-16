@@ -2,7 +2,7 @@ use super::*;
 use sqlx::Connection;
 
 fn calendar(at: Timestamp) -> ::signals::DayCalendar {
-    let context = sinex_model::query::Context::new(
+    let context = sinex_query::Context::new(
         jiff::Timestamp::from_nanosecond(at.unix_ns()).unwrap(),
         jiff::tz::TimeZone::get("UTC").unwrap(),
         jiff::civil::Time::constant(4, 0, 0, 0),

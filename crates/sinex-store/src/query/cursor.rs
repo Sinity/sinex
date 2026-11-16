@@ -122,7 +122,7 @@ pub async fn context_for_page(
     }
     let mut ctx = ctx.clone();
     if ctx.catalog.is_none() {
-        ctx.catalog = Some(sinex_model::query::QueryCatalog::new(
+        ctx.catalog = Some(sinex_query::QueryCatalog::new(
             sinex_schema::kinds::all(conn).await?.into_values(),
         ));
     }

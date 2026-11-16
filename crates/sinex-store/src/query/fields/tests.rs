@@ -1,5 +1,5 @@
 use super::*;
-use sinex_model::query::{ALIASES, FieldType};
+use sinex_query::{ALIASES, FieldType};
 
 #[devkit::test]
 fn main_times_and_promoted_fields_have_sql() {

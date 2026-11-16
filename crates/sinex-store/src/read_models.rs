@@ -2,7 +2,7 @@
 //! consumers through the commit-log reader, never by database triggers.
 use crate::Result;
 use crate::commit_log::Committed;
-use sinex_model::query::text::payload_text;
+use sinex_query::text::payload_text;
 use sqlx::{Connection, PgConnection};
 
 /// The search read model's consumer name.

@@ -64,6 +64,7 @@ concepts an agent needs before opening it.
 |---|---|
 | `crates/sinex-macros` | the `EventPayload` and `DbCheck` derives |
 | `crates/sinex-model` | identifiers, the three clocks, record locations and keys, kinds as declarations with field hints, typed payloads, events and batches. No I/O |
+| `crates/sinex-query` | query parsing, binding, completion and stored definition behaviour. No I/O |
 | `crates/sinex-protocol` | the command table and the producer protocol. No I/O |
 | `crates/sinex-transport` | the NATS ingress, the confirmed stream, the one producer client (Polylogue depends on it as the producer client) |
 | `crates/sinex-schema` | the schema declared in Rust, generating fresh DDL and structural upgrades, plus named data steps; `sinex-schema apply` for development databases (deployments run `sinexd admin upgrade`) |

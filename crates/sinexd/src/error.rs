@@ -13,7 +13,7 @@ pub(crate) enum Error {
     Failure(#[from] Failure),
     /// A refusal of query text; [`Error::in_query`] places it in the text.
     #[error(transparent)]
-    Query(#[from] sinex_model::query::QueryError),
+    Query(#[from] sinex_query::QueryError),
     #[error(transparent)]
     Store(#[from] sinex_store::Error),
     #[error(transparent)]

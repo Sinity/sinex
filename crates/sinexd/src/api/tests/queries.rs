@@ -328,9 +328,9 @@ async fn ambiguous_saved_names_do_not_block_other_saved_questions(db: devkit::pg
         &sinex_model::event_types::query::Saved {
             name: "clash".into(),
             query: "events | count".into(),
-            template: sinex_model::query::template::parse(
+            template: sinex_query::template::parse(
                 "events | count",
-                &sinex_model::query::Context::utc(jiff::Timestamp::UNIX_EPOCH),
+                &sinex_query::Context::utc(jiff::Timestamp::UNIX_EPOCH),
             )
             .unwrap(),
             parameters: vec![],

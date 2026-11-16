@@ -1,7 +1,7 @@
 //! Recall selects its shell session through the same compiler and commit view
 //! as other queries. Its bounds describe recorded extent, not a known end.
 use super::*;
-use sinex_model::query::{Alias, Op, SortBy, SortKey, Value};
+use sinex_query::{Alias, Op, SortBy, SortKey, Value};
 
 pub(super) enum Selection {
     Window {
@@ -274,7 +274,7 @@ async fn mark_links(
     let mut links = serde_json::Map::new();
     for (name, text) in questions {
         let text = format!("{text} | fields id,event_type,source,key,material,offset,output");
-        let query = sinex_model::query::bind(&text, &ctx).map_err(|e| Error::Invalid(e.message))?;
+        let query = sinex_query::bind(&text, &ctx).map_err(|e| Error::Invalid(e.message))?;
         let (text, values) = {
             let compiled = super::compile_query(conn, &ctx, seq, &query).await?;
             let mut sql = SqlFragment::text(format!("SELECT {} FROM (", compiled.json_object()));
@@ -295,7 +295,7 @@ async fn mark_links(
                 row["event_type"].as_str(),
                 row["key"].as_str(),
             ) {
-                serde_json::json!(sinex_model::query::citation(
+                serde_json::json!(sinex_query::citation(
                     "key",
                     &format!("{source}/{kind}/{key}")
                 ))

@@ -1,12 +1,12 @@
 use super::*;
-use crate::kinds::KindDeclaration;
 use serde_json::json;
+use sinex_model::kinds::KindDeclaration;
 use std::collections::BTreeMap;
 
 fn declared_context() -> Context {
     let declaration = |name: &str, mixed: &str| {
         let mut d = KindDeclaration::schemaless(
-            crate::KindRef {
+            sinex_model::KindRef {
                 name: name.into(),
                 version: 1,
             },
@@ -267,14 +267,14 @@ fn grouped_repeated_and_saved_outputs_use_their_entering_column_types() {
     let query = q("commands | group by cwd | agg min(command) | where min_command = 001");
     assert_eq!(values(&query, "min_command"), [&Value::Text("001".into())]);
 
-    let saved = crate::query::saved::SavedQuery::from_text(
+    let saved = crate::saved::from_text(
         "by-directory".into(),
         "commands | group by cwd | count".into(),
         vec![],
         &ctx(),
     )
     .unwrap();
-    let query = crate::query::saved::bind_saved(
+    let query = crate::saved::bind_saved(
         "query:by-directory | where cwd = \"001\" AND count >= \"2\"",
         &ctx(),
         &BTreeMap::from([(saved.name.clone(), saved)]),

@@ -28,9 +28,7 @@ use compile::calendar::compile as compile_query;
 pub use compile::calendar::initialize as initialize_calendar;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
-use sinex_model::query::{
-    AsOf, Context, Expr, FieldRef, Operand, Query, Source, Stage, Table, read_as,
-};
+use sinex_query::{AsOf, Context, Expr, FieldRef, Operand, Query, Source, Stage, Table, read_as};
 use sql::SqlFragment;
 use sqlx::{Connection, PgConnection};
 
@@ -202,7 +200,7 @@ pub async fn run(
 pub async fn run_operation(
     conn: &mut PgConnection,
     text: &str,
-    operation: &sinex_model::query::template::Template,
+    operation: &sinex_model::query_definition::Template,
     ctx: &Context,
     page: &Page,
 ) -> Result<Answer> {
@@ -220,7 +218,7 @@ async fn run_inner(
     page: &Page,
     capture_selection: bool,
     in_snapshot: bool,
-    operation: Option<&sinex_model::query::template::Template>,
+    operation: Option<&sinex_model::query_definition::Template>,
 ) -> Result<selected::SelectedPage> {
     if !in_snapshot {
         initialize_calendar(conn).await?;
@@ -239,7 +237,7 @@ async fn run_inner(
     let mut ctx = ctx.clone();
     let current_catalog_loaded = ctx.catalog.is_none();
     if current_catalog_loaded {
-        ctx.catalog = Some(sinex_model::query::QueryCatalog::new(
+        ctx.catalog = Some(sinex_query::QueryCatalog::new(
             sinex_schema::kinds::all(&mut tx).await?.into_values(),
         ));
     }
@@ -282,26 +280,24 @@ async fn run_inner(
         None => Some(sinex_schema::kinds::all(&mut tx).await?),
     };
     if let Some(declarations) = declarations {
-        ctx.catalog = Some(sinex_model::query::QueryCatalog::new(
-            declarations.into_values(),
-        ));
+        ctx.catalog = Some(sinex_query::QueryCatalog::new(declarations.into_values()));
     }
     let programmatic = query.and_then(|q| {
-        let parsed = sinex_model::query::bind(text, &ctx).ok();
+        let parsed = sinex_query::bind(text, &ctx).ok();
         (parsed.as_ref() != Some(q)).then(|| format!("{q:?}"))
     });
     let mut saved_context = None;
     let execution = if let Some(operation) = operation {
         Some(operation.clone())
     } else if query.is_none() {
-        if let Some(name) = sinex_model::query::saved::reference_name(text) {
+        if let Some(name) = sinex_query::saved::reference_name(text) {
             let definitions = saved::saved_definitions(&mut tx, &name).await?;
-            let template = sinex_model::query::saved::template_saved(text, &ctx, &definitions)?;
+            let template = sinex_query::saved::template_saved(text, &ctx, &definitions)?;
             saved_context = Some(definitions);
             Some(template)
         } else {
-            Some(sinex_model::query::template::Template::query(
-                sinex_model::query::syntax::parse(text, &ctx)?,
+            Some(sinex_model::query_definition::Template::query(
+                sinex_query::syntax::parse(text, &ctx)?,
             ))
         }
     } else {
@@ -309,10 +305,7 @@ async fn run_inner(
     };
     let mut bound = match query {
         Some(query) => query.clone(),
-        None => execution
-            .as_ref()
-            .expect("execution template")
-            .bind(&ctx)
+        None => sinex_query::template::bind(execution.as_ref().expect("execution template"), &ctx)
             .map_err(|mut error| {
                 // Expanded definition spans belong to stored text, not the invocation.
                 if saved_context
@@ -428,7 +421,7 @@ async fn run_inner(
                     if matches!(
                         query.source,
                         Source::Walk {
-                            walk: sinex_model::query::Walk::Trace,
+                            walk: sinex_query::Walk::Trace,
                             ..
                         }
                     ) {
