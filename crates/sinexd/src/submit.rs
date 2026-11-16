@@ -352,7 +352,10 @@ async fn request_inner(
         let material = crate::material_access::MaterialAccess::new(
             blobs.clone(),
             class,
-            crate::material_access::Access::default(),
+            crate::material_access::Access {
+                recipient: writer.class_recipient.as_deref(),
+                unlock: None,
+            },
         )?;
         let submitter = Submitter {
             writer,

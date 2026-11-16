@@ -18,10 +18,14 @@ use notify::event::{
 use notify::{RecursiveMode, Watcher};
 use serde_json::{Map, Value, json};
 use sinex_model::event_types::machine::FileChanged;
+use sinex_model::json::JsonExt;
 use sinex_model::{Class, InputRef, Timestamp};
+use sinex_source_core::RecordError;
+use sinex_source_core::RecordResult;
+use sinex_source_core::discovery::{CaptureStream, CapturedBy, DiscoverySpec};
 use sinex_source_core::drivers::live_stream::{self, LiveStream, Rotation, SpoolWriter};
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordError};
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
+use sinex_source_core::{Stateless, StatelessParser};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -31,14 +35,14 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "machine.file-watch",
     origin: Origin::Input(Shape::LiveStream),
     expect: Expectation::continuous_days(1),
-    expires_after: None,
     purpose: "work episodes, project attribution and recall",
     // Paths name projects, people and documents.
     class: Class::Guarded,
     parser: "file-watch",
     parser_version: 2,
     event_types: &["file.changed", "capture.gap"],
-    framer: sinex_source_core::Framer::incremental(sinex_source_core::drivers::append_file::lines),
+    framer: sinex_source_core::Framer::LINES,
+    ..SourceSpec::DEFAULT
 };
 
 /// Directory names skipped by default.
@@ -270,57 +274,42 @@ pub struct FileWatchParser;
 fn split_path(value: Option<&Value>) -> (Option<String>, Option<String>) {
     match value {
         Some(Value::String(s)) => (Some(s.clone()), None),
-        Some(Value::Object(o)) => (
-            None,
-            o.get("hex").and_then(Value::as_str).map(str::to_owned),
-        ),
+        Some(Value::Object(o)) => (None, o.str("hex").map(str::to_owned)),
         _ => (None, None),
     }
 }
 
-impl Parser for FileWatchParser {
+impl StatelessParser for FileWatchParser {
     type Record<'a> = Map<String, Value>;
-    type Carry = ();
     type Payload = FileWatchEvent;
 
     fn parse(
         &self,
         record: &Map<String, Value>,
-        _: &(),
+
         _context: &sinex_source_core::RecordContext<'_>,
-    ) -> Result<(Vec<FileWatchEvent>, ()), RecordError> {
+    ) -> Result<Vec<FileWatchEvent>, RecordError> {
         let (received_at, line) = live_stream::received(record).map_err(RecordError::new)?;
-        let change: Map<String, Value> = serde_json::from_slice(&line)
-            .map_err(|e| RecordError::new(format!("watch record is not JSON: {e}")))?;
+        let change: Map<String, Value> =
+            serde_json::from_slice(&line).record("watch record is not JSON")?;
         let kind = change
-            .get("kind")
-            .and_then(Value::as_str)
-            .ok_or_else(|| RecordError::new("watch record has no kind"))?
+            .str("kind")
+            .record("watch record has no kind")?
             .to_owned();
-        let paths = change
-            .get("paths")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
+        let paths = change.array("paths").cloned().unwrap_or_default();
         if kind == "overflow" {
-            return Ok((
-                vec![FileWatchEvent::Gap(
-                    sinex_model::event_types::capture::Gap {
-                        stream: format!("file-watch:{}", Value::Array(paths)),
-                        start: None,
-                        end: None,
-                        reason: "inotify_overflow".into(),
-                        sequence: None,
-                    },
-                )],
-                (),
-            ));
+            return Ok(vec![FileWatchEvent::Gap(
+                sinex_model::event_types::capture::Gap {
+                    stream: format!("file-watch:{}", Value::Array(paths)),
+                    start: None,
+                    end: None,
+                    reason: "inotify_overflow".into(),
+                    sequence: None,
+                },
+            )]);
         }
-        let is_dir = change.get("is_dir").and_then(Value::as_bool);
-        let note = change
-            .get("note")
-            .and_then(Value::as_str)
-            .map(str::to_owned);
+        let is_dir = change.bool("is_dir");
+        let note = change.str("note").map(str::to_owned);
         let event = |path: Option<&Value>, to: Option<String>| {
             let (path, path_hex) = split_path(path);
             FileChanged {
@@ -340,14 +329,7 @@ impl Parser for FileWatchParser {
         } else {
             paths.iter().map(|p| event(Some(p), None)).collect()
         };
-        Ok((out.into_iter().map(FileWatchEvent::Changed).collect(), ()))
-    }
-}
-
-pub fn source() -> DeclaredSource<FileWatchParser> {
-    DeclaredSource {
-        spec: SPEC,
-        parser: FileWatchParser,
+        Ok(out.into_iter().map(FileWatchEvent::Changed).collect())
     }
 }
 
@@ -364,61 +346,39 @@ pub fn driver(spool: PathBuf, host: String) -> LiveStream {
 
 /// `stage --parser file-watch SPOOL`: changes under the directories in the
 /// `roots` option (and not under `skip` names), captured into SPOOL.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "file-watch",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::Session,
-            locations: &[],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[sinex_source_core::discovery::CaptureStream {
-                spool: "files",
-                options: &[],
-                capabilities: &["watch"],
-            }],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SPEC],
-        plan: Some(|spool, settings| {
-            Ok(sinex_source_core::binding::single(&SPEC, spool, settings))
-        }),
-        source: |_| Ok(Box::new(source())),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::polled(driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: Some(|b, stop| {
-            let list = |key: &str| -> Vec<String> {
-                b.settings
-                    .options
-                    .get(key)
-                    .and_then(Value::as_array)
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|v| v.as_str().map(str::to_owned))
-                            .collect()
-                    })
-                    .unwrap_or_default()
-            };
-            let skip = list("skip");
-            let roots = Roots {
-                roots: list("roots").into_iter().map(PathBuf::from).collect(),
-                skip: if skip.is_empty() {
-                    SKIP.iter().map(|s| (*s).to_owned()).collect()
-                } else {
-                    skip
-                },
-            };
-            if roots.roots.is_empty() {
-                return Err("file-watch: no `roots` to watch".into());
-            }
-            capture_until(&roots, &b.input, stop).map_err(|e| e.to_string())
-        }),
-    };
+super::input_format! { pub FORMAT = "file-watch" {
+    specs: [SPEC],
+    parser: |_b| Stateless(FileWatchParser),
+    discovery: DiscoverySpec {
+        captured_by: CapturedBy::Session,
+        streams: &[CaptureStream { spool: "files", options: &[], capabilities: &["watch"] }],
+        ..DiscoverySpec::DEFAULT
+    },
+    plan: single,
+    reader: polled(driver),
+    capture: |b, _context, stop| {
+        let list = |key: &str| -> Vec<String> {
+            b.settings
+                .options
+                .array(key)
+                .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
+                .unwrap_or_default()
+        };
+        let skip = list("skip");
+        let roots = Roots {
+            roots: list("roots").into_iter().map(PathBuf::from).collect(),
+            skip: if skip.is_empty() {
+                SKIP.iter().map(|s| (*s).to_owned()).collect()
+            } else {
+                skip
+            },
+        };
+        if roots.roots.is_empty() {
+            return Err("file-watch: no `roots` to watch".into());
+        }
+        capture_until(&roots, &b.input, stop).map_err(|e| e.to_string())
+    },
+} }
 
 #[cfg(test)]
 mod tests;

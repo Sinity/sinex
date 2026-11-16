@@ -5,72 +5,60 @@
 //! export is a separate record with the same text at the same millisecond.
 use super::fields;
 use serde_json::{Map, Value};
-use sinex_model::Class;
 use sinex_model::event_types::communication::ConversationMessage;
+use sinex_model::json::JsonExt;
+use sinex_source_core::discovery::{DiscoverySpec, Location};
 use sinex_source_core::drivers::sqlite_rows::SqliteRows;
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordError};
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
+use sinex_source_core::{Framer, RecordError, RecordResult, Stateless, StatelessParser};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "communication.messenger-sqlite",
     origin: Origin::Input(Shape::SqliteRows),
     expect: Expectation::Export,
-    expires_after: None,
     purpose: "conversations with people",
-    class: Class::Open,
     parser: "fbmessengerexport",
-    parser_version: 1,
     event_types: &["conversation.message"],
-    framer: sinex_source_core::Framer::incremental(sinex_source_core::drivers::append_file::lines),
+    framer: Framer::LINES,
+    ..SourceSpec::DEFAULT
 };
 
 pub struct MessengerSqliteParser;
 
-impl Parser for MessengerSqliteParser {
+impl StatelessParser for MessengerSqliteParser {
     type Record<'a> = Map<String, Value>;
-    type Carry = ();
     type Payload = ConversationMessage;
 
     fn parse(
         &self,
         row: &Map<String, Value>,
-        _: &(),
         _context: &sinex_source_core::RecordContext<'_>,
-    ) -> Result<(Vec<ConversationMessage>, ()), RecordError> {
+    ) -> Result<Vec<ConversationMessage>, RecordError> {
         // `data` is the message as the tool received it, as JSON text.
         let data: Map<String, Value> = match row.get("data") {
-            Some(Value::String(text)) => serde_json::from_str(text)
-                .map_err(|e| RecordError::new(format!("data is not a JSON object: {e}")))?,
+            Some(Value::String(text)) => {
+                serde_json::from_str(text).record("data is not a JSON object")?
+            }
             _ => Map::new(),
         };
         let sent_at = fields::from_unix_ms(fields::int(row, "timestamp")?)?;
-        let unsent = data.get("unsent").and_then(Value::as_bool) == Some(true);
+        let unsent = data.bool("unsent") == Some(true);
         let sender = fields::text(row, "author")?;
-        Ok((
-            vec![ConversationMessage {
-                service: "facebook-messenger".into(),
-                thread: fields::text(row, "thread_id")?,
-                thread_name: fields::optional_text(row, "thread_name"),
-                participants: vec![],
-                sender,
-                sent_at,
-                text: fields::optional_text(row, "text").filter(|t| !t.is_empty()),
-                kind: None,
-                media: vec![],
-                reactions: vec![],
-                message_id: Some(fields::text(row, "uid")?),
-                unsent_at: unsent.then_some(sent_at),
-            }],
-            (),
-        ))
-    }
-}
-
-pub fn source() -> DeclaredSource<MessengerSqliteParser> {
-    DeclaredSource {
-        spec: SPEC,
-        parser: MessengerSqliteParser,
+        Ok(vec![ConversationMessage {
+            service: "facebook-messenger".into(),
+            thread: fields::text(row, "thread_id")?,
+            thread_name: fields::optional_text(row, "thread_name"),
+            participants: vec![],
+            sender,
+            sent_at,
+            text: fields::optional_text(row, "text").filter(|t| !t.is_empty()),
+            kind: None,
+            media: vec![],
+            reactions: vec![],
+            message_id: Some(fields::text(row, "uid")?),
+            unsent_at: unsent.then_some(sent_at),
+        }])
     }
 }
 
@@ -93,34 +81,13 @@ pub fn driver(path: PathBuf, host: String) -> SqliteRows {
 }
 
 /// `stage --parser messenger-sqlite PATH`: an `fbmessengerexport` database.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "messenger-sqlite",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "input",
-                path: "messenger-sqlite",
-            }],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SPEC],
-        plan: Some(|input, settings| {
-            Ok(sinex_source_core::binding::single(&SPEC, input, settings))
-        }),
-        source: |_| Ok(Box::new(source())),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::rows(driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: None,
-    };
+super::input_format! { pub FORMAT = "messenger-sqlite" {
+    specs: [SPEC],
+    parser: |_b| Stateless(MessengerSqliteParser),
+    discovery: DiscoverySpec::system(&[Location::new("input", "messenger-sqlite")]),
+    plan: single,
+    reader: rows(driver),
+} }
 
 #[cfg(test)]
 mod tests;

@@ -20,9 +20,7 @@ fn export(path: &Path, lines: &[String]) {
 }
 
 fn parse(record: &Map<String, Value>) -> Result<Vec<TaskRevised>, RecordError> {
-    BeadsParser
-        .parse(record, &(), &sinex_source_core::RecordContext::none())
-        .map(|(out, ())| out)
+    BeadsParser.parse(record, &sinex_source_core::RecordContext::none())
 }
 
 fn records(a: &sinex_source_core::drivers::Acquired) -> Vec<Map<String, Value>> {

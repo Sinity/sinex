@@ -69,6 +69,8 @@ The NixOS module writes daemon settings to `/etc/sinex/sources.json`, including 
 
 **What deployment configuration holds:** the logical day, the API's listen address and authentication, desktop notifications and the optional away command ([signals](interfaces.md#the-host-deliverer)), the database and NATS endpoints, the content store location, this host's name, and per-user facts such as account names on each service. Settings any author may change at run time (quiet hours, the interrupt budget, briefing switches) are the changeable catalog of [architecture.md](architecture.md#configuration-and-clocks), not deployment configuration.
 
+The session and capture binaries take one snapshot of their process environment for discovery. XDG directories, the session socket and desktop notification availability come from that snapshot. The daemon resolves its library cache at startup as `XDG_CACHE_HOME/sinex/library`, or `HOME/.cache/sinex/library` when XDG cache is unset; neither variable being set is a startup error. `SINEX_CLASS_KEY_FILE` supplies the optional public age recipient, parsed once at startup and passed to material writes.
+
 ### Listen address and authentication
 
 The daemon serves its API on a Unix socket and, for HTTP and the reader web, on a configured address (`services.sinex.api.listen`), by default loopback at the one default port declared in the module. Authentication is configured with it:

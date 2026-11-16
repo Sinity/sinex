@@ -1,29 +1,32 @@
 //! Authenticated forecast requests stored as JSON-line materials.
+use crate::sources::input_format;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use sinex_model::event_types::forecast::{ForecastRecord, Issued, Resolved};
 use sinex_model::{
     Class, InputRef, MaterialId, ObservationFacts, ReadingOrder, RevisionChange, Timestamp,
+    event_types::forecast::{ForecastRecord, Issued, Resolved},
+    json::JsonExt,
 };
-use sinex_source_core::drivers::{Acquired, NewMaterial};
 use sinex_source_core::{
-    DeclaredSource, Expectation, Origin, Parser, RecordContext, RecordError, SourceSpec,
+    DeclaredSource, Expectation, Framer, Origin, RecordContext, RecordError, RecordResult,
+    SourceSpec, Stateless, StatelessParser,
+    discovery::DiscoverySpec,
+    drivers::{
+        Acquired, NewMaterial,
+        export_archive::{Framing, frame_lines},
+    },
 };
 
 pub const REQUEST: SourceSpec = SourceSpec {
     name: "forecast.request",
     origin: Origin::Request,
     expect: Expectation::OnDemand,
-    expires_after: None,
     purpose: "submitted probability forecasts",
     class: Class::Guarded,
     parser: "forecast-request",
-    parser_version: 1,
     event_types: &["forecast.issued", "forecast.resolved"],
-    framer: sinex_source_core::Framer::export(
-        sinex_source_core::drivers::export_archive::frame_lines,
-        sinex_source_core::drivers::export_archive::Framing::Lines,
-    ),
+    framer: Framer::export(frame_lines, Framing::Lines),
+    ..SourceSpec::DEFAULT
 };
 
 #[derive(Serialize, Deserialize)]
@@ -33,36 +36,31 @@ enum Line {
     Resolved(Resolved),
 }
 pub struct RequestParser;
-impl Parser for RequestParser {
+impl StatelessParser for RequestParser {
     type Record<'a> = Map<String, Value>;
-    type Carry = ();
     type Payload = ForecastRecord;
     fn parse(
         &self,
         record: &Map<String, Value>,
-        _: &(),
         context: &RecordContext<'_>,
-    ) -> Result<(Vec<ForecastRecord>, ()), RecordError> {
+    ) -> Result<Vec<ForecastRecord>, RecordError> {
         let actor = context
             .manifest
             .details
-            .get("actor")
-            .and_then(Value::as_str)
+            .str("actor")
             .filter(|s| !s.trim().is_empty())
-            .ok_or_else(|| RecordError::new("forecast manifest has no actor"))?;
+            .record("forecast manifest has no actor")?;
         let at = context
             .manifest
             .details
-            .get("written_at_ns")
-            .and_then(Value::as_str)
+            .str("written_at_ns")
             .and_then(|s| s.parse::<i128>().ok())
             .and_then(|ns| Timestamp::from_unix_ns(ns).ok())
-            .ok_or_else(|| RecordError::new("forecast manifest has no time"))?;
+            .record("forecast manifest has no time")?;
         let mut object = record.clone();
         object.insert("by".into(), json!(actor));
         object.insert("at".into(), json!(at));
-        let line: Line = serde_json::from_value(Value::Object(object))
-            .map_err(|e| RecordError::new(e.to_string()))?;
+        let line: Line = serde_json::from_value(Value::Object(object)).record("invalid record")?;
         let payload = match line {
             Line::Issued(x) => {
                 if !x.probability.is_finite()
@@ -87,13 +85,13 @@ impl Parser for RequestParser {
                 ForecastRecord::Resolved(x)
             }
         };
-        Ok((vec![payload], ()))
+        Ok(vec![payload])
     }
 }
-pub fn request_source() -> DeclaredSource<RequestParser> {
+pub fn request_source() -> DeclaredSource<Stateless<RequestParser>> {
     DeclaredSource {
         spec: REQUEST,
-        parser: RequestParser,
+        parser: Stateless(RequestParser),
     }
 }
 
@@ -145,24 +143,11 @@ pub fn request_material(
         cursor_without_material: Value::Null,
     }
 }
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "forecast",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&REQUEST],
-        plan: None,
-        source: |_| Ok(Box::new(request_source())),
-        reader: None,
-        capture: None,
-    };
+input_format! { pub FORMAT = "forecast" {
+    specs: [REQUEST], parser: |_b| Stateless(RequestParser),
+    discovery: DiscoverySpec::DEFAULT,
+    plan: none, reader: none,
+} }
 
 #[cfg(test)]
 mod tests;

@@ -1,13 +1,14 @@
 //! Explicit transcript imports. Relative offsets are never receipt timestamps.
+use crate::sources::input_format;
 use query_language::number::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sinex_model::event_types::imported_text::TranscriptCue;
 use sinex_model::{Class, Timestamp};
-use sinex_source_core::binding::{Binding, InputFormat, Settings};
+use sinex_source_core::binding::{Binding, Settings};
 use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordContext, RecordError};
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
+use sinex_source_core::{Parser, RecordContext, RecordError, RecordResult};
 use std::path::Path;
 
 /// Imports read all fields supplied by the file and run no models.
@@ -50,13 +51,12 @@ pub const fn spec(parser: &'static str, framing: Framing, frame: Frame) -> Sourc
         name: "media.transcripts",
         origin: Origin::Input(Shape::ExportArchive),
         expect: Expectation::Export,
-        expires_after: None,
         purpose: "imported timed speech text",
         class: Class::Guarded,
         parser,
-        parser_version: 1,
         event_types: &["transcript.cue"],
         framer: sinex_source_core::Framer::export(frame, framing),
+        ..SourceSpec::DEFAULT
     }
 }
 pub const JSON: SourceSpec = spec(
@@ -112,8 +112,7 @@ impl TranscriptParser {
         carry: &Carry,
         context: &RecordContext<'_>,
     ) -> Result<(Vec<TranscriptCue>, Carry), RecordError> {
-        let text =
-            std::str::from_utf8(record).map_err(|_| RecordError::new("transcript is not UTF-8"))?;
+        let text = std::str::from_utf8(record).record("transcript is not UTF-8")?;
         let carry = carry.at(context);
         let mut payload = TranscriptCue {
             input: input_identity(&self.input, context),
@@ -127,16 +126,14 @@ impl TranscriptParser {
                     ("start_ms", "end_ms")
                 };
                 let raw: std::collections::HashMap<String, &serde_json::value::RawValue> =
-                    serde_json::from_str(text)
-                        .map_err(|e| RecordError::new(format!("transcript object: {e}")))?;
+                    serde_json::from_str(text).record("transcript object")?;
                 let mut object = Map::new();
                 for (key, value) in &raw {
                     if key != start && key != end {
                         object.insert(
                             key.clone(),
-                            serde_json::from_str(value.get()).map_err(|e| {
-                                RecordError::new(format!("transcript field {key}: {e}"))
-                            })?,
+                            serde_json::from_str(value.get())
+                                .record_with(|| format!("transcript field {key}"))?,
                         );
                     }
                 }
@@ -186,7 +183,7 @@ impl TranscriptParser {
                             &time::format_description::well_known::Rfc3339,
                         )
                         .map(Timestamp)
-                        .map_err(|_| RecordError::new("invalid recording_started_at"))
+                        .record("invalid recording_started_at")
                     })
                     .transpose()?;
                 let offset_ns = if self.format == Format::Whisper {
@@ -226,7 +223,7 @@ impl TranscriptParser {
                     return Ok((vec![], carry));
                 }
                 let mut lines = block.lines();
-                let first = lines.next().ok_or_else(|| RecordError::new("empty cue"))?;
+                let first = lines.next().record("empty cue")?;
                 let timing = if first.contains("-->") {
                     first
                 } else {
@@ -234,18 +231,13 @@ impl TranscriptParser {
                     payload
                         .extra
                         .insert("cue_id".into(), Value::String(first.into()));
-                    lines
-                        .next()
-                        .ok_or_else(|| RecordError::new("cue has no timing"))?
+                    lines.next().record("cue has no timing")?
                 };
-                let (start, end) = timing
-                    .split_once("-->")
-                    .ok_or_else(|| RecordError::new("cue has no timing arrow"))?;
+                let (start, end) = timing.split_once("-->").record("cue has no timing arrow")?;
                 let mut end = end.split_whitespace();
                 payload.start_ms = Some(cue_time(start.trim(), self.format == Format::Srt)?);
                 payload.end_ms = Some(cue_time(
-                    end.next()
-                        .ok_or_else(|| RecordError::new("cue has no end"))?,
+                    end.next().record("cue has no end")?,
                     self.format == Format::Srt,
                 )?);
                 let settings = end.collect::<Vec<_>>().join(" ");
@@ -282,7 +274,7 @@ pub fn optional_string(
     }
 }
 pub fn required_string(object: &mut Map<String, Value>, key: &str) -> Result<String, RecordError> {
-    optional_string(object, key)?.ok_or_else(|| RecordError::new(format!("missing {key}")))
+    optional_string(object, key)?.record_with(|| format!("missing {key}"))
 }
 pub fn identifier(
     object: &mut Map<String, Value>,
@@ -305,7 +297,7 @@ pub fn optional_number(
             .as_f64()
             .filter(|n| n.is_finite())
             .map(Some)
-            .ok_or_else(|| RecordError::new(format!("invalid {key}"))),
+            .record_with(|| format!("invalid {key}")),
         _ => Err(RecordError::new(format!("{key} must be numeric"))),
     }
 }
@@ -330,7 +322,7 @@ pub fn decimal_ms(text: &str, places: u32) -> Result<u64, RecordError> {
         value.scaled_i128(i64::from(places))
     }
     .ok_or_else(unrepresentable)?;
-    u64::try_from(scaled).map_err(|_| RecordError::new("offset exceeds u64 milliseconds"))
+    u64::try_from(scaled).record("offset exceeds u64 milliseconds")
 }
 /// A nonnegative written offset, exactly as written.
 fn offset(text: &str) -> Result<Decimal, RecordError> {
@@ -352,7 +344,7 @@ fn cue_time(text: &str, srt: bool) -> Result<u64, RecordError> {
         let value = if last {
             let (seconds, fraction) = part
                 .split_once(if srt { ',' } else { '.' })
-                .ok_or_else(|| RecordError::new("cue needs milliseconds"))?;
+                .record("cue needs milliseconds")?;
             if fraction.len() != 3 || seconds.len() != 2 {
                 return Err(RecordError::new("invalid cue seconds"));
             }
@@ -362,9 +354,9 @@ fn cue_time(text: &str, srt: bool) -> Result<u64, RecordError> {
                 return Err(RecordError::new("invalid cue time"));
             }
             part.parse::<u64>()
-                .map_err(|_| RecordError::new("invalid cue time"))?
+                .record("invalid cue time")?
                 .checked_mul(1000)
-                .ok_or_else(|| RecordError::new("cue time overflow"))?
+                .record("cue time overflow")?
         };
         if (index > 0 || parts.len() == 2) && value >= 60_000 {
             return Err(RecordError::new("cue minute or second exceeds 59"));
@@ -372,7 +364,7 @@ fn cue_time(text: &str, srt: bool) -> Result<u64, RecordError> {
         total = total
             .checked_mul(60)
             .and_then(|n| n.checked_add(value))
-            .ok_or_else(|| RecordError::new("cue time overflow"))?;
+            .record("cue time overflow")?;
     }
     Ok(total)
 }
@@ -393,39 +385,50 @@ pub(super) fn plan(
 ) -> Result<Vec<Binding>, String> {
     discovery::plan(spec, input, settings)
 }
-fn source(
-    binding: &Binding,
-    format: Format,
-    spec: SourceSpec,
-) -> Result<Box<dyn sinex_source_core::Source>, String> {
-    Ok(Box::new(DeclaredSource {
-        spec,
-        parser: TranscriptParser {
-            format,
-            input: binding.input.display().to_string(),
-        },
-    }))
-}
-macro_rules! input_format {
-    ($name:ident, $spec:ident, $format:ident, $framing:expr) => {
-        pub const $name: InputFormat = InputFormat {
-            name: $spec.parser,
-            accepts: &[],
-            discovery: discovery::spec(true),
-            discover: discovery::discover,
-            specs: || vec![&$spec],
-            plan: Some(|p, s| plan(&$spec, p, s)),
-            source: |b| source(b, Format::$format, $spec),
-            reader: Some(|b| Ok(archive(b, $framing))),
-            capture: None,
-        };
-    };
-}
-input_format!(JSON_FORMAT, JSON, Json, Framing::Whole);
-input_format!(WHISPER_FORMAT, WHISPER, Whisper, JSON_FRAMING);
-input_format!(TEXT_FORMAT, TEXT, Text, Framing::Lines);
-input_format!(WEBVTT_FORMAT, WEBVTT, WebVtt, CUE_FRAMING);
-input_format!(SRT_FORMAT, SRT, Srt, CUE_FRAMING);
+input_format! { pub JSON_FORMAT = "transcript-json" {
+    specs: [JSON],
+    parser: |b| TranscriptParser { format: Format::Json, input: b.input.display().to_string() },
+    discovery: discovery::spec(true),
+    discover: discovery::discover,
+    plan: |input, settings| plan(&JSON, input, settings),
+    reader: |b| Ok(archive(b, Framing::Whole)),
+} }
+
+input_format! { pub WHISPER_FORMAT = "whisper-json" {
+    specs: [WHISPER],
+    parser: |b| TranscriptParser { format: Format::Whisper, input: b.input.display().to_string() },
+    discovery: discovery::spec(true),
+    discover: discovery::discover,
+    plan: |input, settings| plan(&WHISPER, input, settings),
+    reader: |b| Ok(archive(b, JSON_FRAMING)),
+} }
+
+input_format! { pub TEXT_FORMAT = "transcript-text" {
+    specs: [TEXT],
+    parser: |b| TranscriptParser { format: Format::Text, input: b.input.display().to_string() },
+    discovery: discovery::spec(true),
+    discover: discovery::discover,
+    plan: |input, settings| plan(&TEXT, input, settings),
+    reader: |b| Ok(archive(b, Framing::Lines)),
+} }
+
+input_format! { pub WEBVTT_FORMAT = "webvtt" {
+    specs: [WEBVTT],
+    parser: |b| TranscriptParser { format: Format::WebVtt, input: b.input.display().to_string() },
+    discovery: discovery::spec(true),
+    discover: discovery::discover,
+    plan: |input, settings| plan(&WEBVTT, input, settings),
+    reader: |b| Ok(archive(b, CUE_FRAMING)),
+} }
+
+input_format! { pub SRT_FORMAT = "srt" {
+    specs: [SRT],
+    parser: |b| TranscriptParser { format: Format::Srt, input: b.input.display().to_string() },
+    discovery: discovery::spec(true),
+    discover: discovery::discover,
+    plan: |input, settings| plan(&SRT, input, settings),
+    reader: |b| Ok(archive(b, CUE_FRAMING)),
+} }
 
 #[cfg(test)]
 mod tests;
@@ -469,24 +472,26 @@ pub(super) fn json_records(
     nested: bool,
 ) -> Result<(Vec<Vec<u8>>, Value), RecordError> {
     use serde_json::value::RawValue;
-    let error = |e| RecordError::new(format!("imported JSON: {e}"));
     let (rows, defaults) = if nested {
         let mut object: Map<String, Value> = Map::new();
         let mut raw: std::collections::BTreeMap<String, Box<RawValue>> =
-            serde_json::from_slice(bytes).map_err(error)?;
+            serde_json::from_slice(bytes).record("imported JSON")?;
         let rows = raw
             .remove("segments")
-            .ok_or_else(|| RecordError::new("imported JSON needs segments"))?;
+            .record("imported JSON needs segments")?;
         for (key, value) in raw {
-            object.insert(key, serde_json::from_str(value.get()).map_err(error)?);
+            object.insert(
+                key,
+                serde_json::from_str(value.get()).record("imported JSON")?,
+            );
         }
         (
-            serde_json::from_str::<Vec<Box<RawValue>>>(rows.get()).map_err(error)?,
+            serde_json::from_str::<Vec<Box<RawValue>>>(rows.get()).record("imported JSON")?,
             Value::Object(object),
         )
     } else {
         (
-            serde_json::from_slice::<Vec<Box<RawValue>>>(bytes).map_err(error)?,
+            serde_json::from_slice::<Vec<Box<RawValue>>>(bytes).record("imported JSON")?,
             Value::Null,
         )
     };

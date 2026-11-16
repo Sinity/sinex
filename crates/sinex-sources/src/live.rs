@@ -6,10 +6,10 @@
 use crate::discovery::CapturePlan;
 use crate::sources;
 use serde_json::Value;
-use sinex_source_core::Source;
 use sinex_source_core::binding::{Binding, InputFormat, Reader, Settings};
 use sinex_source_core::capture::CaptureStop;
 use sinex_source_core::drivers::producer::{Error, Position, Producer, Store};
+use sinex_source_core::{Source, discovery::DiscoveryContext};
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 use std::sync::Arc;
@@ -124,6 +124,7 @@ fn start(
     binding: Binding,
     positions: &Path,
     failed: tokio::sync::mpsc::UnboundedSender<String>,
+    context: &DiscoveryContext,
 ) -> Result<Live, String> {
     let capture = k.capture.expect("live formats capture");
     // An unwritable spool is a local fault; reconnecting cannot repair it.
@@ -145,13 +146,14 @@ fn start(
     let stop = Arc::new(CaptureStop::new(None));
     let b = binding.clone();
     let thread_stop = stop.clone();
+    let context = context.clone();
     let thread = std::thread::Builder::new()
         .spawn(move || {
             let mut last_failure = None;
             let mut delay = Duration::from_secs(1);
             while !thread_stop.stopped() {
                 let started = Instant::now();
-                let error = match capture(&b, &thread_stop) {
+                let error = match capture(&b, &context, &thread_stop) {
                     _ if thread_stop.stopped() => return,
                     Ok(_) => "source ended".to_owned(),
                     Err(error) => error,
@@ -194,6 +196,8 @@ pub async fn run<F>(
     connection: Connection,
     store: &Store,
     positions: &Path,
+    context: &DiscoveryContext,
+    desktop_notifications: bool,
     mut select: F,
     every: Duration,
     until: Option<Instant>,
@@ -207,10 +211,19 @@ where
     let state_positions = positions.to_owned();
     let plan = select()?;
     let first_failed = failed.clone();
+    let first_context = context.clone();
     let mut lives = tokio::task::spawn_blocking(move || {
         plan.bindings
             .into_iter()
-            .map(|(format, binding)| start(format, binding, &state_positions, first_failed.clone()))
+            .map(|(format, binding)| {
+                start(
+                    format,
+                    binding,
+                    &state_positions,
+                    first_failed.clone(),
+                    &first_context,
+                )
+            })
             .collect::<Result<Vec<_>, _>>()
     })
     .await
@@ -225,7 +238,7 @@ where
         }
     };
     let result = tokio::select! {
-        result = produce_spools(connection, store, positions, &mut lives, every, &mut select, failed, health_bindings) => result,
+        result = produce_spools(connection, store, positions, &mut lives, every, &mut select, failed, health_bindings, context, desktop_notifications) => result,
         result = health::report(positions, health_changes) => result,
         Some(error) = failures.recv() => Err(error),
         _ = shutdown => Ok(()),
@@ -252,6 +265,7 @@ fn extend(
     plan: CapturePlan,
     positions: &Path,
     failed: &tokio::sync::mpsc::UnboundedSender<String>,
+    context: &DiscoveryContext,
 ) -> bool {
     let before = lives.len();
     lives.retain(|live| !plan.exclude.contains(&live.binding.source));
@@ -271,7 +285,7 @@ fn extend(
                 continue;
             }
             existing.capture.stop();
-            match start(format, binding, positions, failed.clone()) {
+            match start(format, binding, positions, failed.clone(), context) {
                 Ok(live) => {
                     *existing = live;
                     changed = true;
@@ -279,7 +293,7 @@ fn extend(
                 Err(error) => eprintln!("{}: {error}", format.name),
             }
         } else {
-            match start(format, binding, positions, failed.clone()) {
+            match start(format, binding, positions, failed.clone(), context) {
                 Ok(live) => {
                     lives.push(live);
                     changed = true;
@@ -319,6 +333,8 @@ async fn produce_spools<F>(
     health_bindings: tokio::sync::watch::Sender<
         Vec<(Binding, sinex_source_core::drivers::spool_health::Counter)>,
     >,
+    context: &DiscoveryContext,
+    desktop_notifications: bool,
 ) -> Result<(), String>
 where
     F: FnMut() -> Result<CapturePlan, String>,
@@ -343,7 +359,7 @@ where
             };
             match select() {
                 Ok(plan) => {
-                    if extend(lives, plan, positions, &failed) {
+                    if extend(lives, plan, positions, &failed, context) {
                         health_bindings.send_replace(monitored(lives));
                         declaration = self::declaration(lives);
                         backup_responder = None;
@@ -400,7 +416,7 @@ where
                     for live in lives.iter() {
                         live.health.lock().unwrap().error = Some(reason.clone());
                     }
-                    notifier::raise(&connection.producer, &reason).await;
+                    notifier::raise(&connection.producer, &reason, desktop_notifications).await;
                     configuration_error = Some(reason);
                     continue;
                 }
@@ -453,7 +469,7 @@ where
                     | Error::Configuration(reason),
                 ) => {
                     live.health.lock().unwrap().error = Some(reason.clone());
-                    notifier::raise(&live.binding.name, &reason).await;
+                    notifier::raise(&live.binding.name, &reason, desktop_notifications).await;
                 }
                 Err(error @ (Error::Nats(_) | Error::NoAck(_) | Error::Refused { .. })) => {
                     let state = match error {

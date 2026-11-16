@@ -1,12 +1,13 @@
 use super::files::sniff;
 use super::*;
 use serde_json::{Map, Value, json};
+use sinex_model::Class;
 use sinex_model::Timestamp;
 use sinex_model::event_types::library::{
     Curation, CurationKind, FileCopy, LibraryRecord, Rendition, Target, ValueOrigin,
 };
 use sinex_model::{RecordOutcome, RecordState};
-use sinex_source_core::Parser;
+use sinex_source_core::StatelessParser;
 use sinex_source_core::drivers::Acquired;
 use sinex_source_core::{DrainInput, Limits, drain};
 use std::path::{Path, PathBuf};
@@ -25,7 +26,10 @@ pub(super) fn png(w: u32, h: u32) -> Vec<u8> {
     b
 }
 
-fn read_events(a: &Acquired, parser: &ScanParser) -> Vec<sinex_model::Event> {
+fn read_events(
+    a: &Acquired,
+    parser: &sinex_source_core::Stateless<ScanParser>,
+) -> Vec<sinex_model::Event> {
     let m = a.material.as_ref().expect("a material");
     let out = drain(
         parser,
@@ -51,7 +55,10 @@ fn read_events(a: &Acquired, parser: &ScanParser) -> Vec<sinex_model::Event> {
         .collect()
 }
 
-pub(super) fn read(a: &Acquired, parser: &ScanParser) -> Vec<FileCopy> {
+pub(super) fn read(
+    a: &Acquired,
+    parser: &sinex_source_core::Stateless<ScanParser>,
+) -> Vec<FileCopy> {
     read_events(a, parser)
         .into_iter()
         .map(|event| event.payload_as().unwrap())
@@ -78,7 +85,7 @@ fn sidecars_named_by_stem_are_not_items() {
     std::fs::write(root.join("notes.json"), b"{}").unwrap();
     let mut mem = ScanState::default();
     let first = scan(&root).poll(&Value::Null, &mut mem).unwrap();
-    let mut paths: Vec<String> = read(&first, &ScanParser)
+    let mut paths: Vec<String> = read(&first, &sinex_source_core::Stateless(ScanParser))
         .into_iter()
         .map(|a| a.path.rsplit('/').next().unwrap().to_owned())
         .collect();
@@ -94,7 +101,10 @@ fn a_single_file_scan_reads_and_misses_nothing_else() {
     std::fs::write(root.join("two.png"), png(20, 20)).unwrap();
     let mut mem = ScanState::default();
     let all = scan(&root).poll(&Value::Null, &mut mem).unwrap();
-    assert_eq!(read(&all, &ScanParser).len(), 2);
+    assert_eq!(
+        read(&all, &sinex_source_core::Stateless(ScanParser)).len(),
+        2
+    );
     assert!(
         scan(&root)
             .poll(&Value::Null, &mut mem)
@@ -109,7 +119,10 @@ fn a_single_file_scan_reads_and_misses_nothing_else() {
         only: Some("one.png".into()),
         ..scan(&root)
     };
-    let seen = read(&only.poll(&Value::Null, &mut mem).unwrap(), &ScanParser);
+    let seen = read(
+        &only.poll(&Value::Null, &mut mem).unwrap(),
+        &sinex_source_core::Stateless(ScanParser),
+    );
     assert_eq!(seen.len(), 1, "only the named file: {seen:?}");
     assert!(seen[0].path.ends_with("one.png"));
     assert!(seen[0].vanished_at.is_none());
@@ -124,7 +137,7 @@ fn scan_describes_stores_and_follows_renames_edits_and_removals() {
     std::fs::write(root.join(".hidden"), b"x").unwrap();
     let s = scan(&root);
     let mut mem = ScanState::default();
-    let parser = ScanParser;
+    let parser = sinex_source_core::Stateless(ScanParser);
 
     let first = s.poll(&Value::Null, &mut mem).unwrap();
     let seen = read(&first, &parser);
@@ -252,7 +265,7 @@ fn a_restarted_scan_keeps_item_keys_and_reads_only_changes() {
     saved.restored().unwrap();
     std::fs::write(root.join("two.png"), png(30, 30)).unwrap();
     let c = saved.poll(&cursor_b).unwrap();
-    let seen = read(&c, &ScanParser);
+    let seen = read(&c, &sinex_source_core::Stateless(ScanParser));
     assert_eq!(
         seen.len(),
         1,
@@ -329,7 +342,7 @@ fn requests_take_author_and_time_from_the_manifest() {
     );
     let m = a.material.as_ref().unwrap();
     let out = drain(
-        &RequestParser,
+        &sinex_source_core::Stateless(RequestParser),
         DrainInput {
             source: "library.request",
             class: Class::Open,
@@ -385,7 +398,7 @@ fn request_citations_keep_payload_identity_and_refuse_invalid_facts() {
     let material = acquired.material.unwrap();
     let outcomes = |manifest: &sinex_model::Manifest| {
         drain(
-            &RequestParser,
+            &sinex_source_core::Stateless(RequestParser),
             DrainInput {
                 source: REQUEST.name,
                 class: Class::Open,
@@ -491,7 +504,7 @@ fn equal_content_moves_prefer_each_files_device_and_inode() {
     let mut state = ScanState::default();
     let first = read(
         &scanner.poll(&Value::Null, &mut state).unwrap(),
-        &ScanParser,
+        &sinex_source_core::Stateless(ScanParser),
     );
     let one = first
         .iter()
@@ -513,7 +526,7 @@ fn equal_content_moves_prefer_each_files_device_and_inode() {
     std::fs::rename(root.join("two.png"), root.join("a.png")).unwrap();
     let moved = read(
         &scanner.poll(&Value::Null, &mut state).unwrap(),
-        &ScanParser,
+        &sinex_source_core::Stateless(ScanParser),
     );
     assert_eq!(
         moved
@@ -542,7 +555,7 @@ fn a_copy_then_removal_keeps_identity_without_the_same_inode() {
     let mut state = ScanState::default();
     let first = read(
         &scanner.poll(&Value::Null, &mut state).unwrap(),
-        &ScanParser,
+        &sinex_source_core::Stateless(ScanParser),
     );
     assert!(
         scanner
@@ -555,7 +568,7 @@ fn a_copy_then_removal_keeps_identity_without_the_same_inode() {
     std::fs::remove_file(root.join("one.png")).unwrap();
     let moved = read(
         &scanner.poll(&Value::Null, &mut state).unwrap(),
-        &ScanParser,
+        &sinex_source_core::Stateless(ScanParser),
     );
     let present = moved
         .iter()
@@ -577,7 +590,10 @@ fn three_unchanged_polls_write_zero_copy_events_and_reuse_hashes_after_restart()
     let first = reader.poll(&Value::Null).unwrap();
     let (_, cursor) = stored(&first);
     let memory = first.memory.as_ref().unwrap().bytes.clone();
-    assert_eq!(read(&first, &ScanParser).len(), 2);
+    assert_eq!(
+        read(&first, &sinex_source_core::Stateless(ScanParser)).len(),
+        2
+    );
     assert_eq!(reader.files_hashed(), 2);
     for _ in 0..3 {
         let unchanged = reader.poll(&cursor).unwrap();
@@ -597,7 +613,11 @@ fn three_unchanged_polls_write_zero_copy_events_and_reuse_hashes_after_restart()
     changed.push(0);
     std::fs::write(root.join("two.png"), changed).unwrap();
     assert_eq!(
-        read(&restarted.poll(&cursor).unwrap(), &ScanParser).len(),
+        read(
+            &restarted.poll(&cursor).unwrap(),
+            &sinex_source_core::Stateless(ScanParser)
+        )
+        .len(),
         1
     );
     assert_eq!(restarted.files_hashed(), 1);
@@ -614,7 +634,7 @@ fn ambiguous_equal_content_moves_create_new_items() {
     let mut state = ScanState::default();
     let first = read(
         &scanner.poll(&Value::Null, &mut state).unwrap(),
-        &ScanParser,
+        &sinex_source_core::Stateless(ScanParser),
     );
     for path in ["one.png", "two.png"] {
         state.files.get_mut(path).unwrap().inode = None;
@@ -623,7 +643,7 @@ fn ambiguous_equal_content_moves_create_new_items() {
     std::fs::rename(root.join("two.png"), root.join("b.png")).unwrap();
     let moved = read(
         &scanner.poll(&Value::Null, &mut state).unwrap(),
-        &ScanParser,
+        &sinex_source_core::Stateless(ScanParser),
     );
     let present: Vec<_> = moved
         .iter()
@@ -665,8 +685,8 @@ fn scans_with_equal_timestamps_are_independent() {
         acquired.material.as_mut().unwrap().manifest.read_at_ns = Some(1_000_000_000);
     }
 
-    let first = read_events(&first, &ScanParser);
-    let second = read_events(&second, &ScanParser);
+    let first = read_events(&first, &sinex_source_core::Stateless(ScanParser));
+    let second = read_events(&second, &sinex_source_core::Stateless(ScanParser));
     assert_eq!(
         first[0].payload["scanned_at"],
         second[0].payload["scanned_at"]
@@ -697,7 +717,10 @@ fn completion_records_do_not_advance_the_file_memory_checkpoint() {
         )
         .unwrap();
         let acquired = reader.poll(&cursor).unwrap();
-        assert_eq!(read(&acquired, &ScanParser).len(), 1);
+        assert_eq!(
+            read(&acquired, &sinex_source_core::Stateless(ScanParser)).len(),
+            1
+        );
         assert_eq!(
             acquired.memory.is_some(),
             index == 2,
@@ -716,7 +739,7 @@ fn one_missing_path_and_several_new_equal_copies_report_ambiguity_across_parts()
     let mut scanner = scan(dir.path());
     let mut state = ScanState::default();
     let first = scanner.poll(&Value::Null, &mut state).unwrap();
-    let old = read(&first, &ScanParser).remove(0);
+    let old = read(&first, &sinex_source_core::Stateless(ScanParser)).remove(0);
     let (_, mut cursor) = stored(&first);
     // Remove the inode, as when a file is moved between file systems.
     state.files.get_mut("old.png").unwrap().inode = None;
@@ -728,7 +751,7 @@ fn one_missing_path_and_several_new_equal_copies_report_ambiguity_across_parts()
     let mut copies = Vec::new();
     for _ in 0..2 {
         let part = scanner.poll(&cursor, &mut state).unwrap();
-        copies.extend(read(&part, &ScanParser));
+        copies.extend(read(&part, &sinex_source_core::Stateless(ScanParser)));
         cursor = stored(&part).1;
     }
     let present: Vec<_> = copies

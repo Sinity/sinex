@@ -1,5 +1,6 @@
 use super::super::cells;
 use super::*;
+use sinex_model::Class;
 
 fn cell(service: &str, body: &str, time: &str) -> Cell {
     let html = format!(
@@ -15,8 +16,8 @@ fn linked_and_unlinked_actions() {
         r#"Visited <a href="https://example.org/a">A page</a>"#,
         "Aug 26, 2026, 9:34:44 PM CEST",
     );
-    let (out, ()) = MyActivityParser
-        .parse(&c, &(), &sinex_source_core::RecordContext::none())
+    let out = MyActivityParser
+        .parse(&c, &sinex_source_core::RecordContext::none())
         .unwrap();
     assert_eq!(out[0].verb.as_deref(), Some("Visited"));
     assert_eq!(out[0].title, "A page");
@@ -27,8 +28,8 @@ fn linked_and_unlinked_actions() {
         "Downloaded a Takeout archive",
         "Dec 15, 2025, 5:15:21 AM CEST",
     );
-    let (out, ()) = MyActivityParser
-        .parse(&c, &(), &sinex_source_core::RecordContext::none())
+    let out = MyActivityParser
+        .parse(&c, &sinex_source_core::RecordContext::none())
         .unwrap();
     assert_eq!(out[0].title_url, None);
     assert_eq!(
@@ -44,8 +45,8 @@ fn watches_keep_unknown_titles_unknown() {
         r#"Watched <a href="https://www.youtube.com/watch?v=abc123">A talk</a><br><a href="https://www.youtube.com/channel/C">Chan</a>"#,
         "Aug 26, 2026, 9:34:44 PM CEST",
     );
-    let (out, ()) = YouTubeParser
-        .parse(&c, &(), &sinex_source_core::RecordContext::none())
+    let out = YouTubeParser
+        .parse(&c, &sinex_source_core::RecordContext::none())
         .unwrap();
     let YouTubeEvent::Watched(w) = &out[0] else {
         panic!()
@@ -58,8 +59,8 @@ fn watches_keep_unknown_titles_unknown() {
         r#"Watched <a href="https://www.youtube.com/watch?v=gone1">https://www.youtube.com/watch?v=gone1</a>"#,
         "Aug 26, 2026, 9:34:44 PM CEST",
     );
-    let (out, ()) = YouTubeParser
-        .parse(&gone, &(), &sinex_source_core::RecordContext::none())
+    let out = YouTubeParser
+        .parse(&gone, &sinex_source_core::RecordContext::none())
         .unwrap();
     let YouTubeEvent::Watched(w) = &out[0] else {
         panic!()
@@ -71,8 +72,8 @@ fn watches_keep_unknown_titles_unknown() {
         "Watched a video that has been removed",
         "Aug 26, 2026, 9:34:44 PM CEST",
     );
-    let (out, ()) = YouTubeParser
-        .parse(&removed, &(), &sinex_source_core::RecordContext::none())
+    let out = YouTubeParser
+        .parse(&removed, &sinex_source_core::RecordContext::none())
         .unwrap();
     let YouTubeEvent::Watched(w) = &out[0] else {
         panic!()
@@ -126,7 +127,7 @@ fn page(times: &[&str]) -> String {
 fn drained(html: &str) -> (Vec<(sinex_model::Timestamp, String)>, Vec<String>) {
     let (records, _) = frame(html.as_bytes());
     let chunks = sinex_source_core::drain::drain(
-        &MyActivityParser,
+        &Stateless(MyActivityParser),
         sinex_source_core::drain::DrainInput {
             source: "google.takeout.my-activity",
             class: Class::Open,

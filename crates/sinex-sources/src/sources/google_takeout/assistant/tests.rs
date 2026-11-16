@@ -8,8 +8,8 @@ fn read(path: &str, csv: &str) -> Result<NoteObserved, RecordError> {
         member: None,
     };
     AssistantParser
-        .parse(&csv.as_bytes(), &(), &context)
-        .map(|(mut out, ())| out.remove(0))
+        .parse(&csv.as_bytes(), &context)
+        .map(|mut out| out.remove(0))
 }
 
 #[devkit::test]

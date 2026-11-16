@@ -6,24 +6,23 @@
 //! the same bookmarks, and the newest export's reading is the live one.
 use super::fields;
 use serde_json::{Map, Value};
-use sinex_model::Class;
 use sinex_model::event_types::media::BookmarkSaved;
+use sinex_model::json::JsonExt;
+use sinex_source_core::discovery::{DiscoverySpec, Location};
 use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordError};
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
+use sinex_source_core::{Framer, Parser, RecordError, RecordResult, binding};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "reading.raindrop",
     origin: Origin::Input(Shape::ExportArchive),
     expect: Expectation::Export,
-    expires_after: None,
     purpose: "saved reading and URL recall",
-    class: Class::Open,
     parser: "raindrop-export",
-    parser_version: 1,
     event_types: &["bookmark.saved"],
-    framer: sinex_source_core::Framer::detected(frame, framing),
+    framer: Framer::detected(frame, framing),
+    ..SourceSpec::DEFAULT
 };
 
 /// Raindrop's trash collection.
@@ -45,8 +44,8 @@ impl Parser for RaindropParser {
         _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<BookmarkSaved>, Vec<String>), RecordError> {
         if record.trim_ascii_start().starts_with(b"{") {
-            let row: Map<String, Value> = serde_json::from_slice(record)
-                .map_err(|e| RecordError::new(format!("not a raindrop object: {e}")))?;
+            let row: Map<String, Value> =
+                serde_json::from_slice(record).record("not a raindrop object")?;
             return Ok((vec![api_row(&row)?], header.clone()));
         }
         csv_row(record, header)
@@ -78,8 +77,8 @@ fn csv_row(
     let row = reader
         .records()
         .next()
-        .ok_or_else(|| RecordError::new("empty CSV record"))?
-        .map_err(|e| RecordError::new(format!("CSV: {e}")))?;
+        .record("empty CSV record")?
+        .record("CSV")?;
     let cells: Vec<String> = row.iter().map(str::to_owned).collect();
     if header.is_empty() {
         let mut names = cells;
@@ -150,7 +149,7 @@ fn api_row(row: &Map<String, Value>) -> Result<BookmarkSaved, RecordError> {
         .get("collection")
         .and_then(|c| c.get("$id"))
         .and_then(Value::as_i64)
-        .or_else(|| row.get("collectionId").and_then(Value::as_i64));
+        .or_else(|| row.i64("collectionId"));
     let updated_at = t("lastUpdate").map(|u| fields::rfc3339(&u)).transpose()?;
     let trashed =
         fields::optional_bool(row, "removed") == Some(true) || collection == Some(TRASH_COLLECTION);
@@ -165,8 +164,7 @@ fn api_row(row: &Map<String, Value>) -> Result<BookmarkSaved, RecordError> {
         // name is in the export's collections file, not on the bookmark.
         folder: None,
         tags: row
-            .get("tags")
-            .and_then(Value::as_array)
+            .array("tags")
             .map(|a| {
                 a.iter()
                     .filter_map(Value::as_str)
@@ -205,13 +203,6 @@ pub fn frame(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
     framing(bytes).frame(bytes, true)
 }
 
-pub fn source() -> DeclaredSource<RaindropParser> {
-    DeclaredSource {
-        spec: SPEC,
-        parser: RaindropParser,
-    }
-}
-
 /// A CSV export (`.csv`) or an API export (`.jsonl`), by the file's name.
 pub fn driver(path: PathBuf, host: String) -> ExportArchive {
     let jsonl = path.extension().is_some_and(|e| e == "jsonl");
@@ -241,40 +232,21 @@ pub fn bookmark_file(path: &std::path::Path) -> bool {
 }
 
 /// `stage --parser raindrop PATH`: each Raindrop export in PATH.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "raindrop",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "input",
-                path: "raindrop",
-            }],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SPEC],
-        plan: Some(|input, settings| {
-            Ok(sinex_source_core::binding::per_file(
-                &SPEC,
-                input,
-                settings,
-                false,
-                bookmark_file,
-            ))
-        }),
-        source: |_| Ok(Box::new(source())),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::shared(driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: None,
-    };
+super::input_format! { pub FORMAT = "raindrop" {
+    specs: [SPEC],
+    parser: |_b| RaindropParser,
+    discovery: DiscoverySpec::system(&[Location::new("input", "raindrop")]),
+    plan: |input, settings| {
+        Ok(binding::per_file(
+            &SPEC,
+            input,
+            settings,
+            false,
+            bookmark_file,
+        ))
+    },
+    reader: shared(driver),
+} }
 
 #[cfg(test)]
 mod tests;

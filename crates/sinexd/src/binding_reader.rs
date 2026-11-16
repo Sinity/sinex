@@ -84,7 +84,10 @@ pub(crate) async fn once(
         &mut readers,
         &mut rounds,
         stop,
-        Access::default(),
+        Access {
+            recipient: writer.class_recipient.as_deref(),
+            unlock: None,
+        },
         stage::ReadMode::ToEnd,
         &mut |_, _| {},
     )

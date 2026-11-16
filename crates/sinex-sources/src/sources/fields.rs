@@ -1,14 +1,13 @@
 //! Reading typed fields out of a JSON record, with errors that name the field.
 use serde_json::{Map, Value};
 use sinex_model::Timestamp;
+use sinex_model::json::JsonExt;
 use sinex_source_core::RecordError;
+use sinex_source_core::RecordResult;
 
 /// Text, or `None` for a missing field, null or an empty string.
 pub(crate) fn optional_text(row: &Map<String, Value>, name: &str) -> Option<String> {
-    row.get(name)
-        .and_then(Value::as_str)
-        .filter(|s| !s.is_empty())
-        .map(str::to_owned)
+    row.str(name).filter(|s| !s.is_empty()).map(str::to_owned)
 }
 
 /// The fields not in `known`, kept by name.
@@ -22,7 +21,7 @@ pub(crate) fn extra(row: &Map<String, Value>, known: &[&str]) -> Map<String, Val
 pub(crate) fn rfc3339(raw: &str) -> Result<Timestamp, RecordError> {
     time::OffsetDateTime::parse(raw, &time::format_description::well_known::Rfc3339)
         .map(Timestamp)
-        .map_err(|e| RecordError::new(format!("invalid time {raw:?}: {e}")))
+        .record_with(|| format!("invalid time {raw:?}"))
 }
 
 #[cfg(feature = "full")]

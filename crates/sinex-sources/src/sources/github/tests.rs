@@ -152,9 +152,8 @@ fn kinds(records: &[Map<String, Value>]) -> Vec<&str> {
 
 fn parse(record: &Map<String, Value>) -> Vec<GithubRecord> {
     GithubParser
-        .parse(record, &(), &sinex_source_core::RecordContext::none())
+        .parse(record, &sinex_source_core::RecordContext::none())
         .unwrap()
-        .0
 }
 
 fn github(url: &str) -> Github {
@@ -276,7 +275,7 @@ fn runs_issues_and_open_checks_parse() {
     assert_eq!(i.number, 3);
     assert_eq!(i.state_reason.as_deref(), Some("completed"));
     assert_eq!(i.assignees, ["alice"]);
-    assert_eq!(i.comments, 2);
+    assert_eq!(i.comments, Some(2));
     let out = parse(&record(
         "checks",
         "o/r",
@@ -287,7 +286,6 @@ fn runs_issues_and_open_checks_parse() {
         GithubParser
             .parse(
                 &record("comment", "o/r", json!({})),
-                &(),
                 &sinex_source_core::RecordContext::none()
             )
             .is_err()
@@ -345,7 +343,7 @@ fn asks_follow_what_changed() {
         }
         (404, Vec::new(), json!({"message": "Not Found"}).to_string())
     });
-    let mut d = driver(github(&url));
+    let mut d = ApiCursor { api: github(&url) };
 
     let first = d.poll(&Value::Null).unwrap();
     let read = records(&first);
@@ -401,7 +399,7 @@ fn the_interval_holds_asks() {
     let (url, asked) = serve(|_| (500, Vec::new(), String::new()));
     let mut github = github(&url);
     github.interval = Duration::from_secs(3600);
-    let mut d = driver(github);
+    let mut d = ApiCursor { api: github };
     let position = Position {
         asked_at: Some(Timestamp::now()),
         ..Position::default()
@@ -429,7 +427,7 @@ fn a_rate_limit_holds_asks_until_its_reset() {
             json!({"message": "API rate limit exceeded"}).to_string(),
         )
     });
-    let mut d = driver(github(&url));
+    let mut d = ApiCursor { api: github(&url) };
     let refused = d.poll(&Value::Null).err().expect("refused");
     assert!(refused.to_string().contains("rate limit"), "{refused}");
     assert_eq!(asked.lock().unwrap().len(), 1);
@@ -581,4 +579,15 @@ fn discovery_reports_awaiting_credentials_without_planning_a_reader() {
             assert!(input.bindings.is_empty());
         }
     }
+}
+
+#[devkit::test]
+fn missing_comments_is_unknown() {
+    let mut item = issue(3);
+    item.as_object_mut().unwrap().remove("comments");
+    let output = parse(&record("issue", "o/r", json!({"item": item})));
+    let [GithubRecord::Issue(issue)] = output.as_slice() else {
+        panic!("expected an issue");
+    };
+    assert_eq!(issue.comments, None);
 }

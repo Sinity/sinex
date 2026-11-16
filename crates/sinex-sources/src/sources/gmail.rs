@@ -3,6 +3,7 @@
 pub mod api;
 pub mod oauth;
 
+use crate::sources::input_format;
 use base64::Engine;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
@@ -10,13 +11,14 @@ use sinex_model::event_types::communication::MailMessage;
 use sinex_model::event_types::gmail::{
     HistoryGap, MailChanged, MessageChange, MessageReference, ProviderMessage, ProviderMissing,
 };
-use sinex_model::{Class, Timestamp};
+use sinex_model::{Class, Timestamp, json::JsonExt};
+use sinex_source_core::discovery::{DiscoverySpec, Location};
 use sinex_source_core::drivers::api_cursor::ApiCursor;
 use sinex_source_core::drivers::held::HeldMaterial;
 use sinex_source_core::drivers::{Acquired, DriverError};
 use sinex_source_core::{
-    DeclaredSource, Expectation, Origin, Parser, Reader, RecordContext, RecordError, Shape,
-    SourceSpec,
+    DeclaredSource, Expectation, Origin, Reader, RecordContext, RecordError, RecordResult, Shape,
+    SourceSpec, Stateless, StatelessParser, binding,
 };
 use std::path::Path;
 
@@ -24,11 +26,9 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "communication.gmail",
     origin: Origin::Input(Shape::ApiCursor),
     expect: Expectation::cadence_hours(1),
-    expires_after: None,
     purpose: "mail and provider history",
     class: Class::Guarded,
     parser: "gmail",
-    parser_version: 1,
     event_types: &[
         "mail.message",
         "mail.provider_message",
@@ -40,6 +40,7 @@ pub const SPEC: SourceSpec = SourceSpec {
         sinex_source_core::drivers::export_archive::frame_lines,
         sinex_source_core::drivers::export_archive::Framing::Lines,
     ),
+    ..SourceSpec::DEFAULT
 };
 
 #[derive(Clone, Debug, Deserialize)]
@@ -80,31 +81,28 @@ sinex_model::payload_enum! {
 }
 
 pub struct GmailParser;
-impl Parser for GmailParser {
+impl StatelessParser for GmailParser {
     type Record<'a> = Map<String, Value>;
-    type Carry = ();
     type Payload = GmailRecord;
 
     fn parse(
         &self,
         record: &Map<String, Value>,
-        _: &(),
         _: &RecordContext<'_>,
-    ) -> Result<(Vec<GmailRecord>, ()), RecordError> {
-        parse_record(record).map(|records| (records, ()))
+    ) -> Result<Vec<GmailRecord>, RecordError> {
+        parse_record(record)
     }
 }
 
 fn required<'a>(value: &'a Value, key: &str) -> Result<&'a str, RecordError> {
     value
-        .get(key)
-        .and_then(Value::as_str)
+        .str(key)
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| RecordError::new(format!("Gmail record missing {key}")))
+        .record_with(|| format!("Gmail record missing {key}"))
 }
 
 fn decode<T: serde::de::DeserializeOwned>(value: Value) -> Result<T, RecordError> {
-    serde_json::from_value(value).map_err(|_| RecordError::new("invalid Gmail record fields"))
+    serde_json::from_value(value).record("invalid Gmail record fields")
 }
 
 fn strings(value: &Value, key: &str) -> Result<Vec<String>, RecordError> {
@@ -116,10 +114,9 @@ fn strings(value: &Value, key: &str) -> Result<Vec<String>, RecordError> {
 
 fn record_text<'a>(record: &'a Map<String, Value>, key: &str) -> Result<&'a str, RecordError> {
     record
-        .get(key)
-        .and_then(Value::as_str)
+        .str(key)
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| RecordError::new(format!("Gmail record missing {key}")))
+        .record_with(|| format!("Gmail record missing {key}"))
 }
 
 fn parse_record(record: &Map<String, Value>) -> Result<Vec<GmailRecord>, RecordError> {
@@ -127,18 +124,17 @@ fn parse_record(record: &Map<String, Value>) -> Result<Vec<GmailRecord>, RecordE
     let response = record
         .get("response")
         .filter(|r| r.is_object())
-        .ok_or_else(|| RecordError::new("Gmail record missing response"))?;
+        .record("Gmail record missing response")?;
     match record_text(record, "kind")? {
         "listing" | "profile" => Ok(vec![]),
         "message" => {
             let raw = response
-                .get("raw")
-                .and_then(Value::as_str)
-                .ok_or_else(|| RecordError::new("Gmail message missing raw bytes"))?;
+                .str("raw")
+                .record("Gmail message missing raw bytes")?;
             let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
                 .decode(raw)
                 .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(raw))
-                .map_err(|_| RecordError::new("Gmail message has invalid base64url bytes"))?;
+                .record("Gmail message has invalid base64url bytes")?;
             let mut message = super::mail::parse_message(&bytes)?;
             let provider_message_id = required(response, "id")?.to_owned();
             message.account = Some(account.clone());
@@ -155,13 +151,8 @@ fn parse_record(record: &Map<String, Value>) -> Result<Vec<GmailRecord>, RecordE
                 .iter()
                 .map(|id| {
                     names
-                        .and_then(|labels| {
-                            labels
-                                .iter()
-                                .find(|l| l.get("id").and_then(Value::as_str) == Some(id))
-                        })
-                        .and_then(|l| l.get("name"))
-                        .and_then(Value::as_str)
+                        .and_then(|labels| labels.iter().find(|l| l.str("id") == Some(id)))
+                        .and_then(|l| l.str("name"))
                         .unwrap_or(id)
                         .to_owned()
                 })
@@ -174,12 +165,11 @@ fn parse_record(record: &Map<String, Value>) -> Result<Vec<GmailRecord>, RecordE
                     let millis = value
                         .as_str()
                         .and_then(|s| s.parse::<i128>().ok())
-                        .ok_or_else(|| RecordError::new("invalid Gmail internal date"))?;
+                        .record("invalid Gmail internal date")?;
                     let ns = millis
                         .checked_mul(1_000_000)
-                        .ok_or_else(|| RecordError::new("Gmail internal date out of range"))?;
-                    Timestamp::from_unix_ns(ns)
-                        .map_err(|_| RecordError::new("Gmail internal date out of range"))
+                        .record("Gmail internal date out of range")?;
+                    Timestamp::from_unix_ns(ns).record("Gmail internal date out of range")
                 })
                 .transpose()?;
             let provider = ProviderMessage {
@@ -239,10 +229,10 @@ fn parse_record(record: &Map<String, Value>) -> Result<Vec<GmailRecord>, RecordE
     }
 }
 
-pub fn source() -> DeclaredSource<GmailParser> {
+pub fn source() -> DeclaredSource<Stateless<GmailParser>> {
     DeclaredSource {
         spec: SPEC,
-        parser: GmailParser,
+        parser: Stateless(GmailParser),
     }
 }
 
@@ -306,47 +296,38 @@ impl<T: api::Transport + 'static> Reader for GmailReader<T> {
     }
 }
 
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "gmail",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "input",
-                path: "gmail",
-            }],
-            capabilities: &[],
-            credentials: &["client_id_file", "client_secret_file", "refresh_token_file"],
-            streams: &[],
-        },
-        discover,
-        specs: || vec![&SPEC],
-        plan: Some(|input, settings| {
-            let config = Config::load(input)?;
-            let mut settings = settings.clone();
-            settings.options = json!({"account": config.account, "include_spam_trash": true});
-            Ok(sinex_source_core::binding::single(&SPEC, input, &settings))
-        }),
-        source: |_| Ok(Box::new(source())),
-        reader: Some(|binding| {
-            let config = Config::load(&binding.input)?;
-            if binding.settings.option("account") != Some(&config.account) {
-                return Err("Gmail account configuration changed; plan the binding again".into());
-            }
-            let tokens = oauth::TokenProvider::new(
-                config.credentials,
-                oauth::GoogleExchange::default(),
-                oauth::SystemClock,
-            );
-            Ok(sinex_source_core::binding::polled(GmailReader::new(
-                api::Http::new(tokens, &config.account),
-                config.account,
-                binding.settings.host.clone(),
-            )))
-        }),
-        capture: None,
-    };
+input_format! { pub FORMAT = "gmail" {
+    specs: [SPEC],
+    parser: |_b| Stateless(GmailParser),
+    discovery: DiscoverySpec {
+        locations: &[Location::new("input", "gmail")],
+        credentials: &["client_id_file", "client_secret_file", "refresh_token_file"],
+        ..DiscoverySpec::DEFAULT
+    },
+    discover: discover,
+    plan: |input, settings| {
+        let config = Config::load(input)?;
+        let mut settings = settings.clone();
+        settings.options = json!({"account": config.account, "include_spam_trash": true});
+        Ok(binding::single(&SPEC, input, &settings))
+    },
+    reader: |binding| {
+        let config = Config::load(&binding.input)?;
+        if binding.settings.option("account") != Some(&config.account) {
+            return Err("Gmail account configuration changed; plan the binding again".into());
+        }
+        let tokens = oauth::TokenProvider::new(
+            config.credentials,
+            oauth::GoogleExchange::default(),
+            oauth::SystemClock,
+        );
+        Ok(binding::polled(GmailReader::new(
+            api::Http::new(tokens, &config.account),
+            config.account,
+            binding.settings.host.clone(),
+        )))
+    },
+} }
 
 fn discover(
     format: &sinex_source_core::InputFormat,

@@ -377,7 +377,7 @@ impl Api {
                 blobs: &blobs,
                 writer: &writer,
                 access: crate::material_access::Access {
-                    recipient: None,
+                    recipient: writer.class_recipient.as_deref(),
                     unlock: unlock.as_ref(),
                 },
                 stop,

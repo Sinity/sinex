@@ -5,6 +5,7 @@
 //! values `busctl` writes as `{"type": <signature>, "data": <value>}`.
 use serde_json::{Map, Value};
 use sinex_model::InputRef;
+use sinex_model::json::JsonExt;
 use sinex_source_core::drivers::live_stream::{self, LiveStream, Rotation, SpoolWriter};
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
@@ -117,7 +118,7 @@ pub(crate) fn names_until(stop: &sinex_source_core::capture::CaptureStop) -> Vec
     serde_json::from_slice::<Vec<Map<String, Value>>>(&out)
         .unwrap_or_default()
         .into_iter()
-        .filter_map(|n| n.get("name").and_then(Value::as_str).map(str::to_owned))
+        .filter_map(|n| n.str("name").map(str::to_owned))
         .collect()
 }
 
@@ -158,12 +159,7 @@ impl Message {
     pub fn parse(line: &[u8]) -> Result<Self, String> {
         let m: Map<String, Value> =
             serde_json::from_slice(line).map_err(|e| format!("not a busctl JSON message: {e}"))?;
-        let text = |k: &str| {
-            m.get(k)
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned()
-        };
+        let text = |k: &str| m.str(k).unwrap_or_default().to_owned();
         let args = match m.get("payload").and_then(|p| p.get("data")) {
             Some(Value::Array(items)) => items.iter().map(decode).collect(),
             Some(other) => vec![decode(other)],
@@ -176,8 +172,8 @@ impl Message {
             path: text("path"),
             sender: text("sender"),
             destination: text("destination"),
-            serial: m.get("cookie").and_then(Value::as_u64),
-            reply_serial: m.get("reply_cookie").and_then(Value::as_u64),
+            serial: m.u64("cookie"),
+            reply_serial: m.u64("reply_cookie"),
             args,
         })
     }

@@ -213,7 +213,7 @@ pub struct GithubWorkflowRun {
 
 /// A GitHub issue; a later reading replaces it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2, type = "github.issue", key = ["repository", "number"], replace = newer, time = created_at, quality = intrinsic)]
+#[event(version = 3, type = "github.issue", key = ["repository", "number"], replace = newer, time = created_at, quality = intrinsic)]
 pub struct GithubIssue {
     pub repository: String,
     pub number: u64,
@@ -226,7 +226,7 @@ pub struct GithubIssue {
     pub author: Option<String>,
     pub labels: Vec<String>,
     pub assignees: Vec<String>,
-    pub comments: u64,
+    pub comments: Option<u64>,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
     pub closed_at: Option<Timestamp>,

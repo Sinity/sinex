@@ -24,7 +24,7 @@ fn observation() -> SourceCoverage {
 fn parse(observation: SourceCoverage) -> Vec<sinex_source_core::DrainOutput> {
     let material = observation_material(observation).material.unwrap();
     drain(
-        &ObservationParser,
+        &Stateless(ObservationParser),
         DrainInput {
             source: OBSERVATION.name,
             class: OBSERVATION.class,

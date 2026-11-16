@@ -135,7 +135,7 @@ impl Position {
 
     /// Write a temporary file, sync it to disk, then rename it over the old one.
     pub fn save(&self, dir: &Path, binding: &str) -> Result<(), Error> {
-        write_synced(&Self::path(dir, binding), self)
+        store_state(&Self::path(dir, binding), self)
     }
 }
 
@@ -207,7 +207,7 @@ impl UnacknowledgedFrames {
 
     fn save(&self, dir: &Path, binding: &str) -> Result<(), Error> {
         let path = Self::path(dir, binding);
-        write_synced(&path, self)
+        store_state(&path, self)
     }
 
     fn clear(dir: &Path, binding: &str) -> Result<(), Error> {
@@ -231,27 +231,23 @@ fn read_state<T: serde::de::DeserializeOwned>(
     serde_json::from_reader(std::io::BufReader::new(reader))
         .map_err(|error| Error::State(path.to_owned(), error.to_string()))
 }
-fn write_synced(path: &Path, value: &impl Serialize) -> Result<(), Error> {
-    let err = |error: &dyn std::fmt::Display| Error::State(path.to_owned(), error.to_string());
+fn store_state(path: &Path, value: &impl Serialize) -> Result<(), Error> {
     let directory = path
         .parent()
         .ok_or_else(|| Error::State(path.to_owned(), "state path has no parent".into()))?;
-    std::fs::create_dir_all(directory).map_err(|error| err(&error))?;
-    let temporary = tempfile::NamedTempFile::new_in(directory).map_err(|error| err(&error))?;
-    let preparation = hashed_blobs::Preparation::new(directory).map_err(|error| err(&error))?;
-    let mut writer = preparation
-        .plain_writer(temporary.reopen().map_err(|error| err(&error))?, 3)
-        .map_err(|error| err(&error))?;
-    serde_json::to_writer(&mut writer, value).map_err(|error| err(&error))?;
-    drop(writer.finish().map_err(|error| err(&error))?);
-    temporary
-        .as_file()
-        .sync_all()
-        .map_err(|error| err(&error))?;
-    temporary.persist(path).map_err(|error| err(&error))?;
-    std::fs::File::open(directory)
-        .and_then(|file| file.sync_all())
-        .map_err(|error| err(&error))
+    std::fs::create_dir_all(directory)
+        .map_err(|error| Error::State(path.to_owned(), error.to_string()))?;
+    sinex_transport::durable::write_replacing(path, 0o600, |file| {
+        let preparation =
+            hashed_blobs::Preparation::new(directory).map_err(std::io::Error::other)?;
+        let mut writer = preparation
+            .plain_writer(file.try_clone()?, 3)
+            .map_err(std::io::Error::other)?;
+        serde_json::to_writer(&mut writer, value)?;
+        drop(writer.finish().map_err(std::io::Error::other)?);
+        Ok(())
+    })
+    .map_err(|(_, error)| Error::State(path.to_owned(), error.to_string()))
 }
 
 /// What one poll sent.

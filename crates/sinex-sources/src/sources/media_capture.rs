@@ -7,10 +7,18 @@
 //! events (the `screen-text` derivation in `sinexd`).
 use serde_json::{Value, json};
 use sinex_model::event_types::session::MediaSegment;
+use sinex_model::json::JsonExt;
 use sinex_model::{Class, InputRef, Timestamp};
+#[cfg(test)]
+use sinex_source_core::DeclaredSource;
+use sinex_source_core::RecordResult;
+use sinex_source_core::discovery::{
+    CaptureOption, CaptureStream, CaptureValue, CapturedBy, DiscoverySpec,
+};
 use sinex_source_core::drivers::media::{self, Media};
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordContext, RecordError};
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
+use sinex_source_core::{RecordContext, RecordError};
+use sinex_source_core::{Stateless, StatelessParser};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -19,7 +27,6 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "session.media",
     origin: Origin::Input(Shape::Media),
     expect: Expectation::continuous_days(2),
-    expires_after: None,
     purpose: "recall: what was on screen and said; screen text and transcripts",
     // Whatever was on screen or within the microphone's reach.
     class: Class::Guarded,
@@ -30,6 +37,7 @@ pub const SPEC: SourceSpec = SourceSpec {
         media::whole,
         sinex_source_core::drivers::export_archive::Framing::Whole,
     ),
+    ..SourceSpec::DEFAULT
 };
 
 pub struct MediaParser;
@@ -43,52 +51,37 @@ fn ts(v: &Value) -> Option<Timestamp> {
     Timestamp::from_unix_ns(ns).ok()
 }
 
-impl Parser for MediaParser {
+impl StatelessParser for MediaParser {
     type Record<'a> = &'a [u8];
-    type Carry = ();
     type Payload = MediaSegment;
 
     fn parse(
         &self,
         record: &&[u8],
-        _: &(),
-        context: &RecordContext<'_>,
-    ) -> Result<(Vec<MediaSegment>, ()), RecordError> {
-        let m = &context.manifest.details;
-        let started_at = ts(m.get("started_ns").unwrap_or(&Value::Null))
-            .ok_or_else(|| RecordError::new("segment has no start"))?;
-        let ended_at = ts(m.get("ended_ns").unwrap_or(&Value::Null)).unwrap_or(started_at);
-        let s = |k: &str| m.get(k).and_then(Value::as_str).map(str::to_owned);
-        let n = |k: &str| {
-            m.get(k)
-                .and_then(Value::as_u64)
-                .and_then(|v| u32::try_from(v).ok())
-        };
-        Ok((
-            vec![MediaSegment {
-                kind: s("kind").ok_or_else(|| RecordError::new("segment has no kind"))?,
-                started_at,
-                ended_at,
-                mime: s("mime").unwrap_or_else(|| "application/octet-stream".into()),
-                bytes: record.len() as u64,
-                target: s("target"),
-                width: n("width"),
-                height: n("height"),
-                accessibility_text: match m.get("accessibility_text") {
-                    None | Some(Value::Null) => None,
-                    Some(Value::String(text)) => Some(text.clone()),
-                    Some(_) => return Err(RecordError::new("accessibility_text is not text")),
-                },
-            }],
-            (),
-        ))
-    }
-}
 
-pub fn source() -> DeclaredSource<MediaParser> {
-    DeclaredSource {
-        spec: SPEC,
-        parser: MediaParser,
+        context: &RecordContext<'_>,
+    ) -> Result<Vec<MediaSegment>, RecordError> {
+        let m = &context.manifest.details;
+        let started_at =
+            ts(m.get("started_ns").unwrap_or(&Value::Null)).record("segment has no start")?;
+        let ended_at = ts(m.get("ended_ns").unwrap_or(&Value::Null)).unwrap_or(started_at);
+        let s = |k: &str| m.str(k).map(str::to_owned);
+        let n = |k: &str| m.u64(k).and_then(|v| u32::try_from(v).ok());
+        Ok(vec![MediaSegment {
+            kind: s("kind").record("segment has no kind")?,
+            started_at,
+            ended_at,
+            mime: s("mime").unwrap_or_else(|| "application/octet-stream".into()),
+            bytes: record.len() as u64,
+            target: s("target"),
+            width: n("width"),
+            height: n("height"),
+            accessibility_text: match m.get("accessibility_text") {
+                None | Some(Value::Null) => None,
+                Some(Value::String(text)) => Some(text.clone()),
+                Some(_) => return Err(RecordError::new("accessibility_text is not text")),
+            },
+        }])
     }
 }
 
@@ -269,59 +262,46 @@ fn media(b: &sinex_source_core::binding::Binding) -> Result<&'static str, String
 /// `stage --parser media SPOOL`: screen stills (option `kind: screen`, every
 /// `every` seconds, 60 by default) or audio segments (`kind: audio`,
 /// `segment` seconds each, 300 by default), captured into SPOOL.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "media",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::Session,
-            locations: &[],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[
-                sinex_source_core::discovery::CaptureStream {
-                    spool: "screen",
-                    options: &[sinex_source_core::discovery::CaptureOption {
-                        name: "kind",
-                        value: sinex_source_core::discovery::CaptureValue::Text("screen"),
-                    }],
-                    capabilities: &["wayland", "grim"],
-                },
-                sinex_source_core::discovery::CaptureStream {
-                    spool: "audio",
-                    options: &[sinex_source_core::discovery::CaptureOption {
-                        name: "kind",
-                        value: sinex_source_core::discovery::CaptureValue::Text("audio"),
-                    }],
-                    capabilities: &["pipewire", "pw-record"],
-                },
-            ],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SPEC],
-        plan: Some(|spool, settings| {
-            let b = sinex_source_core::binding::Binding::of(&SPEC, spool, settings.clone());
-            let kind = media(&b)?;
-            Ok(vec![b.named(kind)])
-        }),
-        source: |_| Ok(Box::new(source())),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::polled(driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-                media(b)?,
-            )))
-        }),
-        capture: Some(|b, stop| {
-            let seconds =
-                |key, default| Duration::from_secs(b.settings.number(key).unwrap_or(default));
-            match media(b)? {
-                "screen" => capture_screen(&b.input, seconds("every", 60), stop),
-                _ => capture_audio(&b.input, seconds("segment", 300), stop),
-            }
-            .map_err(|e| e.to_string())
-        }),
-    };
+super::input_format! { pub FORMAT = "media" {
+    specs: [SPEC],
+    parser: |_b| Stateless(MediaParser),
+    discovery: DiscoverySpec {
+        captured_by: CapturedBy::Session,
+        streams: &[
+            CaptureStream {
+                spool: "screen",
+                options: &[CaptureOption { name: "kind", value: CaptureValue::Text("screen") }],
+                capabilities: &["wayland", "grim"],
+            },
+            CaptureStream {
+                spool: "audio",
+                options: &[CaptureOption { name: "kind", value: CaptureValue::Text("audio") }],
+                capabilities: &["pipewire", "pw-record"],
+            },
+        ],
+        ..DiscoverySpec::DEFAULT
+    },
+    plan: |spool, settings| {
+        let b = sinex_source_core::binding::Binding::of(&SPEC, spool, settings.clone());
+        let kind = media(&b)?;
+        Ok(vec![b.named(kind)])
+    },
+    reader: |b| {
+        Ok(sinex_source_core::binding::polled(driver(
+            b.input.clone(),
+            b.settings.host.clone(),
+            media(b)?,
+        )))
+    },
+    capture: |b, _context, stop| {
+        let seconds = |key, default| Duration::from_secs(b.settings.number(key).unwrap_or(default));
+        match media(b)? {
+            "screen" => capture_screen(&b.input, seconds("every", 60), stop),
+            _ => capture_audio(&b.input, seconds("segment", 300), stop),
+        }
+        .map_err(|e| e.to_string())
+    },
+} }
 
 #[cfg(test)]
 mod tests;

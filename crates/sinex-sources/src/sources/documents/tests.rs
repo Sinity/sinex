@@ -1,12 +1,13 @@
 use super::*;
 use sinex_model::{ReadingOrder, RecordOutcome};
+use sinex_source_core::DeclaredSource;
 use sinex_source_core::drivers::dir_snapshot::DirState;
 use sinex_source_core::{DrainInput, Limits, drain};
 use std::path::Path;
 pub(super) fn parse(acquired: &sinex_source_core::Acquired) -> Vec<sinex_model::Event> {
     let m = acquired.material.as_ref().unwrap();
     drain(
-        &DocumentParser,
+        &Stateless(DocumentParser),
         DrainInput {
             source: SPEC.name,
             class: Class::Guarded,
@@ -118,7 +119,7 @@ fn reader_restart_rebuilds_file_facts_and_keeps_held_bytes() {
     let sink = Sink::default();
     let source = DeclaredSource {
         spec: SPEC,
-        parser: DocumentParser,
+        parser: Stateless(DocumentParser),
     };
     let prepared = prepare(
         &source,

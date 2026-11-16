@@ -1,4 +1,5 @@
 use super::*;
+use sinex_model::Class;
 #[devkit::test]
 fn signal_frame_replay_preserves_whole_original_json_and_host_line_offsets() {
     let bytes=b"  {\n \"kind\": \"signals\",\n \"frame\": \"synthetic\",\n \"reports\": [],\n \"class\": \"open\"\n}\n  ";

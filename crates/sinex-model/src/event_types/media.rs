@@ -9,7 +9,7 @@ use serde_json::{Map, Value};
 /// in the older account-data export) and how long it played; the start is
 /// derived from those two.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2, type = "music.played",
+#[event(version = 3, type = "music.played",
     key = ["ended_at", "played_ms", "track_uri", "episode_uri", "track_name", "artist_name"],
     replace = repeat,
     time = started_at,
@@ -35,6 +35,8 @@ pub struct MusicPlayed {
     pub shuffle: Option<bool>,
     /// Spotify's own skip flag; `None` when the export does not say.
     pub skipped: Option<bool>,
+    /// The play lasted under 30 seconds; Spotify's own `skipped` is beside it.
+    pub skipped_inferred: bool,
     pub offline: Option<bool>,
     pub incognito_mode: Option<bool>,
     /// Fields this parser does not model (`ip_addr`, `offline_timestamp`, new

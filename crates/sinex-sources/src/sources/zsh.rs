@@ -8,7 +8,11 @@
 //! the elapsed field is written as 0 before the command ends, so it is kept as
 //! written and never read as a duration.
 use crate::sources::shell_history::Seen;
-use sinex_model::{Class, Timestamp, event_types::CommandImported};
+#[cfg(test)]
+use sinex_model::Class;
+use sinex_model::{Timestamp, event_types::CommandImported};
+use sinex_source_core::RecordResult;
+use sinex_source_core::discovery::{DiscoverySpec, Location};
 use sinex_source_core::drivers::append_file::AppendFile;
 use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
@@ -18,13 +22,12 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "terminal.zsh-history",
     origin: Origin::Input(Shape::AppendFile),
     expect: Expectation::continuous_days(2),
-    expires_after: None,
     purpose: "command fusion and shell recall",
-    class: Class::Open,
     parser: "zsh-extended-history",
     parser_version: 3,
     event_types: &["command.imported"],
     framer: sinex_source_core::Framer::incremental(frame),
+    ..SourceSpec::DEFAULT
 };
 
 pub struct ZshParser {
@@ -44,24 +47,15 @@ impl Parser for ZshParser {
         _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<CommandImported>, Seen), RecordError> {
         let decoded = unmetafy(record)?;
-        let text = std::str::from_utf8(&decoded)
-            .map_err(|_| RecordError::new("invalid UTF-8 after zsh unmetafy"))?;
-        let text = text
-            .strip_suffix('\n')
-            .ok_or_else(|| RecordError::new("unfinished zsh record"))?;
+        let text = std::str::from_utf8(&decoded).record("invalid UTF-8 after zsh unmetafy")?;
+        let text = text.strip_suffix('\n').record("unfinished zsh record")?;
         let (start, elapsed, command) = if let Some(header) = text.strip_prefix(": ") {
             let (start, rest) = header
                 .split_once(':')
-                .ok_or_else(|| RecordError::new("invalid extended zsh header"))?;
-            let (elapsed, command) = rest
-                .split_once(';')
-                .ok_or_else(|| RecordError::new("invalid extended zsh header"))?;
-            let start = start
-                .parse::<i64>()
-                .map_err(|_| RecordError::new("invalid zsh start time"))?;
-            let elapsed = elapsed
-                .parse::<i64>()
-                .map_err(|_| RecordError::new("invalid zsh elapsed field"))?;
+                .record("invalid extended zsh header")?;
+            let (elapsed, command) = rest.split_once(';').record("invalid extended zsh header")?;
+            let start = start.parse::<i64>().record("invalid zsh start time")?;
+            let elapsed = elapsed.parse::<i64>().record("invalid zsh elapsed field")?;
             (Some(start), Some(elapsed), command)
         } else {
             // A plain-history command starting with ':' has one extra '\'.
@@ -78,7 +72,7 @@ impl Parser for ZshParser {
         let started_at = start
             .map(Timestamp::from_unix_secs)
             .transpose()
-            .map_err(|_| RecordError::new("zsh start time out of range"))?;
+            .record("zsh start time out of range")?;
         // zsh appends one space when the command's last non-space byte is a
         // backslash. Remove only that space, then decode escaped newlines.
         let command = if command.trim_end_matches(' ').ends_with('\\') {
@@ -111,9 +105,7 @@ pub fn unmetafy(bytes: &[u8]) -> Result<Vec<u8>, RecordError> {
     while i < bytes.len() {
         if bytes[i] == 0x83 {
             i += 1;
-            let b = *bytes
-                .get(i)
-                .ok_or_else(|| RecordError::new("incomplete zsh meta escape"))?;
+            let b = *bytes.get(i).record("incomplete zsh meta escape")?;
             out.push(b ^ 0x20);
         } else {
             out.push(bytes[i]);
@@ -170,36 +162,14 @@ pub fn extended_line(line: &[u8]) -> bool {
 }
 
 /// `stage --parser zsh PATH`: a zsh history file.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "zsh",
-        accepts: &[sinex_source_core::stage::Structure::FirstLine(
-            extended_line,
-        )],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "environment",
-                path: "ZSH_HISTFILE",
-            }],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SPEC],
-        plan: Some(|input, settings| {
-            Ok(sinex_source_core::binding::single(&SPEC, input, settings))
-        }),
-        source: |b| Ok(Box::new(source(b.settings.host.clone()))),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::appended(driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: None,
-    };
+super::input_format! { pub FORMAT = "zsh" {
+    specs: [SPEC],
+    source: |b| Ok(Box::new(source(b.settings.host.clone()))),
+    discovery: DiscoverySpec::system(&[Location::new("environment", "ZSH_HISTFILE")]),
+    accepts: [sinex_source_core::stage::Structure::FirstLine(extended_line)],
+    plan: single,
+    reader: appended(driver),
+} }
 
 #[cfg(test)]
 mod tests;

@@ -6,27 +6,23 @@
 //! the GDPR export writes too; the two stay separate records.
 use super::fields;
 use serde_json::{Map, Value};
-use sinex_model::Class;
 use sinex_model::event_types::social::PostPublished;
-use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordError};
+use sinex_model::json::JsonExt;
+use sinex_source_core::discovery::{DiscoverySpec, Location};
+use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES, frame_lines};
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
+use sinex_source_core::{Framer, RecordError, RecordResult, Stateless, StatelessParser, binding};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "social.reddit-archive",
     origin: Origin::Input(Shape::ExportArchive),
     expect: Expectation::Export,
-    expires_after: None,
     purpose: "what the operator wrote at Reddit, including what the GDPR export lacks",
-    class: Class::Open,
     parser: "reddit-archive",
-    parser_version: 1,
     event_types: &["post.published"],
-    framer: sinex_source_core::Framer::export(
-        sinex_source_core::drivers::export_archive::frame_lines,
-        Framing::Lines,
-    ),
+    framer: Framer::export(frame_lines, Framing::Lines),
+    ..SourceSpec::DEFAULT
 };
 
 /// Fields read into the event; the rest go to `extra`.
@@ -46,17 +42,15 @@ const KNOWN: &[&str] = &[
 
 pub struct RedditArchiveParser;
 
-impl Parser for RedditArchiveParser {
+impl StatelessParser for RedditArchiveParser {
     type Record<'a> = Map<String, Value>;
-    type Carry = ();
     type Payload = PostPublished;
 
     fn parse(
         &self,
         item: &Map<String, Value>,
-        _: &(),
         _context: &sinex_source_core::RecordContext<'_>,
-    ) -> Result<(Vec<PostPublished>, ()), RecordError> {
+    ) -> Result<Vec<PostPublished>, RecordError> {
         // `t1_` names a comment and `t3_` a post (a submission).
         let name = fields::text(item, "name")?;
         let comment = match name.split_once('_') {
@@ -73,42 +67,33 @@ impl Parser for RedditArchiveParser {
             Some(Value::String(s)) => s.parse().ok(),
             _ => None,
         }
-        .ok_or_else(|| RecordError::new("created_utc is not a number"))?;
+        .record("created_utc is not a number")?;
         let text = |name: &str| fields::optional_text(item, name).filter(|t| !t.is_empty());
-        Ok((
-            vec![PostPublished {
-                service: "reddit".into(),
-                kind: if comment { "comment" } else { "post" }.into(),
-                native_id: fields::text(item, "id")?,
-                created_at: Some(sinex_model::Timestamp::from_unix_secs(created).map_err(
-                    |_| RecordError::new(format!("created_utc {created} out of range")),
-                )?),
-                title: text("title"),
-                body: if comment {
-                    text("body")
-                } else {
-                    text("selftext")
-                },
-                url: text("permalink").map(|p| format!("https://www.reddit.com{p}")),
-                parent: if comment {
-                    text("parent_id").or_else(|| text("link_id"))
-                } else {
-                    None
-                },
-                community: text("subreddit"),
-                tags: vec![],
-                score: item.get("score").and_then(Value::as_i64),
-                extra: fields::extra(item, KNOWN),
-            }],
-            (),
-        ))
-    }
-}
-
-pub fn source() -> DeclaredSource<RedditArchiveParser> {
-    DeclaredSource {
-        spec: SPEC,
-        parser: RedditArchiveParser,
+        Ok(vec![PostPublished {
+            service: "reddit".into(),
+            kind: if comment { "comment" } else { "post" }.into(),
+            native_id: fields::text(item, "id")?,
+            created_at: Some(
+                sinex_model::Timestamp::from_unix_secs(created)
+                    .record_with(|| format!("created_utc {created} out of range"))?,
+            ),
+            title: text("title"),
+            body: if comment {
+                text("body")
+            } else {
+                text("selftext")
+            },
+            url: text("permalink").map(|p| format!("https://www.reddit.com{p}")),
+            parent: if comment {
+                text("parent_id").or_else(|| text("link_id"))
+            } else {
+                None
+            },
+            community: text("subreddit"),
+            tags: vec![],
+            score: item.i64("score"),
+            extra: fields::extra(item, KNOWN),
+        }])
     }
 }
 
@@ -131,40 +116,21 @@ fn archive_file(path: &std::path::Path) -> bool {
 
 /// `stage --parser reddit-archive PATH`: an Arctic Shift pull of the operator's
 /// items, a directory holding its two files.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "reddit-archive",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "input",
-                path: "reddit-archive",
-            }],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SPEC],
-        plan: Some(|input, settings| {
-            Ok(sinex_source_core::binding::per_file(
-                &SPEC,
-                input,
-                settings,
-                false,
-                archive_file,
-            ))
-        }),
-        source: |_| Ok(Box::new(source())),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::shared(driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: None,
-    };
+super::input_format! { pub FORMAT = "reddit-archive" {
+    specs: [SPEC],
+    parser: |_b| Stateless(RedditArchiveParser),
+    discovery: DiscoverySpec::system(&[Location::new("input", "reddit-archive")]),
+    plan: |input, settings| {
+        Ok(binding::per_file(
+            &SPEC,
+            input,
+            settings,
+            false,
+            archive_file,
+        ))
+    },
+    reader: shared(driver),
+} }
 
 #[cfg(test)]
 mod tests;

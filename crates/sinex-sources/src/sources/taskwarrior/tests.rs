@@ -15,9 +15,8 @@ fn tasks() -> Vec<TaskRevised> {
         .map(|(start, end)| {
             let record: Map<String, Value> = serde_json::from_slice(&EXPORT[*start..*end]).unwrap();
             TaskwarriorParser
-                .parse(&record, &(), &sinex_source_core::RecordContext::none())
+                .parse(&record, &sinex_source_core::RecordContext::none())
                 .unwrap()
-                .0
                 .remove(0)
         })
         .collect()

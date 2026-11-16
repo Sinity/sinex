@@ -2,6 +2,7 @@ use super::*;
 use crate::Result;
 use sinex_model::{BatchKind, MaterialRef};
 use sinex_source_core::Limits;
+use sinex_source_core::{Stateless, StatelessParser};
 use sinex_sources::sources::notes;
 
 #[devkit::test]
@@ -245,26 +246,24 @@ async fn sealed_history_needs_no_private_key_and_keeps_the_binding_sealed(
 }
 
 struct IgnoreFirst;
-impl sinex_source_core::Parser for IgnoreFirst {
+impl StatelessParser for IgnoreFirst {
     type Record<'a> = &'a [u8];
-    type Carry = ();
     type Payload = sinex_model::event_types::media::NoteDocument;
     fn record_hash(&self, raw: &[u8], context: &sinex_source_core::RecordContext<'_>) -> [u8; 32] {
-        sinex_source_core::Parser::record_hash(&notes::NotesParser, raw, context)
+        sinex_source_core::StatelessParser::record_hash(&notes::NotesParser, raw, context)
     }
     fn parse(
         &self,
         record: &&[u8],
-        carry: &(),
         context: &sinex_source_core::drain::RecordContext<'_>,
-    ) -> Result<(Vec<Self::Payload>, ()), sinex_source_core::RecordError> {
+    ) -> Result<Vec<Self::Payload>, sinex_source_core::RecordError> {
         if context
             .member
             .is_some_and(|m| m.path == "a.md" && !m.details.contains_key("removed_at_ns"))
         {
-            return Ok((Vec::new(), ()));
+            return Ok(Vec::new());
         }
-        sinex_source_core::Parser::parse(&notes::NotesParser, record, carry, context)
+        sinex_source_core::StatelessParser::parse(&notes::NotesParser, record, context)
     }
 }
 fn ignore_first(b: &mut BindingReader) {
@@ -272,7 +271,7 @@ fn ignore_first(b: &mut BindingReader) {
     spec.parser_version = 99;
     b.source = Arc::new(sinex_source_core::DeclaredSource {
         spec,
-        parser: IgnoreFirst,
+        parser: Stateless(IgnoreFirst),
     });
 }
 

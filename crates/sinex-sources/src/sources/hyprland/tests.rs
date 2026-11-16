@@ -118,19 +118,22 @@ fn spooled_capture_drains_to_typed_events() {
     .unwrap();
     let acquired = driver(spool, "h".into()).poll(&Value::Null).unwrap();
     let m = acquired.material.unwrap();
-    let chunks = source()
-        .drain(DrainInput {
-            source: SPEC.name,
-            class: SPEC.class,
-            material: MaterialId::new(),
-            bytes: crate::test_support::body(&m).into(),
-            records: &m.records,
-            carry: Value::Null,
-            reading_order: &|a| ReadingOrder(a as i64),
-            limits: Limits::default(),
-            manifest: &m.manifest,
-        })
-        .unwrap();
+    let chunks = DeclaredSource {
+        spec: SPEC,
+        parser: HyprlandParser,
+    }
+    .drain(DrainInput {
+        source: SPEC.name,
+        class: SPEC.class,
+        material: MaterialId::new(),
+        bytes: crate::test_support::body(&m).into(),
+        records: &m.records,
+        carry: Value::Null,
+        reading_order: &|a| ReadingOrder(a as i64),
+        limits: Limits::default(),
+        manifest: &m.manifest,
+    })
+    .unwrap();
     let mut types: Vec<String> = Vec::new();
     for outcome in chunks.iter().flat_map(|c| &c.outcomes) {
         match outcome {

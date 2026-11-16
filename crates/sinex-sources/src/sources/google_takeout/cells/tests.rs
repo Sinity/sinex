@@ -76,3 +76,15 @@ fn the_time_line_is_found_by_pattern_in_multiline_text() {
     assert_eq!(c.lines.len(), 3);
     assert_eq!(c.lines[2].text, "second line");
 }
+
+#[devkit::test]
+fn takeout_cell_text_matches_document_text() {
+    let markup = "A&#x1f642;<script>ignored</script><style>hidden</style> &amp; B";
+    let html = SEARCH.replace("a &amp; b", markup);
+    let cell = parse(&html).unwrap();
+    assert_eq!(cell.lines[0].links[0].1, "A🙂 & B");
+    assert_eq!(
+        cell.lines[0].links[0].1,
+        sinex_source_core::markup::html_text(markup)
+    );
+}

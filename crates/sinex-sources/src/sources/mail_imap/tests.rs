@@ -362,7 +362,10 @@ fn partial_admission_keeps_unfed_uids_available_for_retry() {
     let port = server(vec![(4, M1), (7, M2)], 99, false);
     let imap = mail(port, Some("secret"), None);
     let acquired = imap.poll_fresh(&Value::Null).unwrap();
-    let source = source();
+    let source = sinex_source_core::DeclaredSource {
+        spec: SPEC,
+        parser: Stateless(super::super::mail::MailParser),
+    };
     let prepared = sinex_source_core::drivers::prepare(
         &source,
         "imap-test",
@@ -548,7 +551,7 @@ fn an_unrepresentable_idle_timeout_fails_before_connecting() {
 #[devkit::test]
 fn uid_coordinates_distinguish_equal_messages_and_survive_retries() {
     use sinex_model::EventPayload;
-    use sinex_source_core::Parser;
+    use sinex_source_core::StatelessParser;
     const NO_ID: &str = "Subject: identical\r\n\r\nbody\r\n";
     let imap = mail(
         server(vec![(4, NO_ID), (7, NO_ID)], 99, false),
@@ -566,9 +569,8 @@ fn uid_coordinates_distinguish_equal_messages_and_survive_retries() {
                     member: material.manifest.member_at(*start),
                 };
                 super::super::mail::MailParser
-                    .parse(&&material.bytes[*start..*end], &(), &context)
+                    .parse(&&material.bytes[*start..*end], &context)
                     .unwrap()
-                    .0
                     .remove(0)
             })
             .collect::<Vec<_>>()

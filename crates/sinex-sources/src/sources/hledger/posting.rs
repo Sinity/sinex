@@ -1,6 +1,7 @@
 //! Posting syntax is captured without inferring amounts or checking balances.
 use super::{Posting, RecordError};
 use sinex_model::event_types::finance::PostingAmount;
+use sinex_source_core::RecordResult;
 
 pub(super) fn parse(raw: &str) -> Result<Posting, RecordError> {
     let body = raw.trim_start();
@@ -222,9 +223,7 @@ fn quantity(raw: &str) -> Result<(String, Option<String>), RecordError> {
     static AMOUNT: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
         regex::Regex::new(r#"^(?P<sign>[+-])?\s*(?:(?P<leading>"(?:[^"\\]|\\.)*"|[^\s0-9.,+\-;|*!@=()]+)\s*)?(?P<amount>[+-]?(?:[0-9]+(?:[.,\s][0-9]+)*[.,]?|[.,][0-9]+))(?:\s*(?P<trailing>"(?:[^"\\]|\\.)*"|[^\s0-9.,+\-;|*!@=()]+))?$"#).expect("fixed journal amount expression")
     });
-    let fields = AMOUNT
-        .captures(raw)
-        .ok_or_else(|| RecordError::new("invalid journal amount"))?;
+    let fields = AMOUNT.captures(raw).record("invalid journal amount")?;
     let number = fields.name("amount").unwrap().as_str();
     let punctuation = number.matches([',', '.']).collect::<Vec<_>>();
     if punctuation.len() > 1 && punctuation.iter().all(|p| *p == punctuation[0]) {

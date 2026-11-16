@@ -11,9 +11,8 @@ fn daily_domain_records_keep_zero_and_do_not_invent_an_instant() {
         .into_iter()
         .flat_map(|(start, end)| {
             FreedomParser
-                .parse(&&bytes[start..end], &(), &RecordContext::none())
+                .parse(&&bytes[start..end], &RecordContext::none())
                 .unwrap()
-                .0
         })
         .collect();
     assert_eq!(events.len(), 3);
@@ -36,7 +35,7 @@ fn malformed_days_and_values_are_record_failures() {
     ] {
         assert!(
             FreedomParser
-                .parse(&record.as_bytes(), &(), &RecordContext::none())
+                .parse(&record.as_bytes(), &RecordContext::none())
                 .is_err(),
             "{record}"
         );
@@ -54,9 +53,8 @@ fn a_partial_day_waits_for_its_complete_record() {
     let record = &bytes[consumed + rest[0].0..consumed + rest[0].1];
     assert_eq!(
         FreedomParser
-            .parse(&record, &(), &RecordContext::none())
-            .unwrap()
-            .0[0]
+            .parse(&record, &RecordContext::none())
+            .unwrap()[0]
             .day,
         "2025-02-02"
     );
@@ -73,9 +71,8 @@ fn reader_framing_keeps_complete_day_records() {
     for (start, end) in ranges {
         assert_eq!(
             FreedomParser
-                .parse(&&bytes[start..end], &(), &RecordContext::none())
+                .parse(&&bytes[start..end], &RecordContext::none())
                 .unwrap()
-                .0
                 .len(),
             1
         );

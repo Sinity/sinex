@@ -27,22 +27,22 @@ use crate::sources::fields;
 use crate::sources::samsung_health::typed;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use sinex_model::Timestamp;
 use sinex_model::event_types::account::{AccountRow, TaskRevised};
 use sinex_model::event_types::communication::CallLogged;
 use sinex_model::event_types::health::HealthRecord;
-use sinex_model::{Class, Timestamp};
+use sinex_model::json::JsonExt;
+use sinex_source_core::discovery::{DiscoverySpec, Location};
 use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordContext, RecordError};
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
+use sinex_source_core::{Framer, Parser, RecordContext, RecordError, RecordResult, binding};
 use std::path::{Path, PathBuf};
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "account.samsung",
     origin: Origin::Input(Shape::ExportArchive),
     expect: Expectation::Export,
-    expires_after: None,
     purpose: "what the operator's Samsung account kept: health sync, settings, backups",
-    class: Class::Open,
     parser: "samsung-account-export",
     parser_version: 6,
     event_types: &[
@@ -51,10 +51,8 @@ pub const SPEC: SourceSpec = SourceSpec {
         "task.revised",
         "account.row",
     ],
-    framer: sinex_source_core::Framer::export(
-        frame,
-        sinex_source_core::drivers::export_archive::Framing::Csv,
-    ),
+    framer: Framer::export(frame, Framing::Csv),
+    ..SourceSpec::DEFAULT
 };
 
 sinex_model::payload_enum! {
@@ -117,25 +115,18 @@ impl Parser for SamsungCloudParser {
             }
             values.insert(name.clone(), json_or_typed(cell));
         }
-        let text = |name: &str| values.get(name).and_then(Value::as_str).map(str::to_owned);
+        let text = |name: &str| values.str(name).map(str::to_owned);
         if carry.header.iter().any(|h| h == "datauuid") {
-            let native_id = text("datauuid")
-                .ok_or_else(|| RecordError::new(format!("{table} row without a datauuid")))?;
-            let time = |name: &str| {
-                values
-                    .get(name)
-                    .and_then(Value::as_str)
-                    .map(minute_utc)
-                    .transpose()
-            };
+            let native_id =
+                text("datauuid").record_with(|| format!("{table} row without a datauuid"))?;
+            let time = |name: &str| values.str(name).map(minute_utc).transpose();
             let start = match time("start_time")? {
                 Some(t) => Some(t),
                 None => time("day_time")?.or(time("create_time")?),
             };
             let end = time("end_time")?;
             let offset_minutes = values
-                .get("time_offset")
-                .and_then(Value::as_i64)
+                .i64("time_offset")
                 .and_then(|ms| i32::try_from(ms / 60_000).ok());
             return Ok((
                 vec![SamsungEvent::Health(
@@ -149,7 +140,7 @@ impl Parser for SamsungCloudParser {
                         values,
                         vec![],
                     )
-                    .map_err(|error| RecordError::new(error.to_string()))?,
+                    .record("invalid health record")?,
                 )],
                 carry.clone(),
             ));
@@ -207,9 +198,8 @@ fn call(account_key: String, values: &Map<String, Value>) -> Result<CallLogged, 
     let integer = |field: &str, value: Option<String>| {
         value
             .map(|v| {
-                v.parse::<i64>().map_err(|_| {
-                    RecordError::new(format!("call log {field} {v:?} is not a number"))
-                })
+                v.parse::<i64>()
+                    .record_with(|| format!("call log {field} {v:?} is not a number"))
             })
             .transpose()
     };
@@ -248,7 +238,7 @@ fn reminder(values: Map<String, Value>) -> Result<TaskRevised, RecordError> {
     let task_id = values
         .get("record_id")
         .map(id_text)
-        .ok_or_else(|| RecordError::new("Reminder row without a record_id"))?;
+        .record("Reminder row without a record_id")?;
     let text = |name: &str| {
         values
             .get(name)
@@ -333,12 +323,11 @@ fn minute_utc(raw: &str) -> Result<Timestamp, RecordError> {
     let civil = jiff::civil::DateTime::strptime("%Y-%m-%d %H:%M:%S%.f", raw)
         .or_else(|_| jiff::civil::DateTime::strptime("%Y-%m-%d %H:%M:%S", raw))
         .or_else(|_| jiff::civil::DateTime::strptime("%Y-%m-%d %H:%M", raw))
-        .map_err(|e| RecordError::new(format!("invalid time {raw:?}: {e}")))?;
+        .record_with(|| format!("invalid time {raw:?}"))?;
     let z = civil
         .to_zoned(jiff::tz::TimeZone::UTC)
-        .map_err(|e| RecordError::new(e.to_string()))?;
-    Timestamp::from_unix_ns(z.timestamp().as_nanosecond())
-        .map_err(|_| RecordError::new("time out of range"))
+        .record("invalid time")?;
+    Timestamp::from_unix_ns(z.timestamp().as_nanosecond()).record("time out of range")
 }
 
 /// `…/samsungcloud_gk000066110879_20260329_access/Step Count/Step Count(3).csv`
@@ -371,13 +360,6 @@ fn is_table(path: &Path) -> bool {
     csv && !s.contains("Samsung Pass") && !s.contains("/SMS/")
 }
 
-pub fn source() -> DeclaredSource<SamsungCloudParser> {
-    DeclaredSource {
-        spec: SPEC,
-        parser: SamsungCloudParser,
-    }
-}
-
 pub fn frame(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
     Framing::Csv.frame(bytes, true)
 }
@@ -393,36 +375,13 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
 }
 
 /// `stage --parser samsung-account PATH`: each table of a Samsung account export under PATH.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "samsung-account",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "input",
-                path: "samsung-account",
-            }],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SPEC],
-        plan: Some(|input, settings| {
-            Ok(sinex_source_core::binding::per_file(
-                &SPEC, input, settings, true, is_table,
-            ))
-        }),
-        source: |_| Ok(Box::new(source())),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::shared(driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: None,
-    };
+super::input_format! { pub FORMAT = "samsung-account" {
+    specs: [SPEC],
+    parser: |_b| SamsungCloudParser,
+    discovery: DiscoverySpec::system(&[Location::new("input", "samsung-account")]),
+    plan: |input, settings| Ok(binding::per_file(&SPEC, input, settings, true, is_table)),
+    reader: shared(driver),
+} }
 
 #[cfg(test)]
 mod tests;

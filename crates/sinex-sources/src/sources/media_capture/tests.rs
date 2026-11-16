@@ -23,19 +23,22 @@ fn a_stored_segment_drains_to_one_event_from_its_manifest() {
         .unwrap()
         .material
         .unwrap();
-    let chunks = source()
-        .drain(DrainInput {
-            source: SPEC.name,
-            class: SPEC.class,
-            material: MaterialId::new(),
-            bytes: m.bytes.as_slice().into(),
-            records: &m.records,
-            carry: Value::Null,
-            reading_order: &|a| ReadingOrder(a as i64),
-            limits: Limits::default(),
-            manifest: &m.manifest,
-        })
-        .unwrap();
+    let chunks = DeclaredSource {
+        spec: SPEC,
+        parser: Stateless(MediaParser),
+    }
+    .drain(DrainInput {
+        source: SPEC.name,
+        class: SPEC.class,
+        material: MaterialId::new(),
+        bytes: m.bytes.as_slice().into(),
+        records: &m.records,
+        carry: Value::Null,
+        reading_order: &|a| ReadingOrder(a as i64),
+        limits: Limits::default(),
+        manifest: &m.manifest,
+    })
+    .unwrap();
     let events: Vec<_> = chunks
         .iter()
         .flat_map(|c| &c.outcomes)

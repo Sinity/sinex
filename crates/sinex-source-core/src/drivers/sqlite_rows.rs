@@ -31,6 +31,7 @@ use super::{Acquired, DriverError, NewMaterial, StoredBytes, file_facts};
 use rusqlite::{Connection, OpenFlags, types::ValueRef};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
+use sinex_model::json::JsonExt;
 use sinex_model::{InputRef, MaterialId, ObservationFacts, RevisionChange, Timestamp};
 use std::collections::HashMap;
 use std::io::Write;
@@ -147,7 +148,7 @@ impl RowState {
             let Ok(row) = serde_json::from_slice::<Map<String, Value>>(line) else {
                 continue;
             };
-            if let Some(rowid) = row.get("_rowid").and_then(Value::as_i64) {
+            if let Some(rowid) = row.i64("_rowid") {
                 self.hashes
                     .entry(rowid)
                     .or_insert(*blake3::hash(line).as_bytes());

@@ -33,7 +33,7 @@ impl Library<'_> {
         }
         let blobs = self.blobs.clone();
         let content = content.to_owned();
-        let target = render::cache_path(&cache_dir(), &content, media_type);
+        let target = render::cache_path(self.cache, &content, media_type);
         tokio::task::spawn_blocking(move || -> R<(PathBuf, bool)> {
             if render::verified(&target, std::fs::metadata(&target).map(|m| m.len()).unwrap_or(0), &content) {
                 return Ok((target, false));
@@ -48,12 +48,9 @@ impl Library<'_> {
             }
             // Plain media streams to the cache; delta-encoded content is
             // decoded whole first.
-            let tmp = target.with_extension("partial");
-            let mut file = std::io::BufWriter::new(std::fs::File::create(&tmp)?);
-            blobs.copy_to(&content, &mut file)?;
-            std::io::Write::flush(&mut file)?;
-            drop(file);
-            std::fs::rename(&tmp, &target)?;
+            sinex_transport::durable::write_replacing(&target, 0o600, |file| {
+                blobs.copy_to(&content, file).map(|_| ()).map_err(std::io::Error::other)
+            }).map_err(|(_, error)| error)?;
             Ok((target, false))
         })
         .await?
@@ -170,13 +167,4 @@ impl Library<'_> {
         .await?;
         Ok(json!({ "item": item, "rendition": id, "content": content, "width": w, "height": h }))
     }
-}
-
-/// Where stored bytes are written out for players.
-fn cache_dir() -> PathBuf {
-    std::env::var_os("XDG_CACHE_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
-        .unwrap_or_else(std::env::temp_dir)
-        .join("sinex/library")
 }

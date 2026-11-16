@@ -104,7 +104,7 @@ pub(crate) struct DocumentText {
 impl PerEvent for DocumentText {
     const NAME: &'static str = "document.text";
     /// Bump when the reading of a format changes.
-    const VERSION: u32 = 3;
+    const VERSION: u32 = 4;
     const INPUTS: &'static [&'static str] = &[FileCopy::EVENT_TYPE];
     const OUTPUTS: &'static [&'static str] = &[DocumentTextPayload::EVENT_TYPE];
     const READS: Reads = Reads::Blob("content");

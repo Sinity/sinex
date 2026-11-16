@@ -85,6 +85,7 @@ impl World {
             &self.blobs,
             "h",
             &[],
+            self.root.as_path(),
             sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
                 .expect("fixture day setting"),
             request,
@@ -534,6 +535,7 @@ async fn the_library_end_to_end(db: devkit::pg::TestDatabase) {
         blobs: &w.blobs,
         host: "h",
         roots: &[],
+        cache: w.root.as_path(),
         time_settings: sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
             .expect("fixture day setting"),
     };
@@ -926,6 +928,7 @@ async fn selections_inside_a_configured_root_use_one_item_and_preserve_other_pat
         &w.blobs,
         "h",
         &roots,
+        w.root.as_path(),
         sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
             .expect("fixture day setting"),
         Request::LibraryAdd {

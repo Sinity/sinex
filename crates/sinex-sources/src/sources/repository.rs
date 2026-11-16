@@ -18,17 +18,19 @@
 //!
 //! A commit that cannot be decoded is a record failure of its own; the rest
 //! of the poll is read.
+use crate::sources::input_format;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sinex_model::event_types::code::{
     FileChange, GitCommit, GitFileChange, GitRecord, GitRefUpdated, RefChange,
 };
-use sinex_model::{Class, InputRef, Timestamp};
+use sinex_model::{InputRef, Timestamp, json::JsonExt};
+use sinex_source_core::discovery::{DiscoverySpec, Location};
 use sinex_source_core::drivers::DriverError;
 use sinex_source_core::drivers::api_cursor::{Api, ApiCursor, Page};
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordError};
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
+use sinex_source_core::{RecordError, RecordResult, Stateless, StatelessParser};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
@@ -36,55 +38,41 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "code.git",
     origin: Origin::Input(Shape::ApiCursor),
     expect: Expectation::cadence_hours(1),
-    expires_after: None,
     purpose: "work episodes, project attribution and recall",
-    class: Class::Open,
     parser: "git-commits",
     parser_version: 2,
     event_types: &["git.commit", "git.ref_updated"],
-    framer: sinex_source_core::Framer::incremental(sinex_source_core::drivers::append_file::lines),
+    framer: sinex_source_core::Framer::LINES,
+    ..SourceSpec::DEFAULT
 };
 
 pub struct GitParser;
 
-impl Parser for GitParser {
+impl StatelessParser for GitParser {
     type Record<'a> = Map<String, Value>;
-    type Carry = ();
     type Payload = GitRecord;
 
     fn parse(
         &self,
         record: &Map<String, Value>,
-        _: &(),
         _context: &sinex_source_core::RecordContext<'_>,
-    ) -> Result<(Vec<GitRecord>, ()), RecordError> {
+    ) -> Result<Vec<GitRecord>, RecordError> {
         let value = Value::Object(record.clone());
-        let payload = match record.get("record").and_then(Value::as_str) {
-            None => GitRecord::Commit(
-                serde_json::from_value(value)
-                    .map_err(|e| RecordError::new(format!("not a commit record: {e}")))?,
-            ),
-            Some("ref_updated") => GitRecord::RefUpdated(
-                serde_json::from_value(value)
-                    .map_err(|e| RecordError::new(format!("not a ref update: {e}")))?,
-            ),
+        let payload = match record.str("record") {
+            None => GitRecord::Commit(serde_json::from_value(value).record("not a commit record")?),
+            Some("ref_updated") => {
+                GitRecord::RefUpdated(serde_json::from_value(value).record("not a ref update")?)
+            }
             Some("unreadable") => {
                 return Err(RecordError::new(format!(
                     "commit {} could not be read: {}",
-                    record.get("commit").and_then(Value::as_str).unwrap_or("?"),
-                    record.get("reason").and_then(Value::as_str).unwrap_or("?"),
+                    record.str("commit").unwrap_or("?"),
+                    record.str("reason").unwrap_or("?"),
                 )));
             }
             Some(other) => return Err(RecordError::new(format!("unknown record {other:?}"))),
         };
-        Ok((vec![payload], ()))
-    }
-}
-
-pub fn source() -> DeclaredSource<GitParser> {
-    DeclaredSource {
-        spec: SPEC,
-        parser: GitParser,
+        Ok(vec![payload])
     }
 }
 
@@ -467,34 +455,13 @@ pub fn driver(path: PathBuf, host: String) -> ApiCursor<Repository> {
 }
 
 /// `stage --parser repository PATH`: a local repository's commits and ref updates.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "repository",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "projects",
-                path: "",
-            }],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SPEC],
-        plan: Some(|input, settings| {
-            Ok(sinex_source_core::binding::single(&SPEC, input, settings))
-        }),
-        source: |_| Ok(Box::new(source())),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::polled(driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: None,
-    };
+input_format! { pub FORMAT = "repository" {
+    specs: [SPEC],
+    parser: |_b| Stateless(GitParser),
+    discovery: DiscoverySpec::system(&[Location::new("projects", "")]),
+    plan: single,
+    reader: polled(driver),
+} }
 
 #[cfg(test)]
 mod tests;

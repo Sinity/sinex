@@ -15,9 +15,8 @@ fn only_line_terminators_are_removed_and_no_time_is_invented() {
         ("echo a\\\n", "echo a\\"),
     ] {
         let payload = parser
-            .parse(&raw.as_bytes(), &(), &RecordContext::none())
+            .parse(&raw.as_bytes(), &RecordContext::none())
             .unwrap()
-            .0
             .remove(0);
         assert_eq!(payload.command, expected);
         assert_eq!(payload.hostname, "example-host");
@@ -29,13 +28,12 @@ fn only_line_terminators_are_removed_and_no_time_is_invented() {
     }
     assert!(
         parser
-            .parse(&b"\n".as_slice(), &(), &RecordContext::none())
+            .parse(&b"\n".as_slice(), &RecordContext::none())
             .unwrap()
-            .0
             .is_empty()
     );
     for raw in [b"\xff\n".as_slice(), b"unfinished"] {
-        assert!(parser.parse(&raw, &(), &RecordContext::none()).is_err());
+        assert!(parser.parse(&raw, &RecordContext::none()).is_err());
     }
 }
 
@@ -128,9 +126,8 @@ fn append_restart_replacement_and_missing_source_use_shared_reader() {
             TextHistoryParser {
                 host: "example-host".into()
             }
-            .parse(&&body(&first)[*start..*end], &(), &RecordContext::none())
-            .unwrap()
-            .0[0]
+            .parse(&&body(&first)[*start..*end], &RecordContext::none())
+            .unwrap()[0]
                 .command,
             "pwd"
         );

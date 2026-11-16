@@ -16,8 +16,10 @@
 //! author, channel and time from the material's manifest, which the daemon
 //! fills from the authenticated caller, never from the lines.
 use serde_json::json;
-use sinex_model::Class;
+use sinex_source_core::discovery::{DiscoverySpec, Location};
+use sinex_source_core::drivers::export_archive::{Framing, frame_lines};
 use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
+use sinex_source_core::{Framer, binding};
 
 mod files;
 mod requests;
@@ -33,99 +35,74 @@ pub const SCAN: SourceSpec = SourceSpec {
     name: "library.scan",
     origin: Origin::Input(Shape::DirSnapshot),
     expect: Expectation::cadence_days(1),
-    expires_after: None,
     purpose: "the media library",
-    class: Class::Open,
     parser: "library-scan",
     parser_version: 2,
     event_types: &["library.copy"],
-    framer: sinex_source_core::Framer::export(
-        sinex_source_core::drivers::export_archive::frame_lines,
-        sinex_source_core::drivers::export_archive::Framing::Lines,
-    ),
+    framer: Framer::export(frame_lines, Framing::Lines),
+    ..SourceSpec::DEFAULT
 };
 
 pub const REQUEST: SourceSpec = SourceSpec {
     name: "library.request",
     origin: Origin::Request,
     expect: Expectation::OnDemand,
-    expires_after: None,
     purpose: "the media library",
-    class: Class::Open,
     parser: "library-request",
     parser_version: 2,
     event_types: sinex_model::event_types::library::REQUEST_TYPES,
-    framer: sinex_source_core::Framer::export(
-        sinex_source_core::drivers::export_archive::frame_lines,
-        sinex_source_core::drivers::export_archive::Framing::Lines,
-    ),
+    framer: Framer::export(frame_lines, Framing::Lines),
+    ..SourceSpec::DEFAULT
 };
 
 /// Library roots are bindings like any other; library requests are supplied by the API.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "library",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "declared",
-                path: "library",
-            }],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SCAN, &REQUEST],
-        plan: Some(|path, settings| {
-            let path =
-                std::fs::canonicalize(path).map_err(|e| format!("{}: {e}", path.display()))?;
-            let mut settings = settings.clone();
-            let root = if let Some(root) = settings.option("root") {
-                std::fs::canonicalize(root).map_err(|error| format!("{root}: {error}"))?
-            } else if path.is_dir() {
-                path.clone()
-            } else {
-                path.parent()
-                    .ok_or("library input has no parent")?
-                    .to_path_buf()
-            };
-            let selection = path
-                .strip_prefix(&root)
-                .map_err(|_| "library selection is outside its root")?;
-            if !selection.as_os_str().is_empty() {
-                if !settings.options.is_object() {
-                    settings.options = json!({});
-                }
-                settings.options["only"] = json!(selection.to_string_lossy());
+super::input_format! { pub FORMAT = "library" {
+    specs: [SCAN, REQUEST],
+    source: |b| {
+        if b.source == SCAN.name {
+            Ok(Box::new(scan_source()))
+        } else {
+            Ok(Box::new(request_source()))
+        }
+    },
+    discovery: DiscoverySpec::system(&[Location::new("declared", "library")]),
+    plan: |path, settings| {
+        let path = std::fs::canonicalize(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let mut settings = settings.clone();
+        let root = if let Some(root) = settings.option("root") {
+            std::fs::canonicalize(root).map_err(|error| format!("{root}: {error}"))?
+        } else if path.is_dir() {
+            path.clone()
+        } else {
+            path.parent()
+                .ok_or("library input has no parent")?
+                .to_path_buf()
+        };
+        let selection = path
+            .strip_prefix(&root)
+            .map_err(|_| "library selection is outside its root")?;
+        if !selection.as_os_str().is_empty() {
+            if !settings.options.is_object() {
+                settings.options = json!({});
             }
-            Ok(sinex_source_core::binding::single(&SCAN, &root, &settings))
-        }),
-        source: |b| {
-            if b.source == SCAN.name {
-                Ok(Box::new(scan_source()))
-            } else {
-                Ok(Box::new(request_source()))
-            }
-        },
-        reader: Some(|b| {
-            if b.source != SCAN.name {
-                return Err("library requests are supplied by the API".into());
-            }
-            Ok(sinex_source_core::binding::polled(LibraryReader::new(
-                LibraryScan {
-                    root: b.input.clone(),
-                    host: b.settings.host.clone(),
-                    keep_bytes: !b.settings.boolean("reference")?.unwrap_or(false),
-                    probe: true,
-                    bytes_per_poll: 1 << 30,
-                    only: b.settings.option("only").map(str::to_owned),
-                },
-            )))
-        }),
-        capture: None,
-    };
+            settings.options["only"] = json!(selection.to_string_lossy());
+        }
+        Ok(binding::single(&SCAN, &root, &settings))
+    },
+    reader: |b| {
+        if b.source != SCAN.name {
+            return Err("library requests are supplied by the API".into());
+        }
+        Ok(binding::polled(LibraryReader::new(LibraryScan {
+            root: b.input.clone(),
+            host: b.settings.host.clone(),
+            keep_bytes: !b.settings.boolean("reference")?.unwrap_or(false),
+            probe: true,
+            bytes_per_poll: 1 << 30,
+            only: b.settings.option("only").map(str::to_owned),
+        })))
+    },
+} }
 
 #[cfg(test)]
 mod tests;

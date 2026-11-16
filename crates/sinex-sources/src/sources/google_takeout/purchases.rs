@@ -5,43 +5,33 @@
 //! no time); its identity is the provider's ID where there is one.
 use crate::sources::fields;
 use serde_json::{Map, Value};
+use sinex_model::Timestamp;
 use sinex_model::event_types::account::PurchaseObserved;
-use sinex_model::{Class, Timestamp};
 use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
 use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordError};
+use sinex_source_core::{Framer, RecordError, RecordResult, Stateless, StatelessParser};
 use std::path::PathBuf;
 
 pub const PLAY_STORE: SourceSpec = SourceSpec {
     name: "google.play-store",
     origin: Origin::Input(Shape::ExportArchive),
     expect: Expectation::Export,
-    expires_after: None,
     purpose: "apps installed, bought and reviewed",
-    class: Class::Open,
     parser: "google-play-store",
-    parser_version: 1,
     event_types: &["purchase.observed"],
-    framer: sinex_source_core::Framer::export(
-        frame_play_store,
-        sinex_source_core::drivers::export_archive::Framing::JsonArray(""),
-    ),
+    framer: Framer::export(frame_play_store, Framing::JsonArray("")),
+    ..SourceSpec::DEFAULT
 };
 
 pub const PURCHASES: SourceSpec = SourceSpec {
     name: "google.purchases",
     origin: Origin::Input(Shape::ExportArchive),
     expect: Expectation::Export,
-    expires_after: None,
     purpose: "orders and reservations",
-    class: Class::Open,
     parser: "google-purchases",
-    parser_version: 1,
     event_types: &["purchase.observed"],
-    framer: sinex_source_core::Framer::export(
-        frame_purchases,
-        sinex_source_core::drivers::export_archive::Framing::Whole,
-    ),
+    framer: Framer::export(frame_purchases, Framing::Whole),
+    ..SourceSpec::DEFAULT
 };
 
 /// The wrapper keys and the field holding each wrapped item's time.
@@ -58,17 +48,15 @@ const WRAPPERS: &[(&str, &str)] = &[
 
 pub struct PurchasesParser;
 
-impl Parser for PurchasesParser {
+impl StatelessParser for PurchasesParser {
     type Record<'a> = Map<String, Value>;
-    type Carry = ();
     type Payload = PurchaseObserved;
 
     fn parse(
         &self,
         row: &Map<String, Value>,
-        _: &(),
         _context: &sinex_source_core::RecordContext<'_>,
-    ) -> Result<(Vec<PurchaseObserved>, ()), RecordError> {
+    ) -> Result<Vec<PurchaseObserved>, RecordError> {
         // An order file: the object itself is the item.
         if row.contains_key("merchantOrderId") || row.contains_key("lineItem") {
             let at = row
@@ -87,10 +75,13 @@ impl Parser for PurchasesParser {
                 .and_then(Value::as_str);
             let id = fields::optional_text(row, "merchantOrderId")
                 .map(|id| format!("{}:{id}", merchant.unwrap_or("")));
-            return Ok((
-                vec![observed("order", id, at, merchant.map(str::to_owned), row)],
-                (),
-            ));
+            return Ok(vec![observed(
+                "order",
+                id,
+                at,
+                merchant.map(str::to_owned),
+                row,
+            )]);
         }
         let (kind, item) = match row.iter().next() {
             Some((k, v)) if row.len() == 1 => (k.as_str(), v),
@@ -98,7 +89,7 @@ impl Parser for PurchasesParser {
         };
         let item = item
             .as_object()
-            .ok_or_else(|| RecordError::new(format!("{kind} is not an object")))?;
+            .record_with(|| format!("{kind} is not an object"))?;
         let time_field = WRAPPERS.iter().find(|(k, _)| *k == kind).map(|(_, f)| *f);
         let at = match time_field {
             Some("") | None => None,
@@ -132,7 +123,7 @@ impl Parser for PurchasesParser {
                 .map(|(t, at)| format!("{doc_type}:{t}@{}", at.unix_ns())),
             _ => None,
         };
-        Ok((vec![observed(kind, id, at, title, item)], ()))
+        Ok(vec![observed(kind, id, at, title, item)])
     }
 }
 
@@ -161,17 +152,17 @@ fn observed(
     }
 }
 
-pub fn play_store() -> DeclaredSource<PurchasesParser> {
+pub fn play_store() -> DeclaredSource<Stateless<PurchasesParser>> {
     DeclaredSource {
         spec: PLAY_STORE,
-        parser: PurchasesParser,
+        parser: Stateless(PurchasesParser),
     }
 }
 
-pub fn purchases() -> DeclaredSource<PurchasesParser> {
+pub fn purchases() -> DeclaredSource<Stateless<PurchasesParser>> {
     DeclaredSource {
         spec: PURCHASES,
-        parser: PurchasesParser,
+        parser: Stateless(PurchasesParser),
     }
 }
 

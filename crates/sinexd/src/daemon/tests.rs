@@ -472,6 +472,7 @@ async fn shutdown_releases_source_and_backup_waiting_on_publication(db: devkit::
         unlock: Default::default(),
         host: "synthetic".into(),
         library_roots: vec![],
+        library_cache: root.path().join("library-cache"),
     };
     let socket = root.path().join("api.sock");
     let config = api::Config {

@@ -4,14 +4,9 @@ fn parse(line: &str) -> ChatMessage {
     let p = WeeChatParser {
         zone: jiff::tz::TimeZone::get("Europe/Warsaw").unwrap(),
     };
-    p.parse(
-        &line.as_bytes(),
-        &(),
-        &sinex_source_core::RecordContext::none(),
-    )
-    .unwrap()
-    .0
-    .remove(0)
+    p.parse(&line.as_bytes(), &sinex_source_core::RecordContext::none())
+        .unwrap()
+        .remove(0)
 }
 
 #[devkit::test]
@@ -73,9 +68,22 @@ fn empty_lines_are_not_messages() {
         zone: jiff::tz::TimeZone::UTC,
     };
     assert!(
-        p.parse(&&b"\n"[..], &(), &sinex_source_core::RecordContext::none())
+        p.parse(&&b"\n"[..], &sinex_source_core::RecordContext::none())
             .unwrap()
-            .0
             .is_empty()
     );
+}
+
+#[devkit::test]
+fn invalid_timestamp_is_a_record_error() {
+    let parser = WeeChatParser {
+        zone: jiff::tz::TimeZone::UTC,
+    };
+    let error = parser
+        .parse(
+            &&b"not-a-time\tann\thello\n"[..],
+            &sinex_source_core::RecordContext::none(),
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("invalid time"));
 }

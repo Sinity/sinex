@@ -1,5 +1,6 @@
 //! Directory tar coordinates index stored member data, excluding tar headers.
 use crate::RecordError;
+use crate::RecordResult;
 use sinex_model::Manifest;
 
 pub(crate) const MEDIA_TYPE: &str = "application/x-tar";
@@ -46,9 +47,8 @@ pub(crate) fn validate(manifest: &Manifest, records: &[(usize, usize)]) -> Resul
         }
         let member = manifest
             .member_at(start)
-            .ok_or_else(|| RecordError::new("directory record has no unambiguous member"))?;
-        let path =
-            super::paths::member_path(member).map_err(|e| RecordError::new(e.to_string()))?;
+            .record("directory record has no unambiguous member")?;
+        let path = super::paths::member_path(member).record("invalid record")?;
         if !paths.insert(path) {
             return Err(RecordError::new("directory capture repeats a member path"));
         }
@@ -79,8 +79,7 @@ pub(crate) fn decode<'a>(
     let Some(ranges) = &node.sparse else {
         return Ok(raw);
     };
-    let size = usize::try_from(node.size)
-        .map_err(|_| RecordError::new("sparse file exceeds addressable size"))?;
+    let size = usize::try_from(node.size).record("sparse file exceeds addressable size")?;
     let mut bytes = vec![0; size];
     let mut at = 0usize;
     let mut previous = 0;
@@ -89,15 +88,13 @@ pub(crate) fn decode<'a>(
             .offset
             .checked_add(range.length)
             .filter(|end| *end <= node.size && range.offset >= previous)
-            .ok_or_else(|| RecordError::new("invalid sparse file range"))?;
-        let count = usize::try_from(range.length)
-            .map_err(|_| RecordError::new("sparse range exceeds addressable size"))?;
+            .record("invalid sparse file range")?;
+        let count =
+            usize::try_from(range.length).record("sparse range exceeds addressable size")?;
         let next = at
             .checked_add(count)
-            .ok_or_else(|| RecordError::new("sparse range exceeds addressable size"))?;
-        let data = raw
-            .get(at..next)
-            .ok_or_else(|| RecordError::new("sparse file data is incomplete"))?;
+            .record("sparse range exceeds addressable size")?;
+        let data = raw.get(at..next).record("sparse file data is incomplete")?;
         bytes[range.offset as usize..end as usize].copy_from_slice(data);
         previous = end;
         at = next;

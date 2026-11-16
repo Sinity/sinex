@@ -222,7 +222,7 @@ Provider observations enter the common domain events; there is no per-provider c
 Family F10.
 
 **Plays.** Spotify extended and account exports, live recently-played, library and playlists, Last.fm and ListenBrainz scrobbles, YouTube and YouTube Music, mpv, Jellyfin, Plex and Steam each keep their provider records; plays seen by several providers stay side by side.
-- Spotify keeps offline timestamp versus sync time, play duration, skip, shuffle and reason, platform, country, network and account metadata, and episode and audiobook fields. A short-history record's minute precision is explicit.
+- Spotify keeps offline timestamp versus sync time, play duration, skip, shuffle and reason, platform, country, network and account metadata, and episode and audiobook fields. A short-history record's minute precision is explicit. Both export forms also record `skipped_inferred` when the play lasts under 30 seconds; the provider's `skipped` stays separate.
 - Saved items and playlist positions and revisions are not plays.
 - An API with a restricted history window is polled often enough for its real throughput and exposes gaps; a successful poll never claims complete playback.
 - MPRIS player facts come from the [bus stream](streams.md), not a second player poller.
@@ -241,7 +241,7 @@ Family F11.
 
 **Git** captures commit objects and the tree and blob facts needed to read the changes, refs and reflogs, author, committer and signatures, message bytes, ordered parents, per-file diff and numstat, rename, copy and binary indicators, and worktree and dirty-file observations. Raw object bytes are kept beside decoded metadata. Repository identity is stable across moves, clones and worktrees, accounts for multiple roots and SHA algorithms, and is distinct from a filesystem path. A ref rewrite or an unreachable commit is a state change observed at poll time; the commit's creation remains. SVN reads its XML log and diff records with the repository UUID and revision.
 
-**Forges.** GitHub, GitLab and Forgejo acquire issues, pull requests, comments, inline review threads, reviews, labels, milestones and assignees, commits, statuses and checks, Actions and pipeline jobs and attempts, complete available logs and artifacts, and provider events.
+**Forges.** GitHub, GitLab and Forgejo acquire issues, pull requests, comments, inline review threads, reviews, labels, milestones and assignees, commits, statuses and checks, Actions and pipeline jobs and attempts, complete available logs and artifacts, and provider events. A GitHub issue with no comment count keeps that count unknown.
 - The JSON, GraphQL or HTTP bodies received and binary artifacts are stored, never a chosen-field report.
 - Nested connections are paged to completion.
 - Update scans by the provider's update time must catch old workflow reruns and checks, reviews and comments that change without the pull request's `updatedAt`.
@@ -264,7 +264,7 @@ Family F12.
 
 **Roots.** All files in the declared notes, journal, document, health-document, download and library roots are captured, including note attachments and configuration metadata. The format-specific reader owns consistent acquisition; the filesystem watcher routes changes to it rather than reading a mutable database as a file. Markdown and front matter, Org and Logseq, Joplin's own stores, office documents, PDF, HTML, EPUB, photos and scientific or clinical packages keep their exact input, all file metadata and attributes, and raw path bytes. Acquisition never rewrites originals or executes active document content.
 
-**Extraction** is a derived reading of the stored bytes, independent of whether acquisition parsed anything. A file-only capture is reported as acquired and unparsed until extraction succeeds. DICOM images, lab and vendor XML, JSON and CSV, prescriptions and psychometric responses are source records, not clinical interpretations; Sinex draws no health conclusions.
+**Extraction** is a derived reading of the stored bytes, independent of whether acquisition parsed anything. A file-only capture is reported as acquired and unparsed until extraction succeeds. Documents, Google Takeout cells and page titles share markup text and character-reference decoding; HTML text omits script, style and head contents. DICOM images, lab and vendor XML, JSON and CSV, prescriptions and psychometric responses are source records, not clinical interpretations; Sinex draws no health conclusions.
 
 **Notes** keep text, title, tags, wikilinks, native ID, front-matter status and attachment references. A native ID follows a rename; without one, file identity and correspondence are recorded explicitly, never by asserting that two equal notes are one.
 

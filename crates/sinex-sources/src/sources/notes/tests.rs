@@ -1,4 +1,5 @@
 use super::*;
+use sinex_model::Class;
 use sinex_model::{ReadingOrder, RecordOutcome};
 use sinex_source_core::drivers::dir_snapshot::DirState;
 use sinex_source_core::{DrainInput, Limits, drain};
@@ -12,7 +13,7 @@ fn notes_and_their_removal() {
     std::fs::write(root.join(".obsidian/app.json"), "{}").unwrap();
     let d = driver(root.clone(), "h".into());
     let mut state = DirState::default();
-    let parser = NotesParser;
+    let parser = Stateless(NotesParser);
     let run = |a: &sinex_source_core::drivers::Acquired| {
         let m = a.material.as_ref().unwrap();
         let out = drain(
@@ -77,9 +78,8 @@ fn note_in_vault(text: &str, path: &str, root: &str, host: &str) -> NoteDocument
         member: Some(&member),
     };
     NotesParser
-        .parse(&text.as_bytes(), &(), &context)
+        .parse(&text.as_bytes(), &context)
         .unwrap()
-        .0
         .remove(0)
 }
 
@@ -270,7 +270,7 @@ fn payloads_without_metadata_and_removed_markers_keep_unknown_information() {
         manifest: &manifest,
         member: Some(&member),
     };
-    let (payloads, ()) = NotesParser.parse(&b"".as_slice(), &(), &context).unwrap();
+    let payloads = NotesParser.parse(&b"".as_slice(), &context).unwrap();
     assert!(payloads.is_empty());
 }
 
@@ -347,7 +347,7 @@ fn raw_byte_note_paths_stay_distinct_after_memory_and_removal() {
     let material = acquired.material.unwrap();
     let cursor = (material.cursor_at)(material.records.last().unwrap().1).unwrap();
     let outputs = drain(
-        &NotesParser,
+        &Stateless(NotesParser),
         DrainInput {
             source: SPEC.name,
             class: Class::Open,
@@ -441,14 +441,12 @@ fn raw_byte_vault_roots_stay_distinct_from_equal_display_names() {
             NotesParser
                 .parse(
                     &bytes.as_ref(),
-                    &(),
                     &RecordContext {
                         manifest: &material.manifest,
                         member: Some(member),
                     },
                 )
                 .unwrap()
-                .0
                 .remove(0),
         );
     }

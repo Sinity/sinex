@@ -1,27 +1,26 @@
 use super::*;
+use crate::{Stateless, StatelessParser};
 use std::os::unix::ffi::OsStringExt;
 use std::os::unix::fs::{FileExt, MetadataExt, PermissionsExt};
 use std::process::Command;
 
 struct FileHashParser;
 
-impl crate::Parser for FileHashParser {
+impl StatelessParser for FileHashParser {
     type Record<'a> = &'a [u8];
-    type Carry = ();
     type Payload = sinex_model::event_types::media::NoteDocument;
 
     fn parse(
         &self,
         bytes: &&[u8],
-        carry: &(),
         context: &crate::RecordContext<'_>,
-    ) -> Result<(Vec<Self::Payload>, ()), crate::RecordError> {
-        let (mut notes, ()) =
-            crate::Parser::parse(&crate::test_parser::NotesParser, bytes, carry, context)?;
+    ) -> Result<Vec<Self::Payload>, crate::RecordError> {
+        let mut notes =
+            crate::StatelessParser::parse(&crate::test_parser::NotesParser, bytes, context)?;
         for note in &mut notes {
             note.text = Some(blake3::hash(bytes).to_hex().to_string());
         }
-        Ok((notes, ()))
+        Ok(notes)
     }
 }
 
@@ -182,7 +181,7 @@ fn gnu_tar_restores_raw_names_sparse_data_attributes_and_access_acl() {
     // The same recorded member expands through the normal drain during replay.
     let source = crate::DeclaredSource {
         spec: crate::test_parser::source().spec,
-        parser: FileHashParser,
+        parser: Stateless(FileHashParser),
     };
     use crate::Source;
     let chunks = source

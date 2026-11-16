@@ -12,10 +12,14 @@
 //! `N: <node>` and `E: KEY=value` lines.
 use serde_json::{Map, Value};
 use sinex_model::event_types::system::DeviceChanged;
-use sinex_model::{Class, InputRef, Timestamp};
+use sinex_model::json::JsonExt;
+use sinex_model::{InputRef, Timestamp};
+use sinex_source_core::RecordError;
+use sinex_source_core::RecordResult;
+use sinex_source_core::discovery::{CaptureStream, CapturedBy, DiscoverySpec, Location};
 use sinex_source_core::drivers::live_stream::{self, LiveStream, Rotation, SpoolWriter};
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordError};
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
+use sinex_source_core::{Stateless, StatelessParser};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -25,13 +29,11 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "machine.udev",
     origin: Origin::Input(Shape::LiveStream),
     expect: Expectation::continuous_days(30),
-    expires_after: None,
     purpose: "which devices were attached when, peripheral and storage history",
-    class: Class::Open,
     parser: "udev-blocks",
-    parser_version: 1,
     event_types: &["device.changed"],
-    framer: sinex_source_core::Framer::incremental(sinex_source_core::drivers::append_file::lines),
+    framer: sinex_source_core::Framer::LINES,
+    ..SourceSpec::DEFAULT
 };
 
 pub struct UdevParser;
@@ -40,7 +42,7 @@ pub struct UdevParser;
 fn first(properties: &Map<String, Value>, names: &[&str]) -> Option<String> {
     names
         .iter()
-        .find_map(|name| properties.get(*name).and_then(Value::as_str))
+        .find_map(|name| properties.str(*name))
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
 }
@@ -59,8 +61,7 @@ fn device(received_at: Timestamp, block: &str) -> Result<Option<DeviceChanged>, 
                 properties.insert(name.to_owned(), Value::String(value.to_owned()));
             }
         }
-        let action = first(&properties, &["ACTION"])
-            .ok_or_else(|| RecordError::new("udev event without ACTION"))?;
+        let action = first(&properties, &["ACTION"]).record("udev event without ACTION")?;
         (action, first(&properties, &["DEVPATH"]), None)
     } else if let Some(path) = head.strip_prefix("P: ") {
         let mut node = None;
@@ -77,7 +78,7 @@ fn device(received_at: Timestamp, block: &str) -> Result<Option<DeviceChanged>, 
     } else {
         return Ok(None);
     };
-    let device = path.ok_or_else(|| RecordError::new("udev block without a device path"))?;
+    let device = path.record("udev block without a device path")?;
     Ok(Some(DeviceChanged {
         received_at,
         action,
@@ -100,28 +101,19 @@ fn device(received_at: Timestamp, block: &str) -> Result<Option<DeviceChanged>, 
     }))
 }
 
-impl Parser for UdevParser {
+impl StatelessParser for UdevParser {
     type Record<'a> = Map<String, Value>;
-    type Carry = ();
     type Payload = DeviceChanged;
 
     fn parse(
         &self,
         record: &Map<String, Value>,
-        _: &(),
-        _context: &sinex_source_core::RecordContext<'_>,
-    ) -> Result<(Vec<DeviceChanged>, ()), RecordError> {
-        let (received_at, bytes) = live_stream::received(record).map_err(RecordError::new)?;
-        let block = std::str::from_utf8(&bytes)
-            .map_err(|e| RecordError::new(format!("udev block is not UTF-8: {e}")))?;
-        Ok((device(received_at, block)?.into_iter().collect(), ()))
-    }
-}
 
-pub fn source() -> DeclaredSource<UdevParser> {
-    DeclaredSource {
-        spec: SPEC,
-        parser: UdevParser,
+        _context: &sinex_source_core::RecordContext<'_>,
+    ) -> Result<Vec<DeviceChanged>, RecordError> {
+        let (received_at, bytes) = live_stream::received(record).map_err(RecordError::new)?;
+        let block = std::str::from_utf8(&bytes).record("udev block is not UTF-8")?;
+        Ok(device(received_at, block)?.into_iter().collect())
     }
 }
 
@@ -207,38 +199,20 @@ pub fn capture(
 }
 
 /// `stage --parser udev SPOOL`: device events from udev, captured into SPOOL.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "udev",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "spool",
-                path: "udev",
-            }],
-            capabilities: &["udevadm"],
-            credentials: &[],
-            streams: &[sinex_source_core::discovery::CaptureStream {
-                spool: "udev",
-                options: &[],
-                capabilities: &[],
-            }],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SPEC],
-        plan: Some(|spool, settings| {
-            Ok(sinex_source_core::binding::single(&SPEC, spool, settings))
-        }),
-        source: |_| Ok(Box::new(source())),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::polled(driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: Some(|b, stop| capture(&b.input, stop).map_err(|e| e.to_string())),
-    };
+super::input_format! { pub FORMAT = "udev" {
+    specs: [SPEC],
+    parser: |_b| Stateless(UdevParser),
+    discovery: DiscoverySpec {
+        captured_by: CapturedBy::System,
+        locations: &[Location::new("spool", "udev")],
+        capabilities: &["udevadm"],
+        streams: &[CaptureStream { spool: "udev", options: &[], capabilities: &[] }],
+        ..DiscoverySpec::DEFAULT
+    },
+    plan: single,
+    reader: polled(driver),
+    capture: |b, _context, stop| capture(&b.input, stop).map_err(|e| e.to_string()),
+} }
 
 #[cfg(test)]
 mod tests;

@@ -64,8 +64,13 @@ fn main() -> ExitCode {
         );
         return ExitCode::FAILURE;
     }
+    let context = sinex_source_core::discovery::DiscoveryContext::from_environment(
+        &cli.host,
+        cli.state.join("spool"),
+        std::env::vars().collect(),
+    );
     let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
-    match runtime.block_on(run(cli)) {
+    match runtime.block_on(run(cli, context)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("sinex-capture: {e}");
@@ -74,8 +79,10 @@ fn main() -> ExitCode {
     }
 }
 
-async fn run(cli: Cli) -> Result<(), String> {
-    let spools = cli.state.join("spool");
+async fn run(
+    cli: Cli,
+    mut context: sinex_source_core::discovery::DiscoveryContext,
+) -> Result<(), String> {
     let positions = cli.state.join("positions");
     let store = Store::open(&cli.store).map_err(|e| format!("content store: {e}"))?;
     let connection = live::Connection {
@@ -85,14 +92,13 @@ async fn run(cli: Cli) -> Result<(), String> {
         producer: cli.producer.clone(),
         upload: cli.upload,
     };
-    use sinex_sources::discovery::{self, CapturedBy, Configuration, DiscoveryContext};
+    use sinex_sources::discovery::{self, CapturedBy, Configuration};
     let configuration = cli
         .sources
         .as_deref()
         .map(Configuration::load)
         .transpose()?
         .unwrap_or_default();
-    let mut context = DiscoveryContext::for_process(&cli.host, spools);
     context.sources = configuration.sources;
     context.exclude = configuration.exclude;
     context.watch = cli.watch;
@@ -101,6 +107,8 @@ async fn run(cli: Cli) -> Result<(), String> {
         connection,
         &store,
         &positions,
+        &context,
+        context.environment.contains_key("DBUS_SESSION_BUS_ADDRESS"),
         || {
             let mut plan = discovery::captures(&context, CapturedBy::System)?;
             plan.bindings

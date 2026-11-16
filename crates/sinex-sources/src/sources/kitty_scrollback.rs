@@ -13,10 +13,13 @@ use crate::sources::terminal_text::strip_escapes;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sinex_model::event_types::machine::{ScrollbackCaptured, ScrollbackWindow};
+use sinex_model::json::JsonExt;
 use sinex_model::{Class, Timestamp};
+use sinex_source_core::RecordResult;
+use sinex_source_core::discovery::{DiscoverySpec, Location};
 use sinex_source_core::drain::RecordContext;
 use sinex_source_core::drivers::dir_snapshot::DirSnapshot;
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -25,17 +28,16 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "terminal.kitty-scrollback",
     origin: Origin::Input(Shape::DirSnapshot),
     expect: Expectation::continuous_days(2),
-    expires_after: None,
     purpose: "terminal recall: what kitty windows showed",
     // What terminals show includes what was typed into them.
     class: Class::Guarded,
     parser: "kitty-scrollback",
-    parser_version: 1,
     event_types: &["scrollback.captured", "scrollback.window"],
     framer: sinex_source_core::Framer::export(
         sinex_source_core::drivers::export_archive::frame_whole,
         sinex_source_core::drivers::export_archive::Framing::Whole,
     ),
+    ..SourceSpec::DEFAULT
 };
 
 sinex_model::payload_enum! {
@@ -214,17 +216,16 @@ impl Parser for ScrollbackParser {
     ) -> Result<(Vec<Snapshot>, Windows), RecordError> {
         let member = context
             .member
-            .ok_or_else(|| RecordError::new("a snapshot needs its directory snapshot member"))?;
+            .record("a snapshot needs its directory snapshot member")?;
         // A snapshot removed from the lake was still taken; its events stay.
         if member.details.contains_key("removed_at_ns") {
             return Ok((vec![], windows.clone()));
         }
         let file = member.path.rsplit('/').next().unwrap_or(&member.path);
-        let named =
-            name(file).ok_or_else(|| RecordError::new(format!("not a snapshot name: {file}")))?;
+        let named = name(file).record_with(|| format!("not a snapshot name: {file}"))?;
         if file.ends_with(".meta.json") {
-            let sidecar: Map<String, Value> = serde_json::from_slice(record)
-                .map_err(|e| RecordError::new(format!("sidecar is not a JSON object: {e}")))?;
+            let sidecar: Map<String, Value> =
+                serde_json::from_slice(record).record("sidecar is not a JSON object")?;
             let text = |key: &str| fields::optional_text(&sidecar, key);
             let snapshot = text("ansi_file").unwrap_or_else(|| {
                 format!("{}.ansi", file.strip_suffix(".meta.json").unwrap_or(file))
@@ -234,14 +235,10 @@ impl Parser for ScrollbackParser {
                     captured_at: named.captured_at,
                     host: text("hostname").or(Some(named.host)),
                     kitty_pid: sidecar
-                        .get("kitty_pid")
-                        .and_then(Value::as_u64)
+                        .u64("kitty_pid")
                         .and_then(|p| u32::try_from(p).ok())
                         .or(named.kitty_pid),
-                    window_id: sidecar
-                        .get("window_id")
-                        .and_then(Value::as_i64)
-                        .unwrap_or(named.window_id),
+                    window_id: sidecar.i64("window_id").unwrap_or(named.window_id),
                     title: text("title"),
                     cwd: text("cwd"),
                     snapshot,
@@ -261,8 +258,7 @@ impl Parser for ScrollbackParser {
                 windows.clone(),
             ));
         }
-        let ansi = std::str::from_utf8(record)
-            .map_err(|e| RecordError::new(format!("snapshot is not UTF-8: {e}")))?;
+        let ansi = std::str::from_utf8(record).record("snapshot is not UTF-8")?;
         let lines = plain_lines(ansi);
         let window = format!(
             "{}/{}/{}",
@@ -293,13 +289,6 @@ impl Parser for ScrollbackParser {
     }
 }
 
-pub fn source() -> DeclaredSource<ScrollbackParser> {
-    DeclaredSource {
-        spec: SPEC,
-        parser: ScrollbackParser,
-    }
-}
-
 /// Snapshot text and sidecars; the HTML renderings beside some are made from
 /// the text.
 pub fn select(path: &str) -> bool {
@@ -317,34 +306,13 @@ pub fn driver(root: PathBuf, host: String) -> DirSnapshot {
 }
 
 /// `stage --parser kitty-scrollback DIR`: the lake's scrollback snapshots in DIR.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "kitty-scrollback",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "capture",
-                path: "kitty-scrollback",
-            }],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SPEC],
-        plan: Some(|input, settings| {
-            Ok(sinex_source_core::binding::single(&SPEC, input, settings))
-        }),
-        source: |_| Ok(Box::new(source())),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::walked(driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: None,
-    };
+super::input_format! { pub FORMAT = "kitty-scrollback" {
+    specs: [SPEC],
+    parser: |_b| ScrollbackParser,
+    discovery: DiscoverySpec::system(&[Location::new("capture", "kitty-scrollback")]),
+    plan: single,
+    reader: walked(driver),
+} }
 
 #[cfg(test)]
 mod tests;

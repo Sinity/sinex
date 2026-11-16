@@ -9,6 +9,7 @@ use sinex_model::event_types::environment::AirSampled;
 use sinex_model::event_types::machine::LakeObservation;
 use sinex_model::event_types::peripheral::{BatterySampled, BluetoothAudioSampled, DisplaySampled};
 use sinex_source_core::RecordError;
+use sinex_source_core::RecordResult;
 
 sinex_model::payload_enum! {
     #[derive(Clone, Debug, PartialEq)]
@@ -36,13 +37,12 @@ pub(super) fn seconds(value: f64) -> Result<Timestamp, RecordError> {
     let nanos = (whole as i128)
         .checked_mul(1_000_000_000)
         .and_then(|whole| whole.checked_add(micros * 1_000))
-        .ok_or_else(|| RecordError::new(format!("time {value} out of range")))?;
-    Timestamp::from_unix_ns(nanos)
-        .map_err(|e| RecordError::new(format!("time {value} out of range: {e}")))
+        .record_with(|| format!("time {value} out of range"))?;
+    Timestamp::from_unix_ns(nanos).record_with(|| format!("time {value} out of range"))
 }
 
 fn decode<T: DeserializeOwned>(lane: &str, payload: &Value) -> Result<T, RecordError> {
-    T::deserialize(payload).map_err(|e| RecordError::new(format!("{lane} payload: {e}")))
+    T::deserialize(payload).record_with(|| format!("{lane} payload"))
 }
 
 /// The events of one envelope record of `lane`.

@@ -5,11 +5,9 @@ fn one(v: Value) -> WykopEvent {
     WykopParser
         .parse(
             v.as_object().unwrap(),
-            &(),
             &sinex_source_core::RecordContext::none(),
         )
         .unwrap()
-        .0
         .remove(0)
 }
 
@@ -38,11 +36,9 @@ fn activity_feed_repeats_own_posts_and_adds_down_votes_and_favourites() {
                 "votes": {"up": 2, "down": 0}})
             .as_object()
             .unwrap(),
-            &(),
             &sinex_source_core::RecordContext::none(),
         )
-        .unwrap()
-        .0;
+        .unwrap();
     let [WykopEvent::Post(p)] = rows.as_slice() else {
         panic!("{rows:?}")
     };
@@ -57,11 +53,9 @@ fn activity_feed_repeats_own_posts_and_adds_down_votes_and_favourites() {
                 "author": {"username": "other"}, "voted": -1, "favourite": true})
             .as_object()
             .unwrap(),
-            &(),
             &sinex_source_core::RecordContext::none(),
         )
-        .unwrap()
-        .0;
+        .unwrap();
     assert!(matches!(&rows[0], WykopEvent::Vote(v) if v.direction == "down"));
     assert!(matches!(&rows[1], WykopEvent::Saved(s) if s.native_id == "link:7"));
     // An item the operator only commented on yields nothing here.
@@ -71,11 +65,9 @@ fn activity_feed_repeats_own_posts_and_adds_down_votes_and_favourites() {
                 "author": {"username": "other"}, "voted": 0, "favourite": false})
             .as_object()
             .unwrap(),
-            &(),
             &sinex_source_core::RecordContext::none(),
         )
-        .unwrap()
-        .0;
+        .unwrap();
     assert!(rows.is_empty());
 }
 
@@ -122,9 +114,21 @@ fn votes_have_no_time_of_their_own() {
         WykopParser
             .parse(
                 json!({"kind": "nope"}).as_object().unwrap(),
-                &(),
                 &sinex_source_core::RecordContext::none()
             )
             .is_err()
     );
+}
+
+#[devkit::test]
+fn invalid_timestamp_is_a_record_error() {
+    let row = json!({"kind": "entry", "entry_id": 1, "entry_created_at": "not-a-time",
+        "entry_author": "test-user", "entry_content": "x", "entry_tags": [], "votes_score": 0});
+    let error = WykopParser
+        .parse(
+            row.as_object().unwrap(),
+            &sinex_source_core::RecordContext::none(),
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("invalid time"));
 }

@@ -10,8 +10,8 @@ fn parse(line: &str) -> Result<Produced, RecordError> {
     ))
     .unwrap();
     SessionSocketParser
-        .parse(&rec, &(), &sinex_source_core::RecordContext::none())
-        .map(|(mut v, ())| v.remove(0))
+        .parse(&rec, &sinex_source_core::RecordContext::none())
+        .map(|mut v| v.remove(0))
 }
 
 #[devkit::test]
@@ -507,8 +507,8 @@ fn command_reported_while_listener_down_arrives_after_start() {
     assert_eq!(material.records.len(), 1);
     let (start, end) = material.records[0];
     let record = serde_json::from_slice(&crate::test_support::body(&material)[start..end]).unwrap();
-    let (events, ()) = SessionSocketParser
-        .parse(&record, &(), &sinex_source_core::RecordContext::none())
+    let events = SessionSocketParser
+        .parse(&record, &sinex_source_core::RecordContext::none())
         .unwrap();
     let Produced::Command(report) = &events[0] else {
         panic!("reported command")

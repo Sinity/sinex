@@ -4,10 +4,11 @@ use serde_json::Value;
 use sinex_analysis::finding::{Finding, Template};
 use sinex_analysis::presentation::Section;
 use sinex_model::EventId;
+use sinex_model::json::JsonExt;
 
 fn description(row: &Value) -> String {
     let payload = row.get("payload").unwrap_or(row);
-    let text = |name| payload.get(name).and_then(Value::as_str);
+    let text = |name| payload.str(name);
     let mut fields = Vec::new();
     match row["event_type"].as_str() {
         Some("work.episode") => {
@@ -41,7 +42,7 @@ fn description(row: &Value) -> String {
                 fields.push(path.to_owned());
             }
             if let Some(check) = text("check_name") {
-                let result = match payload.get("check_passed").and_then(Value::as_bool) {
+                let result = match payload.bool("check_passed") {
                     Some(true) => "passed",
                     Some(false) => "failed",
                     None => "result not recorded",
@@ -51,12 +52,7 @@ fn description(row: &Value) -> String {
             if let Some(revision) = text("revision") {
                 fields.push(format!("revision {revision}"));
             }
-            if payload["failed"] == true
-                && payload
-                    .get("check_passed")
-                    .and_then(Value::as_bool)
-                    .is_none()
-            {
+            if payload["failed"] == true && payload.bool("check_passed").is_none() {
                 fields.push("recorded failure".into());
             }
         }
@@ -75,13 +71,13 @@ fn description(row: &Value) -> String {
             if let Some(host) = text("host") {
                 fields.push(format!("host {host}"));
             }
-            if let Some(commands) = payload.get("commands").and_then(Value::as_u64) {
+            if let Some(commands) = payload.u64("commands") {
                 fields.push(format!("{commands} recorded commands"));
             }
             if let Some(ended_at) = text("ended_at") {
                 fields.push(format!("observed through {ended_at}"));
             }
-            if let Some(cwds) = payload.get("cwds").and_then(Value::as_array) {
+            if let Some(cwds) = payload.array("cwds") {
                 fields.push(format!(
                     "directories {}",
                     cwds.iter()

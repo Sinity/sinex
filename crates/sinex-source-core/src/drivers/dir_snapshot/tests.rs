@@ -633,7 +633,7 @@ fn an_unreadable_entry_fails_only_its_record_and_is_retried() {
     let material = d.poll(&Value::Null, &mut state).unwrap().material.unwrap();
     assert_eq!(material.records.len(), 2);
     let chunks = drain(
-        &NotesParser,
+        &crate::Stateless(NotesParser),
         crate::DrainInput {
             source: "synthetic",
             class: Class::Open,

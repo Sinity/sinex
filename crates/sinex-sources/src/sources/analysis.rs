@@ -1,56 +1,55 @@
 //! Authenticated analysis requests keep their own source material.
+use crate::sources::input_format;
 use serde_json::{Map, Value, json};
-use sinex_model::event_types::analysis::AnalysisRequest;
 use sinex_model::{
-    Class, InputRef, MaterialId, ObservationFacts, ReadingOrder, RevisionChange, Timestamp,
+    InputRef, MaterialId, ObservationFacts, ReadingOrder, RevisionChange, Timestamp,
+    event_types::analysis::AnalysisRequest, json::JsonExt,
 };
-use sinex_source_core::drain::RecordContext;
-use sinex_source_core::drivers::{Acquired, NewMaterial};
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, SourceSpec};
-use sinex_source_core::{Parser, RecordError};
+use sinex_source_core::{
+    DeclaredSource, Expectation, Framer, Origin, RecordContext, RecordError, RecordResult,
+    SourceSpec, Stateless, StatelessParser,
+    discovery::DiscoverySpec,
+    drivers::{
+        Acquired, NewMaterial,
+        export_archive::{Framing, frame_lines},
+    },
+};
 
 pub const REQUEST: SourceSpec = SourceSpec {
     name: "analysis.request",
     origin: Origin::Request,
     expect: Expectation::OnDemand,
-    expires_after: None,
     purpose: "authored analysis questions",
-    class: Class::Open,
     parser: "analysis-request",
     parser_version: 2,
     event_types: &["analysis.request"],
-    framer: sinex_source_core::Framer::export(
-        sinex_source_core::drivers::export_archive::frame_lines,
-        sinex_source_core::drivers::export_archive::Framing::Lines,
-    ),
+    framer: Framer::export(frame_lines, Framing::Lines),
+    ..SourceSpec::DEFAULT
 };
 pub struct RequestParser;
-impl Parser for RequestParser {
+impl StatelessParser for RequestParser {
     type Record<'a> = Map<String, Value>;
-    type Carry = ();
     type Payload = AnalysisRequest;
     fn parse(
         &self,
         record: &Map<String, Value>,
-        _: &(),
         context: &RecordContext<'_>,
-    ) -> Result<(Vec<AnalysisRequest>, ()), RecordError> {
-        let mut request: AnalysisRequest = serde_json::from_value(Value::Object(record.clone()))
-            .map_err(|e| RecordError::new(e.to_string()))?;
+    ) -> Result<Vec<AnalysisRequest>, RecordError> {
+        let mut request: AnalysisRequest =
+            serde_json::from_value(Value::Object(record.clone())).record("invalid record")?;
         request.by = context
             .manifest
             .details
-            .get("actor")
-            .and_then(Value::as_str)
-            .ok_or_else(|| RecordError::new("analysis request has no authenticated actor"))?
+            .str("actor")
+            .record("analysis request has no authenticated actor")?
             .into();
-        Ok((vec![request], ()))
+        Ok(vec![request])
     }
 }
-pub fn request_source() -> DeclaredSource<RequestParser> {
+pub fn request_source() -> DeclaredSource<Stateless<RequestParser>> {
     DeclaredSource {
         spec: REQUEST,
-        parser: RequestParser,
+        parser: Stateless(RequestParser),
     }
 }
 pub fn request_material(
@@ -98,24 +97,11 @@ pub fn request_material(
     }
 }
 
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "analysis",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&REQUEST],
-        plan: None,
-        source: |_| Ok(Box::new(request_source())),
-        reader: None,
-        capture: None,
-    };
+input_format! { pub FORMAT = "analysis" {
+    specs: [REQUEST], parser: |_b| Stateless(RequestParser),
+    discovery: DiscoverySpec::DEFAULT,
+    plan: none, reader: none,
+} }
 
 #[cfg(test)]
 mod tests;

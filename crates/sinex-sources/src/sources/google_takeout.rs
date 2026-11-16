@@ -8,11 +8,12 @@ pub mod keep;
 pub mod location;
 pub mod purchases;
 pub mod tasks;
-
-use sinex_source_core::Source;
-use sinex_source_core::binding::{Binding, InputFormat, Reading, shared};
+use sinex_source_core::binding::{Binding, Reading, shared};
+use sinex_source_core::discovery::{DiscoverySpec, Location};
 use sinex_source_core::drivers::export_archive::ExportArchive;
 use sinex_source_core::registry::SourceSpec;
+use sinex_source_core::stage::Structure;
+use sinex_source_core::{Source, binding};
 use std::path::PathBuf;
 
 /// Each product read from a Takeout archive: its spec, its parser and its
@@ -75,28 +76,30 @@ pub fn takeout_member(member: &str) -> bool {
 /// `stage --parser takeout PATH`: every product of each Takeout archive in PATH,
 /// plus the calendars in it; each product its own binding, so each keeps its
 /// own cursor.
-pub const FORMAT: InputFormat = InputFormat {
-    name: "takeout",
-    accepts: &[sinex_source_core::stage::Structure::ArchiveLayout(
-        takeout_member,
-    )],
-    discovery: sinex_source_core::discovery::DiscoverySpec {
-        captured_by: sinex_source_core::discovery::CapturedBy::System,
-        locations: &[sinex_source_core::discovery::Location {
-            root: "input",
-            path: "takeout",
-        }],
-        capabilities: &[],
-        credentials: &[],
-        streams: &[],
+super::input_format! { pub FORMAT = "takeout" {
+    specs: [
+        activity::MY_ACTIVITY,
+        activity::YOUTUBE,
+        keep::SPEC,
+        assistant::SPEC,
+        tasks::SPEC,
+        purchases::PLAY_STORE,
+        purchases::PURCHASES,
+        location::SPEC,
+        fit::SPEC,
+    ],
+    source: |b| {
+        if b.source == super::calendar::SPEC.name {
+            return (super::calendar::FORMAT.source)(b);
+        }
+        Ok((product(b)?.1)())
     },
-    discover: crate::discovery::discover_format,
-    specs: || PRODUCTS.iter().map(|p| p.0).collect(),
-    plan: Some(|input, settings| {
+    discovery: DiscoverySpec::system(&[Location::new("input", "takeout")]),
+    accepts: [Structure::ArchiveLayout(takeout_member)],
+    plan: |input, settings| {
         let zoned = settings.clone().with_zone()?;
         let mut out = Vec::new();
-        for file in sinex_source_core::binding::files(input, false, sinex_source_core::binding::any)
-        {
+        for file in binding::files(input, false, binding::any) {
             out.push(Binding::of(&super::calendar::SPEC, &file, zoned.clone()));
             out.extend(
                 PRODUCTS
@@ -105,14 +108,8 @@ pub const FORMAT: InputFormat = InputFormat {
             );
         }
         Ok(out)
-    }),
-    source: |b| {
-        if b.source == super::calendar::SPEC.name {
-            return (super::calendar::FORMAT.source)(b);
-        }
-        Ok((product(b)?.1)())
     },
-    reader: Some(|b| -> Result<Reading, String> {
+    reader: |b| -> Result<Reading, String> {
         if b.source == super::calendar::SPEC.name {
             return (super::calendar::FORMAT.reader.expect("calendar reads"))(b);
         }
@@ -120,6 +117,5 @@ pub const FORMAT: InputFormat = InputFormat {
             b.input.clone(),
             b.settings.host.clone(),
         )))
-    }),
-    capture: None,
-};
+    },
+} }

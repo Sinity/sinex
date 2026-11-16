@@ -6,10 +6,9 @@ fn reads_an_entry_and_keeps_new_fields() {
     let row = json!({"favicon_url": "https://a/f.ico", "page_transition": "LINK", "title": "A",
         "url": "https://a/", "client_id": "c==", "time_usec": 1_565_000_000_123_456i64,
         "page_transition_qualifier": "CLIENT_REDIRECT"});
-    let (p, ()) = TakeoutChromeParser
+    let p = TakeoutChromeParser
         .parse(
             row.as_object().unwrap(),
-            &(),
             &sinex_source_core::RecordContext::none(),
         )
         .unwrap();
@@ -26,4 +25,16 @@ fn selects_both_member_names() {
     assert!(select("Takeout/Chrome/BrowserHistory.json"));
     assert!(select("Takeout/Chrome/History.json"));
     assert!(!select("Takeout/Chrome/Bookmarks.html"));
+}
+
+#[devkit::test]
+fn missing_time_usec_is_a_record_error() {
+    let row = json!({"url": "https://example.org", "title": "A page"});
+    let error = TakeoutChromeParser
+        .parse(
+            row.as_object().unwrap(),
+            &sinex_source_core::RecordContext::none(),
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("time_usec"));
 }

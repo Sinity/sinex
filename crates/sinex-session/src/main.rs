@@ -129,17 +129,18 @@ struct Live {
 }
 
 fn main() -> ExitCode {
+    let environment = std::env::vars().collect();
     match Cli::parse().command {
         Command::Run(run) => {
             let runtime = runtime();
-            match runtime.block_on(produce(run)) {
+            match runtime.block_on(produce(run, environment)) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => fail(e),
             }
         }
         Command::ReportCommand(report) => {
             // Failing to report is never the shell's problem.
-            let _ = report_command(report);
+            let _ = report_command(report, environment);
             ExitCode::SUCCESS
         }
         Command::ClipboardFrame { selection } => {
@@ -148,7 +149,7 @@ fn main() -> ExitCode {
                 Err(e) => fail(e.to_string()),
             }
         }
-        Command::Capture(live) => match runtime().block_on(capture(live)) {
+        Command::Capture(live) => match runtime().block_on(capture(live, environment)) {
             Ok(n) => {
                 println!("captured {n}");
                 ExitCode::SUCCESS
@@ -168,13 +169,21 @@ fn runtime() -> tokio::runtime::Runtime {
         .expect("tokio runtime")
 }
 
-fn report_command(report: ReportCommand) -> Result<(), String> {
+fn report_command(
+    report: ReportCommand,
+    environment: std::collections::BTreeMap<String, String>,
+) -> Result<(), String> {
     use sinex_sources::sources::session_socket::{self, ShellReport};
-    let socket = session_socket::default_path().ok_or("no integration socket")?;
     let host = std::fs::read_to_string("/proc/sys/kernel/hostname")
         .map_err(|e| e.to_string())?
         .trim()
         .to_owned();
+    let context = sinex_source_core::discovery::DiscoveryContext::from_environment(
+        &host,
+        PathBuf::new(),
+        environment,
+    );
+    let socket = session_socket::default_path(&context).ok_or("no integration socket")?;
     let started_at =
         sinex_model::Timestamp::from_unix_ns(report.started_at_ns).map_err(|e| e.to_string())?;
     let duration_ns = report
@@ -210,13 +219,21 @@ fn secs(s: Option<u64>) -> Option<Duration> {
     s.map(Duration::from_secs)
 }
 
-async fn capture(live: Live) -> Result<u64, String> {
+async fn capture(
+    live: Live,
+    environment: std::collections::BTreeMap<String, String>,
+) -> Result<u64, String> {
     let shutdown = sinex_source_core::capture::shutdown_signal().map_err(|e| e.to_string())?;
     let stop = std::sync::Arc::new(sinex_source_core::capture::CaptureStop::new(secs(
         live.seconds,
     )));
     let task_stop = stop.clone();
-    let mut task = tokio::task::spawn_blocking(move || capture_source(live, &task_stop));
+    let context = sinex_source_core::discovery::DiscoveryContext::from_environment(
+        "localhost",
+        live.spool.clone(),
+        environment,
+    );
+    let mut task = tokio::task::spawn_blocking(move || capture_source(live, &context, &task_stop));
     let result = tokio::select! {
         result = &mut task => result.map_err(|e| e.to_string())?,
         _ = shutdown => {
@@ -230,6 +247,7 @@ async fn capture(live: Live) -> Result<u64, String> {
 
 fn capture_source(
     live: Live,
+    context: &sinex_source_core::discovery::DiscoveryContext,
     stop: &sinex_source_core::capture::CaptureStop,
 ) -> Result<u64, String> {
     let (format, binding) = live::binding(
@@ -238,18 +256,21 @@ fn capture_source(
         "localhost",
         live::options(&live.options)?,
     )?;
-    (format.capture.expect("live formats capture"))(&binding, stop)
+    (format.capture.expect("live formats capture"))(&binding, context, stop)
 }
 
-fn requested(run: &Run) -> Result<sinex_sources::discovery::CapturePlan, String> {
-    use sinex_sources::discovery::{self, CapturedBy, Configuration, DiscoveryContext};
+fn requested(
+    run: &Run,
+    context: &sinex_source_core::discovery::DiscoveryContext,
+) -> Result<sinex_sources::discovery::CapturePlan, String> {
+    use sinex_sources::discovery::{self, CapturedBy, Configuration};
     let configuration = run
         .sources
         .as_deref()
         .map(Configuration::load)
         .transpose()?
         .unwrap_or_default();
-    let mut context = DiscoveryContext::for_process(&run.host, run.state.join("spool"));
+    let mut context = context.clone();
     context.sources = configuration.sources;
     context.exclude = configuration.exclude;
     context.watch = run.watch.clone();
@@ -264,10 +285,19 @@ fn requested(run: &Run) -> Result<sinex_sources::discovery::CapturePlan, String>
 }
 
 /// Capture threads write spools; the shared loop produces what they wrote.
-async fn produce(run: Run) -> Result<(), String> {
+async fn produce(
+    run: Run,
+    environment: std::collections::BTreeMap<String, String>,
+) -> Result<(), String> {
     use sinex_source_core::drivers::producer::Store;
 
-    let plan = requested(&run)?;
+    let context = sinex_source_core::discovery::DiscoveryContext::from_environment(
+        &run.host,
+        run.state.join("spool"),
+        environment,
+    );
+    let desktop_notifications = context.environment.contains_key("DBUS_SESSION_BUS_ADDRESS");
+    let plan = requested(&run, &context)?;
     let store = Store::open(&run.store).map_err(|e| format!("content store: {e}"))?;
     let connection = live::Connection {
         url: run.nats.clone(),
@@ -315,7 +345,9 @@ async fn produce(run: Run) -> Result<(), String> {
         connection,
         &store,
         &run.state.join("positions"),
-        || requested(&run),
+        &context,
+        desktop_notifications,
+        || requested(&run, &context),
         Duration::from_secs(run.every),
         until,
     )

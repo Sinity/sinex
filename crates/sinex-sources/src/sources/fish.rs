@@ -14,9 +14,13 @@
 //! then rewrites the file without duplicates; records are numbered like zsh's
 //! ([`Seen`]), so a block read again is a repeat.
 use crate::sources::shell_history::Seen;
-use sinex_model::{Class, Timestamp, event_types::CommandImported};
+#[cfg(test)]
+use sinex_model::Class;
+use sinex_model::{Timestamp, event_types::CommandImported};
+use sinex_source_core::RecordResult;
+use sinex_source_core::discovery::{DiscoverySpec, Location};
 use sinex_source_core::drivers::append_file::AppendFile;
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
 
@@ -24,13 +28,11 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "terminal.fish-history",
     origin: Origin::Input(Shape::AppendFile),
     expect: Expectation::continuous_days(2),
-    expires_after: None,
     purpose: "command fusion and shell recall",
-    class: Class::Open,
     parser: "fish-history",
-    parser_version: 1,
     event_types: &["command.imported"],
     framer: sinex_source_core::Framer::incremental(frame),
+    ..SourceSpec::DEFAULT
 };
 
 pub struct FishParser {
@@ -72,13 +74,12 @@ impl Parser for FishParser {
         seen: &Seen,
         _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<CommandImported>, Seen), RecordError> {
-        let text = std::str::from_utf8(record)
-            .map_err(|_| RecordError::new("fish history record is not UTF-8"))?;
+        let text = std::str::from_utf8(record).record("fish history record is not UTF-8")?;
         let mut lines = text.lines();
         let command = lines
             .next()
             .and_then(|l| l.strip_prefix("- cmd:"))
-            .ok_or_else(|| RecordError::new("a fish history record starts with `- cmd:`"))?;
+            .record("a fish history record starts with `- cmd:`")?;
         let command = unescape(command.strip_prefix(' ').unwrap_or(command));
         let mut when = None;
         let mut paths = Vec::new();
@@ -89,7 +90,7 @@ impl Parser for FishParser {
                 when = Some(
                     value
                         .parse::<i64>()
-                        .map_err(|_| RecordError::new(format!("invalid fish `when` {value:?}")))?,
+                        .record_with(|| format!("invalid fish `when` {value:?}"))?,
                 );
                 in_paths = false;
             } else if line.trim_end() == "  paths:" {
@@ -105,7 +106,7 @@ impl Parser for FishParser {
         let started_at = when
             .map(Timestamp::from_unix_secs)
             .transpose()
-            .map_err(|_| RecordError::new("fish start time out of range"))?;
+            .record("fish start time out of range")?;
         let (n, seen) = match when {
             Some(when) => seen.next(when, &command),
             None => (0, seen.clone()),
@@ -148,13 +149,6 @@ pub fn frame(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
     (out, start)
 }
 
-pub fn source(host: String) -> DeclaredSource<FishParser> {
-    DeclaredSource {
-        spec: SPEC,
-        parser: FishParser { host },
-    }
-}
-
 pub fn driver(path: PathBuf, host: String) -> AppendFile {
     AppendFile {
         path,
@@ -164,34 +158,13 @@ pub fn driver(path: PathBuf, host: String) -> AppendFile {
 }
 
 /// `stage --parser fish PATH`: a fish history file.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "fish",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "data",
-                path: "fish/fish_history",
-            }],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SPEC],
-        plan: Some(|input, settings| {
-            Ok(sinex_source_core::binding::single(&SPEC, input, settings))
-        }),
-        source: |b| Ok(Box::new(source(b.settings.host.clone()))),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::appended(driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: None,
-    };
+super::input_format! { pub FORMAT = "fish" {
+    specs: [SPEC],
+    parser: |b| FishParser { host: b.settings.host.clone() },
+    discovery: DiscoverySpec::system(&[Location::new("data", "fish/fish_history")]),
+    plan: single,
+    reader: appended(driver),
+} }
 
 #[cfg(test)]
 mod tests;

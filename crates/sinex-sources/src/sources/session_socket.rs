@@ -20,9 +20,12 @@ use sinex_model::event_types::machine::ScrollbackCaptured;
 use sinex_model::event_types::session::{EditorReport, TerminalReport};
 use sinex_model::event_types::work::GitIdentity;
 use sinex_model::{Class, InputRef, Timestamp};
+use sinex_source_core::RecordError;
+use sinex_source_core::RecordResult;
+use sinex_source_core::discovery::{CaptureStream, CapturedBy, DiscoverySpec};
 use sinex_source_core::drivers::live_stream::{self, LiveStream, Rotation, SpoolWriter};
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordError};
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
+use sinex_source_core::{Stateless, StatelessParser};
 use std::io::{BufRead, BufReader};
 use std::net::Shutdown;
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -34,7 +37,6 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "session.integrations",
     origin: Origin::Input(Shape::LiveStream),
     expect: Expectation::continuous_days(2),
-    expires_after: None,
     purpose: "recall: files edited, commands run in the terminal and what they printed",
     // Paths, command lines and terminal output.
     class: Class::Guarded,
@@ -46,7 +48,8 @@ pub const SPEC: SourceSpec = SourceSpec {
         "scrollback.captured",
         "command.reported",
     ],
-    framer: sinex_source_core::Framer::incremental(sinex_source_core::drivers::append_file::lines),
+    framer: sinex_source_core::Framer::LINES,
+    ..SourceSpec::DEFAULT
 };
 
 sinex_model::payload_enum! {
@@ -60,15 +63,17 @@ sinex_model::payload_enum! {
 }
 
 /// `$SINEX_SESSION_SOCKET`, or `$XDG_RUNTIME_DIR/sinex/session.sock`.
-pub fn default_path() -> Option<PathBuf> {
-    if let Some(p) = std::env::var_os("SINEX_SESSION_SOCKET") {
-        return Some(p.into());
-    }
-    Some(
-        Path::new(&std::env::var_os("XDG_RUNTIME_DIR")?)
-            .join("sinex")
-            .join("session.sock"),
-    )
+pub fn default_path(context: &sinex_source_core::discovery::DiscoveryContext) -> Option<PathBuf> {
+    context
+        .environment
+        .get("SINEX_SESSION_SOCKET")
+        .map(PathBuf::from)
+        .or_else(|| {
+            context
+                .runtime_dir
+                .as_ref()
+                .map(|root| root.join("sinex").join("session.sock"))
+        })
 }
 
 /// Listen on `socket` and spool every line any connection writes, until
@@ -284,22 +289,21 @@ fn take_i64(m: &mut Map<String, Value>, k: &str) -> Option<i64> {
     }
 }
 
-impl Parser for SessionSocketParser {
+impl StatelessParser for SessionSocketParser {
     type Record<'a> = Map<String, Value>;
-    type Carry = ();
     type Payload = Produced;
 
     fn parse(
         &self,
         record: &Map<String, Value>,
-        _: &(),
+
         _context: &sinex_source_core::RecordContext<'_>,
-    ) -> Result<(Vec<Produced>, ()), RecordError> {
+    ) -> Result<Vec<Produced>, RecordError> {
         let (received_at, bytes) = live_stream::received(record).map_err(RecordError::new)?;
-        let mut m: Map<String, Value> = serde_json::from_slice(&bytes)
-            .map_err(|e| RecordError::new(format!("not a JSON object: {e}")))?;
-        let source = take_str(&mut m, "source").ok_or_else(|| RecordError::new("no `source`"))?;
-        let event = take_str(&mut m, "event").ok_or_else(|| RecordError::new("no `event`"))?;
+        let mut m: Map<String, Value> =
+            serde_json::from_slice(&bytes).record("not a JSON object")?;
+        let source = take_str(&mut m, "source").record("no `source`")?;
+        let event = take_str(&mut m, "event").record("no `event`")?;
         let out = match source.as_str() {
             "neovim" | "vim" => Produced::Editor(EditorReport {
                 received_at,
@@ -328,7 +332,7 @@ impl Parser for SessionSocketParser {
             "shell" if event == "command" => Produced::Command(command(m)?),
             other => return Err(RecordError::new(format!("unknown producer `{other}`"))),
         };
-        Ok((vec![out], ()))
+        Ok(vec![out])
     }
 }
 
@@ -337,7 +341,7 @@ impl Parser for SessionSocketParser {
 /// unknown.
 fn command(mut m: Map<String, Value>) -> Result<CommandReported, RecordError> {
     let required = |m: &mut Map<String, Value>, key: &str| {
-        take_str(m, key).ok_or_else(|| RecordError::new(format!("no `{key}`")))
+        take_str(m, key).record_with(|| format!("no `{key}`"))
     };
     let execution = required(&mut m, "execution")?;
     let shell = required(&mut m, "shell")?;
@@ -350,13 +354,12 @@ fn command(mut m: Map<String, Value>) -> Result<CommandReported, RecordError> {
     let started_at: Timestamp = m
         .remove("started_at")
         .and_then(|v| serde_json::from_value(v).ok())
-        .ok_or_else(|| RecordError::new("no readable `started_at`"))?;
+        .record("no readable `started_at`")?;
     let git_identity = match m.remove("git_identity") {
         None | Some(Value::Null) => None,
-        Some(value) => Some(
-            serde_json::from_value::<GitIdentity>(value)
-                .map_err(|e| RecordError::new(format!("unreadable `git_identity`: {e}")))?,
-        ),
+        Some(value) => {
+            Some(serde_json::from_value::<GitIdentity>(value).record("unreadable `git_identity`")?)
+        }
     };
     Ok(CommandReported {
         execution,
@@ -460,7 +463,7 @@ pub fn send_or_queue(socket: &Path, line: &Value, timeout: Duration) -> std::io:
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
     file.write_all(&serde_json::to_vec(line)?)?;
-    sinex_source_core::drivers::media::place(&pending, &partial, &complete)
+    sinex_transport::durable::place(&partial, &complete)
 }
 
 fn drain_reports(socket: &Path, writer: &Arc<Mutex<SpoolWriter>>) -> std::io::Result<u64> {
@@ -518,12 +521,11 @@ fn scrollback(
     received_at: Timestamp,
     mut m: Map<String, Value>,
 ) -> Result<ScrollbackCaptured, RecordError> {
-    let window_id =
-        take_i64(&mut m, "window_id").ok_or_else(|| RecordError::new("no `window_id`"))?;
+    let window_id = take_i64(&mut m, "window_id").record("no `window_id`")?;
     let count = |m: &mut Map<String, Value>, key: &str| {
         take_i64(m, key)
             .and_then(|n| u64::try_from(n).ok())
-            .ok_or_else(|| RecordError::new(format!("no `{key}`")))
+            .record_with(|| format!("no `{key}`"))
     };
     let lines = count(&mut m, "lines")?;
     let from_line = count(&mut m, "from_line")?;
@@ -545,53 +547,30 @@ fn scrollback(
     })
 }
 
-pub fn source() -> DeclaredSource<SessionSocketParser> {
-    DeclaredSource {
-        spec: SPEC,
-        parser: SessionSocketParser,
-    }
-}
-
 /// `stage --parser integration-socket SPOOL`: lines the editor and terminal
 /// integrations write to the integration socket (the `socket` option, or the default path),
 /// captured into SPOOL.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "integration-socket",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::Session,
-            locations: &[],
-            capabilities: &["runtime"],
-            credentials: &[],
-            streams: &[sinex_source_core::discovery::CaptureStream {
-                spool: "integrations",
-                options: &[],
-                capabilities: &[],
-            }],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SPEC],
-        plan: Some(|spool, settings| {
-            Ok(sinex_source_core::binding::single(&SPEC, spool, settings))
-        }),
-        source: |_| Ok(Box::new(source())),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::polled(driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: Some(|b, stop| {
-            let socket = b
-                .settings
-                .option("socket")
-                .map(PathBuf::from)
-                .or_else(default_path)
-                .ok_or("no integration socket path (XDG_RUNTIME_DIR unset)")?;
-            capture_until(&socket, &b.input, stop).map_err(|e| e.to_string())
-        }),
-    };
+super::input_format! { pub FORMAT = "integration-socket" {
+    specs: [SPEC],
+    parser: |_b| Stateless(SessionSocketParser),
+    discovery: DiscoverySpec {
+        captured_by: CapturedBy::Session,
+        capabilities: &["runtime"],
+        streams: &[CaptureStream { spool: "integrations", options: &[], capabilities: &[] }],
+        ..DiscoverySpec::DEFAULT
+    },
+    plan: single,
+    reader: polled(driver),
+    capture: |b, context, stop| {
+        let socket = b
+            .settings
+            .option("socket")
+            .map(PathBuf::from)
+            .or_else(|| default_path(context))
+            .ok_or("no integration socket path (XDG_RUNTIME_DIR unset)")?;
+        capture_until(&socket, &b.input, stop).map_err(|e| e.to_string())
+    },
+} }
 
 #[cfg(test)]
 mod tests;

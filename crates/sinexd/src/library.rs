@@ -24,6 +24,7 @@ pub(crate) struct Library<'a> {
     pub writer: &'a WriterHandle,
     pub blobs: &'a Blobs,
     pub host: &'a str,
+    pub cache: &'a std::path::Path,
     pub roots: &'a [std::path::PathBuf],
     pub time_settings: sinex_model::time_settings::TimeSettings,
 }
@@ -137,6 +138,7 @@ pub(crate) async fn dispatch(
     blobs: &Blobs,
     host: &str,
     roots: &[std::path::PathBuf],
+    cache: &std::path::Path,
     time_settings: sinex_model::time_settings::TimeSettings,
     request: Request,
     actor: &str,
@@ -186,6 +188,7 @@ pub(crate) async fn dispatch(
         blobs,
         host,
         roots,
+        cache,
         time_settings,
     };
     let number = |s: &str, what: &str| {

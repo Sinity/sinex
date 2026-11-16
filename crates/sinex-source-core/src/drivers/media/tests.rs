@@ -47,16 +47,19 @@ fn place_moves_whole_bytes_and_syncs_the_directory_after_renaming() {
     let from = dir.path().join("segment.jpg.partial");
     let to = dir.path().join("segment.jpg");
     std::fs::write(&from, b"whole").unwrap();
-    place(dir.path(), &from, &to).unwrap();
+    sinex_transport::durable::place(&from, &to).unwrap();
     assert_eq!(std::fs::read(&to).unwrap(), b"whole");
     assert!(!from.exists());
 
-    // The directory is synced after the rename: a directory that cannot be
-    // opened fails the call even though the rename itself succeeded.
+    // Renaming needs write and search access; syncing the directory also needs read access.
     std::fs::write(&from, b"again").unwrap();
-    let missing = dir.path().join("missing");
-    assert!(place(&missing, &from, &to).is_err());
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o300)).unwrap();
+    let result = sinex_transport::durable::place(&from, &to);
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(result.is_err());
     assert_eq!(std::fs::read(&to).unwrap(), b"again");
+    assert!(!from.exists());
 }
 
 #[devkit::test]

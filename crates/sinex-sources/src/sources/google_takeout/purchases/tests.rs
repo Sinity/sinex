@@ -5,11 +5,9 @@ fn one(v: Value) -> PurchaseObserved {
     PurchasesParser
         .parse(
             v.as_object().unwrap(),
-            &(),
             &sinex_source_core::RecordContext::none(),
         )
         .unwrap()
-        .0
         .remove(0)
 }
 

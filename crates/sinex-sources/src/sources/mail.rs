@@ -20,23 +20,24 @@
 //! message again under its new name and records the old name's reading as
 //! removed; the new reading is the newer one. A message kept in two folders
 //! and deleted from the one it was last read in is recorded as removed.
+use crate::sources::input_format;
 use mailparse::{MailHeaderMap, ParsedMail};
+use sinex_model::Timestamp;
 use sinex_model::event_types::communication::{MailAttachment, MailMessage};
-use sinex_model::{Class, Timestamp};
+use sinex_model::json::JsonExt;
+use sinex_source_core::discovery::{DiscoverySpec, Location};
 use sinex_source_core::drain::RecordContext;
 use sinex_source_core::drivers::dir_snapshot::DirSnapshot;
 use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordError};
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
+use sinex_source_core::{RecordError, RecordResult, Stateless, StatelessParser};
 use std::path::PathBuf;
 
 pub const MBOX: SourceSpec = SourceSpec {
     name: "communication.mbox",
     origin: Origin::Input(Shape::ExportArchive),
     expect: Expectation::Export,
-    expires_after: None,
     purpose: "mail recall and correspondence history",
-    class: Class::Open,
     parser: "rfc5322-mail",
     parser_version: 3,
     event_types: &["mail.message"],
@@ -44,15 +45,14 @@ pub const MBOX: SourceSpec = SourceSpec {
         sinex_source_core::drivers::export_archive::frame_mbox,
         sinex_source_core::drivers::export_archive::Framing::Mbox,
     ),
+    ..SourceSpec::DEFAULT
 };
 
 pub const MAILDIR: SourceSpec = SourceSpec {
     name: "communication.maildir",
     origin: Origin::Input(Shape::DirSnapshot),
     expect: Expectation::cadence_hours(1),
-    expires_after: None,
     purpose: "mail recall and correspondence history",
-    class: Class::Open,
     parser: "rfc5322-mail",
     parser_version: 6,
     event_types: &["mail.message"],
@@ -60,43 +60,33 @@ pub const MAILDIR: SourceSpec = SourceSpec {
         sinex_source_core::drivers::export_archive::frame_whole,
         sinex_source_core::drivers::export_archive::Framing::Whole,
     ),
+    ..SourceSpec::DEFAULT
 };
 
 pub struct MailParser;
 
-impl Parser for MailParser {
+impl StatelessParser for MailParser {
     type Record<'a> = &'a [u8];
-    type Carry = ();
     type Payload = MailMessage;
 
     fn parse(
         &self,
         record: &&[u8],
-        _: &(),
         context: &RecordContext<'_>,
-    ) -> Result<(Vec<MailMessage>, ()), RecordError> {
+    ) -> Result<Vec<MailMessage>, RecordError> {
         // A removed Maildir file: its removal is recorded at the source.
         if context
             .member
             .is_some_and(|m| m.details.contains_key("removed_at_ns"))
         {
-            return Ok((vec![], ()));
+            return Ok(vec![]);
         }
         let mut message = parse_message(record)?;
-        message.native_id = context.member.and_then(|member| {
-            member
-                .details
-                .get("native_id")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_owned)
-        });
-        message.account = context
-            .manifest
-            .details
-            .get("account")
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_owned);
-        Ok((vec![message], ()))
+        message.native_id = context
+            .member
+            .and_then(|member| member.details.str("native_id").map(str::to_owned));
+        message.account = context.manifest.details.str("account").map(str::to_owned);
+        Ok(vec![message])
     }
 }
 
@@ -116,8 +106,7 @@ pub fn parse_message(raw: &[u8]) -> Result<MailMessage, RecordError> {
 }
 
 fn read_message(message: &[u8]) -> Result<MailMessage, RecordError> {
-    let parsed = mailparse::parse_mail(message)
-        .map_err(|e| RecordError::new(format!("not a mail message: {e}")))?;
+    let parsed = mailparse::parse_mail(message).record("not a mail message")?;
     let headers = &parsed.headers;
     let one = |name: &str| {
         headers
@@ -212,17 +201,11 @@ fn walk(
         disposition.disposition == mailparse::DispositionType::Attachment || filename.is_some();
     let mime = part.ctype.mimetype.to_ascii_lowercase();
     if !attached && mime == "text/plain" && text.is_none() {
-        *text = Some(
-            part.get_body()
-                .map_err(|e| RecordError::new(format!("text part: {e}")))?,
-        );
+        *text = Some(part.get_body().record("text part")?);
     } else if !attached && mime == "text/html" {
         *html = true;
     } else if attached {
-        let size = part
-            .get_body_raw()
-            .map_err(|e| RecordError::new(format!("attachment: {e}")))?
-            .len() as u64;
+        let size = part.get_body_raw().record("attachment")?.len() as u64;
         attachments.push(MailAttachment {
             filename,
             content_type: mime,
@@ -273,18 +256,10 @@ fn mbox_unescape(raw: &[u8]) -> Vec<u8> {
     out
 }
 
-pub fn mbox_source() -> DeclaredSource<MailParser> {
-    DeclaredSource {
-        spec: MBOX,
-        parser: MailParser,
-    }
-}
-
 pub struct MaildirParser;
 
-impl Parser for MaildirParser {
+impl StatelessParser for MaildirParser {
     type Record<'a> = &'a [u8];
-    type Carry = ();
     type Payload = MailMessage;
 
     fn record_hash(&self, raw: &[u8], context: &RecordContext<'_>) -> [u8; 32] {
@@ -294,10 +269,9 @@ impl Parser for MaildirParser {
     fn parse(
         &self,
         record: &&[u8],
-        carry: &(),
         context: &RecordContext<'_>,
-    ) -> Result<(Vec<MailMessage>, ()), RecordError> {
-        let (mut messages, ()) = MailParser.parse(record, carry, context)?;
+    ) -> Result<Vec<MailMessage>, RecordError> {
+        let mut messages = MailParser.parse(record, context)?;
         for message in &mut messages {
             if let (Some(member), Some(root), Some(host)) = (
                 context.member,
@@ -313,7 +287,7 @@ impl Parser for MaildirParser {
                             .and_then(|value| {
                                 base64::engine::general_purpose::STANDARD.decode(value).ok()
                             })
-                            .ok_or_else(|| RecordError::new("invalid raw Maildir path bytes"))?;
+                            .record("invalid raw Maildir path bytes")?;
                         PathBuf::from(std::ffi::OsString::from_vec(bytes))
                     }
                     None => PathBuf::from(&member.path),
@@ -342,14 +316,7 @@ impl Parser for MaildirParser {
                 }
             }
         }
-        Ok((messages, ()))
-    }
-}
-
-pub fn maildir_source() -> DeclaredSource<MaildirParser> {
-    DeclaredSource {
-        spec: MAILDIR,
-        parser: MaildirParser,
+        Ok(messages)
     }
 }
 
@@ -379,72 +346,22 @@ pub fn maildir_driver(root: PathBuf, host: String) -> DirSnapshot {
 }
 
 /// `stage --parser mbox PATH`: each mbox file in PATH.
-pub const MBOX_FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "mbox",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "input",
-                path: "mbox",
-            }],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&MBOX],
-        plan: Some(|input, settings| {
-            Ok(sinex_source_core::binding::per_file(
-                &MBOX,
-                input,
-                settings,
-                false,
-                sinex_source_core::binding::any,
-            ))
-        }),
-        source: |_| Ok(Box::new(mbox_source())),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::shared(mbox_driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: None,
-    };
+input_format! { pub MBOX_FORMAT = "mbox" {
+    specs: [MBOX],
+    parser: |_b| Stateless(MailParser),
+    discovery: DiscoverySpec::system(&[Location::new("input", "mbox")]),
+    plan: per_file,
+    reader: shared(mbox_driver),
+} }
 
 /// `stage --parser maildir PATH`: the Maildir at PATH, walked as one directory.
-pub const MAILDIR_FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "maildir",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "input",
-                path: "maildir",
-            }],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&MAILDIR],
-        plan: Some(|input, settings| {
-            Ok(sinex_source_core::binding::single(
-                &MAILDIR, input, settings,
-            ))
-        }),
-        source: |_| Ok(Box::new(maildir_source())),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::walked(maildir_driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: None,
-    };
+input_format! { pub MAILDIR_FORMAT = "maildir" {
+    specs: [MAILDIR],
+    parser: |_b| Stateless(MaildirParser),
+    discovery: DiscoverySpec::system(&[Location::new("input", "maildir")]),
+    plan: single,
+    reader: walked(maildir_driver),
+} }
 
 #[cfg(test)]
 mod tests;

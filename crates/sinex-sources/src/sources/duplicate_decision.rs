@@ -1,59 +1,58 @@
 //! Duplicate decisions (`same`, `distinct`, `withdraw-decision`) kept as
 //! JSON-line request materials. The server supplies the author, channel and
 //! time from the request's manifest; a line cannot claim another author.
+use crate::sources::input_format;
 use serde_json::{Map, Value, json};
-use sinex_model::event_types::duplicate::Duplicate;
 use sinex_model::{
     Class, InputRef, MaterialId, ObservationFacts, ReadingOrder, RevisionChange, Timestamp,
+    event_types::duplicate::Duplicate, json::JsonExt,
 };
-use sinex_source_core::drain::RecordContext;
-use sinex_source_core::drivers::{Acquired, NewMaterial};
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, SourceSpec};
-use sinex_source_core::{Parser, RecordError};
+use sinex_source_core::{
+    DeclaredSource, Expectation, Framer, Origin, RecordContext, RecordError, RecordResult,
+    SourceSpec, Stateless, StatelessParser,
+    discovery::DiscoverySpec,
+    drivers::{
+        Acquired, NewMaterial,
+        export_archive::{Framing, frame_lines},
+    },
+};
 
 pub const REQUEST: SourceSpec = SourceSpec {
     name: "duplicate.request",
     origin: Origin::Request,
     expect: Expectation::OnDemand,
-    expires_after: None,
     purpose: "decisions on whether two records are one occurrence",
     class: Class::Guarded,
     parser: "duplicate-request",
-    parser_version: 1,
     event_types: &["curation.duplicate"],
-    framer: sinex_source_core::Framer::export(
-        sinex_source_core::drivers::export_archive::frame_lines,
-        sinex_source_core::drivers::export_archive::Framing::Lines,
-    ),
+    framer: Framer::export(frame_lines, Framing::Lines),
+    ..SourceSpec::DEFAULT
 };
 
 pub struct RequestParser;
 
-impl Parser for RequestParser {
+impl StatelessParser for RequestParser {
     type Record<'a> = Map<String, Value>;
-    type Carry = ();
     type Payload = Duplicate;
 
     fn parse(
         &self,
         record: &Map<String, Value>,
-        _: &(),
         context: &RecordContext<'_>,
-    ) -> Result<(Vec<Duplicate>, ()), RecordError> {
+    ) -> Result<Vec<Duplicate>, RecordError> {
         let detail = |name: &str| {
             context
                 .manifest
                 .details
-                .get(name)
-                .and_then(Value::as_str)
+                .str(name)
                 .filter(|s| !s.trim().is_empty())
-                .ok_or_else(|| RecordError::new(format!("decision manifest has no {name}")))
+                .record_with(|| format!("decision manifest has no {name}"))
         };
         let actor = detail("actor")?;
         let via = detail("via")?;
         let written_ns = detail("written_at_ns")?
             .parse::<i128>()
-            .map_err(|_| RecordError::new("decision manifest has no time"))?;
+            .record("decision manifest has no time")?;
         let mut object = record.clone();
         object.insert("author".into(), json!(actor));
         object.insert("via".into(), json!(via));
@@ -61,29 +60,27 @@ impl Parser for RequestParser {
             "at".into(),
             json!(i64::try_from(written_ns / 1_000_000).unwrap_or(i64::MAX)),
         );
-        let decision: Duplicate = serde_json::from_value(Value::Object(object))
-            .map_err(|e| RecordError::new(e.to_string()))?;
+        let decision: Duplicate =
+            serde_json::from_value(Value::Object(object)).record("invalid record")?;
         if decision.pair.len() != 2 || decision.pair[0] >= decision.pair[1] {
             return Err(RecordError::new(
                 "a duplicate decision names two different records, sorted",
             ));
         }
-        decision
-            .header()
-            .map_err(|e| RecordError::new(e.to_string()))?;
+        decision.header().record("invalid record")?;
         if decision.decision.is_none() && decision.withdraws.is_empty() {
             return Err(RecordError::new(
                 "a record without a decision must withdraw one",
             ));
         }
-        Ok((vec![decision], ()))
+        Ok(vec![decision])
     }
 }
 
-pub fn request_source() -> DeclaredSource<RequestParser> {
+pub fn request_source() -> DeclaredSource<Stateless<RequestParser>> {
     DeclaredSource {
         spec: REQUEST,
-        parser: RequestParser,
+        parser: Stateless(RequestParser),
     }
 }
 
@@ -141,24 +138,11 @@ pub fn request_material(
     }
 }
 
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "duplicate",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&REQUEST],
-        plan: None,
-        source: |_| Ok(Box::new(request_source())),
-        reader: None,
-        capture: None,
-    };
+input_format! { pub FORMAT = "duplicate" {
+    specs: [REQUEST], parser: |_b| Stateless(RequestParser),
+    discovery: DiscoverySpec::DEFAULT,
+    plan: none, reader: none,
+} }
 
 #[cfg(test)]
 mod tests;

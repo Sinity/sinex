@@ -9,26 +9,25 @@
 //! receipt and evidence (manifests of the checkout's files, up to megabytes)
 //! stay in the stored line; the event carries the checkout's HEAD at the
 //! job's start and end from them.
-use crate::sources::fields;
+use crate::sources::{fields, input_format};
 use serde_json::{Map, Value};
-use sinex_model::Class;
-use sinex_model::event_types::work::AgentctlEvent;
-use sinex_source_core::drivers::append_file::AppendFile;
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordError};
-use std::path::PathBuf;
+use sinex_model::{event_types::work::AgentctlEvent, json::JsonExt};
+use sinex_source_core::{
+    Expectation, Framer, Origin, RecordContext, RecordError, Shape, SourceSpec, Stateless,
+    StatelessParser, binding,
+    discovery::{DiscoverySpec, Location},
+    drivers::append_file::AppendFile,
+};
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "work.agentctl",
     origin: Origin::Input(Shape::AppendFile),
     expect: Expectation::continuous_days(2),
-    expires_after: None,
     purpose: "the builds, tests and agent jobs run on this host, and how they ended",
-    class: Class::Open,
     parser: "agentctl-events",
-    parser_version: 1,
     event_types: &["agentctl.event"],
-    framer: sinex_source_core::Framer::incremental(sinex_source_core::drivers::append_file::lines),
+    framer: Framer::LINES,
+    ..SourceSpec::DEFAULT
 };
 
 /// Fields read into the event's own; the rest go to `extra`.
@@ -54,17 +53,15 @@ const TIMES: &[&str] = &["emitted_at", "completed_at", "at", "ended_at"];
 
 pub struct AgentctlParser;
 
-impl Parser for AgentctlParser {
+impl StatelessParser for AgentctlParser {
     type Record<'a> = Map<String, Value>;
-    type Carry = ();
     type Payload = AgentctlEvent;
 
     fn parse(
         &self,
         line: &Map<String, Value>,
-        _: &(),
-        _context: &sinex_source_core::RecordContext<'_>,
-    ) -> Result<(Vec<AgentctlEvent>, ()), RecordError> {
+        _context: &RecordContext<'_>,
+    ) -> Result<Vec<AgentctlEvent>, RecordError> {
         let head = |side: &str| {
             line.get("execution_receipt")
                 .and_then(|r| r.pointer(&format!("/{side}/head")))
@@ -76,74 +73,31 @@ impl Parser for AgentctlParser {
             .find_map(|name| fields::optional_text(line, name))
             .map(|t| fields::rfc3339(&t))
             .transpose()?;
-        Ok((
-            vec![AgentctlEvent {
-                record_kind: fields::text(line, "kind")?,
-                phase: fields::optional_text(line, "phase"),
-                job_id: fields::optional_text(line, "job_id"),
-                project: fields::optional_text(line, "project"),
-                operation: fields::optional_text(line, "operation"),
-                pool: fields::optional_text(line, "pool"),
-                attempt: line.get("attempt").and_then(Value::as_u64),
-                outcome: fields::optional_text(line, "outcome"),
-                exit_code: line.get("exit_code").and_then(Value::as_i64),
-                working_directory: fields::optional_text(line, "working_directory"),
-                start_head: head("start"),
-                end_head: head("end"),
-                at,
-                extra: fields::extra(line, KNOWN),
-            }],
-            (),
-        ))
-    }
-}
-
-pub fn source() -> DeclaredSource<AgentctlParser> {
-    DeclaredSource {
-        spec: SPEC,
-        parser: AgentctlParser,
-    }
-}
-
-pub fn driver(path: PathBuf, host: String) -> AppendFile {
-    AppendFile {
-        path,
-        host,
-        framer: sinex_source_core::Framer::incremental(
-            sinex_source_core::drivers::append_file::lines,
-        ),
+        Ok(vec![AgentctlEvent {
+            record_kind: fields::text(line, "kind")?,
+            phase: fields::optional_text(line, "phase"),
+            job_id: fields::optional_text(line, "job_id"),
+            project: fields::optional_text(line, "project"),
+            operation: fields::optional_text(line, "operation"),
+            pool: fields::optional_text(line, "pool"),
+            attempt: line.u64("attempt"),
+            outcome: fields::optional_text(line, "outcome"),
+            exit_code: line.i64("exit_code"),
+            working_directory: fields::optional_text(line, "working_directory"),
+            start_head: head("start"),
+            end_head: head("end"),
+            at,
+            extra: fields::extra(line, KNOWN),
+        }])
     }
 }
 
 /// `stage --parser agentctl PATH`: AgentCTL's event log.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "agentctl",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "input",
-                path: "agentctl",
-            }],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SPEC],
-        plan: Some(|input, settings| {
-            Ok(sinex_source_core::binding::single(&SPEC, input, settings))
-        }),
-        source: |_| Ok(Box::new(source())),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::appended(driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: None,
-    };
+input_format! { pub FORMAT = "agentctl" {
+    specs: [SPEC], parser: |_b| Stateless(AgentctlParser),
+    discovery: DiscoverySpec::system(&[Location::new("input", "agentctl")]),
+    plan: single, reader: |b| Ok(binding::appended(AppendFile { path: b.input.clone(), host: b.settings.host.clone(), framer: Framer::LINES })),
+} }
 
 #[cfg(test)]
 mod tests;

@@ -4,12 +4,13 @@ use super::files::{Digests, digest, dimensions, ffprobe};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sinex_model::event_types::library::FileCopy;
+use sinex_model::json::JsonExt;
 use sinex_model::{
     InputRef, MaterialId, ObservationFacts, ReadingOrder, RevisionChange, Timestamp,
 };
 use sinex_source_core::drivers::{Acquired, DriverError, NewMaterial, file_facts};
 use sinex_source_core::registry::DeclaredSource;
-use sinex_source_core::{Parser, RecordError};
+use sinex_source_core::{RecordError, RecordResult, Stateless, StatelessParser};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 
@@ -64,9 +65,8 @@ fn nanos(text: &Option<String>) -> Option<Timestamp> {
 
 pub struct ScanParser;
 
-impl Parser for ScanParser {
+impl StatelessParser for ScanParser {
     type Record<'a> = Map<String, Value>;
-    type Carry = ();
     type Payload = FileCopy;
 
     /// Location and file facts do not change the hash of the captured bytes.
@@ -85,11 +85,10 @@ impl Parser for ScanParser {
     fn parse(
         &self,
         record: &Map<String, Value>,
-        _: &(),
         context: &sinex_source_core::RecordContext<'_>,
-    ) -> Result<(Vec<FileCopy>, ()), RecordError> {
+    ) -> Result<Vec<FileCopy>, RecordError> {
         let line: ScanLine = serde_json::from_value(Value::Object(record.clone()))
-            .map_err(|e| RecordError::new(format!("not a library scan line: {e}")))?;
+            .record("not a library scan line")?;
         let d = match line {
             ScanLine::File(d) => d,
             ScanLine::Unreadable { path, reason } => {
@@ -97,7 +96,7 @@ impl Parser for ScanParser {
                     "partial library scan: {path}: {reason}"
                 )));
             }
-            ScanLine::Complete { .. } => return Ok((Vec::new(), ())),
+            ScanLine::Complete { .. } => return Ok(Vec::new()),
         };
         let d = *d;
         let key = d.item_key.clone();
@@ -105,21 +104,19 @@ impl Parser for ScanParser {
             .manifest
             .read_at_ns
             .and_then(|n| Timestamp::from_unix_ns(i128::from(n)).ok())
-            .ok_or_else(|| RecordError::new("library scan has no acquisition time"))?;
+            .record("library scan has no acquisition time")?;
         let scan = context
             .manifest
             .details
-            .get("scan")
-            .and_then(Value::as_str)
-            .ok_or_else(|| RecordError::new("library scan has no identity"))?
+            .str("scan")
+            .record("library scan has no identity")?
             .to_owned();
         let part_index = context
             .manifest
             .details
-            .get("part_index")
-            .and_then(Value::as_u64)
+            .u64("part_index")
             .and_then(|index| u32::try_from(index).ok())
-            .ok_or_else(|| RecordError::new("library scan has no part index"))?;
+            .record("library scan has no part index")?;
         let payload = FileCopy {
             scan,
             part_index,
@@ -146,14 +143,14 @@ impl Parser for ScanParser {
             move_candidates: d.move_candidates,
             previous_content: d.previous_content,
         };
-        Ok((vec![payload], ()))
+        Ok(vec![payload])
     }
 }
 
-pub fn scan_source() -> DeclaredSource<ScanParser> {
+pub fn scan_source() -> DeclaredSource<Stateless<ScanParser>> {
     DeclaredSource {
         spec: SCAN,
-        parser: ScanParser,
+        parser: Stateless(ScanParser),
     }
 }
 

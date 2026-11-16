@@ -18,8 +18,10 @@ use sinex_model::event_types::input::{
     InputLogger, KeyPressed, KeyReleased, PointerButton, PointerMoved, PointerScrolled,
 };
 use sinex_model::{Class, Timestamp};
+use sinex_source_core::RecordResult;
+use sinex_source_core::discovery::{DiscoverySpec, Location};
 use sinex_source_core::drivers::append_file::{AppendFile, lines};
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -28,12 +30,10 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "desktop.input-log",
     origin: Origin::Input(Shape::AppendFile),
     expect: Expectation::continuous_days(2),
-    expires_after: None,
     purpose: "keystroke timing, typing and pointer activity",
     // Keystrokes spell out what was typed, passwords included.
     class: Class::Guarded,
     parser: "scribe-tap",
-    parser_version: 1,
     event_types: &[
         "key.pressed",
         "key.released",
@@ -42,7 +42,8 @@ pub const SPEC: SourceSpec = SourceSpec {
         "pointer.scrolled",
         "input.logger",
     ],
-    framer: sinex_source_core::Framer::incremental(lines),
+    framer: sinex_source_core::Framer::LINES,
+    ..SourceSpec::DEFAULT
 };
 
 sinex_model::payload_enum! {
@@ -152,7 +153,7 @@ fn kernel_time(row: &mut Map<String, Value>) -> Result<Option<Timestamp>, Record
     let us = sec
         .checked_mul(1_000_000)
         .and_then(|s| s.checked_add(usec))
-        .ok_or_else(|| RecordError::new("kernel time out of range"))?;
+        .record("kernel time out of range")?;
     fields::from_unix_us(us).map(Some)
 }
 
@@ -168,19 +169,16 @@ impl Parser for InputLogParser {
         _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<Input>, Numbering), RecordError> {
         let mut row = record.clone();
-        let logged_at = fields::rfc3339(
-            &take_text(&mut row, "ts").ok_or_else(|| RecordError::new("no `ts`"))?,
-        )?;
-        let event = take_text(&mut row, "event").ok_or_else(|| RecordError::new("no `event`"))?;
-        let session =
-            take_text(&mut row, "session").ok_or_else(|| RecordError::new("no `session`"))?;
+        let logged_at = fields::rfc3339(&take_text(&mut row, "ts").record("no `ts`")?)?;
+        let event = take_text(&mut row, "event").record("no `event`")?;
+        let session = take_text(&mut row, "session").record("no `session`")?;
         let logged_ns = logged_at.unix_ns();
         let number = |identity: String| numbering.next(&session, logged_ns, &identity);
         let (input, next) = match event.as_str() {
             "press" | "release" => {
                 let kernel_at = kernel_time(&mut row)?;
-                let key = take_text(&mut row, "keycode")
-                    .ok_or_else(|| RecordError::new("a key record without `keycode`"))?;
+                let key =
+                    take_text(&mut row, "keycode").record("a key record without `keycode`")?;
                 let code = take_int(&mut row, "code").and_then(|c| u16::try_from(c).ok());
                 let value = take_int(&mut row, "value").and_then(|v| i32::try_from(v).ok());
                 let changed = take_bool(&mut row, "changed");
@@ -219,10 +217,10 @@ impl Parser for InputLogParser {
                 (input, next)
             }
             "pointer_button_press" | "pointer_button_release" => {
-                let button = take_text(&mut row, "code")
-                    .ok_or_else(|| RecordError::new("a button record without `code`"))?;
-                let value = take_int(&mut row, "value")
-                    .ok_or_else(|| RecordError::new("a button record without `value`"))?;
+                let button =
+                    take_text(&mut row, "code").record("a button record without `code`")?;
+                let value =
+                    take_int(&mut row, "value").record("a button record without `value`")?;
                 let pressed = event == "pointer_button_press";
                 let (n, next) = number(format!("{event}\0{button}\0{value}"));
                 (
@@ -239,10 +237,9 @@ impl Parser for InputLogParser {
                 )
             }
             "pointer_rel" | "pointer_abs" => {
-                let axis = take_text(&mut row, "code")
-                    .ok_or_else(|| RecordError::new("a pointer record without `code`"))?;
-                let value = take_int(&mut row, "value")
-                    .ok_or_else(|| RecordError::new("a pointer record without `value`"))?;
+                let axis = take_text(&mut row, "code").record("a pointer record without `code`")?;
+                let value =
+                    take_int(&mut row, "value").record("a pointer record without `value`")?;
                 let (n, next) = number(format!("{event}\0{axis}\0{value}"));
                 let input = if axis.contains("WHEEL") {
                     Input::Scrolled(PointerScrolled {
@@ -284,13 +281,6 @@ impl Parser for InputLogParser {
     }
 }
 
-pub fn source() -> DeclaredSource<InputLogParser> {
-    DeclaredSource {
-        spec: SPEC,
-        parser: InputLogParser,
-    }
-}
-
 /// A day's log, `<YYYY-MM-DD>.jsonl`. Other files beside them (a repair's
 /// `.torn-original.jsonl` copy, temporary files) are not the log.
 pub fn is_day_file(path: &Path) -> bool {
@@ -318,40 +308,15 @@ pub fn driver(path: PathBuf, host: String) -> AppendFile {
 }
 
 /// `stage --parser input-log DIR`: each day's log in DIR, or one log file.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "input-log",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "capture",
-                path: "keylog",
-            }],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SPEC],
-        plan: Some(|input, settings| {
-            Ok(sinex_source_core::binding::per_file(
-                &SPEC,
-                input,
-                settings,
-                false,
-                is_day_file,
-            ))
-        }),
-        source: |_| Ok(Box::new(source())),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::appended(driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: None,
-    };
+super::input_format! { pub FORMAT = "input-log" {
+    specs: [SPEC],
+    parser: |_b| InputLogParser,
+    discovery: DiscoverySpec::system(&[Location::new("capture", "keylog")]),
+    plan: |input, settings| {
+        Ok(sinex_source_core::binding::per_file(&SPEC, input, settings, false, is_day_file))
+    },
+    reader: appended(driver),
+} }
 
 #[cfg(test)]
 mod tests;

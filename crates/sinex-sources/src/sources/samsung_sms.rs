@@ -4,27 +4,22 @@
 //! Drafts are kept, marked as such.
 use crate::sources::fields;
 use serde_json::{Map, Value};
-use sinex_model::Class;
 use sinex_model::event_types::communication::ConversationMessage;
+use sinex_source_core::discovery::{DiscoverySpec, Location};
 use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordError};
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
+use sinex_source_core::{Framer, Parser, RecordError, RecordResult, binding};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "phone.samsung-sms",
     origin: Origin::Input(Shape::ExportArchive),
     expect: Expectation::Export,
-    expires_after: None,
     purpose: "text messages sent and received",
-    class: Class::Open,
     parser: "samsung-sms",
-    parser_version: 1,
     event_types: &["conversation.message"],
-    framer: sinex_source_core::Framer::export(
-        frame,
-        sinex_source_core::drivers::export_archive::Framing::Csv,
-    ),
+    framer: Framer::export(frame, Framing::Csv),
+    ..SourceSpec::DEFAULT
 };
 
 pub struct SmsParser;
@@ -49,15 +44,14 @@ impl Parser for SmsParser {
             .iter()
             .position(|h| h == "VALUE")
             .and_then(|i| cells.get(i))
-            .ok_or_else(|| RecordError::new("row without a VALUE"))?;
-        let inner: String = serde_json::from_str(value)
-            .map_err(|e| RecordError::new(format!("VALUE is not a JSON string: {e}")))?;
-        let m: Map<String, Value> = serde_json::from_str(&inner)
-            .map_err(|e| RecordError::new(format!("VALUE does not hold a JSON object: {e}")))?;
+            .record("row without a VALUE")?;
+        let inner: String = serde_json::from_str(value).record("VALUE is not a JSON string")?;
+        let m: Map<String, Value> =
+            serde_json::from_str(&inner).record("VALUE does not hold a JSON object")?;
         let text = |name: &str| fields::optional_text(&m, name);
         let ms: i64 = text("date")
             .and_then(|d| d.parse().ok())
-            .ok_or_else(|| RecordError::new("message without a date"))?;
+            .record("message without a date")?;
         let address = text("address").unwrap_or_else(|| "unknown".into());
         let kind = match text("type").as_deref() {
             Some("1") => "received",
@@ -92,13 +86,6 @@ impl Parser for SmsParser {
     }
 }
 
-pub fn source() -> DeclaredSource<SmsParser> {
-    DeclaredSource {
-        spec: SPEC,
-        parser: SmsParser,
-    }
-}
-
 pub fn frame(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
     Framing::Csv.frame(bytes, true)
 }
@@ -117,44 +104,19 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
 }
 
 /// `stage --parser samsung-sms PATH`: each Samsung SMS backup (`SMS_*.csv`) under PATH.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "samsung-sms",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "input",
-                path: "samsung-sms",
-            }],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SPEC],
-        plan: Some(|input, settings| {
-            Ok(sinex_source_core::binding::per_file(
-                &SPEC,
-                input,
-                settings,
-                true,
-                |p| {
-                    p.file_name()
-                        .and_then(|n| n.to_str())
-                        .is_some_and(|n| n.starts_with("SMS_") && n.ends_with(".csv"))
-                },
-            ))
-        }),
-        source: |_| Ok(Box::new(source())),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::shared(driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: None,
-    };
+super::input_format! { pub FORMAT = "samsung-sms" {
+    specs: [SPEC],
+    parser: |_b| SmsParser,
+    discovery: DiscoverySpec::system(&[Location::new("input", "samsung-sms")]),
+    plan: |input, settings| {
+        Ok(binding::per_file(&SPEC, input, settings, true, |p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("SMS_") && n.ends_with(".csv"))
+        }))
+    },
+    reader: shared(driver),
+} }
 
 #[cfg(test)]
 mod tests;

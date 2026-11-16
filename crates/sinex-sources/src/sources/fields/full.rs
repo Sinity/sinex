@@ -1,25 +1,25 @@
 use super::*;
+use sinex_model::json::JsonExt;
+use sinex_source_core::RecordResult;
 
 pub(crate) fn text(row: &Map<String, Value>, name: &str) -> Result<String, RecordError> {
-    match row.get(name) {
-        Some(Value::String(s)) => Ok(s.clone()),
-        other => Err(RecordError::new(format!("{name} is not text: {other:?}"))),
-    }
+    row.str(name)
+        .map(str::to_owned)
+        .record_with(|| format!("{name} is not text: {:?}", row.get(name)))
 }
 
 pub(crate) fn int(row: &Map<String, Value>, name: &str) -> Result<i64, RecordError> {
-    row.get(name)
-        .and_then(Value::as_i64)
-        .ok_or_else(|| RecordError::new(format!("{name} is not an integer: {:?}", row.get(name))))
+    row.i64(name)
+        .record_with(|| format!("{name} is not an integer: {:?}", row.get(name)))
 }
 
 pub(crate) fn optional_bool(row: &Map<String, Value>, name: &str) -> Option<bool> {
-    row.get(name).and_then(Value::as_bool)
+    row.bool(name)
 }
 
 pub(crate) fn from_unix_us(us: i64) -> Result<Timestamp, RecordError> {
     Timestamp::from_unix_ns(i128::from(us) * 1000)
-        .map_err(|_| RecordError::new(format!("time {us} µs out of range")))
+        .record_with(|| format!("time {us} µs out of range"))
 }
 
 /// Microseconds since 1601-01-01 (Chromium and Windows FILETIME/10).
@@ -32,7 +32,7 @@ pub(crate) const WEBKIT_EPOCH_OFFSET_US: i64 = 11_644_473_600_000_000;
 
 pub(crate) fn from_unix_ms(ms: i64) -> Result<Timestamp, RecordError> {
     Timestamp::from_unix_ns(i128::from(ms) * 1_000_000)
-        .map_err(|_| RecordError::new(format!("time {ms} ms out of range")))
+        .record_with(|| format!("time {ms} ms out of range"))
 }
 
 /// The cells of one framed CSV row; a byte-order mark on the first is dropped.
@@ -44,8 +44,8 @@ pub(crate) fn csv_cells(record: &[u8]) -> Result<Vec<String>, RecordError> {
     let row = reader
         .records()
         .next()
-        .ok_or_else(|| RecordError::new("empty CSV record"))?
-        .map_err(|e| RecordError::new(format!("CSV: {e}")))?;
+        .record("empty CSV record")?
+        .record("CSV")?;
     let mut cells: Vec<String> = row.iter().map(str::to_owned).collect();
     if let Some(first) = cells.first_mut() {
         *first = first.trim_start_matches('\u{feff}').to_owned();
@@ -65,11 +65,11 @@ pub(crate) fn day(raw: &str) -> Result<Option<Timestamp>, RecordError> {
     else {
         return Err(RecordError::new(format!("invalid date {raw:?}")));
     };
-    let month = time::Month::try_from(m as u8)
-        .map_err(|_| RecordError::new(format!("invalid month in {raw:?}")))?;
+    let month =
+        time::Month::try_from(m as u8).record_with(|| format!("invalid month in {raw:?}"))?;
     time::Date::from_calendar_date(i32::from(y), month, d as u8)
         .map(|date| Some(Timestamp(date.midnight().assume_utc())))
-        .map_err(|e| RecordError::new(format!("invalid date {raw:?}: {e}")))
+        .record_with(|| format!("invalid date {raw:?}"))
 }
 
 pub(crate) struct FieldReader(Map<String, Value>);
@@ -97,7 +97,7 @@ impl FieldReader {
 
     pub(crate) fn required_text(&mut self, name: &str) -> Result<String, RecordError> {
         self.text(name)?
-            .ok_or_else(|| RecordError::new(format!("{name} is missing")))
+            .record_with(|| format!("{name} is missing"))
     }
 
     pub(crate) fn int(&mut self, name: &str) -> Result<Option<i64>, RecordError> {
@@ -116,7 +116,7 @@ impl FieldReader {
             None => Ok(None),
             Some(n) => u64::try_from(n)
                 .map(Some)
-                .map_err(|_| RecordError::new(format!("{name} is negative: {n}"))),
+                .record_with(|| format!("{name} is negative: {n}")),
         }
     }
 
@@ -193,11 +193,10 @@ impl FieldReader {
 /// from its shortest spelling, which keeps the digits the source wrote.
 pub(crate) fn unix_seconds(text: &str, name: &str) -> Result<Timestamp, RecordError> {
     let nanos = query_language::number::Decimal::parse(text)
-        .ok_or_else(|| RecordError::new(format!("{name} is not a time: {text:?}")))?
+        .record_with(|| format!("{name} is not a time: {text:?}"))?
         .scaled_i128(9)
-        .ok_or_else(|| RecordError::new(format!("{name} {text} is out of range")))?;
-    Timestamp::from_unix_ns(nanos)
-        .map_err(|_| RecordError::new(format!("{name} {text} is out of range")))
+        .record_with(|| format!("{name} {text} is out of range"))?;
+    Timestamp::from_unix_ns(nanos).record_with(|| format!("{name} {text} is out of range"))
 }
 
 #[cfg(test)]

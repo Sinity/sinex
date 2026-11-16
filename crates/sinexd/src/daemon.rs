@@ -91,6 +91,8 @@ impl ShutdownSummary {
 }
 
 pub(crate) struct Options {
+    pub class_recipient: Option<Arc<sinex_sealing::Recipient>>,
+    pub library_cache: PathBuf,
     pub database: String,
     pub store: PathBuf,
     /// The NATS server, with the daemon's user in the URL when the server
@@ -169,7 +171,8 @@ async fn serve(
 
     let (commits_tx, commits) = watch::channel(0u64);
     let (read_models_tx, read_models) = watch::channel(());
-    let (handle, queues) = writer::channels();
+    let (mut handle, queues) = writer::channels();
+    handle.class_recipient = o.class_recipient.clone();
     let writer_conn = connect(&o.database, "sinex.writer").await?;
     *writer_connected = true;
     let mut writer_conn = writer::claim(writer_conn).await?;
@@ -361,6 +364,7 @@ async fn serve(
             .map_err(|e| Error::file(&o.api.tokens, e))?,
         unlock: Default::default(),
         host: o.host.clone(),
+        library_cache: o.library_cache.clone(),
         library_roots: if sources
             .exclude
             .get("library.scan")

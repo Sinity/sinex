@@ -15,15 +15,20 @@
 //!   under a benchmark's `runs/`.
 use super::fields::FieldReader;
 use serde_json::{Map, Value};
+#[cfg(test)]
+use sinex_model::Class;
+use sinex_model::Payloads;
 use sinex_model::event_types::records::{
     BackupChecked, BackupDrilled, ConfigDriftChecked, ExperimentRun, ExperimentStarted,
     GenerationActivated, SandboxAuditFinding, TaskStoreDrilled, UsageAssessed, UsageCensusTaken,
 };
-use sinex_model::{Class, Payloads};
-use sinex_source_core::drivers::append_file::{AppendFile, lines};
+use sinex_source_core::RecordError;
+use sinex_source_core::RecordResult;
+use sinex_source_core::discovery::{DiscoverySpec, Location};
+use sinex_source_core::drivers::append_file::AppendFile;
 use sinex_source_core::drivers::dir_snapshot::DirSnapshot;
 use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordError};
+use sinex_source_core::{Stateless, StatelessParser};
 use std::path::{Path, PathBuf};
 
 const fn line_spec(
@@ -37,13 +42,14 @@ const fn line_spec(
         name,
         origin: Origin::Input(Shape::AppendFile),
         expect,
-        expires_after: None,
+
         purpose,
-        class: Class::Open,
+
         parser,
-        parser_version: 1,
+
         event_types,
-        framer: sinex_source_core::Framer::incremental(lines),
+        framer: sinex_source_core::Framer::LINES,
+        ..SourceSpec::DEFAULT
     }
 }
 
@@ -100,16 +106,14 @@ pub const EXPERIMENTS: SourceSpec = SourceSpec {
     name: "machine.experiments",
     origin: Origin::Input(Shape::DirSnapshot),
     expect: Expectation::OnDemand,
-    expires_after: None,
     purpose: "machine experiment results with the conditions they ran under",
-    class: Class::Open,
     parser: "machine-experiments",
-    parser_version: 1,
     event_types: &["experiment.started", "experiment.run"],
     framer: sinex_source_core::Framer::export(
         sinex_source_core::drivers::export_archive::frame_whole,
         sinex_source_core::drivers::export_archive::Framing::Whole,
     ),
+    ..SourceSpec::DEFAULT
 };
 
 /// Each source and the name it has under the machine root.
@@ -129,33 +133,23 @@ pub struct JsonLines<P> {
     read: fn(FieldReader) -> Result<Vec<P>, RecordError>,
 }
 
-impl<P: Payloads> Parser for JsonLines<P> {
+impl<P: Payloads> StatelessParser for JsonLines<P> {
     type Record<'a> = Map<String, Value>;
-    type Carry = ();
     type Payload = P;
 
     fn parse(
         &self,
         record: &Map<String, Value>,
-        _: &(),
         _context: &sinex_source_core::RecordContext<'_>,
-    ) -> Result<(Vec<P>, ()), RecordError> {
-        Ok(((self.read)(FieldReader::new(record.clone()))?, ()))
+    ) -> Result<Vec<P>, RecordError> {
+        (self.read)(FieldReader::new(record.clone()))
     }
-}
-
-fn missing(name: &str) -> RecordError {
-    RecordError::new(format!("{name} is missing"))
 }
 
 fn generation(mut f: FieldReader) -> Result<Vec<GenerationActivated>, RecordError> {
     let host = f.required_text("host")?;
-    let generation = f
-        .unsigned("generation")?
-        .ok_or_else(|| missing("generation"))?;
-    let activated_at = f
-        .time("activated_at")?
-        .ok_or_else(|| missing("activated_at"))?;
+    let generation = f.unsigned("generation")?.record("generation is missing")?;
+    let activated_at = f.time("activated_at")?.record("activated_at is missing")?;
     let (revision, dirty) = match f.text("sinnix_revision")? {
         None => (None, None),
         Some(r) if r == "unknown" => (None, None),
@@ -184,11 +178,11 @@ fn backup_check(mut f: FieldReader) -> Result<Vec<BackupChecked>, RecordError> {
         None | Some(0) => None,
         Some(secs) => Some(
             sinex_model::Timestamp::from_unix_secs(secs)
-                .map_err(|_| RecordError::new(format!("deadline_epoch {secs} is out of range")))?,
+                .record_with(|| format!("deadline_epoch {secs} is out of range"))?,
         ),
     };
     Ok(vec![BackupChecked {
-        checked_at: f.time("ts")?.ok_or_else(|| missing("ts"))?,
+        checked_at: f.time("ts")?.record("ts is missing")?,
         check: f.required_text("type")?,
         label: f.text("label")?,
         ok: f.boolean("ok")?,
@@ -212,7 +206,7 @@ fn restore_drill(mut f: FieldReader) -> Result<Vec<BackupDrilled>, RecordError> 
     Ok(vec![BackupDrilled {
         repo: f.required_text("repo")?,
         archive: f.text("archive")?,
-        started_at: f.time("started_at")?.ok_or_else(|| missing("started_at"))?,
+        started_at: f.time("started_at")?.record("started_at is missing")?,
         ended_at: f.time("ended_at")?,
         duration_s: f.unsigned("duration_s")?,
         exit_code: f.int("exit_code")?,
@@ -227,7 +221,7 @@ fn restore_drill(mut f: FieldReader) -> Result<Vec<BackupDrilled>, RecordError> 
 
 fn task_store_drill(mut f: FieldReader) -> Result<Vec<TaskStoreDrilled>, RecordError> {
     Ok(vec![TaskStoreDrilled {
-        drilled_at: f.time("ts")?.ok_or_else(|| missing("ts"))?,
+        drilled_at: f.time("ts")?.record("ts is missing")?,
         archive: f.required_text("archive")?,
         ok: f.boolean("ok")?,
         dolt_commit: f.text("dolt_commit")?,
@@ -241,7 +235,7 @@ fn task_store_drill(mut f: FieldReader) -> Result<Vec<TaskStoreDrilled>, RecordE
 
 fn sandbox_finding(mut f: FieldReader) -> Result<Vec<SandboxAuditFinding>, RecordError> {
     Ok(vec![SandboxAuditFinding {
-        found_at: f.time("timestamp")?.ok_or_else(|| missing("timestamp"))?,
+        found_at: f.time("timestamp")?.record("timestamp is missing")?,
         kind: f.required_text("kind")?,
         unit: f.text("unit")?,
         // A lane no unit owns is written with manager `-`.
@@ -270,7 +264,7 @@ fn assessed(
         Some((id, at, window)) => (Some(id.to_owned()), at, window),
         None => (
             None,
-            f.unix_time("ts")?.ok_or_else(|| missing("ts"))?,
+            f.unix_time("ts")?.record("ts is missing")?,
             f.unsigned("window_days")?,
         ),
     };
@@ -298,7 +292,7 @@ fn census(mut f: FieldReader) -> Result<Vec<Census>, RecordError> {
     };
     let taken = UsageCensusTaken {
         snapshot_id: f.required_text("snapshot_id")?,
-        taken_at: f.unix_time("ts")?.ok_or_else(|| missing("ts"))?,
+        taken_at: f.unix_time("ts")?.record("ts is missing")?,
         collected_at: f.unix_time("collected_at")?,
         since: f.unix_time("since")?,
         until: f.unix_time("until")?,
@@ -320,8 +314,7 @@ fn census(mut f: FieldReader) -> Result<Vec<Census>, RecordError> {
             taken.window_days,
         );
         out.push(Census::Assessed(
-            assessed(FieldReader::new(row), Some(census))
-                .map_err(|e| RecordError::new(format!("rows/{i}: {e}")))?,
+            assessed(FieldReader::new(row), Some(census)).record_with(|| format!("rows/{i}"))?,
         ));
     }
     out.insert(0, Census::Taken(taken));
@@ -356,27 +349,26 @@ sinex_model::payload_enum! {
 /// run, so it is read without events.
 pub struct ExperimentParser;
 
-impl Parser for ExperimentParser {
+impl StatelessParser for ExperimentParser {
     type Record<'a> = &'a [u8];
-    type Carry = ();
     type Payload = Experiment;
 
     fn parse(
         &self,
         record: &&[u8],
-        _: &(),
+
         context: &sinex_source_core::RecordContext<'_>,
-    ) -> Result<(Vec<Experiment>, ()), RecordError> {
+    ) -> Result<Vec<Experiment>, RecordError> {
         let member = context
             .member
-            .ok_or_else(|| RecordError::new("an experiment file needs its directory member"))?;
+            .record("an experiment file needs its directory member")?;
         if member.details.contains_key("removed_at_ns") {
-            return Ok((vec![], ()));
+            return Ok(vec![]);
         }
         let object: Map<String, Value> = serde_json::from_slice(record)
-            .map_err(|e| RecordError::new(format!("{} is not a JSON object: {e}", member.path)))?;
+            .record_with(|| format!("{} is not a JSON object", member.path))?;
         let started = member.path == "started.json" || member.path.ends_with("/started.json");
-        Ok((vec![experiment(FieldReader::new(object), started)?], ()))
+        Ok(vec![experiment(FieldReader::new(object), started)?])
     }
 }
 
@@ -446,7 +438,7 @@ fn lines_source<P: Payloads>(
 ) -> Box<dyn sinex_source_core::Source> {
     Box::new(DeclaredSource {
         spec: spec.clone(),
-        parser: JsonLines { read },
+        parser: Stateless(JsonLines { read }),
     })
 }
 
@@ -462,7 +454,7 @@ pub fn source(spec: &SourceSpec) -> Result<Box<dyn sinex_source_core::Source>, S
         p if p == CONFIG_DRIFT.parser => lines_source(spec, config_drift),
         p if p == EXPERIMENTS.parser => Box::new(DeclaredSource {
             spec: spec.clone(),
-            parser: ExperimentParser,
+            parser: Stateless(ExperimentParser),
         }),
         other => return Err(format!("{other}: not a machine record")),
     })
@@ -505,7 +497,7 @@ pub fn line_driver(path: PathBuf, host: String) -> AppendFile {
     AppendFile {
         path,
         host,
-        framer: sinex_source_core::Framer::incremental(lines),
+        framer: sinex_source_core::Framer::LINES,
     }
 }
 
@@ -521,46 +513,29 @@ pub fn experiment_driver(root: PathBuf, host: String) -> DirSnapshot {
 
 /// `stage --parser machine-records PATH`: the machine root's record files and
 /// experiment runs, one binding each.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "machine-records",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[
-                sinex_source_core::discovery::Location {
-                    root: "declared",
-                    path: "machine",
-                },
-                sinex_source_core::discovery::Location {
-                    root: "input",
-                    path: "machine-records",
-                },
-            ],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || FILES.iter().map(|(spec, _)| *spec).collect(),
-        plan: Some(|input, settings| Ok(plan(input, settings))),
-        source: |b| source(spec_of(&b.parser)?),
-        reader: Some(|b| {
-            let spec = spec_of(&b.parser)?;
-            Ok(if spec.origin == Origin::Input(Shape::DirSnapshot) {
-                sinex_source_core::binding::walked(experiment_driver(
-                    b.input.clone(),
-                    b.settings.host.clone(),
-                ))
-            } else {
-                sinex_source_core::binding::appended(line_driver(
-                    b.input.clone(),
-                    b.settings.host.clone(),
-                ))
-            })
-        }),
-        capture: None,
-    };
+super::input_format! { pub FORMAT = "machine-records" {
+    specs: || FILES.iter().map(|(spec, _)| *spec).collect(),
+    source: |b| source(spec_of(&b.parser)?),
+    discovery: DiscoverySpec::system(&[
+        Location::new("declared", "machine"),
+        Location::new("input", "machine-records"),
+    ]),
+    plan: |input, settings| Ok(plan(input, settings)),
+    reader: |b| {
+        let spec = spec_of(&b.parser)?;
+        Ok(if spec.origin == Origin::Input(Shape::DirSnapshot) {
+            sinex_source_core::binding::walked(experiment_driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+            ))
+        } else {
+            sinex_source_core::binding::appended(line_driver(
+                b.input.clone(),
+                b.settings.host.clone(),
+            ))
+        })
+    },
+} }
 
 #[cfg(test)]
 mod tests;

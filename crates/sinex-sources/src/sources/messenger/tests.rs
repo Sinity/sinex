@@ -8,10 +8,9 @@ fn gdpr_threads_key_by_participants() {
          "isUnsent": false, "media": [], "reactions": [{"reaction": "x", "actor": "B"}]},
         {"senderName": "B", "timestamp": 1_723_462_266_668i64, "type": "media", "isUnsent": true,
          "media": [{"uri": "media/a.webp"}]}]});
-    let (out, ()) = MessengerParser
+    let out = MessengerParser
         .parse(
             doc.as_object().unwrap(),
-            &(),
             &sinex_source_core::RecordContext::none(),
         )
         .unwrap();
@@ -29,10 +28,9 @@ fn older_export_threads_are_repaired() {
         "title": "B", "messages": [{"sender_name": "Micha\u{00c5}\u{0082}",
         "timestamp_ms": 1_500_000_000_000i64, "content": "za\u{00c5}\u{00bc}\u{00c3}\u{00b3}\u{00c5}\u{0082}\u{00c4}\u{0087}",
         "type": "Generic", "photos": [{"uri": "messages/photos/p.jpg"}]}]});
-    let (out, ()) = MessengerParser
+    let out = MessengerParser
         .parse(
             doc.as_object().unwrap(),
-            &(),
             &sinex_source_core::RecordContext::none(),
         )
         .unwrap();
@@ -42,4 +40,17 @@ fn older_export_threads_are_repaired() {
     assert_eq!(out[0].media, vec!["messages/photos/p.jpg"]);
     assert_eq!(repair("plain ascii"), "plain ascii");
     assert_eq!(repair("już"), "już", "real text is left alone");
+}
+
+#[devkit::test]
+fn invalid_timestamp_is_a_record_error() {
+    let row = json!({"participants": ["A"], "threadName": "T", "messages": [
+        {"senderName": "A", "timestamp": i64::MAX, "text": "hello", "type": "text"}]});
+    let error = MessengerParser
+        .parse(
+            row.as_object().unwrap(),
+            &sinex_source_core::RecordContext::none(),
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("out of range"));
 }

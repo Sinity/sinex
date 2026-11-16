@@ -7,43 +7,34 @@
 //! title or the time text: Google restates both between exports. The YouTube
 //! history gives `video.watched` and `video.searched`.
 use super::cells::{CELL, Cell};
-use sinex_model::Class;
 use sinex_model::event_types::account::{ActionRecorded, VideoSearched, VideoWatched};
 use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
 use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordError};
+use sinex_source_core::{Framer, RecordError, Stateless, StatelessParser};
 use std::path::PathBuf;
 
 pub const MY_ACTIVITY: SourceSpec = SourceSpec {
     name: "google.my-activity",
     origin: Origin::Input(Shape::ExportArchive),
     expect: Expectation::Export,
-    expires_after: None,
     purpose: "searches, visits and app use recorded by the Google account",
-    class: Class::Open,
     parser: "google-my-activity",
-    parser_version: 1,
+    parser_version: 2,
     event_types: &["action.recorded"],
-    framer: sinex_source_core::Framer::export(
-        frame,
-        sinex_source_core::drivers::export_archive::Framing::Delimited(CELL),
-    ),
+    framer: Framer::export(frame, Framing::Delimited(CELL)),
+    ..SourceSpec::DEFAULT
 };
 
 pub const YOUTUBE: SourceSpec = SourceSpec {
     name: "google.youtube-history",
     origin: Origin::Input(Shape::ExportArchive),
     expect: Expectation::Export,
-    expires_after: None,
     purpose: "videos watched and searched for",
-    class: Class::Open,
     parser: "google-youtube-history",
-    parser_version: 2,
+    parser_version: 3,
     event_types: &["video.watched", "video.searched"],
-    framer: sinex_source_core::Framer::export(
-        frame,
-        sinex_source_core::drivers::export_archive::Framing::Delimited(CELL),
-    ),
+    framer: Framer::export(frame, Framing::Delimited(CELL)),
+    ..SourceSpec::DEFAULT
 };
 
 pub fn frame(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
@@ -52,17 +43,15 @@ pub fn frame(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
 
 pub struct MyActivityParser;
 
-impl Parser for MyActivityParser {
+impl StatelessParser for MyActivityParser {
     type Record<'a> = Cell;
-    type Carry = ();
     type Payload = ActionRecorded;
 
     fn parse(
         &self,
         cell: &Cell,
-        _: &(),
         _context: &sinex_source_core::RecordContext<'_>,
-    ) -> Result<(Vec<ActionRecorded>, ()), RecordError> {
+    ) -> Result<Vec<ActionRecorded>, RecordError> {
         let first = &cell.lines[0];
         let (verb, title, title_url, unlinked_text) = match first.links.first() {
             Some((href, text)) => {
@@ -76,22 +65,19 @@ impl Parser for MyActivityParser {
             }
             None => (None, first.text.clone(), None, Some(first.text.clone())),
         };
-        Ok((
-            vec![ActionRecorded {
-                service: cell.service.clone(),
-                at: cell.at,
-                verb,
-                title,
-                title_url,
-                unlinked_text,
-                lines: cell.lines[1..].iter().map(|l| l.text.clone()).collect(),
-                products: cell.section("Products"),
-                locations: cell.section("Locations"),
-                details: cell.section("Details"),
-                zone_label: cell.zone_label.clone(),
-            }],
-            (),
-        ))
+        Ok(vec![ActionRecorded {
+            service: cell.service.clone(),
+            at: cell.at,
+            verb,
+            title,
+            title_url,
+            unlinked_text,
+            lines: cell.lines[1..].iter().map(|l| l.text.clone()).collect(),
+            products: cell.section("Products"),
+            locations: cell.section("Locations"),
+            details: cell.section("Details"),
+            zone_label: cell.zone_label.clone(),
+        }])
     }
 }
 
@@ -105,17 +91,15 @@ sinex_model::payload_enum! {
 
 pub struct YouTubeParser;
 
-impl Parser for YouTubeParser {
+impl StatelessParser for YouTubeParser {
     type Record<'a> = Cell;
-    type Carry = ();
     type Payload = YouTubeEvent;
 
     fn parse(
         &self,
         cell: &Cell,
-        _: &(),
         _context: &sinex_source_core::RecordContext<'_>,
-    ) -> Result<(Vec<YouTubeEvent>, ()), RecordError> {
+    ) -> Result<Vec<YouTubeEvent>, RecordError> {
         let first = &cell.lines[0];
         let service = "youtube".to_owned();
         if first.text.starts_with("Watched") {
@@ -135,39 +119,33 @@ impl Parser for YouTubeParser {
             if link.is_none() {
                 details.insert(0, first.text.trim().to_owned());
             }
-            Ok((
-                vec![YouTubeEvent::Watched(VideoWatched {
-                    service,
-                    video_id,
-                    watched_at: cell.at,
-                    url: link.map(|(u, _)| u),
-                    title,
-                    channel: channel.as_ref().map(|(_, n)| n.clone()),
-                    channel_url: channel.map(|(u, _)| u),
-                    products: cell.section("Products"),
-                    details,
-                })],
-                (),
-            ))
+            Ok(vec![YouTubeEvent::Watched(VideoWatched {
+                service,
+                video_id,
+                watched_at: cell.at,
+                url: link.map(|(u, _)| u),
+                title,
+                channel: channel.as_ref().map(|(_, n)| n.clone()),
+                channel_url: channel.map(|(u, _)| u),
+                products: cell.section("Products"),
+                details,
+            })])
         } else if first.text.starts_with("Searched for") {
             let (url, query) = match first.links.first() {
                 Some((u, q)) => (Some(u.clone()), q.clone()),
                 None => (None, first.text["Searched for".len()..].trim().to_owned()),
             };
-            Ok((
-                vec![YouTubeEvent::Searched(VideoSearched {
-                    service,
-                    searched_at: cell.at,
-                    query,
-                    url,
-                    products: cell.section("Products"),
-                })],
-                (),
-            ))
+            Ok(vec![YouTubeEvent::Searched(VideoSearched {
+                service,
+                searched_at: cell.at,
+                query,
+                url,
+                products: cell.section("Products"),
+            })])
         } else {
             // Other history lines (a visit to the YouTube Music home page) are
             // in My Activity as actions; here they are not a watch or search.
-            Ok((vec![], ()))
+            Ok(vec![])
         }
     }
 }
@@ -189,17 +167,17 @@ pub fn video_id(url: &str) -> Option<String> {
     id.filter(|i| !i.is_empty())
 }
 
-pub fn my_activity() -> DeclaredSource<MyActivityParser> {
+pub fn my_activity() -> DeclaredSource<Stateless<MyActivityParser>> {
     DeclaredSource {
         spec: MY_ACTIVITY,
-        parser: MyActivityParser,
+        parser: Stateless(MyActivityParser),
     }
 }
 
-pub fn youtube() -> DeclaredSource<YouTubeParser> {
+pub fn youtube() -> DeclaredSource<Stateless<YouTubeParser>> {
     DeclaredSource {
         spec: YOUTUBE,
-        parser: YouTubeParser,
+        parser: Stateless(YouTubeParser),
     }
 }
 

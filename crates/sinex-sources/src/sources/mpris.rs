@@ -10,24 +10,27 @@ use super::dbus::{self, Message};
 use serde_json::{Map, Value, json};
 use sinex_model::Class;
 use sinex_model::event_types::session::PlayerChanged;
-use sinex_source_core::drivers::live_stream::{self, LiveStream};
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
+use sinex_model::json::JsonExt;
+use sinex_source_core::RecordResult;
+use sinex_source_core::discovery::{CaptureStream, CapturedBy, DiscoverySpec};
+use sinex_source_core::drivers::live_stream;
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "media.mpris",
     origin: Origin::Input(Shape::LiveStream),
     expect: Expectation::continuous_days(7),
-    expires_after: None,
     purpose: "listening and watching history, attention",
     // Titles and URLs of what is playing.
     class: Class::Guarded,
     parser: "dbus-mpris",
     parser_version: 2,
     event_types: &["player.changed"],
-    framer: sinex_source_core::Framer::incremental(sinex_source_core::drivers::append_file::lines),
+    framer: sinex_source_core::Framer::LINES,
+    ..SourceSpec::DEFAULT
 };
 
 pub const MATCHES: &[&str] = &[
@@ -46,7 +49,7 @@ fn changed(
     props: &Map<String, Value>,
     snapshot: bool,
 ) -> PlayerChanged {
-    let meta = props.get("Metadata").and_then(Value::as_object);
+    let meta = props.object("Metadata");
     let s = |k: &str| {
         meta.and_then(|m| m.get(k))
             .and_then(Value::as_str)
@@ -57,10 +60,7 @@ fn changed(
         captured_by: sinex_model::event_types::session::CaptureProgram::Sinex,
         received_at,
         player,
-        status: props
-            .get("PlaybackStatus")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
+        status: props.str("PlaybackStatus").map(str::to_owned),
         title: s("xesam:title"),
         artists: meta
             .and_then(|m| m.get("xesam:artist"))
@@ -99,8 +99,7 @@ impl Parser for MprisParser {
     ) -> Result<(Vec<PlayerChanged>, BTreeMap<String, String>), RecordError> {
         let (received_at, bytes) = live_stream::received(record).map_err(RecordError::new)?;
         let mut owners = owners.clone();
-        let value: Value = serde_json::from_slice(&bytes)
-            .map_err(|e| RecordError::new(format!("not JSON: {e}")))?;
+        let value: Value = serde_json::from_slice(&bytes).record("not JSON")?;
         if let Some(snap) = value.get("snapshot") {
             let name = snap["name"].as_str().unwrap_or_default().to_owned();
             if let Some(owner) = snap["owner"].as_str() {
@@ -145,17 +144,6 @@ impl Parser for MprisParser {
         };
         Ok((out, owners))
     }
-}
-
-pub fn source() -> DeclaredSource<MprisParser> {
-    DeclaredSource {
-        spec: SPEC,
-        parser: MprisParser,
-    }
-}
-
-pub fn driver(spool: PathBuf, host: String) -> LiveStream {
-    dbus::driver(spool, host, "dbus:session:org.mpris.MediaPlayer2")
 }
 
 /// One snapshot line per player on the bus now.
@@ -203,35 +191,25 @@ pub fn capture(
 }
 
 /// `stage --parser players SPOOL`: media players (MPRIS), captured into SPOOL.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "players",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::Session,
-            locations: &[],
-            capabilities: &["session_bus", "busctl"],
-            credentials: &[],
-            streams: &[sinex_source_core::discovery::CaptureStream {
-                spool: "players",
-                options: &[],
-                capabilities: &[],
-            }],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SPEC],
-        plan: Some(|spool, settings| {
-            Ok(sinex_source_core::binding::single(&SPEC, spool, settings))
-        }),
-        source: |_| Ok(Box::new(source())),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::polled(driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: Some(|b, stop| capture(&b.input, stop).map_err(|e| e.to_string())),
-    };
+super::input_format! { pub FORMAT = "players" {
+    specs: [SPEC],
+    parser: |_b| MprisParser,
+    discovery: DiscoverySpec {
+        captured_by: CapturedBy::Session,
+        capabilities: &["session_bus", "busctl"],
+        streams: &[CaptureStream { spool: "players", options: &[], capabilities: &[] }],
+        ..DiscoverySpec::DEFAULT
+    },
+    plan: single,
+    reader: |b| {
+        Ok(sinex_source_core::binding::polled(dbus::driver(
+            b.input.clone(),
+            b.settings.host.clone(),
+            "dbus:session:org.mpris.MediaPlayer2",
+        )))
+    },
+    capture: |b, _context, stop| capture(&b.input, stop).map_err(|e| e.to_string()),
+} }
 
 #[cfg(test)]
 mod tests;

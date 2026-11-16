@@ -2,27 +2,30 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sinex_model::event_types::documents::DocumentCaptured;
+use sinex_model::json::JsonExt;
 use sinex_model::{Class, Timestamp};
 use sinex_source_core::binding::{Binding, InputFormat};
+use sinex_source_core::discovery::{
+    Availability, Cause, DiscoveredInput, DiscoveryContext, DiscoverySpec, Location,
+};
 use sinex_source_core::drivers::dir_snapshot::DirSnapshot;
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordContext, RecordError};
+use sinex_source_core::drivers::export_archive::{Framing, frame_whole};
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
+use sinex_source_core::{
+    Framer, RecordContext, RecordError, RecordResult, Stateless, StatelessParser, binding,
+};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "knowledge.documents",
     origin: Origin::Input(Shape::DirSnapshot),
     expect: Expectation::cadence_hours(1),
-    expires_after: None,
     purpose: "configured document bytes for recall and text extraction",
     class: Class::Guarded,
     parser: "documents",
-    parser_version: 1,
     event_types: &["document.captured"],
-    framer: sinex_source_core::Framer::export(
-        sinex_source_core::drivers::export_archive::frame_whole,
-        sinex_source_core::drivers::export_archive::Framing::Whole,
-    ),
+    framer: Framer::export(frame_whole, Framing::Whole),
+    ..SourceSpec::DEFAULT
 };
 /// Subtrees assigned to another source are excluded before this reader walks.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -42,9 +45,8 @@ impl Options {
 }
 
 pub struct DocumentParser;
-impl Parser for DocumentParser {
+impl StatelessParser for DocumentParser {
     type Record<'a> = &'a [u8];
-    type Carry = ();
     type Payload = DocumentCaptured;
     const READS_BLANK_RECORDS: bool = true;
 
@@ -55,12 +57,11 @@ impl Parser for DocumentParser {
     fn parse(
         &self,
         record: &&[u8],
-        _: &(),
         context: &RecordContext<'_>,
-    ) -> Result<(Vec<DocumentCaptured>, ()), RecordError> {
+    ) -> Result<Vec<DocumentCaptured>, RecordError> {
         let member = context
             .member
-            .ok_or_else(|| RecordError::new("document needs its directory member"))?;
+            .record("document needs its directory member")?;
         let time = |key: &str| -> Result<Option<Timestamp>, RecordError> {
             member
                 .details
@@ -69,7 +70,7 @@ impl Parser for DocumentParser {
                     v.as_str()
                         .and_then(|s| s.parse::<i128>().ok())
                         .and_then(|ns| Timestamp::from_unix_ns(ns).ok())
-                        .ok_or_else(|| RecordError::new(format!("invalid document {key}")))
+                        .record_with(|| format!("invalid document {key}"))
                 })
                 .transpose()
         };
@@ -78,7 +79,7 @@ impl Parser for DocumentParser {
         let content = digest
             .as_ref()
             .map(|hash| format!("blake3:{}", hash.to_hex()));
-        if let Some(expected) = member.details.get("hash").and_then(Value::as_str)
+        if let Some(expected) = member.details.str("hash")
             && let Some(digest) = digest
             && expected != digest.to_hex().as_str()
         {
@@ -86,33 +87,26 @@ impl Parser for DocumentParser {
                 "document content differs from member digest",
             ));
         }
-        Ok((
-            vec![DocumentCaptured {
-                host: context
-                    .manifest
-                    .detail("host")
-                    .as_str()
-                    .ok_or_else(|| RecordError::new("document needs its recorded host"))?
-                    .into(),
-                root: context
-                    .manifest
-                    .path
-                    .clone()
-                    .ok_or_else(|| RecordError::new("document needs its recorded root"))?,
-                path: member.path.clone(),
-                size: removed_at.is_none().then_some(record.len() as u64),
-                modified_at: time("mtime_ns")?,
-                media_type: removed_at.is_none().then(|| media_type(record).into()),
-                native_path_bytes: member
-                    .details
-                    .get("native_path_bytes")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned),
-                content,
-                removed_at,
-            }],
-            (),
-        ))
+        Ok(vec![DocumentCaptured {
+            host: context
+                .manifest
+                .detail("host")
+                .as_str()
+                .record("document needs its recorded host")?
+                .into(),
+            root: context
+                .manifest
+                .path
+                .clone()
+                .record("document needs its recorded root")?,
+            path: member.path.clone(),
+            size: removed_at.is_none().then_some(record.len() as u64),
+            modified_at: time("mtime_ns")?,
+            media_type: removed_at.is_none().then(|| media_type(record).into()),
+            native_path_bytes: member.details.str("native_path_bytes").map(str::to_owned),
+            content,
+            removed_at,
+        }])
     }
 }
 fn media_type(bytes: &[u8]) -> &'static str {
@@ -139,10 +133,6 @@ pub fn driver(root: PathBuf, host: String) -> DirSnapshot {
         removed_at_source: false,
     }
 }
-
-use sinex_source_core::discovery::{
-    Availability, CapturedBy, Cause, DiscoveredInput, DiscoveryContext, DiscoverySpec, Location,
-};
 
 fn discover(format: &InputFormat, context: &DiscoveryContext) -> Vec<DiscoveredInput> {
     let mut found = crate::discovery::discover_format(format, context);
@@ -199,28 +189,15 @@ fn discover(format: &InputFormat, context: &DiscoveryContext) -> Vec<DiscoveredI
     found
 }
 
-pub const FORMAT: InputFormat = InputFormat {
-    name: "documents",
-    accepts: &[],
-    discovery: DiscoverySpec {
-        captured_by: CapturedBy::System,
-        locations: &[
-            Location {
-                root: "declared",
-                path: "documents",
-            },
-            Location {
-                root: "declared",
-                path: "downloads",
-            },
-        ],
-        capabilities: &[],
-        credentials: &[],
-        streams: &[],
-    },
-    discover,
-    specs: || vec![&SPEC],
-    plan: Some(|input, settings| {
+super::input_format! { pub FORMAT = "documents" {
+    specs: [SPEC],
+    parser: |_b| Stateless(DocumentParser),
+    discovery: DiscoverySpec::system(&[
+        Location::new("declared", "documents"),
+        Location::new("declared", "downloads"),
+    ]),
+    discover: discover,
+    plan: |input, settings| {
         Options::from_settings(settings)?;
         if input.as_os_str().is_empty() {
             return Err("document acquisition needs a root".into());
@@ -232,21 +209,14 @@ pub const FORMAT: InputFormat = InputFormat {
         Ok(vec![
             Binding::of(&SPEC, &input, settings.clone()).named("directory"),
         ])
-    }),
-    source: |_| {
-        Ok(Box::new(DeclaredSource {
-            spec: SPEC,
-            parser: DocumentParser,
-        }))
     },
-    reader: Some(|binding| {
+    reader: |binding| {
         let excluded = Options::from_settings(&binding.settings)?.excluded_roots;
-        Ok(sinex_source_core::binding::walked_excluding(
+        Ok(binding::walked_excluding(
             driver(binding.input.clone(), binding.settings.host.clone()),
             excluded,
         ))
-    }),
-    capture: None,
-};
+    },
+} }
 #[cfg(test)]
 mod tests;

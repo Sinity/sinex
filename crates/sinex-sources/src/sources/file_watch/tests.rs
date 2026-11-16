@@ -35,10 +35,9 @@ fn directories_skip_declared_names_and_symlinks() {
 
 #[devkit::test]
 fn renames_keep_both_ends_and_odd_paths_survive() {
-    let (out, ()) = FileWatchParser
+    let out = FileWatchParser
         .parse(
             &rec(json!({"kind": "renamed", "paths": ["/a/x", "/a/y"], "is_dir": null})),
-            &(),
             &sinex_source_core::RecordContext::none(),
         )
         .unwrap();
@@ -47,10 +46,9 @@ fn renames_keep_both_ends_and_odd_paths_survive() {
     };
     assert_eq!(change.path.as_deref(), Some("/a/x"));
     assert_eq!(change.to.as_deref(), Some("/a/y"));
-    let (out, ()) = FileWatchParser
+    let out = FileWatchParser
         .parse(
             &rec(json!({"kind": "created", "paths": [{"hex": "2fff"}], "is_dir": false})),
-            &(),
             &sinex_source_core::RecordContext::none(),
         )
         .unwrap();
@@ -61,8 +59,8 @@ fn renames_keep_both_ends_and_odd_paths_survive() {
         (change.path.clone(), change.path_hex.as_deref()),
         (None, Some("2fff"))
     );
-    let (out, ()) = FileWatchParser
-        .parse(&rec(json!({"kind": "unwatched", "paths": ["/big"], "note": "inotify watch limit reached"})), &(), &sinex_source_core::RecordContext::none())
+    let out = FileWatchParser
+        .parse(&rec(json!({"kind": "unwatched", "paths": ["/big"], "note": "inotify watch limit reached"})), &sinex_source_core::RecordContext::none())
         .unwrap();
     let FileWatchEvent::Changed(change) = &out[0] else {
         panic!("file change")
@@ -98,9 +96,8 @@ fn capture_sees_changes_including_in_new_directories() {
         let r: Map<String, Value> =
             serde_json::from_slice(&crate::test_support::body(&m)[*s..*e]).unwrap();
         for c in FileWatchParser
-            .parse(&r, &(), &sinex_source_core::RecordContext::none())
+            .parse(&r, &sinex_source_core::RecordContext::none())
             .unwrap()
-            .0
         {
             if let FileWatchEvent::Changed(change) = c {
                 seen.push((change.change, change.path.unwrap_or_default()));
@@ -157,8 +154,8 @@ fn inotify_overflow_records_unknown_gap_and_rescans_each_root() {
         &crate::test_support::body(&material)[material.records[0].0..material.records[0].1],
     )
     .unwrap();
-    let (events, ()) = FileWatchParser
-        .parse(&record, &(), &sinex_source_core::RecordContext::none())
+    let events = FileWatchParser
+        .parse(&record, &sinex_source_core::RecordContext::none())
         .unwrap();
     let FileWatchEvent::Gap(gap) = &events[0] else {
         panic!("capture gap")

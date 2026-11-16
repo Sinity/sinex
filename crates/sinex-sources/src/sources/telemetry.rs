@@ -4,11 +4,14 @@
 //! live capture. Samples use the same event admission and replay as other sources.
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use sinex_model::InputRef;
 use sinex_model::event_types::telemetry::SinexTelemetry;
-use sinex_model::{Class, InputRef};
+use sinex_source_core::RecordError;
+use sinex_source_core::RecordResult;
+use sinex_source_core::discovery::{CaptureStream, CapturedBy, DiscoverySpec};
 use sinex_source_core::drivers::live_stream::{self, LiveStream};
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordError};
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
+use sinex_source_core::{Stateless, StatelessParser};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -16,13 +19,11 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "sinex.telemetry",
     origin: Origin::Input(Shape::LiveStream),
     expect: Expectation::continuous_hours(1),
-    expires_after: None,
     purpose: "Sinex's sampled state",
-    class: Class::Open,
     parser: "sinex-telemetry",
-    parser_version: 1,
     event_types: sinex_model::event_types::telemetry::TYPES,
-    framer: sinex_source_core::Framer::incremental(sinex_source_core::drivers::append_file::lines),
+    framer: sinex_source_core::Framer::LINES,
+    ..SourceSpec::DEFAULT
 };
 
 /// One spooled sample of one part.
@@ -36,36 +37,24 @@ pub struct Sample {
 
 pub struct TelemetryParser;
 
-impl Parser for TelemetryParser {
+impl StatelessParser for TelemetryParser {
     type Record<'a> = Map<String, Value>;
-    type Carry = ();
     type Payload = SinexTelemetry;
 
     fn parse(
         &self,
         record: &Map<String, Value>,
-        _: &(),
-        _context: &sinex_source_core::RecordContext<'_>,
-    ) -> Result<(Vec<SinexTelemetry>, ()), RecordError> {
-        let (sampled_at, bytes) = live_stream::received(record).map_err(RecordError::new)?;
-        let sample: Sample = serde_json::from_slice(&bytes)
-            .map_err(|e| RecordError::new(format!("telemetry sample: {e}")))?;
-        Ok((
-            vec![SinexTelemetry {
-                component: sample.component,
-                name: sample.name,
-                sampled_at,
-                measures: sample.measures,
-            }],
-            (),
-        ))
-    }
-}
 
-pub fn source() -> DeclaredSource<TelemetryParser> {
-    DeclaredSource {
-        spec: SPEC,
-        parser: TelemetryParser,
+        _context: &sinex_source_core::RecordContext<'_>,
+    ) -> Result<Vec<SinexTelemetry>, RecordError> {
+        let (sampled_at, bytes) = live_stream::received(record).map_err(RecordError::new)?;
+        let sample: Sample = serde_json::from_slice(&bytes).record("telemetry sample")?;
+        Ok(vec![SinexTelemetry {
+            component: sample.component,
+            name: sample.name,
+            sampled_at,
+            measures: sample.measures,
+        }])
     }
 }
 
@@ -82,35 +71,17 @@ pub fn driver(spool: PathBuf, host: String) -> LiveStream {
 
 /// `stage --parser sinex-telemetry SPOOL`: the samples a daemon spooled into SPOOL.
 /// The daemon reads its own spool without configuration.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "sinex-telemetry",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[sinex_source_core::discovery::CaptureStream {
-                spool: "telemetry",
-                options: &[],
-                capabilities: &[],
-            }],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SPEC],
-        plan: Some(|spool, settings| {
-            Ok(sinex_source_core::binding::single(&SPEC, spool, settings))
-        }),
-        source: |_| Ok(Box::new(source())),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::polled(driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: None,
-    };
+super::input_format! { pub FORMAT = "sinex-telemetry" {
+    specs: [SPEC],
+    parser: |_b| Stateless(TelemetryParser),
+    discovery: DiscoverySpec {
+        captured_by: CapturedBy::System,
+        streams: &[CaptureStream { spool: "telemetry", options: &[], capabilities: &[] }],
+        ..DiscoverySpec::DEFAULT
+    },
+    plan: single,
+    reader: polled(driver),
+} }
 
 #[cfg(test)]
 mod tests;

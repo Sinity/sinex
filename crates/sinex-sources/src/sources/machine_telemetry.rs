@@ -20,12 +20,14 @@
 //! each of its inputs was last checked, its journal cursor), overwritten in
 //! place.
 use serde_json::{Map, Value};
-use sinex_model::Class;
 use sinex_model::event_types::telemetry::{HardwareState, ProcessKilled, ResourceSampled};
-use sinex_source_core::binding::{Binding, InputFormat, Settings};
+use sinex_source_core::RecordError;
+use sinex_source_core::RecordResult;
+use sinex_source_core::binding::{Binding, Settings};
+use sinex_source_core::discovery::{DiscoverySpec, Location};
 use sinex_source_core::drivers::sqlite_rows::{Changes, SqliteRows};
 use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordError};
+use sinex_source_core::{Stateless, StatelessParser};
 use std::path::{Path, PathBuf};
 
 sinex_model::payload_enum! {
@@ -62,17 +64,16 @@ const fn spec(parser: &'static str, event_types: &'static [&'static str]) -> Sou
         name: "machine.telemetry",
         origin: Origin::Input(Shape::SqliteRows),
         expect: Expectation::continuous_hours(1),
-        expires_after: None,
+
         // A sealed file repeats rows the active file's binding read.
         purpose: "resource figures and what the machine was doing: power, temperatures, \
                   memory, IO and pressure per service and process, and OOM kills",
-        class: Class::Open,
+
         parser,
-        parser_version: 1,
+
         event_types,
-        framer: sinex_source_core::Framer::incremental(
-            sinex_source_core::drivers::append_file::lines,
-        ),
+        framer: sinex_source_core::Framer::LINES,
+        ..SourceSpec::DEFAULT
     }
 }
 
@@ -89,50 +90,45 @@ pub struct TelemetryParser {
     pub table: &'static str,
 }
 
-impl Parser for TelemetryParser {
+impl StatelessParser for TelemetryParser {
     type Record<'a> = Map<String, Value>;
-    type Carry = ();
     type Payload = Telemetry;
 
     fn parse(
         &self,
         row: &Map<String, Value>,
-        _: &(),
+
         _context: &sinex_source_core::RecordContext<'_>,
-    ) -> Result<(Vec<Telemetry>, ()), RecordError> {
+    ) -> Result<Vec<Telemetry>, RecordError> {
         let mut columns = row.clone();
         // The SQLite-row driver's own field, not a column of the table.
         columns.remove("_rowid");
-        let row_id =
-            take_int(&mut columns, "id")?.ok_or_else(|| RecordError::new("the row has no id"))?;
+        let row_id = take_int(&mut columns, "id")?.record("the row has no id")?;
         let payload = match self.table {
             "kill_event" => Telemetry::Killed(ProcessKilled {
                 row_id,
                 observed_at: take_time(&mut columns, "observed_at")?,
                 host: take_text(&mut columns, "host")?,
                 boot_id: take_text(&mut columns, "boot_id")?,
-                killer: take_text(&mut columns, "killer")?
-                    .ok_or_else(|| RecordError::new("killer is missing"))?,
+                killer: take_text(&mut columns, "killer")?.record("killer is missing")?,
                 victim_comm: take_text(&mut columns, "victim_comm")?,
                 victim_pid: take_int(&mut columns, "victim_pid")?,
                 victim_rss_mib: take_int(&mut columns, "victim_rss_mib")?,
                 cgroup_path: take_text(&mut columns, "cgroup_path")?,
                 oom_score: take_int(&mut columns, "oom_score")?,
-                raw_line: take_text(&mut columns, "raw_line")?
-                    .ok_or_else(|| RecordError::new("raw_line is missing"))?,
+                raw_line: take_text(&mut columns, "raw_line")?.record("raw_line is missing")?,
                 journal_cursor: take_text(&mut columns, "journal_cursor")?,
                 values: values(columns),
             }),
             "hardware_state" => {
-                let state = take_text(&mut columns, "payload_json")?
-                    .ok_or_else(|| RecordError::new("payload_json is missing"))?;
+                let state =
+                    take_text(&mut columns, "payload_json")?.record("payload_json is missing")?;
                 Telemetry::Hardware(HardwareState {
                     row_id,
                     captured_at: take_time(&mut columns, "captured_at")?,
                     host: take_text(&mut columns, "host")?,
                     boot_id: take_text(&mut columns, "boot_id")?,
-                    state: serde_json::from_str(&state)
-                        .map_err(|e| RecordError::new(format!("payload_json is not JSON: {e}")))?,
+                    state: serde_json::from_str(&state).record("payload_json is not JSON")?,
                     values: values(columns),
                 })
             }
@@ -145,7 +141,7 @@ impl Parser for TelemetryParser {
                 values: values(columns),
             }),
         };
-        Ok((vec![payload], ()))
+        Ok(vec![payload])
     }
 }
 
@@ -165,7 +161,7 @@ fn take_int(columns: &mut Map<String, Value>, name: &str) -> Result<Option<i64>,
         Some(value) => value
             .as_i64()
             .map(Some)
-            .ok_or_else(|| RecordError::new(format!("{name} is not an integer: {value}"))),
+            .record_with(|| format!("{name} is not an integer: {value}")),
     }
 }
 
@@ -193,18 +189,6 @@ fn values(columns: Map<String, Value>) -> Map<String, Value> {
             (name, value)
         })
         .collect()
-}
-
-pub fn source(table: &'static str) -> Result<DeclaredSource<TelemetryParser>, String> {
-    let spec = SPECS
-        .iter()
-        .find(|s| s.parser.strip_prefix("machine-telemetry:") == Some(table))
-        .ok_or_else(|| format!("{table}: not a machine telemetry table"))?
-        .clone();
-    Ok(DeclaredSource {
-        spec,
-        parser: TelemetryParser { table },
-    })
 }
 
 pub fn driver(path: PathBuf, host: String, table: &'static str) -> SqliteRows {
@@ -261,38 +245,30 @@ fn tables(path: &Path) -> Option<Vec<String>> {
 }
 
 /// `stage --parser machine-telemetry PATH`: the collector's databases.
-pub const FORMAT: InputFormat = InputFormat {
-    name: "machine-telemetry",
-    accepts: &[],
-    discovery: sinex_source_core::discovery::DiscoverySpec {
-        captured_by: sinex_source_core::discovery::CapturedBy::System,
-        locations: &[
-            sinex_source_core::discovery::Location {
-                root: "declared",
-                path: "telemetry",
-            },
-            sinex_source_core::discovery::Location {
-                root: "input",
-                path: "machine-telemetry",
-            },
-        ],
-        capabilities: &[],
-        credentials: &[],
-        streams: &[],
-    },
-    discover: crate::discovery::discover_format,
+super::input_format! { pub FORMAT = "machine-telemetry" {
     specs: || SPECS.iter().collect(),
-    plan: Some(plan),
-    source: |b| Ok(Box::new(source(table_of(&b.parser)?)?)),
-    reader: Some(|b| {
+    source: |b| {
+        let table = table_of(&b.parser)?;
+        let spec = SPECS
+            .iter()
+            .find(|s| s.parser.strip_prefix("machine-telemetry:") == Some(table))
+            .ok_or_else(|| format!("{table}: not a machine telemetry table"))?
+            .clone();
+        Ok(Box::new(DeclaredSource { spec, parser: Stateless(TelemetryParser { table }) }))
+    },
+    discovery: DiscoverySpec::system(&[
+        Location::new("declared", "telemetry"),
+        Location::new("input", "machine-telemetry"),
+    ]),
+    plan: |i, s| plan(i, s),
+    reader: |b| {
         Ok(sinex_source_core::binding::rows(driver(
             b.input.clone(),
             b.settings.host.clone(),
             table_of(&b.parser)?,
         )))
-    }),
-    capture: None,
-};
+    },
+} }
 
 #[cfg(test)]
 mod tests;

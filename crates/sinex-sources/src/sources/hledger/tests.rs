@@ -5,7 +5,14 @@ pub(crate) mod shared_read;
 const TRANSACTION: &[u8] = b"2030-01-05=2030-01-06 * Example|sample ; header\n  Assets:Example\n  Expenses:Example  -40.00000000000000000001 TEST ; posting\n\n";
 
 fn parser() -> HledgerParser {
-    source("example-host".into(), "example.journal".into()).parser
+    HledgerParser {
+        host: "example-host".into(),
+        journal: "example.journal".into(),
+        initial_year: None,
+        input_format: "journal".into(),
+        included_from: None,
+        includes: Default::default(),
+    }
 }
 
 fn transaction(input: &[u8]) -> TransactionPosted {
@@ -229,7 +236,10 @@ fn shared_read_restart_and_replay_keep_duplicate_transactions_and_directives() {
     let events = shared_read::export_restart(
         &input,
         driver("example.journal".into(), "example-host".into()),
-        &source("example-host".into(), "example.journal".into()),
+        &DeclaredSource {
+            spec: SPEC,
+            parser: parser(),
+        },
         3,
         0,
     );
@@ -262,7 +272,13 @@ fn archived_members_reset_counts_and_reordering_preserves_keys() {
         shared_read::export_restart(
             &archive(names),
             driver,
-            &source("example-host".into(), "example.tar".into()),
+            &DeclaredSource {
+                spec: SPEC,
+                parser: HledgerParser {
+                    journal: "example.tar".into(),
+                    ..parser()
+                },
+            },
             4,
             0,
         )
@@ -368,7 +384,10 @@ fn default_year_affects_identity_only_when_used_by_the_date() {
         shared_read::export_restart(
             raw.as_bytes(),
             driver("example.journal".into(), "example-host".into()),
-            &source("example-host".into(), "example.journal".into()),
+            &DeclaredSource {
+                spec: SPEC,
+                parser: parser(),
+            },
             3,
             0,
         )

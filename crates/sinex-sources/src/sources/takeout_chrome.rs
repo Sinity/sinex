@@ -3,27 +3,23 @@
 //! `Browser History` array. Times are microseconds since the Unix epoch.
 use super::fields;
 use serde_json::{Map, Value};
-use sinex_model::Class;
 use sinex_model::event_types::browser::BrowserHistoryEntry;
+use sinex_source_core::discovery::{DiscoverySpec, Location};
 use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordError};
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
+use sinex_source_core::stage::Structure;
+use sinex_source_core::{Framer, RecordError, Stateless, StatelessParser};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "browser.takeout-chrome-history",
     origin: Origin::Input(Shape::ExportArchive),
     expect: Expectation::Export,
-    expires_after: None,
     purpose: "browsing recall before live capture",
-    class: Class::Open,
     parser: "takeout-chrome-history",
-    parser_version: 1,
     event_types: &["browser.history_entry"],
-    framer: sinex_source_core::Framer::export(
-        frame,
-        sinex_source_core::drivers::export_archive::Framing::JsonArray("/Browser History"),
-    ),
+    framer: Framer::export(frame, Framing::JsonArray("/Browser History")),
+    ..SourceSpec::DEFAULT
 };
 
 const KNOWN: &[&str] = &[
@@ -37,17 +33,15 @@ const KNOWN: &[&str] = &[
 
 pub struct TakeoutChromeParser;
 
-impl Parser for TakeoutChromeParser {
+impl StatelessParser for TakeoutChromeParser {
     type Record<'a> = Map<String, Value>;
-    type Carry = ();
     type Payload = BrowserHistoryEntry;
 
     fn parse(
         &self,
         row: &Map<String, Value>,
-        _: &(),
         _context: &sinex_source_core::RecordContext<'_>,
-    ) -> Result<(Vec<BrowserHistoryEntry>, ()), RecordError> {
+    ) -> Result<Vec<BrowserHistoryEntry>, RecordError> {
         let payload = BrowserHistoryEntry {
             url: fields::text(row, "url")?,
             title: fields::optional_text(row, "title"),
@@ -57,14 +51,7 @@ impl Parser for TakeoutChromeParser {
             favicon_url: fields::optional_text(row, "favicon_url"),
             extra: fields::extra(row, KNOWN),
         };
-        Ok((vec![payload], ()))
-    }
-}
-
-pub fn source() -> DeclaredSource<TakeoutChromeParser> {
-    DeclaredSource {
-        spec: SPEC,
-        parser: TakeoutChromeParser,
+        Ok(vec![payload])
     }
 }
 
@@ -88,40 +75,14 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
 }
 
 /// `stage --parser takeout-chrome PATH`: each Takeout Chrome history in PATH.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "takeout-chrome",
-        accepts: &[sinex_source_core::stage::Structure::ArchiveLayout(select)],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "input",
-                path: "takeout-chrome",
-            }],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SPEC],
-        plan: Some(|input, settings| {
-            Ok(sinex_source_core::binding::per_file(
-                &SPEC,
-                input,
-                settings,
-                false,
-                sinex_source_core::binding::any,
-            ))
-        }),
-        source: |_| Ok(Box::new(source())),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::shared(driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: None,
-    };
+super::input_format! { pub FORMAT = "takeout-chrome" {
+    specs: [SPEC],
+    parser: |_b| Stateless(TakeoutChromeParser),
+    discovery: DiscoverySpec::system(&[Location::new("input", "takeout-chrome")]),
+    accepts: [Structure::ArchiveLayout(select)],
+    plan: per_file,
+    reader: shared(driver),
+} }
 
 #[cfg(test)]
 mod tests;

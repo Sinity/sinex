@@ -202,6 +202,7 @@ pub(crate) struct CurationTurn(tokio::sync::OwnedMutexGuard<()>);
 /// Where producers hand batches to the writer.
 #[derive(Clone)]
 pub(crate) struct WriterHandle {
+    pub class_recipient: Option<Arc<sinex_sealing::Recipient>>,
     source_publication: sinex_transport::backup::Publication,
     derivations: Arc<tokio::sync::Mutex<()>>,
     signals: Arc<tokio::sync::Mutex<()>>,
@@ -450,6 +451,7 @@ pub(crate) fn channels() -> (WriterHandle, Queues) {
     let (bulk, bulk_rx) = mpsc::channel(DEPTH);
     (
         WriterHandle {
+            class_recipient: None,
             source_publication: Default::default(),
             derivations: Arc::new(tokio::sync::Mutex::new(())),
             signals: Arc::new(tokio::sync::Mutex::new(())),

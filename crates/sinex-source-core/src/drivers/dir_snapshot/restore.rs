@@ -1,6 +1,7 @@
 //! Rebuild the file facts of a restarted reader from its saved memory and the
 //! admitted bundles after it.
 use super::*;
+use sinex_model::json::JsonExt;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 
 type Facts = Option<FileFacts>;
@@ -382,8 +383,7 @@ fn facts(
                 .ok_or_else(invalid)?;
             let modified_ns = member
                 .details
-                .get("mtime_ns")
-                .and_then(Value::as_str)
+                .str("mtime_ns")
                 .and_then(|text| text.parse().ok())
                 .ok_or_else(invalid)?;
             Ok(Some(FileFacts {

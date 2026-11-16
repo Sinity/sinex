@@ -8,27 +8,27 @@
 //! start would shift every play by its length.
 use super::fields;
 use serde_json::{Map, Value};
+use sinex_model::Timestamp;
 use sinex_model::event_types::media::MusicPlayed;
-use sinex_model::{Class, Timestamp};
-use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordError};
+use sinex_source_core::discovery::{DiscoverySpec, Location};
+use sinex_source_core::drivers::export_archive::{
+    ExportArchive, Framing, PART_BYTES, frame_json_array,
+};
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
+use sinex_source_core::stage::Structure;
+use sinex_source_core::{Framer, RecordError, RecordResult, Stateless, StatelessParser};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "media.spotify-history",
     origin: Origin::Input(Shape::ExportArchive),
     expect: Expectation::Export,
-    expires_after: None,
     purpose: "listening history and the attention stream",
-    class: Class::Open,
     parser: "spotify-streaming-history",
-    parser_version: 1,
+    parser_version: 2,
     event_types: &["music.played"],
-    framer: sinex_source_core::Framer::export(
-        sinex_source_core::drivers::export_archive::frame_json_array,
-        sinex_source_core::drivers::export_archive::Framing::JsonArray(""),
-    ),
+    framer: Framer::export(frame_json_array, Framing::JsonArray("")),
+    ..SourceSpec::DEFAULT
 };
 
 const EXTENDED: &[&str] = &[
@@ -62,19 +62,19 @@ const BASIC: &[&str] = &[
     "episodeName",
 ];
 
+const INFERRED_SKIP_MS: i64 = 30_000;
+
 pub struct SpotifyParser;
 
-impl Parser for SpotifyParser {
+impl StatelessParser for SpotifyParser {
     type Record<'a> = Map<String, Value>;
-    type Carry = ();
     type Payload = MusicPlayed;
 
     fn parse(
         &self,
         row: &Map<String, Value>,
-        _: &(),
         _context: &sinex_source_core::RecordContext<'_>,
-    ) -> Result<(Vec<MusicPlayed>, ()), RecordError> {
+    ) -> Result<Vec<MusicPlayed>, RecordError> {
         let payload = if row.contains_key("ts") {
             extended(row)?
         } else if row.contains_key("endTime") {
@@ -84,13 +84,13 @@ impl Parser for SpotifyParser {
                 "neither ts nor endTime: not a Spotify play",
             ));
         };
-        Ok((vec![payload], ()))
+        Ok(vec![payload])
     }
 }
 
 fn started(ended: Timestamp, played_ms: i64) -> Result<Timestamp, RecordError> {
     Timestamp::from_unix_ns(ended.unix_ns() - i128::from(played_ms) * 1_000_000)
-        .map_err(|_| RecordError::new("start time out of range"))
+        .record("start time out of range")
 }
 
 fn extended(row: &Map<String, Value>) -> Result<MusicPlayed, RecordError> {
@@ -101,6 +101,7 @@ fn extended(row: &Map<String, Value>) -> Result<MusicPlayed, RecordError> {
         started_at: started(ended_at, played_ms)?,
         ended_at,
         played_ms,
+        skipped_inferred: played_ms < INFERRED_SKIP_MS,
         track_uri: t("spotify_track_uri"),
         track_name: t("master_metadata_track_name"),
         artist_name: t("master_metadata_album_artist_name"),
@@ -127,13 +128,14 @@ fn basic(row: &Map<String, Value>) -> Result<MusicPlayed, RecordError> {
     let format = time::macros::format_description!("[year]-[month]-[day] [hour]:[minute]");
     let ended_at = time::PrimitiveDateTime::parse(&raw, format)
         .map(|t| Timestamp(t.assume_utc()))
-        .map_err(|e| RecordError::new(format!("invalid endTime {raw:?}: {e}")))?;
+        .record_with(|| format!("invalid endTime {raw:?}"))?;
     let played_ms = fields::int(row, "msPlayed")?;
     let t = |name| fields::optional_text(row, name);
     Ok(MusicPlayed {
         started_at: started(ended_at, played_ms)?,
         ended_at,
         played_ms,
+        skipped_inferred: played_ms < INFERRED_SKIP_MS,
         track_uri: None,
         track_name: t("trackName"),
         artist_name: t("artistName"),
@@ -155,13 +157,6 @@ fn basic(row: &Map<String, Value>) -> Result<MusicPlayed, RecordError> {
     })
 }
 
-pub fn source() -> DeclaredSource<SpotifyParser> {
-    DeclaredSource {
-        spec: SPEC,
-        parser: SpotifyParser,
-    }
-}
-
 pub fn select(member: &str) -> bool {
     let name = member.rsplit('/').next().unwrap_or(member);
     name.ends_with(".json")
@@ -179,40 +174,14 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
 }
 
 /// `stage --parser spotify PATH`: each Spotify export archive in PATH.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "spotify",
-        accepts: &[sinex_source_core::stage::Structure::ArchiveLayout(select)],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "input",
-                path: "spotify",
-            }],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SPEC],
-        plan: Some(|input, settings| {
-            Ok(sinex_source_core::binding::per_file(
-                &SPEC,
-                input,
-                settings,
-                false,
-                sinex_source_core::binding::any,
-            ))
-        }),
-        source: |_| Ok(Box::new(source())),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::shared(driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: None,
-    };
+super::input_format! { pub FORMAT = "spotify" {
+    specs: [SPEC],
+    parser: |_b| Stateless(SpotifyParser),
+    discovery: DiscoverySpec::system(&[Location::new("input", "spotify")]),
+    accepts: [Structure::ArchiveLayout(select)],
+    plan: per_file,
+    reader: shared(driver),
+} }
 
 #[cfg(test)]
 mod tests;

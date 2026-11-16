@@ -82,16 +82,14 @@ fn store_descriptor(dir: &Path, descriptor: &EncodedBlob, group: Option<u32>) ->
     let name = file_name(&descriptor.hash.to_string())?;
     let path = descriptor_path(dir, &name);
     permissions::check_existing_file(&path, group)?;
-    let mut temporary = tempfile::NamedTempFile::new_in(dir).map_err(Error::Storage)?;
-    temporary
-        .write_all(&descriptor.encode())
-        .map_err(Error::Storage)?;
-    permissions::share_completed_file(temporary.as_file(), group)?;
-    temporary.as_file().sync_all().map_err(Error::Storage)?;
-    temporary
-        .persist(path)
-        .map_err(|error| Error::Storage(error.error))?;
-    sync_directory(dir)
+    crate::durable::write_replacing(&path, 0o600, |file| {
+        file.write_all(&descriptor.encode())?;
+        permissions::share_completed_file(file, group).map_err(|error| match error {
+            Error::Storage(error) => error,
+            error => std::io::Error::other(error.to_string()),
+        })
+    })
+    .map_err(|(_, error)| Error::Storage(error))
 }
 fn load_descriptor(dir: &Path, blob: &str) -> Result<EncodedBlob, Error> {
     let file =
@@ -124,12 +122,8 @@ fn finish(
     let path = dir.join(file_name(&descriptor.hash.to_string())?);
     permissions::check_existing_file(&path, group)?;
     permissions::share_completed_file(temporary.as_file(), group)?;
-    temporary.as_file().sync_all().map_err(Error::Storage)?;
     store_descriptor(&dir, descriptor, group)?;
-    temporary
-        .persist(path)
-        .map_err(|error| Error::Storage(error.error))?;
-    sync_directory(&dir)
+    crate::durable::place(temporary.path(), &path).map_err(Error::Storage)
 }
 
 /// A raw-reader convenience: the encoding is written directly into its custody file
@@ -426,9 +420,7 @@ pub fn receive(
         return Err(error);
     }
     permissions::share_completed_file(&file, group)?;
-    file.sync_all().map_err(Error::Storage)?;
-    std::fs::rename(&path, dir.join(name)).map_err(Error::Storage)?;
-    sync_directory(&dir)?;
+    crate::durable::place(&path, &dir.join(name)).map_err(Error::Storage)?;
     Ok(true)
 }
 fn same_bytes(file: &mut std::fs::File, data: &[u8]) -> Result<bool, Error> {

@@ -4,7 +4,8 @@ use sinex_model::{
     Batch, BatchKind, Class, MaterialId, ReadingOrder, RecordLocation, RecordOutcome, RunId,
     event_types::CommandImported,
 };
-use sinex_source_core::{DrainInput, Limits, Parser, RecordContext, RecordError, drain};
+use sinex_source_core::{DrainInput, Limits, RecordContext, RecordError, drain};
+use sinex_source_core::{Stateless, StatelessParser};
 use sinex_store::{AdmissionContext, NoDerivations, Outcome};
 
 async fn admit_one(conn: &mut AdmissionContext, batch: &Batch) -> Outcome {
@@ -16,16 +17,14 @@ async fn admit_one(conn: &mut AdmissionContext, batch: &Batch) -> Outcome {
 
 /// One source-shaped record containing an array of outputs, all at its original offset.
 struct ArrayRecord;
-impl Parser for ArrayRecord {
+impl StatelessParser for ArrayRecord {
     type Record<'a> = serde_json::Map<String, Value>;
-    type Carry = ();
     type Payload = CommandImported;
     fn parse(
         &self,
         record: &Self::Record<'_>,
-        _: &(),
         _: &RecordContext<'_>,
-    ) -> std::result::Result<(Vec<CommandImported>, ()), RecordError> {
+    ) -> std::result::Result<Vec<CommandImported>, RecordError> {
         let commands = record["commands"]
             .as_array()
             .ok_or_else(|| RecordError::new("commands array"))?;
@@ -45,7 +44,7 @@ impl Parser for ArrayRecord {
                 })
             })
             .collect::<std::result::Result<Vec<_>, RecordError>>()?;
-        Ok((payloads, ()))
+        Ok(payloads)
     }
 }
 
@@ -62,7 +61,7 @@ async fn one_record_keeps_more_than_65535_outputs_and_their_citations(
     let material = MaterialId::new();
     let framed = [(0, bytes.len())];
     let chunks = drain(
-        &ArrayRecord,
+        &Stateless(ArrayRecord),
         DrainInput {
             source: "synthetic-array",
             class: Class::Open,

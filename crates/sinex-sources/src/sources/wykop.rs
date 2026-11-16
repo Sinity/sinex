@@ -14,23 +14,23 @@
 //! frontend reads it; read as UTC it would be an hour or two early.
 use crate::sources::fields;
 use serde_json::{Map, Value};
+use sinex_model::Timestamp;
 use sinex_model::event_types::media::BookmarkSaved;
 use sinex_model::event_types::social::{
     AccountSetting, NotificationReceived, PostPublished, VoteCast,
 };
-use sinex_model::{Class, Timestamp};
+use sinex_model::json::JsonExt;
+use sinex_source_core::discovery::{DiscoverySpec, Location};
 use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordError};
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
+use sinex_source_core::{Framer, RecordError, RecordResult, Stateless, StatelessParser, binding};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "social.wykop",
     origin: Origin::Input(Shape::ExportArchive),
     expect: Expectation::Export,
-    expires_after: None,
     purpose: "what the operator wrote and voted on at Wykop",
-    class: Class::Open,
     parser: "wykop",
     parser_version: 2,
     event_types: &[
@@ -40,10 +40,8 @@ pub const SPEC: SourceSpec = SourceSpec {
         "notification.received",
         "account.setting",
     ],
-    framer: sinex_source_core::Framer::export(
-        frame,
-        sinex_source_core::drivers::export_archive::Framing::Lines,
-    ),
+    framer: Framer::export(frame, Framing::Lines),
+    ..SourceSpec::DEFAULT
 };
 
 sinex_model::payload_enum! {
@@ -86,17 +84,15 @@ const KNOWN: &[&str] = &[
 
 pub struct WykopParser;
 
-impl Parser for WykopParser {
+impl StatelessParser for WykopParser {
     type Record<'a> = Map<String, Value>;
-    type Carry = ();
     type Payload = WykopEvent;
 
     fn parse(
         &self,
         row: &Map<String, Value>,
-        _: &(),
         _context: &sinex_source_core::RecordContext<'_>,
-    ) -> Result<(Vec<WykopEvent>, ()), RecordError> {
+    ) -> Result<Vec<WykopEvent>, RecordError> {
         let kind = fields::text(row, "kind")?;
         let id = |name: &str| -> Result<String, RecordError> {
             match row.get(name) {
@@ -111,8 +107,7 @@ impl Parser for WykopParser {
                 .transpose()
         };
         let tags = |name: &str| -> Vec<String> {
-            row.get(name)
-                .and_then(Value::as_array)
+            row.array(name)
                 .map(|a| {
                     a.iter()
                         .filter_map(|t| t.as_str().map(str::to_owned))
@@ -121,7 +116,7 @@ impl Parser for WykopParser {
                 .unwrap_or_default()
         };
         let text = |name: &str| fields::optional_text(row, name);
-        let int = |name: &str| row.get(name).and_then(Value::as_i64);
+        let int = |name: &str| row.i64(name);
         let extra = fields::extra(row, KNOWN);
         let post = |kind: &str, native_id, created_at, title, body, url, parent, tags, score| {
             WykopEvent::Post(PostPublished {
@@ -155,11 +150,11 @@ impl Parser for WykopParser {
             })
         };
         match kind.as_str() {
-            "action" => return Ok((action(row)?, ())),
+            "action" => return Ok(action(row)?),
             "notification" | "notification_group_item" => {
-                return Ok((vec![notification(row)?], ()));
+                return Ok(vec![notification(row)?]);
             }
-            "setting_item" => return Ok((vec![setting(row)?], ())),
+            "setting_item" => return Ok(vec![setting(row)?]),
             _ => {}
         }
         let event = match kind.as_str() {
@@ -234,7 +229,7 @@ impl Parser for WykopParser {
             ),
             other => return Err(RecordError::new(format!("unknown Wykop kind {other:?}"))),
         };
-        Ok((vec![event], ()))
+        Ok(vec![event])
     }
 }
 
@@ -243,7 +238,7 @@ impl Parser for WykopParser {
 const OPERATOR_ACCOUNTS: &[&str] = &["Sinity", "Ezoman"];
 
 fn object<'a>(row: &'a Map<String, Value>, name: &str) -> Option<&'a Map<String, Value>> {
-    row.get(name).and_then(Value::as_object)
+    row.object(name)
 }
 
 fn id_text(v: Option<&Value>) -> Option<String> {
@@ -272,7 +267,7 @@ fn optional_time(row: &Map<String, Value>, name: &str) -> Result<Option<Timestam
 /// item the operator commented on (nothing: the comment files carry it).
 fn action(row: &Map<String, Value>) -> Result<Vec<WykopEvent>, RecordError> {
     let resource = fields::text(row, "resource")?;
-    let id = id_text(row.get("id")).ok_or_else(|| RecordError::new("action without id"))?;
+    let id = id_text(row.get("id")).record("action without id")?;
     let slug = fields::optional_text(row, "slug");
     let url = item_url(&resource, &id, slug.as_deref());
     let created = optional_time(row, "created_at")?;
@@ -281,8 +276,7 @@ fn action(row: &Map<String, Value>) -> Result<Vec<WykopEvent>, RecordError> {
         .and_then(Value::as_str)
         .map(str::to_owned);
     let tags: Vec<String> = row
-        .get("tags")
-        .and_then(Value::as_array)
+        .array("tags")
         .map(|a| {
             a.iter()
                 .filter_map(|t| t.as_str().map(str::to_owned))
@@ -331,7 +325,7 @@ fn action(row: &Map<String, Value>) -> Result<Vec<WykopEvent>, RecordError> {
             extra: extra.clone(),
         }));
     }
-    match row.get("voted").and_then(Value::as_i64) {
+    match row.i64("voted") {
         Some(v) if v != 0 => out.push(WykopEvent::Vote(VoteCast {
             service: "wykop".into(),
             target_kind: resource.clone(),
@@ -347,7 +341,7 @@ fn action(row: &Map<String, Value>) -> Result<Vec<WykopEvent>, RecordError> {
         })),
         _ => {}
     }
-    if row.get("favourite").and_then(Value::as_bool) == Some(true) {
+    if row.bool("favourite") == Some(true) {
         out.push(WykopEvent::Saved(BookmarkSaved {
             service: "wykop".into(),
             native_id: format!("{resource}:{id}"),
@@ -371,13 +365,13 @@ fn action(row: &Map<String, Value>) -> Result<Vec<WykopEvent>, RecordError> {
 
 /// A tag notification: a new entry or link under an observed tag.
 fn notification(row: &Map<String, Value>) -> Result<WykopEvent, RecordError> {
-    let id = id_text(row.get("id")).ok_or_else(|| RecordError::new("notification without id"))?;
+    let id = id_text(row.get("id")).record("notification without id")?;
     let (target, target_url) = ["entry", "link"]
         .iter()
         .find_map(|r| {
             let o = object(row, r)?;
             let tid = id_text(o.get("id"))?;
-            let slug = o.get("slug").and_then(Value::as_str);
+            let slug = o.str("slug");
             Some((Some(format!("{r}:{tid}")), Some(item_url(r, &tid, slug))))
         })
         .unwrap_or((None, None));
@@ -398,7 +392,7 @@ fn notification(row: &Map<String, Value>) -> Result<WykopEvent, RecordError> {
         native_id: id,
         kind: fields::text(row, "type")?,
         created_at: optional_time(row, "created_at")?,
-        read: row.get("read").and_then(Value::as_i64).map(|r| r != 0),
+        read: row.i64("read").map(|r| r != 0),
         target,
         target_url,
         actor: object(row, "user")
@@ -424,7 +418,7 @@ fn setting(row: &Map<String, Value>) -> Result<WykopEvent, RecordError> {
     let value = ["username", "name", "domain", "url"]
         .iter()
         .find_map(|k| fields::optional_text(row, k))
-        .ok_or_else(|| RecordError::new(format!("{endpoint} item without a value")))?;
+        .record_with(|| format!("{endpoint} item without a value"))?;
     Ok(WykopEvent::Setting(AccountSetting {
         service: "wykop".into(),
         setting,
@@ -436,22 +430,13 @@ fn setting(row: &Map<String, Value>) -> Result<WykopEvent, RecordError> {
 /// `YYYY-MM-DD HH:MM:SS`, Warsaw local time.
 fn warsaw(raw: &str) -> Result<Timestamp, RecordError> {
     let civil = jiff::civil::DateTime::strptime("%Y-%m-%d %H:%M:%S", raw.trim())
-        .map_err(|e| RecordError::new(format!("invalid time {raw:?}: {e}")))?;
-    let tz = jiff::tz::TimeZone::get("Europe/Warsaw")
-        .map_err(|e| RecordError::new(format!("Europe/Warsaw: {e}")))?;
+        .record_with(|| format!("invalid time {raw:?}"))?;
+    let tz = jiff::tz::TimeZone::get("Europe/Warsaw").record("Europe/Warsaw")?;
     let zoned = tz
         .to_ambiguous_zoned(civil)
         .compatible()
-        .map_err(|e| RecordError::new(format!("{raw:?} in Warsaw: {e}")))?;
-    Timestamp::from_unix_ns(zoned.timestamp().as_nanosecond())
-        .map_err(|_| RecordError::new("time out of range"))
-}
-
-pub fn source() -> DeclaredSource<WykopParser> {
-    DeclaredSource {
-        spec: SPEC,
-        parser: WykopParser,
-    }
+        .record_with(|| format!("{raw:?} in Warsaw"))?;
+    Timestamp::from_unix_ns(zoned.timestamp().as_nanosecond()).record("time out of range")
 }
 
 pub fn frame(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
@@ -476,36 +461,13 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
 }
 
 /// `stage --parser wykop PATH`: each of the account's own Wykop export files in PATH.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "wykop",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "input",
-                path: "wykop",
-            }],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SPEC],
-        plan: Some(|input, settings| {
-            Ok(sinex_source_core::binding::per_file(
-                &SPEC, input, settings, false, is_own,
-            ))
-        }),
-        source: |_| Ok(Box::new(source())),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::shared(driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: None,
-    };
+super::input_format! { pub FORMAT = "wykop" {
+    specs: [SPEC],
+    parser: |_b| Stateless(WykopParser),
+    discovery: DiscoverySpec::system(&[Location::new("input", "wykop")]),
+    plan: |input, settings| Ok(binding::per_file(&SPEC, input, settings, false, is_own)),
+    reader: shared(driver),
+} }
 
 #[cfg(test)]
 mod tests;

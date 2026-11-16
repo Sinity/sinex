@@ -3,27 +3,22 @@
 //! `read` (`Date Read`); both are days. ISBNs come wrapped as `="…"`, and an
 //! unrated book has rating 0.
 use crate::sources::fields;
-use sinex_model::Class;
 use sinex_model::event_types::media::BookStatus;
+use sinex_source_core::discovery::{DiscoverySpec, Location};
 use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordError};
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
+use sinex_source_core::{Framer, Parser, RecordError, RecordResult};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "reading.goodreads",
     origin: Origin::Input(Shape::ExportArchive),
     expect: Expectation::Export,
-    expires_after: None,
     purpose: "books shelved and read, for long-horizon interest",
-    class: Class::Open,
     parser: "goodreads-library",
-    parser_version: 1,
     event_types: &["book.status"],
-    framer: sinex_source_core::Framer::export(
-        frame,
-        sinex_source_core::drivers::export_archive::Framing::Csv,
-    ),
+    framer: Framer::export(frame, Framing::Csv),
+    ..SourceSpec::DEFAULT
 };
 
 pub struct GoodreadsParser;
@@ -53,8 +48,8 @@ impl Parser for GoodreadsParser {
                 .filter(|c| !c.is_empty())
         };
         let int = |name: &str| get(name).and_then(|v| v.parse::<i64>().ok());
-        let book_id = get("Book Id").ok_or_else(|| RecordError::new("row without a Book Id"))?;
-        let title = get("Title").ok_or_else(|| RecordError::new("row without a Title"))?;
+        let book_id = get("Book Id").record("row without a Book Id")?;
+        let title = get("Title").record("row without a Title")?;
         let added = get("Date Added")
             .map(|d| fields::day(&d))
             .transpose()?
@@ -111,13 +106,6 @@ fn unwrap_formula(cell: &str) -> String {
         .to_owned()
 }
 
-pub fn source() -> DeclaredSource<GoodreadsParser> {
-    DeclaredSource {
-        spec: SPEC,
-        parser: GoodreadsParser,
-    }
-}
-
 pub fn frame(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
     Framing::Csv.frame(bytes, true)
 }
@@ -133,40 +121,13 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
 }
 
 /// `stage --parser goodreads PATH`: each Goodreads export in PATH.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "goodreads",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "input",
-                path: "goodreads",
-            }],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SPEC],
-        plan: Some(|input, settings| {
-            Ok(sinex_source_core::binding::per_file(
-                &SPEC,
-                input,
-                settings,
-                false,
-                sinex_source_core::binding::any,
-            ))
-        }),
-        source: |_| Ok(Box::new(source())),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::shared(driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: None,
-    };
+super::input_format! { pub FORMAT = "goodreads" {
+    specs: [SPEC],
+    parser: |_b| GoodreadsParser,
+    discovery: DiscoverySpec::system(&[Location::new("input", "goodreads")]),
+    plan: per_file,
+    reader: shared(driver),
+} }
 
 #[cfg(test)]
 mod tests;

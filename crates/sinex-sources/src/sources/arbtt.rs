@@ -21,11 +21,13 @@
 //!
 //! Times are UTC: Lynchpin's materialized view read them as local time and is
 //! two hours late in summer.
+use crate::sources::input_format;
+use sinex_model::Timestamp;
 use sinex_model::event_types::desktop::{SampledWindow, WindowSampled};
-use sinex_model::{Class, Timestamp};
+use sinex_source_core::discovery::{DiscoverySpec, Location};
 use sinex_source_core::drivers::append_file::AppendFile;
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordError};
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
+use sinex_source_core::{Parser, RecordError, RecordResult, binding};
 use std::path::PathBuf;
 
 const MAGIC: &[u8] = b"arbtt-timelog-v1\n";
@@ -34,13 +36,11 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "desktop.arbtt",
     origin: Origin::Input(Shape::AppendFile),
     expect: Expectation::continuous_days(2),
-    expires_after: None,
     purpose: "which window was in use, sampled every interval",
-    class: Class::Open,
     parser: "arbtt-timelog-v1",
-    parser_version: 1,
     event_types: &["window.sampled"],
     framer: sinex_source_core::Framer::incremental(frame),
+    ..SourceSpec::DEFAULT
 };
 
 /// The previous sample's strings, which a reference byte indexes.
@@ -87,7 +87,7 @@ impl Reader<'_> {
             .pos
             .checked_add(n)
             .filter(|e| *e <= self.bytes.len())
-            .ok_or_else(|| RecordError::new("truncated sample"))?;
+            .record("truncated sample")?;
         let out = &self.bytes[self.pos..end];
         self.pos = end;
         Ok(out)
@@ -113,8 +113,7 @@ impl Reader<'_> {
             }
             1 => {
                 let sign = self.u8()?;
-                let n =
-                    usize::try_from(self.u64()?).map_err(|_| RecordError::new("huge Integer"))?;
+                let n = usize::try_from(self.u64()?).record("huge Integer")?;
                 if n > 15 {
                     return Err(RecordError::new(format!("an Integer of {n} digits")));
                 }
@@ -131,13 +130,10 @@ impl Reader<'_> {
 
     /// A literal string: a count of characters, then their UTF-8 bytes.
     fn literal(&mut self) -> Result<String, RecordError> {
-        let chars = usize::try_from(self.u64()?).map_err(|_| RecordError::new("huge string"))?;
+        let chars = usize::try_from(self.u64()?).record("huge string")?;
         let mut out = String::new();
         for _ in 0..chars {
-            let first = *self
-                .bytes
-                .get(self.pos)
-                .ok_or_else(|| RecordError::new("truncated string"))?;
+            let first = *self.bytes.get(self.pos).record("truncated string")?;
             let len = match first {
                 0x00..=0x7f => 1,
                 0xc0..=0xdf => 2,
@@ -145,8 +141,7 @@ impl Reader<'_> {
                 0xf0..=0xf7 => 4,
                 _ => return Err(RecordError::new("invalid UTF-8 in a string")),
             };
-            let c = std::str::from_utf8(self.take(len)?)
-                .map_err(|_| RecordError::new("invalid UTF-8 in a string"))?;
+            let c = std::str::from_utf8(self.take(len)?).record("invalid UTF-8 in a string")?;
             out.push_str(c);
         }
         Ok(out)
@@ -158,11 +153,11 @@ impl Reader<'_> {
         match self.u8()? {
             0 => self.literal(),
             i => match previous {
-                Some(strings) => strings.get(usize::from(i) - 1).cloned().ok_or_else(|| {
-                    RecordError::new(format!(
+                Some(strings) => strings.get(usize::from(i) - 1).cloned().record_with(|| {
+                    format!(
                         "reference {i} to the previous sample, which has {} strings",
                         strings.len()
-                    ))
+                    )
                 }),
                 None => Ok(String::new()),
             },
@@ -212,13 +207,12 @@ impl Reader<'_> {
         }
         // Modified Julian Day 40587 is 1970-01-01.
         let secs_ns = (day - 40_587) * 86_400 * 1_000_000_000 + num * 1_000_000_000 / den;
-        let sampled_at = Timestamp::from_unix_ns(secs_ns)
-            .map_err(|_| RecordError::new("sample time out of range"))?;
+        let sampled_at = Timestamp::from_unix_ns(secs_ns).record("sample time out of range")?;
         let active = windows.iter().find(|w| w.active);
         let sample = WindowSampled {
             sampled_at,
-            rate_ms: i64::try_from(rate).map_err(|_| RecordError::new("rate out of range"))?,
-            idle_ms: i64::try_from(idle).map_err(|_| RecordError::new("idle out of range"))?,
+            rate_ms: i64::try_from(rate).record("rate out of range")?,
+            idle_ms: i64::try_from(idle).record("idle out of range")?,
             active_title: active.map(|w| w.title.clone()),
             active_program: active.map(|w| w.program.clone()),
             desktop: Some(desktop).filter(|d| !d.is_empty()),
@@ -253,13 +247,6 @@ pub fn frame(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
     (records, pos)
 }
 
-pub fn source() -> DeclaredSource<ArbttParser> {
-    DeclaredSource {
-        spec: SPEC,
-        parser: ArbttParser,
-    }
-}
-
 pub fn driver(path: PathBuf, host: String) -> AppendFile {
     AppendFile {
         path,
@@ -269,40 +256,17 @@ pub fn driver(path: PathBuf, host: String) -> AppendFile {
 }
 
 /// `stage --parser arbtt PATH`: each ARBTT `capture.log` under PATH.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "arbtt",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "home",
-                path: ".arbtt/capture.log",
-            }],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SPEC],
-        plan: Some(|input, settings| {
-            Ok(sinex_source_core::binding::per_file(
-                &SPEC,
-                input,
-                settings,
-                true,
-                |p| p.file_name().is_some_and(|n| n == "capture.log"),
-            ))
-        }),
-        source: |_| Ok(Box::new(source())),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::appended(driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: None,
-    };
+input_format! { pub FORMAT = "arbtt" {
+    specs: [SPEC],
+    parser: |_b| ArbttParser,
+    discovery: DiscoverySpec::system(&[Location::new("home", ".arbtt/capture.log")]),
+    plan: |input, settings| {
+        Ok(binding::per_file(&SPEC, input, settings, true, |p| {
+            p.file_name().is_some_and(|n| n == "capture.log")
+        }))
+    },
+    reader: appended(driver),
+} }
 
 #[cfg(test)]
 mod tests;

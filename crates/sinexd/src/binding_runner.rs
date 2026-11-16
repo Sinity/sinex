@@ -546,7 +546,10 @@ pub(crate) async fn run(
             &mut bindings.readers,
             &mut rounds,
             stop.clone(),
-            crate::material_access::Access::default(),
+            crate::material_access::Access {
+                recipient: writer.class_recipient.as_deref(),
+                unlock: None,
+            },
             crate::stage::ReadMode::Once,
             &mut |binding, result| {
                 let key = format!("binding {binding}");

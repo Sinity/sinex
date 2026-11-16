@@ -77,3 +77,27 @@ fn a_new_member_starts_with_its_header() {
     assert!(events.is_empty());
     assert_eq!(next.member, "posts.csv");
 }
+
+#[devkit::test]
+fn invalid_timestamp_is_a_record_error() {
+    let manifest = sinex_model::Manifest::from_json(json!({"path": "comments.csv"}));
+    let context = RecordContext {
+        manifest: &manifest,
+        member: None,
+    };
+    let (_, carry) = RedditParser
+        .parse(
+            &&b"id,permalink,date,ip,subreddit,gildings,link,parent,body,media\n"[..],
+            &Carry::default(),
+            &context,
+        )
+        .unwrap();
+    let error = RedditParser
+        .parse(
+            &&b"abc,,not-a-date,,Science,0,,,body,\n"[..],
+            &carry,
+            &context,
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("invalid time"));
+}

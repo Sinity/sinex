@@ -42,3 +42,6 @@ pub fn place(from: &Path, to: &Path) -> io::Result<()> {
     std::fs::rename(from, to)?;
     File::open(to.parent().unwrap_or(Path::new(".")))?.sync_all()
 }
+
+#[cfg(test)]
+mod tests;

@@ -72,8 +72,8 @@ fn updates_after(
 
 fn parse(record: &Map<String, Value>) -> Result<GitRecord, RecordError> {
     GitParser
-        .parse(record, &(), &sinex_source_core::RecordContext::none())
-        .map(|(mut out, ())| out.remove(0))
+        .parse(record, &sinex_source_core::RecordContext::none())
+        .map(|mut out| out.remove(0))
 }
 
 #[devkit::test]

@@ -157,3 +157,76 @@ fn dbus_notification_with_delivery_hint_records_signal_origin() {
     let (events, _) = read(&[(1.0, NOTIFY), (1.1, &reply(41, ":1.9", 7))]);
     assert!(shown(&events[0]).extra.is_empty());
 }
+
+fn recorded(lines: &[&str]) -> Vec<sinex_model::Event> {
+    use sinex_model::{Manifest, MaterialId, ReadingOrder, RecordOutcome};
+    use sinex_source_core::{DrainInput, Limits, Source};
+    let mut bytes = Vec::new();
+    for (i, line) in lines.iter().enumerate() {
+        bytes.extend(live_stream::frame(
+            Timestamp::from_unix_ns(i as i128 + 1).unwrap(),
+            line.as_bytes(),
+        ));
+        bytes.push(b'\n');
+    }
+    let records = SPEC.framer.frame(&bytes).0;
+    DeclaredSource {
+        spec: SPEC,
+        parser: NotificationsParser,
+    }
+    .drain(DrainInput {
+        source: SPEC.name,
+        class: SPEC.class,
+        material: MaterialId::new(),
+        bytes: bytes.as_slice().into(),
+        records: &records,
+        carry: Value::Null,
+        reading_order: &|offset| ReadingOrder(offset as i64),
+        limits: Limits::default(),
+        manifest: &Manifest::from_json(serde_json::json!({})),
+    })
+    .unwrap()
+    .into_iter()
+    .flat_map(|chunk| chunk.outcomes)
+    .flat_map(|outcome| match outcome {
+        RecordOutcome::Events { events, .. } => events,
+        RecordOutcome::Failure { reason, .. } => panic!("{reason}"),
+    })
+    .collect()
+}
+
+#[devkit::test]
+fn same_summary_different_body_are_two_events() {
+    let notification = |body| {
+        serde_json::json!({
+        "type": "method_call", "member": "Notify",
+        "payload": {"type": "susssasa{sv}i", "data": ["mail", 0, "", "New mail", body, [], {}, -1]}
+    }).to_string()
+    };
+    let first = notification("first body");
+    let second = notification("second body");
+    let events = recorded(&[&first, &second]);
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].payload["summary"], "New mail");
+    assert_eq!(events[1].payload["summary"], "New mail");
+    assert_eq!(events[0].payload["body"], "first body");
+    assert_eq!(events[1].payload["body"], "second body");
+    assert_eq!(events[0].equivalence_key, None);
+    assert_eq!(events[1].equivalence_key, None);
+    assert_ne!(events[0].location(), events[1].location());
+}
+
+#[devkit::test]
+fn reused_id_closes_are_two_events() {
+    let closed =
+        r#"{"type":"signal","member":"NotificationClosed","payload":{"type":"uu","data":[12,2]}}"#;
+    let events = recorded(&[closed, closed]);
+    assert_eq!(events.len(), 2);
+    for event in &events {
+        assert_eq!(event.event_type, "notification.closed");
+        assert_eq!(event.payload["notification_id"], 12);
+        assert_eq!(event.payload["reason"], "dismissed");
+        assert_eq!(event.equivalence_key, None);
+    }
+    assert_ne!(events[0].location(), events[1].location());
+}

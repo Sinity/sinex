@@ -6,27 +6,22 @@
 //! device and instant.
 use crate::sources::fields;
 use serde_json::{Map, Value};
-use sinex_model::Class;
 use sinex_model::event_types::account::LocationSample;
+use sinex_model::json::JsonExt;
 use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
 use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordError};
+use sinex_source_core::{Framer, RecordError, RecordResult, Stateless, StatelessParser};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "google.location-history",
     origin: Origin::Input(Shape::ExportArchive),
     expect: Expectation::Export,
-    expires_after: None,
     purpose: "where the operator was",
-    class: Class::Open,
     parser: "google-location-history",
-    parser_version: 1,
     event_types: &["location.sample"],
-    framer: sinex_source_core::Framer::export(
-        frame,
-        sinex_source_core::drivers::export_archive::Framing::JsonArray("/locations"),
-    ),
+    framer: Framer::export(frame, Framing::JsonArray("/locations")),
+    ..SourceSpec::DEFAULT
 };
 
 const KNOWN: &[&str] = &[
@@ -44,62 +39,54 @@ const KNOWN: &[&str] = &[
 
 pub struct LocationParser;
 
-impl Parser for LocationParser {
+impl StatelessParser for LocationParser {
     type Record<'a> = Map<String, Value>;
-    type Carry = ();
     type Payload = LocationSample;
 
     fn parse(
         &self,
         fix: &Map<String, Value>,
-        _: &(),
         _context: &sinex_source_core::RecordContext<'_>,
-    ) -> Result<(Vec<LocationSample>, ()), RecordError> {
+    ) -> Result<Vec<LocationSample>, RecordError> {
         let at = match fix.get("timestampMs") {
-            Some(Value::String(ms)) => fields::from_unix_ms(
-                ms.parse()
-                    .map_err(|_| RecordError::new(format!("timestampMs {ms:?}")))?,
-            )?,
-            Some(Value::Number(n)) => fields::from_unix_ms(
-                n.as_i64()
-                    .ok_or_else(|| RecordError::new("timestampMs out of range"))?,
-            )?,
+            Some(Value::String(ms)) => {
+                fields::from_unix_ms(ms.parse().record_with(|| format!("timestampMs {ms:?}"))?)?
+            }
+            Some(Value::Number(n)) => {
+                fields::from_unix_ms(n.as_i64().record("timestampMs out of range")?)?
+            }
             _ => fields::rfc3339(&fields::text(fix, "timestamp")?)?,
         };
         let e7 = |name: &str| -> Result<f64, RecordError> {
-            fix.get(name)
-                .and_then(Value::as_i64)
+            fix.i64(name)
                 .map(|v| v as f64 / 1e7)
-                .ok_or_else(|| RecordError::new(format!("fix without {name}")))
+                .record_with(|| format!("fix without {name}"))
         };
-        let num = |name: &str| fix.get(name).and_then(Value::as_f64);
+        let num = |name: &str| fix.f64(name);
         let device = fix.get("deviceTag").map(|d| match d {
             Value::String(s) => s.clone(),
             other => other.to_string(),
         });
-        Ok((
-            vec![LocationSample {
-                provider: "google".into(),
-                device,
-                at,
-                latitude: e7("latitudeE7")?,
-                longitude: e7("longitudeE7")?,
-                accuracy_m: num("accuracy"),
-                altitude_m: num("altitude"),
-                velocity_mps: num("velocity"),
-                heading_deg: num("heading"),
-                activity: fix.get("activity").cloned(),
-                extra: fields::extra(fix, KNOWN),
-            }],
-            (),
-        ))
+        Ok(vec![LocationSample {
+            provider: "google".into(),
+            device,
+            at,
+            latitude: e7("latitudeE7")?,
+            longitude: e7("longitudeE7")?,
+            accuracy_m: num("accuracy"),
+            altitude_m: num("altitude"),
+            velocity_mps: num("velocity"),
+            heading_deg: num("heading"),
+            activity: fix.get("activity").cloned(),
+            extra: fields::extra(fix, KNOWN),
+        }])
     }
 }
 
-pub fn source() -> DeclaredSource<LocationParser> {
+pub fn source() -> DeclaredSource<Stateless<LocationParser>> {
     DeclaredSource {
         spec: SPEC,
-        parser: LocationParser,
+        parser: Stateless(LocationParser),
     }
 }
 

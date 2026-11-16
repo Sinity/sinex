@@ -7,8 +7,8 @@ fn row(value: Value) -> Map<String, Value> {
 }
 
 fn parse(table: &'static str, row: &Map<String, Value>) -> Result<Telemetry, RecordError> {
-    let (mut payloads, ()) =
-        TelemetryParser { table }.parse(row, &(), &sinex_source_core::RecordContext::none())?;
+    let mut payloads =
+        TelemetryParser { table }.parse(row, &sinex_source_core::RecordContext::none())?;
     assert_eq!(payloads.len(), 1, "one event per row");
     Ok(payloads.remove(0))
 }

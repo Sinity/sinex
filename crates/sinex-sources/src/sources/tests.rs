@@ -38,8 +38,11 @@ fn a_shared_source_name_resolves_by_parser() {
         .into_iter()
         .find(|s| s.name == "desktop.clipboard" && s.parser.starts_with("sinnix-lake:"))
         .expect("the lake's clipboard lane");
-    let b =
-        sinex_source_core::Binding::of(lake, std::path::Path::new("/realm"), Settings::new("h"));
+    let b = sinex_source_core::Binding::of(
+        lake,
+        std::path::Path::new("/workspace/lake"),
+        Settings::new("h"),
+    );
     assert_eq!(source_for(&b).unwrap().spec().parser, lake.parser);
     assert_eq!(
         format_of_source(lake.name, lake.parser).unwrap().name,

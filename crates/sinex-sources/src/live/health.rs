@@ -1,5 +1,6 @@
 //! Local capture health is refreshed independently of bus requests.
 use super::*;
+use sinex_model::json::JsonExt;
 use sinex_source_core::drivers::spool_health::{self, Backlog, Counter, Counts};
 use std::io::{BufRead, Seek};
 
@@ -17,7 +18,7 @@ fn backlog(
     let mut records = 0u64;
     let result = (|| -> std::io::Result<()> {
         if media {
-            let last = cursor.get("last").and_then(Value::as_str);
+            let last = cursor.str("last");
             for (stem, path) in sinex_source_core::drivers::media::complete(&binding.input)? {
                 if last.is_none_or(|last| stem.as_str() > last) {
                     let length = match std::fs::metadata(path) {
@@ -41,7 +42,7 @@ fn backlog(
                 }
             }
         } else {
-            let segment = cursor.get("segment").and_then(Value::as_u64).unwrap_or(0);
+            let segment = cursor.u64("segment").unwrap_or(0);
             let offset = cursor
                 .pointer("/inner/offset")
                 .and_then(Value::as_u64)
@@ -61,7 +62,7 @@ fn backlog(
                 let length = file.metadata()?.len().saturating_sub(start);
                 let recover_through = recovering
                     .map(|cursor| {
-                        let segment = cursor.get("segment").and_then(Value::as_u64).unwrap_or(0);
+                        let segment = cursor.u64("segment").unwrap_or(0);
                         if index < segment {
                             length
                         } else if index == segment {

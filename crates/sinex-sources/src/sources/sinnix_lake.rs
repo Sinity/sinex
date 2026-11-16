@@ -3,11 +3,13 @@
 //! relative to the lake root and the accepted envelope lanes. An unbound lane
 //! is a record failure. Stream-owned lanes keep `lake.observed`; the other
 //! lanes produce domain events, one per observed record or listed device.
+use crate::sources::input_format;
 use serde_json::{Map, Value};
-use sinex_model::{Class, Timestamp};
-use sinex_source_core::drivers::append_file::{AppendFile, lines};
+use sinex_model::{Class, Timestamp, json::JsonExt};
+use sinex_source_core::discovery::{DiscoverySpec, Location};
+use sinex_source_core::drivers::append_file::AppendFile;
 use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordError};
+use sinex_source_core::{Parser, RecordError, RecordResult, binding};
 use std::path::{Path, PathBuf};
 
 /// One catalog source of the lake: the directories it is written to and the
@@ -33,7 +35,6 @@ const fn spec(
         origin: Origin::Input(Shape::AppendFile),
         // Lanes sampled while their capture runs; event-driven lanes override it.
         expect: Expectation::continuous_days(2),
-        expires_after: None,
         purpose,
         // The class of each lane is the operator's to choose; minimum classes raise it
         // without a code change.
@@ -41,7 +42,8 @@ const fn spec(
         parser,
         parser_version: 4,
         event_types,
-        framer: sinex_source_core::Framer::incremental(lines),
+        framer: sinex_source_core::Framer::LINES,
+        ..SourceSpec::DEFAULT
     }
 }
 
@@ -218,7 +220,7 @@ struct Envelope {
 }
 
 fn envelope(record: &Map<String, Value>, source: &LakeSource) -> Result<Envelope, RecordError> {
-    match record.get("schema").and_then(Value::as_str) {
+    match record.str("schema") {
         Some("sinnix-capture-v1") => {}
         other => {
             return Err(RecordError::new(format!(
@@ -226,13 +228,10 @@ fn envelope(record: &Map<String, Value>, source: &LakeSource) -> Result<Envelope
             )));
         }
     }
-    if record.get("schema_version").and_then(Value::as_i64) != Some(1) {
+    if record.i64("schema_version") != Some(1) {
         return Err(RecordError::new("envelope schema_version is not 1"));
     }
-    let lane = record
-        .get("lane")
-        .and_then(Value::as_str)
-        .ok_or_else(|| RecordError::new("envelope has no lane"))?;
+    let lane = record.str("lane").record("envelope has no lane")?;
     if !source.lane_values.contains(&lane) {
         return Err(RecordError::new(format!(
             "lane {lane:?} is not bound to {} (accepted: {})",
@@ -240,14 +239,10 @@ fn envelope(record: &Map<String, Value>, source: &LakeSource) -> Result<Envelope
             source.lane_values.join(", ")
         )));
     }
-    if record
-        .get("host")
-        .and_then(Value::as_str)
-        .is_none_or(str::is_empty)
-    {
+    if record.str("host").is_none_or(str::is_empty) {
         return Err(RecordError::new("envelope host is not a nonempty string"));
     }
-    if record.get("seq").and_then(Value::as_u64).is_none() {
+    if record.u64("seq").is_none() {
         return Err(RecordError::new("envelope seq is not an unsigned integer"));
     }
     if record
@@ -256,10 +251,7 @@ fn envelope(record: &Map<String, Value>, source: &LakeSource) -> Result<Envelope
     {
         return Err(RecordError::new("envelope raw_ref is not a string or null"));
     }
-    let ts = record
-        .get("ts")
-        .and_then(Value::as_f64)
-        .ok_or_else(|| RecordError::new("envelope has no ts"))?;
+    let ts = record.f64("ts").record("envelope has no ts")?;
     Ok(Envelope {
         lane: lane.to_owned(),
         host: record["host"].as_str().expect("validated host").to_owned(),
@@ -270,11 +262,8 @@ fn envelope(record: &Map<String, Value>, source: &LakeSource) -> Result<Envelope
         payload: record
             .get("payload")
             .cloned()
-            .ok_or_else(|| RecordError::new("envelope has no payload"))?,
-        raw_ref: record
-            .get("raw_ref")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
+            .record("envelope has no payload")?,
+        raw_ref: record.str("raw_ref").map(str::to_owned),
     })
 }
 
@@ -319,13 +308,6 @@ pub fn lake_source(name: &str) -> Option<&'static LakeSource> {
     LAKE_SOURCES.iter().find(|l| l.spec.name == name)
 }
 
-pub fn source(lake_source: &'static LakeSource) -> DeclaredSource<EnvelopeParser> {
-    DeclaredSource {
-        spec: lake_source.spec.clone(),
-        parser: EnvelopeParser { lake_source },
-    }
-}
-
 /// The source's day files (`L-YYYYMMDD.jsonl`) under `root` for `host`, in
 /// name order. The index, sequence, lock and high-water files are not material.
 fn day_files(root: &Path, host: &str, source: &LakeSource) -> Result<Vec<PathBuf>, String> {
@@ -360,7 +342,7 @@ pub fn driver(path: PathBuf, host: String) -> AppendFile {
     AppendFile {
         path,
         host,
-        framer: sinex_source_core::Framer::incremental(lines),
+        framer: sinex_source_core::Framer::LINES,
     }
 }
 
@@ -374,47 +356,30 @@ fn lake_source_of(b: &sinex_source_core::binding::Binding) -> Result<&'static La
 
 /// `stage --parser sinnix-lake ROOT`: every lane's day files under the lake root;
 /// each lane's directories are its configuration.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "sinnix-lake",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "declared",
-                path: "realm",
-            }],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || LAKE_SOURCES.iter().map(|l| &l.spec).collect(),
-        plan: Some(|input, settings| {
-            std::fs::read_dir(input).map_err(|error| format!("{}: {error}", input.display()))?;
-            let mut bindings = Vec::new();
-            for source in LAKE_SOURCES {
-                bindings.extend(day_files(input, &settings.host, source)?.into_iter().map(
-                    |file| {
-                        sinex_source_core::binding::Binding::of(
-                            &source.spec,
-                            &file,
-                            settings.clone(),
-                        )
-                    },
-                ));
-            }
-            Ok(bindings)
-        }),
-        source: |b| Ok(Box::new(source(lake_source_of(b)?))),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::appended(driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: None,
-    };
+input_format! { pub FORMAT = "sinnix-lake" {
+    specs: || LAKE_SOURCES.iter().map(|l| &l.spec).collect(),
+    source: |b| {
+        let lake_source = lake_source_of(b)?;
+        Ok(Box::new(DeclaredSource {
+            spec: lake_source.spec.clone(),
+            parser: EnvelopeParser { lake_source },
+        }))
+    },
+    discovery: DiscoverySpec::system(&[Location::new("declared", "realm")]),
+    plan: |input, settings| {
+        std::fs::read_dir(input).map_err(|error| format!("{}: {error}", input.display()))?;
+        let mut bindings = Vec::new();
+        for source in LAKE_SOURCES {
+            bindings.extend(
+                day_files(input, &settings.host, source)?
+                    .into_iter()
+                    .map(|file| binding::Binding::of(&source.spec, &file, settings.clone())),
+            );
+        }
+        Ok(bindings)
+    },
+    reader: appended(driver),
+} }
 
 mod lanes;
 

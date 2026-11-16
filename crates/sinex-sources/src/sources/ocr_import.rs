@@ -1,12 +1,12 @@
 //! Explicit OCR imports preserve provider confidence scales and geometry.
 use super::transcript::{Carry, identifier, optional_number, optional_string, required_string};
+use crate::sources::input_format;
 use serde_json::{Map, Value};
 use sinex_model::Class;
 use sinex_model::event_types::imported_text::{BoundingBox, OcrText};
-use sinex_source_core::binding::{Binding, InputFormat};
 use sinex_source_core::drivers::export_archive::Framing;
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordContext, RecordError};
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
+use sinex_source_core::{Parser, RecordContext, RecordError, RecordResult};
 
 #[derive(Clone, Copy)]
 pub enum Format {
@@ -25,13 +25,12 @@ pub const fn spec(parser: &'static str, framing: Framing, frame: Frame) -> Sourc
         name: "media.ocr-imports",
         origin: Origin::Input(Shape::ExportArchive),
         expect: Expectation::Export,
-        expires_after: None,
         purpose: "imported OCR text and geometry",
         class: Class::Guarded,
         parser,
-        parser_version: 1,
         event_types: &["ocr.text"],
         framer: sinex_source_core::Framer::export(frame, framing),
+        ..SourceSpec::DEFAULT
     }
 }
 pub const JSON: SourceSpec = spec(
@@ -57,8 +56,7 @@ impl OcrParser {
         carry: &Carry,
         context: &RecordContext<'_>,
     ) -> Result<(Vec<OcrText>, Carry), RecordError> {
-        let text =
-            std::str::from_utf8(record).map_err(|_| RecordError::new("OCR input is not UTF-8"))?;
+        let text = std::str::from_utf8(record).record("OCR input is not UTF-8")?;
         let mut carry = carry.at(context);
         let mut payload = OcrText {
             input: super::transcript::input_identity(&self.input, context),
@@ -77,8 +75,8 @@ impl OcrParser {
                 ));
             }
             Format::Json => {
-                let mut object: Map<String, Value> = serde_json::from_str(text)
-                    .map_err(|e| RecordError::new(format!("OCR object: {e}")))?;
+                let mut object: Map<String, Value> =
+                    serde_json::from_str(text).record("OCR object")?;
                 for key in [
                     "engine",
                     "external_run",
@@ -161,9 +159,8 @@ impl OcrParser {
                 }
                 for key in ["left", "top", "width", "height", "conf"] {
                     let text = required_string(&mut values, key)?;
-                    let number: serde_json::Number = text
-                        .parse()
-                        .map_err(|_| RecordError::new(format!("invalid TSV {key}")))?;
+                    let number: serde_json::Number =
+                        text.parse().record_with(|| format!("invalid TSV {key}"))?;
                     if key == "conf" && number.as_i64() == Some(-1) {
                         continue;
                     }
@@ -201,7 +198,7 @@ impl OcrParser {
             let values = value
                 .as_array()
                 .filter(|v| v.len() == 4)
-                .ok_or_else(|| RecordError::new("bbox must have left, top, width, height"))?;
+                .record("bbox must have left, top, width, height")?;
             for (key, value) in ["left", "top", "width", "height"].into_iter().zip(values) {
                 if object.insert(key.into(), value.clone()).is_some() {
                     return Err(RecordError::new("duplicate bounding box coordinates"));
@@ -228,7 +225,7 @@ impl OcrParser {
                     height,
                     units: units
                         .filter(|s| !s.is_empty())
-                        .ok_or_else(|| RecordError::new("bounding box needs coordinate_units"))?,
+                        .record("bounding box needs coordinate_units")?,
                 })
             }
             _ => return Err(RecordError::new("incomplete or negative bounding box size")),
@@ -243,45 +240,46 @@ fn unsigned(object: &mut Map<String, Value>, key: &str) -> Result<Option<u64>, R
         Some(v) => v
             .as_u64()
             .map(Some)
-            .ok_or_else(|| RecordError::new(format!("invalid {key}"))),
+            .record_with(|| format!("invalid {key}")),
     }
 }
 fn tsv_unsigned(object: &mut Map<String, Value>, key: &str) -> Result<u64, RecordError> {
     required_string(object, key)?
         .parse()
-        .map_err(|_| RecordError::new(format!("invalid TSV {key}")))
+        .record_with(|| format!("invalid TSV {key}"))
 }
-fn source(
-    binding: &Binding,
-    format: Format,
-    spec: SourceSpec,
-) -> Result<Box<dyn sinex_source_core::Source>, String> {
-    Ok(Box::new(DeclaredSource {
-        spec,
-        parser: OcrParser {
-            input: binding.input.display().to_string(),
-            format,
-        },
-    }))
-}
-macro_rules! input_format {
-    ($name:ident, $spec:ident, $format:ident, $framing:expr) => {
-        pub const $name: InputFormat = InputFormat {
-            name: $spec.parser,
-            accepts: &[],
-            discovery: super::transcript::discovery::spec(false),
-            discover: super::transcript::discovery::discover,
-            specs: || vec![&$spec],
-            plan: Some(|p, s| super::transcript::plan(&$spec, p, s)),
-            source: |b| source(b, Format::$format, $spec),
-            reader: Some(|b| Ok(super::transcript::archive(b, $framing))),
-            capture: None,
-        };
-    };
-}
-input_format!(JSON_FORMAT, JSON, Json, super::transcript::JSON_FRAMING);
-input_format!(TSV_FORMAT, TSV, Tsv, Framing::Lines);
-input_format!(TEXT_FORMAT, TEXT, Text, Framing::Lines);
+input_format! { pub JSON_FORMAT = "ocr-json" {
+    specs: [JSON],
+    parser: |b| OcrParser { format: Format::Json, input: b.input.display().to_string() },
+    discovery: super::transcript::discovery::spec(false),
+    discover: super::transcript::discovery::discover,
+    plan: |input, settings| super::transcript::plan(&JSON, input, settings),
+    reader: |b| {
+        Ok(super::transcript::archive(
+            b,
+            super::transcript::JSON_FRAMING,
+        ))
+    },
+} }
+
+input_format! { pub TSV_FORMAT = "ocr-tsv" {
+    specs: [TSV],
+    parser: |b| OcrParser { format: Format::Tsv, input: b.input.display().to_string() },
+    discovery: super::transcript::discovery::spec(false),
+    discover: super::transcript::discovery::discover,
+    plan: |input, settings| super::transcript::plan(&TSV, input, settings),
+    reader: |b| Ok(super::transcript::archive(b, Framing::Lines)),
+} }
+
+input_format! { pub TEXT_FORMAT = "ocr-text" {
+    specs: [TEXT],
+    parser: |b| OcrParser { format: Format::Text, input: b.input.display().to_string() },
+    discovery: super::transcript::discovery::spec(false),
+    discover: super::transcript::discovery::discover,
+    plan: |input, settings| super::transcript::plan(&TEXT, input, settings),
+    reader: |b| Ok(super::transcript::archive(b, Framing::Lines)),
+} }
+
 #[cfg(test)]
 mod tests;
 impl Parser for OcrParser {

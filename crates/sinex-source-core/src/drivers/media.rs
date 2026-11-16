@@ -11,6 +11,7 @@ use super::{Acquired, DriverError, NewMaterial};
 use crate::binding::Reader;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sinex_model::json::JsonExt;
 use sinex_model::{InputRef, MaterialId, ObservationFacts, RevisionChange, Timestamp};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
@@ -154,15 +155,12 @@ impl Reader for Media {
             };
             let mut n = 0;
             for (stem, path) in complete(&self.spool)? {
-                let keep = committed
-                    .get("keep_files")
-                    .and_then(Value::as_array)
-                    .is_some_and(|paths| {
-                        paths.iter().any(|p| {
-                            serde_json::from_value::<Vec<u8>>(p.clone())
-                                .is_ok_and(|keep| path.as_os_str().as_bytes() == keep.as_slice())
-                        })
-                    });
+                let keep = committed.array("keep_files").is_some_and(|paths| {
+                    paths.iter().any(|p| {
+                        serde_json::from_value::<Vec<u8>>(p.clone())
+                            .is_ok_and(|keep| path.as_os_str().as_bytes() == keep.as_slice())
+                    })
+                });
                 if stem <= last && !keep {
                     std::fs::remove_file(&path)?;
                     let _ = std::fs::remove_file(self.spool.join(format!("{stem}.json")));
@@ -189,24 +187,16 @@ pub fn publish_segment(
     let side = dir.join(format!("{stem}.json"));
     let tmp = dir.join(format!(".{stem}.json.tmp"));
     std::fs::write(&tmp, serde_json::to_vec(sidecar).expect("JSON serializes"))?;
-    place(dir, &tmp, &side)?;
+    sinex_transport::durable::place(&tmp, &side)?;
     let data = dir.join(format!("{stem}.{ext}"));
     let counter = super::spool_health::counter(dir);
     let mut health = counter.as_ref().map(|counter| counter.lock().unwrap());
     let length = std::fs::metadata(partial)?.len() + std::fs::metadata(&side)?.len();
-    place(dir, partial, &data)?;
+    sinex_transport::durable::place(partial, &data)?;
     if let Some(health) = &mut health {
         health.captured_media(stem.to_owned(), length);
     }
     Ok(data)
-}
-
-/// Give the complete file `from` its final name `to` in `dir`: sync its bytes,
-/// rename, then sync the directory so the new name survives a host crash.
-pub fn place(dir: &Path, from: &Path, to: &Path) -> std::io::Result<()> {
-    std::fs::File::open(from)?.sync_all()?;
-    std::fs::rename(from, to)?;
-    std::fs::File::open(dir)?.sync_all()
 }
 
 #[cfg(test)]

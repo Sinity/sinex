@@ -54,6 +54,7 @@ pub(crate) struct Api {
     /// The daemon's shutdown. A stage reading in the background stops at it,
     /// ends `stopped_early`, and `resume` reads it again later.
     pub stop: tokio::sync::watch::Receiver<bool>,
+    pub library_cache: std::path::PathBuf,
     pub library_roots: Vec<std::path::PathBuf>,
     /// Read-only SQL statements with pages still to read.
     pub sql_cursors: SqlCursors,
@@ -615,6 +616,7 @@ impl Api {
             &self.blobs,
             &self.host,
             &self.library_roots,
+            &self.library_cache,
             sinex_model::time_settings::TimeSettings::from_parts(self.zone.clone(), self.day_start),
             request,
             caller.actor,

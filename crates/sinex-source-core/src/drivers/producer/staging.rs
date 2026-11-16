@@ -1,7 +1,7 @@
 //! A poll owns one encoded custody inode per material until the frame takes it.
 use super::*;
 use hashed_blobs::{EncodedBlob, Preparation};
-use std::io::Read;
+use std::io::{Read, Write};
 
 pub(super) struct Snapshots(tempfile::TempDir);
 impl Snapshots {
@@ -24,14 +24,14 @@ impl Snapshots {
         let descriptor = prepared.descriptor();
         drop(prepared);
         let name = descriptor.hash.hex();
-        temporary
-            .persist(self.0.path().join(&name))
+        sinex_transport::durable::place(temporary.path(), &self.0.path().join(&name))
             .map_err(|error| error.to_string())?;
-        std::fs::write(
-            self.0.path().join(format!("{name}.descriptor")),
-            descriptor.encode(),
+        sinex_transport::durable::write_replacing(
+            &self.0.path().join(format!("{name}.descriptor")),
+            0o600,
+            |file| file.write_all(&descriptor.encode()),
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(|(_, error)| error.to_string())?;
         Ok(descriptor.hash.to_string())
     }
     fn descriptor(&self, name: &str) -> Result<EncodedBlob, Error> {

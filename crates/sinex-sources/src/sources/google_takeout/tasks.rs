@@ -5,27 +5,22 @@
 //! source.
 use crate::sources::fields;
 use serde_json::{Map, Value};
-use sinex_model::Class;
 use sinex_model::event_types::account::TaskRevised;
+use sinex_model::json::JsonExt;
 use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
 use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordError};
+use sinex_source_core::{Framer, RecordError, RecordResult, Stateless, StatelessParser};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "google.tasks",
     origin: Origin::Input(Shape::ExportArchive),
     expect: Expectation::Export,
-    expires_after: None,
     purpose: "tasks and their completion",
-    class: Class::Open,
     parser: "google-tasks",
-    parser_version: 1,
     event_types: &["task.revised"],
-    framer: sinex_source_core::Framer::export(
-        frame,
-        sinex_source_core::drivers::export_archive::Framing::Whole,
-    ),
+    framer: Framer::export(frame, Framing::Whole),
+    ..SourceSpec::DEFAULT
 };
 
 const KNOWN: &[&str] = &[
@@ -45,37 +40,23 @@ const KNOWN: &[&str] = &[
 
 pub struct TasksParser;
 
-impl Parser for TasksParser {
+impl StatelessParser for TasksParser {
     type Record<'a> = Map<String, Value>;
-    type Carry = ();
     type Payload = TaskRevised;
 
     fn parse(
         &self,
         doc: &Map<String, Value>,
-        _: &(),
         _context: &sinex_source_core::RecordContext<'_>,
-    ) -> Result<(Vec<TaskRevised>, ()), RecordError> {
-        let lists = doc
-            .get("items")
-            .and_then(Value::as_array)
-            .ok_or_else(|| RecordError::new("no task lists (`items`)"))?;
+    ) -> Result<Vec<TaskRevised>, RecordError> {
+        let lists = doc.array("items").record("no task lists (`items`)")?;
         let mut out = Vec::new();
         for list in lists {
-            let list = list
-                .as_object()
-                .ok_or_else(|| RecordError::new("a task list is not an object"))?;
+            let list = list.as_object().record("a task list is not an object")?;
             let list_id = fields::text(list, "id")?;
             let list_title = fields::optional_text(list, "title");
-            for task in list
-                .get("items")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-            {
-                let task = task
-                    .as_object()
-                    .ok_or_else(|| RecordError::new("a task is not an object"))?;
+            for task in list.array("items").into_iter().flatten() {
+                let task = task.as_object().record("a task is not an object")?;
                 let time = |name: &str| -> Result<Option<sinex_model::Timestamp>, RecordError> {
                     fields::optional_text(task, name)
                         .map(|t| fields::rfc3339(&t))
@@ -113,14 +94,14 @@ impl Parser for TasksParser {
                 });
             }
         }
-        Ok((out, ()))
+        Ok(out)
     }
 }
 
-pub fn source() -> DeclaredSource<TasksParser> {
+pub fn source() -> DeclaredSource<Stateless<TasksParser>> {
     DeclaredSource {
         spec: SPEC,
-        parser: TasksParser,
+        parser: Stateless(TasksParser),
     }
 }
 

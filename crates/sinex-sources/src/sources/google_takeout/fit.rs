@@ -7,42 +7,39 @@
 //! `health.daily`); the parser never combines points.
 use crate::sources::fields;
 use serde_json::{Map, Value};
+use sinex_model::Timestamp;
 use sinex_model::event_types::health::HealthRecord;
-use sinex_model::{Class, Timestamp};
+use sinex_model::json::JsonExt;
 use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
 use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordContext, RecordError};
+use sinex_source_core::{
+    Framer, RecordContext, RecordError, RecordResult, Stateless, StatelessParser,
+};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "google.fit",
     origin: Origin::Input(Shape::ExportArchive),
     expect: Expectation::Export,
-    expires_after: None,
     purpose: "steps, activity, heart and location samples Fit recorded",
-    class: Class::Open,
     parser: "google-fit",
     parser_version: 4,
     event_types: &["health.record"],
-    framer: sinex_source_core::Framer::export(
-        frame,
-        sinex_source_core::drivers::export_archive::Framing::JsonArray("/Data Points"),
-    ),
+    framer: Framer::export(frame, Framing::JsonArray("/Data Points")),
+    ..SourceSpec::DEFAULT
 };
 
 pub struct FitParser;
 
-impl Parser for FitParser {
+impl StatelessParser for FitParser {
     type Record<'a> = Map<String, Value>;
-    type Carry = ();
     type Payload = HealthRecord;
 
     fn parse(
         &self,
         point: &Map<String, Value>,
-        _: &(),
         context: &RecordContext<'_>,
-    ) -> Result<(Vec<HealthRecord>, ()), RecordError> {
+    ) -> Result<Vec<HealthRecord>, RecordError> {
         let file = context
             .path()
             .and_then(|p| p.rsplit('/').next())
@@ -51,16 +48,15 @@ impl Parser for FitParser {
             .to_owned();
         let nanos = |name: &str| -> Result<Option<Timestamp>, RecordError> {
             point
-                .get(name)
-                .and_then(Value::as_i64)
+                .i64(name)
                 .map(|n| {
                     Timestamp::from_unix_ns(i128::from(n))
-                        .map_err(|_| RecordError::new(format!("{name} out of range")))
+                        .record_with(|| format!("{name} out of range"))
                 })
                 .transpose()
         };
-        let start_ns = point.get("startTimeNanos").and_then(Value::as_i64);
-        let end_ns = point.get("endTimeNanos").and_then(Value::as_i64);
+        let start_ns = point.i64("startTimeNanos");
+        let end_ns = point.i64("endTimeNanos");
         let category = fields::text(point, "dataTypeName")?;
         let mut values = Map::new();
         for (k, v) in point {
@@ -71,33 +67,30 @@ impl Parser for FitParser {
                 values.insert(k.clone(), v.clone());
             }
         }
-        Ok((
-            vec![
-                HealthRecord::new(
-                    "google-fit".into(),
-                    category,
-                    format!(
-                        "{file}:{}:{}",
-                        start_ns.unwrap_or_default(),
-                        end_ns.unwrap_or_default()
-                    ),
-                    nanos("startTimeNanos")?,
-                    nanos("endTimeNanos")?,
-                    None,
-                    values,
-                    vec![],
-                )
-                .map_err(|error| RecordError::new(error.to_string()))?,
-            ],
-            (),
-        ))
+        Ok(vec![
+            HealthRecord::new(
+                "google-fit".into(),
+                category,
+                format!(
+                    "{file}:{}:{}",
+                    start_ns.unwrap_or_default(),
+                    end_ns.unwrap_or_default()
+                ),
+                nanos("startTimeNanos")?,
+                nanos("endTimeNanos")?,
+                None,
+                values,
+                vec![],
+            )
+            .record("invalid health record")?,
+        ])
     }
 }
 
-pub fn source() -> DeclaredSource<FitParser> {
+pub fn source() -> DeclaredSource<Stateless<FitParser>> {
     DeclaredSource {
         spec: SPEC,
-        parser: FitParser,
+        parser: Stateless(FitParser),
     }
 }
 

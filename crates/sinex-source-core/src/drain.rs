@@ -1,4 +1,5 @@
 //! The drain: everything around `Parser::parse`.
+use crate::RecordResult;
 use crate::{Parser, RecordError, RecordShape};
 use serde_json::Value;
 use sinex_model::{
@@ -273,10 +274,7 @@ impl<'a, P: Parser> Drainer<'a, P> {
     pub fn new(parser: &'a P, input: DrainInput<'a>) -> Result<Self, RecordError> {
         let length = match &input.bytes {
             RecordBytes::Slice(bytes) => bytes.len() as u64,
-            RecordBytes::File(file) => file
-                .metadata()
-                .map_err(|e| RecordError::new(format!("temporary material file: {e}")))?
-                .len(),
+            RecordBytes::File(file) => file.metadata().record("temporary material file")?.len(),
             RecordBytes::Reader(reader) => reader.length(),
         };
         if input
@@ -290,9 +288,8 @@ impl<'a, P: Parser> Drainer<'a, P> {
         let carry: P::Carry = if input.carry.is_null() {
             P::Carry::default()
         } else {
-            serde_json::from_value(input.carry.clone()).map_err(|e| {
-                RecordError::new(format!("stored parser carry does not decode: {e}"))
-            })?
+            serde_json::from_value(input.carry.clone())
+                .record("stored parser carry does not decode")?
         };
         Ok(Self {
             parser,

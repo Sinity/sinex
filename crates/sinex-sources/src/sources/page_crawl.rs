@@ -8,13 +8,17 @@
 //! the request and response facts in its manifest; the parser turns it into
 //! `page.fetched`. A failed fetch is a fact too: it is stored with status 0
 //! and the error, so the page is not silently missing.
+use crate::sources::input_format;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sinex_model::event_types::session::PageFetched;
-use sinex_model::{Class, InputRef, MaterialId, ObservationFacts, RevisionChange, Timestamp};
+use sinex_model::{
+    Class, InputRef, MaterialId, ObservationFacts, RevisionChange, Timestamp, json::JsonExt,
+};
+use sinex_source_core::discovery::{DiscoverySpec, Location};
 use sinex_source_core::drivers::{Acquired, DriverError, NewMaterial};
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordContext, RecordError};
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
+use sinex_source_core::{RecordContext, RecordError, RecordResult, Stateless, StatelessParser};
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -23,16 +27,16 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "browser.page-crawl",
     origin: Origin::Input(Shape::ApiCursor),
     expect: Expectation::OnDemand,
-    expires_after: None,
     purpose: "page content for recall and search over what was read",
     class: Class::Guarded,
     parser: "page-fetch",
-    parser_version: 1,
     event_types: &["page.fetched"],
     framer: sinex_source_core::Framer::export(
         sinex_source_core::drivers::media::whole,
         sinex_source_core::drivers::export_archive::Framing::Whole,
     ),
+    parser_version: 2,
+    ..SourceSpec::DEFAULT
 };
 
 pub const USER_AGENT: &str = "sinex-crawl/0.1 (personal archive of the operator's own browsing)";
@@ -330,82 +334,53 @@ pub fn title(body: &[u8]) -> Option<String> {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ");
-    let t = t
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'");
+    let t = sinex_source_core::markup::decode(&t);
     (!t.is_empty()).then_some(t)
 }
 
 pub struct PageParser;
 
-impl Parser for PageParser {
+impl StatelessParser for PageParser {
     type Record<'a> = &'a [u8];
-    type Carry = ();
     type Payload = PageFetched;
 
     fn parse(
         &self,
         body: &&[u8],
-        _: &(),
         context: &RecordContext<'_>,
-    ) -> Result<(Vec<PageFetched>, ()), RecordError> {
+    ) -> Result<Vec<PageFetched>, RecordError> {
         let m = &context.manifest.details;
-        let s = |k: &str| m.get(k).and_then(Value::as_str).map(str::to_owned);
+        let s = |k: &str| m.str(k).map(str::to_owned);
         let fetched_at = s("fetched_at_ns")
             .and_then(|n| n.parse::<i128>().ok())
             .and_then(|n| Timestamp::from_unix_ns(n).ok())
-            .ok_or_else(|| RecordError::new("fetch has no time"))?;
+            .record("fetch has no time")?;
         let content_type = s("content_type");
         let html = content_type.as_deref().is_some_and(|c| c.contains("html"));
-        let url = s("url").ok_or_else(|| RecordError::new("fetch has no URL"))?;
-        Ok((
-            vec![PageFetched {
-                final_url: s("final_url").unwrap_or_else(|| url.clone()),
-                url,
-                fetched_at,
-                status: m
-                    .get("status")
-                    .and_then(Value::as_u64)
-                    .and_then(|n| u16::try_from(n).ok())
-                    .unwrap_or(0),
-                content_type,
-                bytes: body.len() as u64,
-                title: if html { title(body) } else { None },
-            }],
-            (),
-        ))
-    }
-}
-
-pub fn source() -> DeclaredSource<PageParser> {
-    DeclaredSource {
-        spec: SPEC,
-        parser: PageParser,
+        let url = s("url").record("fetch has no URL")?;
+        Ok(vec![PageFetched {
+            final_url: s("final_url").unwrap_or_else(|| url.clone()),
+            url,
+            fetched_at,
+            status: m
+                .u64("status")
+                .and_then(|n| u16::try_from(n).ok())
+                .unwrap_or(0),
+            content_type,
+            bytes: body.len() as u64,
+            title: if html { title(body) } else { None },
+        }])
     }
 }
 
 /// Crawl materials are replayed with the parser; URLs reach the command's reader in memory.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "page-crawl",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SPEC],
-        plan: None,
-        source: |_| Ok(Box::new(source())),
-        reader: None,
-        capture: None,
-    };
+input_format! { pub FORMAT = "page-crawl" {
+    specs: [SPEC],
+    parser: |_b| Stateless(PageParser),
+    discovery: DiscoverySpec::system(&[]),
+    plan: none,
+    reader: none,
+} }
 
 #[cfg(test)]
 mod tests;

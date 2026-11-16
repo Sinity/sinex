@@ -34,35 +34,36 @@ use serde_json::{Map, Value};
 use sinex_model::Timestamp;
 use sinex_model::event_types::machine::{TerminalOutput, TerminalSession};
 use sinex_model::event_types::session::TerminalReport;
+use sinex_model::json::JsonExt;
+use sinex_source_core::RecordResult;
+use sinex_source_core::discovery::{DiscoverySpec, Location};
 use sinex_source_core::drivers::append_file::AppendFile;
 use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordContext, RecordError};
+use sinex_source_core::{Stateless, StatelessParser};
 use std::path::PathBuf;
 
 pub const CAST: SourceSpec = SourceSpec {
     name: "terminal.asciinema",
     origin: Origin::Input(Shape::AppendFile),
     expect: Expectation::continuous_days(2),
-    expires_after: None,
     purpose: "what terminals showed and what was typed, replayable",
-    class: sinex_model::Class::Open,
     parser: "asciinema-cast",
     parser_version: 3,
     event_types: &["terminal.session", "terminal.output"],
     framer: sinex_source_core::Framer::incremental(cast_spans),
+    ..SourceSpec::DEFAULT
 };
 
 pub const EVENTS: SourceSpec = SourceSpec {
     name: "terminal.capture-events",
     origin: Origin::Input(Shape::AppendFile),
     expect: Expectation::continuous_days(2),
-    expires_after: None,
     purpose: "shell commands around a terminal recording",
-    class: sinex_model::Class::Open,
     parser: "terminal-capture-events",
-    parser_version: 1,
     event_types: &["terminal.reported"],
     framer: sinex_source_core::Framer::incremental(complete_lines),
+    ..SourceSpec::DEFAULT
 };
 
 sinex_model::payload_enum! {
@@ -95,8 +96,7 @@ impl Parser for CastParser {
         carry: &Carry,
         context: &RecordContext<'_>,
     ) -> Result<(Vec<CastEvent>, Carry), RecordError> {
-        let text = std::str::from_utf8(record)
-            .map_err(|e| RecordError::new(format!("cast span is not UTF-8: {e}")))?;
+        let text = std::str::from_utf8(record).record("cast span is not UTF-8")?;
         let first = text.trim_start();
         if first.is_empty() {
             return Ok((vec![], carry.clone()));
@@ -110,12 +110,11 @@ impl Parser for CastParser {
 
 /// A cast's header line: the recording's `terminal.session`.
 fn header(line: &str, context: &RecordContext<'_>) -> Result<(Vec<CastEvent>, Carry), RecordError> {
-    let value: Value = serde_json::from_str(line)
-        .map_err(|e| RecordError::new(format!("cast header is not JSON: {e}")))?;
+    let value: Value = serde_json::from_str(line).record("cast header is not JSON")?;
     let Value::Object(header) = value else {
         return Err(RecordError::new("a cast header is not an object"));
     };
-    let version = header.get("version").and_then(Value::as_u64).unwrap_or(0);
+    let version = header.u64("version").unwrap_or(0);
     if !matches!(version, 2 | 3) {
         return Err(RecordError::new(format!("cast version {version}")));
     }
@@ -125,10 +124,7 @@ fn header(line: &str, context: &RecordContext<'_>) -> Result<(Vec<CastEvent>, Ca
         .and_then(Value::as_str)
         .map(str::to_owned)
         .unwrap_or_else(|| directory(context));
-    let start_ns = header
-        .get("timestamp")
-        .and_then(Value::as_f64)
-        .map(|s| (s * 1e9) as i128);
+    let start_ns = header.f64("timestamp").map(|s| (s * 1e9) as i128);
     let size = |v2: &str, v3: &str| {
         header
             .get(v2)
@@ -138,17 +134,14 @@ fn header(line: &str, context: &RecordContext<'_>) -> Result<(Vec<CastEvent>, Ca
     let started_at = start_ns
         .map(Timestamp::from_unix_ns)
         .transpose()
-        .map_err(|_| RecordError::new("cast start out of range"))?;
+        .record("cast start out of range")?;
     Ok((
         vec![CastEvent::Session(TerminalSession {
             session: session.clone(),
             started_at,
             cols: size("width", "cols"),
             rows: size("height", "rows"),
-            command: header
-                .get("command")
-                .and_then(Value::as_str)
-                .map(str::to_owned),
+            command: header.str("command").map(str::to_owned),
             header: Value::Object(header),
         })],
         Carry {
@@ -162,9 +155,7 @@ fn header(line: &str, context: &RecordContext<'_>) -> Result<(Vec<CastEvent>, Ca
 
 /// A span of cast event lines: one `terminal.output`.
 fn span(text: &str, carry: &Carry) -> Result<(Vec<CastEvent>, Carry), RecordError> {
-    let start = carry
-        .start_ns
-        .ok_or_else(|| RecordError::new("a cast event before its header"))?;
+    let start = carry.start_ns.record("a cast event before its header")?;
     let mut elapsed_ns = carry.elapsed_ns;
     let mut first_ns = None;
     let mut events = 0u32;
@@ -177,8 +168,7 @@ fn span(text: &str, carry: &Carry) -> Result<(Vec<CastEvent>, Carry), RecordErro
         if line.is_empty() {
             continue;
         }
-        let value: Value = serde_json::from_str(line)
-            .map_err(|e| RecordError::new(format!("cast line is not JSON: {e}")))?;
+        let value: Value = serde_json::from_str(line).record("cast line is not JSON")?;
         let Value::Array(parts) = value else {
             return Err(RecordError::new("a cast event is not an array"));
         };
@@ -187,7 +177,7 @@ fn span(text: &str, carry: &Carry) -> Result<(Vec<CastEvent>, Carry), RecordErro
         };
         let t = time
             .as_f64()
-            .ok_or_else(|| RecordError::new("a cast event's time is not a number"))?;
+            .record("a cast event's time is not a number")?;
         let t_ns = (t * 1e9).round() as i128;
         elapsed_ns = if carry.version == 3 {
             elapsed_ns + t_ns
@@ -208,10 +198,7 @@ fn span(text: &str, carry: &Carry) -> Result<(Vec<CastEvent>, Carry), RecordErro
     let Some(first_ns) = first_ns else {
         return Ok((vec![], carry.clone()));
     };
-    let at = |ns: i128| {
-        Timestamp::from_unix_ns(start + ns)
-            .map_err(|_| RecordError::new("cast event time out of range"))
-    };
+    let at = |ns: i128| Timestamp::from_unix_ns(start + ns).record("cast event time out of range");
     Ok((
         vec![CastEvent::Output(TerminalOutput {
             session: carry.session.clone(),
@@ -311,61 +298,43 @@ fn directory(context: &RecordContext<'_>) -> String {
 
 pub struct EventsParser;
 
-impl Parser for EventsParser {
+impl StatelessParser for EventsParser {
     type Record<'a> = Map<String, Value>;
-    type Carry = ();
     type Payload = TerminalReport;
 
     fn parse(
         &self,
         row: &Map<String, Value>,
-        _: &(),
+
         context: &RecordContext<'_>,
-    ) -> Result<(Vec<TerminalReport>, ()), RecordError> {
+    ) -> Result<Vec<TerminalReport>, RecordError> {
         let event = fields::text(row, "type")?;
         let received_at = fields::from_unix_ms(fields::int(row, "ts_ms")?)?;
-        let text = |name: &str| row.get(name).and_then(Value::as_str).map(str::to_owned);
+        let text = |name: &str| row.str(name).map(str::to_owned);
         let mut extra = row.clone();
         for name in ["type", "ts_ms", "cwd", "command", "exit_code", "terminal"] {
             extra.remove(name);
         }
         extra.insert("session".into(), Value::String(directory(context)));
-        Ok((
-            vec![TerminalReport {
-                received_at,
-                terminal: text("terminal").unwrap_or_else(|| "capture".into()),
-                event,
-                window_id: None,
-                execution: None,
-                cwd: text("cwd"),
-                cmdline: text("command"),
-                exit_status: row.get("exit_code").and_then(Value::as_i64),
-                title: None,
-                output: None,
-                extra,
-            }],
-            (),
-        ))
+        Ok(vec![TerminalReport {
+            received_at,
+            terminal: text("terminal").unwrap_or_else(|| "capture".into()),
+            event,
+            window_id: None,
+            execution: None,
+            cwd: text("cwd"),
+            cmdline: text("command"),
+            exit_status: row.i64("exit_code"),
+            title: None,
+            output: None,
+            extra,
+        }])
     }
 }
 
 /// Complete lines only: a recording still being written ends mid-line.
 fn complete_lines(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
     sinex_source_core::drivers::export_archive::Framing::Lines.frame(bytes, false)
-}
-
-pub fn cast_source() -> DeclaredSource<CastParser> {
-    DeclaredSource {
-        spec: CAST,
-        parser: CastParser,
-    }
-}
-
-pub fn events_source() -> DeclaredSource<EventsParser> {
-    DeclaredSource {
-        spec: EVENTS,
-        parser: EventsParser,
-    }
 }
 
 pub fn driver(path: PathBuf, host: String, spec: &SourceSpec) -> AppendFile {
@@ -378,55 +347,37 @@ pub fn driver(path: PathBuf, host: String, spec: &SourceSpec) -> AppendFile {
 
 /// `stage --parser asciinema PATH`: each recording directory under PATH, its cast
 /// and the capture's events beside it.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "asciinema",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "capture",
-                path: "asciinema",
-            }],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&CAST, &EVENTS],
-        plan: Some(|input, settings| {
-            Ok(sinex_source_core::binding::files(input, true, |p| {
-                p.file_name()
-                    .is_some_and(|n| n == "session.cast" || n == "events.jsonl")
-            })
-            .into_iter()
-            .map(|f| {
-                let spec = if f.file_name().is_some_and(|n| n == "session.cast") {
-                    &CAST
-                } else {
-                    &EVENTS
-                };
-                sinex_source_core::binding::Binding::of(spec, &f, settings.clone())
-            })
-            .collect())
-        }),
-        source: |b| {
-            if b.source == CAST.name {
-                Ok(Box::new(cast_source()))
-            } else {
-                Ok(Box::new(events_source()))
-            }
-        },
-        reader: Some(|b| {
-            let spec = if b.source == CAST.name { CAST } else { EVENTS };
-            Ok(sinex_source_core::binding::appended(driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-                &spec,
-            )))
-        }),
-        capture: None,
-    };
+super::input_format! { pub FORMAT = "asciinema" {
+    specs: [CAST, EVENTS],
+    source: |b| {
+        if b.source == CAST.name {
+            Ok(Box::new(DeclaredSource { spec: CAST, parser: CastParser }))
+        } else {
+            Ok(Box::new(DeclaredSource { spec: EVENTS, parser: Stateless(EventsParser) }))
+        }
+    },
+    discovery: DiscoverySpec::system(&[Location::new("capture", "asciinema")]),
+    plan: |input, settings| {
+        Ok(sinex_source_core::binding::files(input, true, |p| {
+            p.file_name().is_some_and(|n| n == "session.cast" || n == "events.jsonl")
+        })
+        .into_iter()
+        .map(|f| {
+            let spec =
+                if f.file_name().is_some_and(|n| n == "session.cast") { &CAST } else { &EVENTS };
+            sinex_source_core::binding::Binding::of(spec, &f, settings.clone())
+        })
+        .collect())
+    },
+    reader: |b| {
+        let spec = if b.source == CAST.name { CAST } else { EVENTS };
+        Ok(sinex_source_core::binding::appended(driver(
+            b.input.clone(),
+            b.settings.host.clone(),
+            &spec,
+        )))
+    },
+} }
 
 #[cfg(test)]
 mod tests;

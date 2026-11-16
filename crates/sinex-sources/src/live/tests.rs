@@ -40,7 +40,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 static SYNTHETIC: InputFormat = InputFormat {
-    capture: Some(|binding, stop| {
+    capture: Some(|binding, _context, stop| {
         let mut writer =
             SpoolWriter::open(&binding.input, Rotation::default()).map_err(|e| e.to_string())?;
         let mut count = 0;
@@ -648,13 +648,13 @@ fn retry_delay_doubles_to_thirty_seconds_and_resets_after_recovery() {
 }
 
 static INTERRUPTED: InputFormat = InputFormat {
-    capture: Some(|binding, stop| {
+    capture: Some(|binding, context, stop| {
         let marker = binding.input.join("first-attempt");
         if !marker.exists() {
             std::fs::write(marker, b"").map_err(|e| e.to_string())?;
             return Err("synthetic source disconnected".into());
         }
-        (SYNTHETIC.capture.unwrap())(binding, stop)
+        (SYNTHETIC.capture.unwrap())(binding, context, stop)
     }),
     ..sources::hyprland::FORMAT
 };
@@ -694,7 +694,7 @@ async fn a_source_failure_restarts_capture_while_the_bus_is_unavailable() {
 }
 
 static BROKEN_SPOOL: InputFormat = InputFormat {
-    capture: Some(|binding, _| {
+    capture: Some(|binding, _, _| {
         std::fs::remove_dir(&binding.input).map_err(|e| e.to_string())?;
         std::fs::write(&binding.input, b"not a spool directory").map_err(|e| e.to_string())?;
         Err("synthetic local storage failure".into())
@@ -727,7 +727,7 @@ async fn an_unwritable_spool_is_a_local_fault_that_ends_the_session() {
 }
 
 static PAUSED: InputFormat = InputFormat {
-    capture: Some(|_, stop| {
+    capture: Some(|_, _, stop| {
         while !stop.wait(Duration::from_millis(100)) {}
         Ok(0)
     }),
@@ -1381,6 +1381,8 @@ async fn run_bindings(
         connection,
         store,
         positions,
+        &DiscoveryContext::default(),
+        false,
         move || {
             Ok(CapturePlan {
                 bindings: bindings.clone(),
@@ -1401,9 +1403,15 @@ fn a_failed_spool_directory_names_the_binding_and_path() {
     let (format, binding) = binding("file-watch", &spool, "fixture", Value::Null).unwrap();
     let name = binding.name.clone();
     let (failed, _failures) = tokio::sync::mpsc::unbounded_channel();
-    let error = start(format, binding, &root.path().join("positions"), failed)
-        .err()
-        .expect("a file cannot be a spool directory");
+    let error = start(
+        format,
+        binding,
+        &root.path().join("positions"),
+        failed,
+        &DiscoveryContext::default(),
+    )
+    .err()
+    .expect("a file cannot be a spool directory");
     assert!(error.contains(&name), "{error}");
     assert!(error.contains(spool.to_str().unwrap()), "{error}");
     assert_eq!(std::fs::read(spool).unwrap(), b"synthetic blocker");

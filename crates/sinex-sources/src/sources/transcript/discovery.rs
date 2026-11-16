@@ -1,29 +1,18 @@
 //! Import roots are walked once per format; each matching file has its own position.
-use sinex_source_core::discovery::{
-    CapturedBy, DiscoveredInput, DiscoveryContext, DiscoverySpec, Location,
-};
+use sinex_source_core::discovery::{DiscoveredInput, DiscoveryContext, DiscoverySpec};
 use sinex_source_core::registry::SourceSpec;
 use sinex_source_core::{Binding, InputFormat, Settings};
 use std::path::{Path, PathBuf};
 
 pub(crate) const fn spec(transcripts: bool) -> DiscoverySpec {
-    DiscoverySpec {
-        captured_by: CapturedBy::System,
-        locations: if transcripts {
-            &[Location {
-                root: "input",
-                path: "transcripts",
-            }]
-        } else {
-            &[Location {
-                root: "input",
-                path: "ocr",
-            }]
-        },
-        capabilities: &[],
-        credentials: &[],
-        streams: &[],
-    }
+    sinex_source_core::discovery::DiscoverySpec::system(if transcripts {
+        &[sinex_source_core::discovery::Location::new(
+            "input",
+            "transcripts",
+        )]
+    } else {
+        &[sinex_source_core::discovery::Location::new("input", "ocr")]
+    })
 }
 
 pub(crate) fn discover(format: &InputFormat, context: &DiscoveryContext) -> Vec<DiscoveredInput> {

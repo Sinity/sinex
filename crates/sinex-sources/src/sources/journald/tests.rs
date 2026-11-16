@@ -11,9 +11,8 @@ fn rec(entry: Value) -> Map<String, Value> {
 
 fn read(entry: Value) -> Vec<JournalReading> {
     JournaldParser
-        .parse(&rec(entry), &(), &sinex_source_core::RecordContext::none())
+        .parse(&rec(entry), &sinex_source_core::RecordContext::none())
         .unwrap()
-        .0
 }
 
 /// The journal entry every record yields first.
@@ -75,7 +74,6 @@ fn an_entry_without_a_cursor_is_a_failure_not_a_guess() {
         JournaldParser
             .parse(
                 &rec(json!({"MESSAGE": "x"})),
-                &(),
                 &sinex_source_core::RecordContext::none()
             )
             .is_err()
@@ -359,13 +357,8 @@ fn raw_journal_exports_keep_live_readings_and_unknown_vendor_fields() {
     );
     let bytes = vendor.to_string().into_bytes();
     let exported = JournalExportParser
-        .parse(
-            &bytes.as_slice(),
-            &(),
-            &sinex_source_core::RecordContext::none(),
-        )
-        .unwrap()
-        .0;
+        .parse(&bytes.as_slice(), &sinex_source_core::RecordContext::none())
+        .unwrap();
     assert_eq!(exported, read(vendor));
     assert_eq!(entry(&exported).cursor, "s=1;i=9");
     assert_eq!(
@@ -382,7 +375,6 @@ fn raw_journal_exports_keep_live_readings_and_unknown_vendor_fields() {
         JournalExportParser
             .parse(
                 &b"{\"MESSAGE\":\"missing cursor\"}".as_slice(),
-                &(),
                 &sinex_source_core::RecordContext::none()
             )
             .is_err()

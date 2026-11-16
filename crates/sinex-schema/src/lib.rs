@@ -351,12 +351,6 @@ fn quote_ident(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
 
-/// Connect and [`apply`].
-pub async fn apply_url(url: &str) -> Result<Applied, Error> {
-    let mut connection = PgConnection::connect(url).await?;
-    apply(&mut connection).await
-}
-
 /// Refuse a database that is not at this build's schema version.
 pub async fn require_current(connection: &mut PgConnection) -> Result<(), Error> {
     let found: Option<i32> = sqlx::query_scalar("SELECT max(version) FROM sinex_schema.applied")

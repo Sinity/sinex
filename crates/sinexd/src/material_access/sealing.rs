@@ -10,19 +10,6 @@ use sinex_store::Blobs;
 use sqlx::PgConnection;
 pub(crate) use unlock::{Unlock, read_limits};
 
-/// The class key's public half, from the file `$SINEX_CLASS_KEY_FILE` (an age
-/// recipient, `age1…`). Sealed sources need it to capture; the daemon never
-/// holds the secret half.
-pub(crate) fn class_key() -> Result<Option<sinex_sealing::Recipient>> {
-    let Some(path) = std::env::var_os("SINEX_CLASS_KEY_FILE") else {
-        return Ok(None);
-    };
-    let text = std::fs::read_to_string(&path).map_err(|e| Error::file(&path, e))?;
-    sinex_sealing::parse_recipient(&text)
-        .map(Some)
-        .map_err(Error::from)
-}
-
 /// Drivers of a sealed source store a material's bytes through this: each
 /// material gets a fresh data key, its bytes are sealed under it, and the key
 /// waits here until the batch that registers the material is sealed with it.

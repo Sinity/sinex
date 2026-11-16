@@ -11,15 +11,17 @@
 //! time ends, a line takes the later of its two instants unless that is after
 //! the sample that read it.
 use super::fields::{FieldReader, unix_seconds};
+use crate::sources::input_format;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use sinex_model::event_types::router::{
     DeviceTrafficSampled, DhcpLeaseSampled, Directions, RouterLogLine, WifiClientSampled,
 };
 use sinex_model::{Class, Timestamp};
-use sinex_source_core::drivers::append_file::{AppendFile, lines};
+use sinex_source_core::discovery::{DiscoverySpec, Location};
+use sinex_source_core::drivers::append_file::AppendFile;
 use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordError};
+use sinex_source_core::{RecordError, RecordResult, Stateless, StatelessParser, binding};
 use std::path::{Path, PathBuf};
 
 const fn spec(lane: &'static str, event_type: &'static [&'static str]) -> SourceSpec {
@@ -27,15 +29,14 @@ const fn spec(lane: &'static str, event_type: &'static [&'static str]) -> Source
         name: "network.router",
         origin: Origin::Input(Shape::AppendFile),
         expect: Expectation::continuous_hours(6),
-        expires_after: None,
         purpose: "which devices were on the home network, their traffic and the router's log",
         // Leases and clients name the household's devices, and the log
         // their addresses.
         class: Class::Guarded,
         parser: lane,
-        parser_version: 1,
         event_types: event_type,
-        framer: sinex_source_core::Framer::incremental(lines),
+        framer: sinex_source_core::Framer::LINES,
+        ..SourceSpec::DEFAULT
     }
 }
 
@@ -87,19 +88,17 @@ pub struct RouterParser {
     pub zone: jiff::tz::TimeZone,
 }
 
-impl Parser for RouterParser {
+impl StatelessParser for RouterParser {
     type Record<'a> = &'a [u8];
-    type Carry = ();
     type Payload = Router;
 
     fn parse(
         &self,
         record: &&[u8],
-        _: &(),
         _context: &sinex_source_core::RecordContext<'_>,
-    ) -> Result<(Vec<Router>, ()), RecordError> {
-        let captured: CaptureRecord = serde_json::from_slice(record)
-            .map_err(|e| RecordError::new(format!("not a capture record: {e}")))?;
+    ) -> Result<Vec<Router>, RecordError> {
+        let captured: CaptureRecord =
+            serde_json::from_slice(record).record("not a capture record")?;
         if captured.schema != "sinnix-capture-v1" || captured.schema_version != 1 {
             return Err(RecordError::new(format!(
                 "capture record schema {} version {}, expected sinnix-capture-v1 version 1",
@@ -124,7 +123,7 @@ impl Parser for RouterParser {
             "associations" => clients(captured.payload, &sample)?,
             other => return Err(RecordError::new(format!("{other} is not a router lane"))),
         };
-        Ok((out, ()))
+        Ok(out)
     }
 }
 
@@ -193,9 +192,9 @@ impl RouterParser {
             }
             _ => ambiguous.compatible(),
         }
-        .map_err(|e| RecordError::new(format!("log time {civil}: {e}")))?;
+        .record_with(|| format!("log time {civil}"))?;
         Timestamp::from_unix_ns(chosen.as_nanosecond())
-            .map_err(|_| RecordError::new(format!("log time {civil} is out of range")))
+            .record_with(|| format!("log time {civil} is out of range"))
     }
 }
 
@@ -260,7 +259,7 @@ fn object(value: Value, what: &str) -> Result<FieldReader, RecordError> {
 }
 
 fn required<T>(value: Option<T>, name: &str) -> Result<T, RecordError> {
-    value.ok_or_else(|| RecordError::new(format!("{name} is missing")))
+    value.record_with(|| format!("{name} is missing"))
 }
 
 /// The leases, `[{mac, ip, hostname, client_id, expires}]`; dnsmasq writes
@@ -283,9 +282,10 @@ fn leases(payload: Value, sample: &Sample) -> Result<Vec<Router>, RecordError> {
                 // dnsmasq writes 0 for a lease that does not expire.
                 expires_at: match f.int("expires")? {
                     None | Some(0) => None,
-                    Some(secs) => Some(Timestamp::from_unix_secs(secs).map_err(|_| {
-                        RecordError::new(format!("lease {i}: expires {secs} is out of range"))
-                    })?),
+                    Some(secs) => Some(
+                        Timestamp::from_unix_secs(secs)
+                            .record_with(|| format!("lease {i}: expires {secs} is out of range"))?,
+                    ),
                 },
                 sampled_at: sample.sampled_at,
                 host: sample.host.clone(),
@@ -310,17 +310,13 @@ fn traffic(payload: Value, sample: &Sample) -> Result<Vec<Router>, RecordError> 
             let family = f
                 .int("family")?
                 .map(|n| {
-                    u8::try_from(n).map_err(|_| {
-                        RecordError::new(format!("rows/{i}: family {n} is out of range"))
-                    })
+                    u8::try_from(n).record_with(|| format!("rows/{i}: family {n} is out of range"))
                 })
                 .transpose()?;
             let port = f
                 .int("port")?
                 .map(|n| {
-                    u16::try_from(n).map_err(|_| {
-                        RecordError::new(format!("rows/{i}: port {n} is out of range"))
-                    })
+                    u16::try_from(n).record_with(|| format!("rows/{i}: port {n} is out of range"))
                 })
                 .transpose()?;
             Ok(Router::Traffic(DeviceTrafficSampled {
@@ -382,7 +378,7 @@ fn clients(payload: Value, sample: &Sample) -> Result<Vec<Router>, RecordError> 
         };
         let freq = data
             .unsigned("freq")?
-            .map(|f| u32::try_from(f).map_err(|_| RecordError::new(format!("freq {f}"))))
+            .map(|f| u32::try_from(f).record_with(|| format!("freq {f}")))
             .transpose()?;
         let Some(Value::Object(clients)) = data.value("clients") else {
             continue;
@@ -424,20 +420,6 @@ fn clients(payload: Value, sample: &Sample) -> Result<Vec<Router>, RecordError> 
     Ok(out)
 }
 
-pub fn source(
-    lane: &'static str,
-    zone: jiff::tz::TimeZone,
-) -> Result<Box<dyn sinex_source_core::Source>, String> {
-    let (spec, _) = LANES
-        .iter()
-        .find(|(_, name)| *name == lane)
-        .ok_or_else(|| format!("{lane} is not a router lane"))?;
-    Ok(Box::new(DeclaredSource {
-        spec: spec.clone(),
-        parser: RouterParser { lane, zone },
-    }))
-}
-
 /// The lane a day file (`<lane>-YYYYMMDD.jsonl`) belongs to.
 fn lane_of(path: &Path) -> Option<&'static SourceSpec> {
     let stem = path.file_name()?.to_str()?.strip_suffix(".jsonl")?;
@@ -451,69 +433,48 @@ fn lane_of(path: &Path) -> Option<&'static SourceSpec> {
         .map(|(spec, _)| spec)
 }
 
-fn lane_name(parser: &str) -> Result<&'static str, String> {
-    LANES
-        .iter()
-        .find(|(spec, _)| spec.parser == parser)
-        .map(|(_, lane)| *lane)
-        .ok_or_else(|| format!("{parser} is not a router lane"))
-}
-
 pub fn driver(path: PathBuf, host: String) -> AppendFile {
     AppendFile {
         path,
         host,
-        framer: sinex_source_core::Framer::incremental(lines),
+        framer: sinex_source_core::Framer::LINES,
     }
 }
 
 /// `stage --parser router PATH`: every lane day file under PATH (the router
 /// directory, one lane's directory or one day file), read in the binding's
 /// zone, recorded when it is planned.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "router",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[
-                sinex_source_core::discovery::Location {
-                    root: "declared",
-                    path: "router",
-                },
-                sinex_source_core::discovery::Location {
-                    root: "input",
-                    path: "router",
-                },
-            ],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || LANES.iter().map(|(spec, _)| spec).collect(),
-        plan: Some(|input, settings| {
-            let settings = settings.clone().with_zone()?;
-            Ok(
-                sinex_source_core::binding::files(input, true, |p| lane_of(p).is_some())
-                    .into_iter()
-                    .filter_map(|file| {
-                        lane_of(&file).map(|spec| {
-                            sinex_source_core::Binding::of(spec, &file, settings.clone())
-                        })
-                    })
-                    .collect(),
-            )
-        }),
-        source: |b| source(lane_name(&b.parser)?, b.settings.zone()?),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::appended(driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: None,
-    };
+input_format! { pub FORMAT = "router" {
+    specs: || LANES.iter().map(|(spec, _)| spec).collect(),
+    source: |b| {
+        let (spec, lane) = LANES
+            .iter()
+            .find(|(spec, _)| spec.parser == b.parser)
+            .ok_or_else(|| format!("{} is not a router lane", b.parser))?;
+        Ok(Box::new(DeclaredSource {
+            spec: spec.clone(),
+            parser: Stateless(RouterParser {
+                lane,
+                zone: b.settings.zone()?,
+            }),
+        }))
+    },
+    discovery: DiscoverySpec::system(&[
+        Location::new("declared", "router"),
+        Location::new("input", "router"),
+    ]),
+    plan: |input, settings| {
+        let settings = settings.clone().with_zone()?;
+        Ok(binding::files(input, true, |p| lane_of(p).is_some())
+            .into_iter()
+            .filter_map(|file| {
+                lane_of(&file)
+                    .map(|spec| sinex_source_core::Binding::of(spec, &file, settings.clone()))
+            })
+            .collect())
+    },
+    reader: appended(driver),
+} }
 
 #[cfg(test)]
 mod tests;

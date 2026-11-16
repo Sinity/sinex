@@ -3,6 +3,7 @@
 use super::SPEC;
 use serde_json::json;
 use sinex_model::event_types::finance::{IncludeTarget, IncludedFrom};
+use sinex_model::json::JsonExt;
 use sinex_source_core::binding::{Binding, Settings};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
@@ -259,10 +260,7 @@ fn resolve(parent: &Path, target: &str, settings: &Settings) -> Result<Vec<PathB
             .join(parent)
     };
     let path = if let Some(rest) = target.strip_prefix("~/") {
-        let home = match settings.options.get("include_home") {
-            Some(home) => home.as_str().map(PathBuf::from),
-            None => std::env::var_os("HOME").map(PathBuf::from),
-        };
+        let home = settings.options.str("include_home").map(PathBuf::from);
         home.ok_or("include home directory is unavailable")?
             .join(rest)
     } else {

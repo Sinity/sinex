@@ -4,63 +4,63 @@
 use serde_json::{Map, Value};
 use sinex_model::Class;
 use sinex_model::event_types::desktop::DomainUsage;
-use sinex_source_core::drivers::export_archive::{ExportArchive, PART_BYTES};
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordContext, RecordError};
+use sinex_source_core::discovery::{DiscoverySpec, Location};
+use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
+use sinex_source_core::{
+    Framer, RecordContext, RecordError, RecordResult, Stateless, StatelessParser, binding,
+};
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "desktop.freedom",
     origin: Origin::Input(Shape::ExportArchive),
     expect: Expectation::Export,
-    expires_after: None,
     purpose: "domain usage reported by Freedom, for attention analysis",
     class: Class::Guarded,
     parser: "freedom-daily-domains",
-    parser_version: 1,
     event_types: &["domain.usage"],
-    framer: sinex_source_core::Framer::export(frame, FRAMING),
+    framer: Framer::export(frame, FRAMING),
+    ..SourceSpec::DEFAULT
 };
 
 pub struct FreedomParser;
 
-impl Parser for FreedomParser {
+impl StatelessParser for FreedomParser {
     type Record<'a> = &'a [u8];
-    type Carry = ();
     type Payload = DomainUsage;
 
     fn parse(
         &self,
         record: &&[u8],
-        _: &(),
+
         _: &RecordContext<'_>,
-    ) -> Result<(Vec<DomainUsage>, ()), RecordError> {
+    ) -> Result<Vec<DomainUsage>, RecordError> {
         let mut object = Vec::with_capacity(record.len() + 2);
         object.push(b'{');
         object.extend_from_slice(record);
         object.push(b'}');
-        let entries: Map<String, Value> = serde_json::from_slice(&object)
-            .map_err(|error| RecordError::new(format!("Freedom day: {error}")))?;
+        let entries: Map<String, Value> = serde_json::from_slice(&object).record("Freedom day")?;
         if entries.len() != 1 {
             return Err(RecordError::new("Freedom record must name one day"));
         }
         let (key, domains) = entries.into_iter().next().expect("one entry");
         let day = key
             .strip_prefix("stat_")
-            .ok_or_else(|| RecordError::new("Freedom day must start with stat_"))?;
+            .record("Freedom day must start with stat_")?;
         jiff::civil::Date::strptime("%Y-%m-%d", day)
-            .map_err(|_| RecordError::new(format!("Freedom day {day:?} is not a date")))?;
+            .record_with(|| format!("Freedom day {day:?} is not a date"))?;
         let domains = domains
             .as_object()
-            .ok_or_else(|| RecordError::new("Freedom day is not a domain-seconds object"))?;
+            .record("Freedom day is not a domain-seconds object")?;
         let events = domains
             .iter()
             .map(|(domain, seconds)| {
                 if domain.is_empty() {
                     return Err(RecordError::new("Freedom domain is empty"));
                 }
-                let seconds = seconds.as_u64().ok_or_else(|| {
-                    RecordError::new("Freedom seconds is not an unsigned integer")
-                })?;
+                let seconds = seconds
+                    .as_u64()
+                    .record("Freedom seconds is not an unsigned integer")?;
                 Ok(DomainUsage {
                     day: day.to_owned(),
                     domain: domain.clone(),
@@ -68,7 +68,7 @@ impl Parser for FreedomParser {
                 })
             })
             .collect::<Result<Vec<_>, RecordError>>()?;
-        Ok((events, ()))
+        Ok(events)
     }
 }
 
@@ -131,54 +131,30 @@ fn day_records(bytes: &[u8], eof: bool) -> (Vec<(usize, usize)>, usize) {
     }
 }
 
-const FRAMING: sinex_source_core::drivers::export_archive::Framing =
-    sinex_source_core::drivers::export_archive::Framing::Custom {
-        name: "freedom-days",
-        frame: day_records,
-    };
+const FRAMING: Framing = Framing::Custom {
+    name: "freedom-days",
+    frame: day_records,
+};
 
 fn frame(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
     FRAMING.frame(bytes, true)
 }
 
-pub fn source() -> DeclaredSource<FreedomParser> {
-    DeclaredSource {
-        spec: SPEC,
-        parser: FreedomParser,
-    }
-}
-
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "freedom",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "input",
-                path: "freedom",
-            }],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SPEC],
-        plan: Some(|input, settings| {
-            Ok(sinex_source_core::binding::single(&SPEC, input, settings))
-        }),
-        source: |_| Ok(Box::new(source())),
-        reader: Some(|binding| {
-            Ok(sinex_source_core::binding::shared(ExportArchive {
-                path: binding.input.clone(),
-                host: binding.settings.host.clone(),
-                select: |_| true,
-                framing: FRAMING,
-                part_bytes: PART_BYTES,
-            }))
-        }),
-        capture: None,
-    };
+super::input_format! { pub FORMAT = "freedom" {
+    specs: [SPEC],
+    parser: |_b| Stateless(FreedomParser),
+    discovery: DiscoverySpec::system(&[Location::new("input", "freedom")]),
+    plan: single,
+    reader: |binding| {
+        Ok(binding::shared(ExportArchive {
+            path: binding.input.clone(),
+            host: binding.settings.host.clone(),
+            select: |_| true,
+            framing: FRAMING,
+            part_bytes: PART_BYTES,
+        }))
+    },
+} }
 
 #[cfg(test)]
 mod tests;

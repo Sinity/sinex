@@ -15,51 +15,36 @@
 //! location; the same message in the PST is a separate record, and with no
 //! Message-ID mail fusion never joins the two.
 use crate::sources::{fields, mail};
-use sinex_model::Class;
 use sinex_model::event_types::communication::MailMessage;
-use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordError};
+use sinex_source_core::discovery::{DiscoverySpec, Location};
+use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES, frame_mbox};
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
+use sinex_source_core::{Framer, Parser, RecordError, Stateless, binding};
 use std::path::PathBuf;
 
 pub const PST: SourceSpec = SourceSpec {
     name: "communication.outlook",
     origin: Origin::Input(Shape::ExportArchive),
     expect: Expectation::Export,
-    expires_after: None,
     purpose: "mail recall and correspondence history",
-    class: Class::Open,
     parser: "rfc5322-mail",
     parser_version: 3,
     event_types: &["mail.message"],
-    framer: sinex_source_core::Framer::export(
-        sinex_source_core::drivers::export_archive::frame_mbox,
-        sinex_source_core::drivers::export_archive::Framing::Mbox,
-    ),
+    framer: Framer::export(frame_mbox, Framing::Mbox),
+    ..SourceSpec::DEFAULT
 };
 
 pub const CSV: SourceSpec = SourceSpec {
     name: "communication.outlook-csv",
     origin: Origin::Input(Shape::ExportArchive),
     expect: Expectation::Export,
-    expires_after: None,
     purpose: "mail recall and correspondence history",
-    class: Class::Open,
     parser: "outlook-csv",
     parser_version: 3,
     event_types: &["mail.message"],
-    framer: sinex_source_core::Framer::export(
-        frame_csv,
-        sinex_source_core::drivers::export_archive::Framing::Csv,
-    ),
+    framer: Framer::export(frame_csv, Framing::Csv),
+    ..SourceSpec::DEFAULT
 };
-
-pub fn pst_source() -> DeclaredSource<mail::MailParser> {
-    DeclaredSource {
-        spec: PST,
-        parser: mail::MailParser,
-    }
-}
 
 mod staging;
 
@@ -149,13 +134,6 @@ impl Parser for CsvParser {
     }
 }
 
-pub fn csv_source() -> DeclaredSource<CsvParser> {
-    DeclaredSource {
-        spec: CSV,
-        parser: CsvParser,
-    }
-}
-
 pub fn frame_csv(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
     Framing::Csv.frame(bytes, true)
 }
@@ -172,63 +150,26 @@ pub fn csv_driver(path: PathBuf, host: String) -> ExportArchive {
 
 /// `stage --parser outlook PATH`: each `.pst` under PATH, converted with `readpst`
 /// to one mbox per folder, each folder its own stable binding of the PST.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "outlook",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "input",
-                path: "outlook",
-            }],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&PST],
-        plan: Some(staging::plan),
-        source: |_| Ok(Box::new(pst_source())),
-        reader: Some(staging::reader),
-        capture: None,
-    };
+super::input_format! { pub FORMAT = "outlook" {
+    specs: [PST],
+    parser: |_b| Stateless(mail::MailParser),
+    discovery: DiscoverySpec::system(&[Location::new("input", "outlook")]),
+    plan: |i, s| staging::plan(i, s),
+    reader: |b| staging::reader(b),
+} }
 
 /// `stage --parser outlook-csv PATH`: each Outlook CSV export under PATH.
-pub const CSV_FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "outlook-csv",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "input",
-                path: "outlook-csv",
-            }],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&CSV],
-        plan: Some(|input, settings| {
-            Ok(sinex_source_core::binding::per_file(
-                &CSV,
-                input,
-                settings,
-                true,
-                |p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("csv")),
-            ))
-        }),
-        source: |_| Ok(Box::new(csv_source())),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::shared(csv_driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: None,
-    };
+super::input_format! { pub CSV_FORMAT = "outlook-csv" {
+    specs: [CSV],
+    parser: |_b| CsvParser,
+    discovery: DiscoverySpec::system(&[Location::new("input", "outlook-csv")]),
+    plan: |input, settings| {
+        Ok(binding::per_file(&CSV, input, settings, true, |p| {
+            p.extension().is_some_and(|e| e.eq_ignore_ascii_case("csv"))
+        }))
+    },
+    reader: shared(csv_driver),
+} }
 
 #[cfg(test)]
 mod tests;

@@ -32,10 +32,16 @@ use sinex_model::event_types::machine::JournalEntry;
 use sinex_model::event_types::system::{
     BootStarted, ShutdownStarted, SleepEnded, SleepStarted, UnitReloaded, UnitStarted, UnitStopped,
 };
+use sinex_model::json::JsonExt;
 use sinex_model::{Class, InputRef, Timestamp};
+use sinex_source_core::RecordError;
+use sinex_source_core::RecordResult;
+use sinex_source_core::discovery::{
+    CaptureOption, CaptureStream, CaptureValue, CapturedBy, DiscoverySpec, Location,
+};
 use sinex_source_core::drivers::live_stream::{self, LiveStream, Rotation, SpoolWriter};
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordError};
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
+use sinex_source_core::{Stateless, StatelessParser};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -45,7 +51,6 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "machine.journald",
     origin: Origin::Input(Shape::LiveStream),
     expect: Expectation::continuous_hours(1),
-    expires_after: None,
     purpose: "machine timeline, service health, unit and boot intervals, and recall",
     // Journal messages carry command lines, paths and sometimes secrets.
     class: Class::Guarded,
@@ -61,7 +66,8 @@ pub const SPEC: SourceSpec = SourceSpec {
         "sleep.ended",
         "shutdown.started",
     ],
-    framer: sinex_source_core::Framer::incremental(sinex_source_core::drivers::append_file::lines),
+    framer: sinex_source_core::Framer::LINES,
+    ..SourceSpec::DEFAULT
 };
 
 sinex_model::payload_enum! {
@@ -249,19 +255,18 @@ fn state_change(entry: &JournalEntry) -> Option<JournalReading> {
     }
 }
 
-impl Parser for JournaldParser {
+impl StatelessParser for JournaldParser {
     type Record<'a> = Map<String, Value>;
-    type Carry = ();
     type Payload = JournalReading;
 
     fn parse(
         &self,
         record: &Map<String, Value>,
-        _: &(),
+
         _context: &sinex_source_core::RecordContext<'_>,
-    ) -> Result<(Vec<JournalReading>, ()), RecordError> {
+    ) -> Result<Vec<JournalReading>, RecordError> {
         let (_, line) = live_stream::received(record).map_err(RecordError::new)?;
-        Ok((read_entry(&line)?, ()))
+        read_entry(&line)
     }
 }
 
@@ -269,8 +274,8 @@ fn read_entry(line: &[u8]) -> Result<Vec<JournalReading>, RecordError> {
     if line.iter().all(u8::is_ascii_whitespace) {
         return Ok(vec![]);
     }
-    let mut fields: Map<String, Value> = serde_json::from_slice(line)
-        .map_err(|e| RecordError::new(format!("journal entry is not a JSON object: {e}")))?;
+    let mut fields: Map<String, Value> =
+        serde_json::from_slice(line).record("journal entry is not a JSON object")?;
     let cursor = match fields.remove("__CURSOR") {
         Some(Value::String(c)) if !c.is_empty() => c,
         _ => return Err(RecordError::new("journal entry has no __CURSOR")),
@@ -311,25 +316,21 @@ fn read_entry(line: &[u8]) -> Result<Vec<JournalReading>, RecordError> {
     Ok(out)
 }
 
-pub fn source() -> DeclaredSource<JournaldParser> {
-    DeclaredSource {
-        spec: SPEC,
-        parser: JournaldParser,
-    }
-}
-
 #[cfg(feature = "full")]
 pub const EXPORT_SPEC: SourceSpec = SourceSpec {
     name: "machine.journald-export",
     origin: Origin::Input(Shape::ExportArchive),
     expect: Expectation::Export,
     parser: "journald-json-export",
-    parser_version: 1,
     framer: sinex_source_core::Framer::export(
         frame_export,
         sinex_source_core::drivers::export_archive::Framing::Lines,
     ),
-    ..SPEC
+    purpose: SPEC.purpose,
+    event_types: SPEC.event_types,
+    class: SPEC.class,
+    parser_version: SPEC.parser_version,
+    ..SourceSpec::DEFAULT
 };
 
 #[cfg(feature = "full")]
@@ -341,67 +342,47 @@ fn frame_export(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
 pub struct JournalExportParser;
 
 #[cfg(feature = "full")]
-impl Parser for JournalExportParser {
+impl StatelessParser for JournalExportParser {
     type Record<'a> = &'a [u8];
-    type Carry = ();
     type Payload = JournalReading;
 
     fn parse(
         &self,
         record: &&[u8],
-        _: &(),
+
         _: &sinex_source_core::RecordContext<'_>,
-    ) -> Result<(Vec<JournalReading>, ()), RecordError> {
-        Ok((read_entry(record)?, ()))
+    ) -> Result<Vec<JournalReading>, RecordError> {
+        read_entry(record)
     }
 }
 
 /// Raw JSON-lines exports, including a final record without a newline.
 #[cfg(feature = "full")]
-pub const EXPORT_FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "journal-json",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "input",
-                path: "journal-json",
-            }],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&EXPORT_SPEC],
-        plan: Some(|input, settings| {
-            Ok(sinex_source_core::binding::per_file(
-                &EXPORT_SPEC,
-                input,
-                settings,
-                true,
-                sinex_source_core::binding::any,
-            ))
-        }),
-        source: |_| {
-            Ok(Box::new(DeclaredSource {
-                spec: EXPORT_SPEC,
-                parser: JournalExportParser,
-            }))
-        },
-        reader: Some(|binding| {
-            Ok(sinex_source_core::binding::shared(
-                sinex_source_core::drivers::export_archive::ExportArchive {
-                    path: binding.input.clone(),
-                    host: binding.settings.host.clone(),
-                    select: |_| true,
-                    framing: sinex_source_core::drivers::export_archive::Framing::Lines,
-                    part_bytes: sinex_source_core::drivers::export_archive::PART_BYTES,
-                },
-            ))
-        }),
-        capture: None,
-    };
+super::input_format! { pub EXPORT_FORMAT = "journal-json" {
+    specs: [EXPORT_SPEC],
+    parser: |_b| Stateless(JournalExportParser),
+    discovery: DiscoverySpec::system(&[Location::new("input", "journal-json")]),
+    plan: |input, settings| {
+        Ok(sinex_source_core::binding::per_file(
+            &EXPORT_SPEC,
+            input,
+            settings,
+            true,
+            sinex_source_core::binding::any,
+        ))
+    },
+    reader: |binding| {
+        Ok(sinex_source_core::binding::shared(
+            sinex_source_core::drivers::export_archive::ExportArchive {
+                path: binding.input.clone(),
+                host: binding.settings.host.clone(),
+                select: |_| true,
+                framing: sinex_source_core::drivers::export_archive::Framing::Lines,
+                part_bytes: sinex_source_core::drivers::export_archive::PART_BYTES,
+            },
+        ))
+    },
+} }
 
 /// The spool reader of the live journal, or of the archive in `directory`.
 pub fn driver(spool: PathBuf, host: String, directory: Option<&str>) -> LiveStream {
@@ -521,11 +502,7 @@ impl<'a> CaptureSettings<'a> {
         Self {
             directory: settings.option("directory"),
             since: settings.option("since"),
-            follow: settings
-                .options
-                .get("follow")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
+            follow: settings.options.bool("follow").unwrap_or(false),
         }
     }
 }
@@ -623,44 +600,32 @@ fn spool_entries(
 /// `directory` (archived journal files to read instead of the live journal),
 /// `since` (where a first capture starts, a `journalctl --since` expression;
 /// the whole journal otherwise) and `follow`.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "journald",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "spool",
-                path: "journald",
-            }],
-            capabilities: &["journalctl"],
-            credentials: &[],
-            streams: &[sinex_source_core::discovery::CaptureStream {
-                spool: "journald",
-                options: &[sinex_source_core::discovery::CaptureOption {
-                    name: "follow",
-                    value: sinex_source_core::discovery::CaptureValue::Boolean(true),
-                }],
-                capabilities: &[],
-            }],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SPEC],
-        plan: Some(|spool, settings| {
-            Ok(sinex_source_core::binding::single(&SPEC, spool, settings))
-        }),
-        source: |_| Ok(Box::new(source())),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::polled(driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-                b.settings.option("directory"),
-            )))
-        }),
-        capture: Some(|b, stop| {
-            capture(&b.input, CaptureSettings::of(&b.settings), stop).map_err(|e| e.to_string())
-        }),
-    };
+super::input_format! { pub FORMAT = "journald" {
+    specs: [SPEC],
+    parser: |_b| Stateless(JournaldParser),
+    discovery: DiscoverySpec {
+        captured_by: CapturedBy::System,
+        locations: &[Location::new("spool", "journald")],
+        capabilities: &["journalctl"],
+        streams: &[CaptureStream {
+            spool: "journald",
+            options: &[CaptureOption { name: "follow", value: CaptureValue::Boolean(true) }],
+            capabilities: &[],
+        }],
+        ..DiscoverySpec::DEFAULT
+    },
+    plan: single,
+    reader: |b| {
+        Ok(sinex_source_core::binding::polled(driver(
+            b.input.clone(),
+            b.settings.host.clone(),
+            b.settings.option("directory"),
+        )))
+    },
+    capture: |b, _context, stop| {
+        capture(&b.input, CaptureSettings::of(&b.settings), stop).map_err(|e| e.to_string())
+    },
+} }
 
 #[cfg(test)]
 mod tests;

@@ -35,9 +35,8 @@ fn captured(events: &[Snapshot]) -> &ScrollbackCaptured {
 
 #[devkit::test]
 fn file_names_give_time_host_process_and_window() {
-    let named =
-        name("20261026T200909Z-sinnix-prime-pid24601-win11-weechat-scratchpad.ansi").unwrap();
-    assert_eq!(named.host, "sinnix-prime");
+    let named = name("20261026T200909Z-test-host-pid24601-win11-weechat-scratchpad.ansi").unwrap();
+    assert_eq!(named.host, "test-host");
     assert_eq!(named.kitty_pid, Some(24601));
     assert_eq!(named.window_id, 11);
     assert_eq!(

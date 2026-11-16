@@ -1,4 +1,5 @@
 use super::*;
+use crate::{Stateless, StatelessParser};
 use sinex_model::{Timestamp, event_types::CommandImported};
 
 /// Lines `n:command`; carry counts records; "panic" panics; "bad" fails.
@@ -324,7 +325,7 @@ fn directory_tar_members_keep_distinct_record_offsets_and_reject_overlaps() {
     }));
     let run = |manifest: &sinex_model::Manifest, records: &[(usize, usize)]| {
         drain(
-            &NotesParser,
+            &crate::Stateless(NotesParser),
             DrainInput {
                 source: "synthetic",
                 class: Class::Open,
@@ -476,28 +477,23 @@ fn an_export_tar_member_can_hold_several_records() {
 fn owned_json_records_decode_from_bounded_ranges_with_the_same_hash() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     struct Object;
-    impl Parser for Object {
+    impl StatelessParser for Object {
         type Record<'a> = serde_json::Map<String, Value>;
-        type Carry = ();
         type Payload = CommandImported;
         const VOLATILE: &'static [&'static str] = &["last_seen"];
         fn parse(
             &self,
             record: &Self::Record<'_>,
-            _: &(),
             _: &RecordContext<'_>,
-        ) -> Result<(Vec<CommandImported>, ()), RecordError> {
-            Ok((
-                vec![CommandImported {
-                    command: record["command"].as_str().unwrap().into(),
-                    hostname: "h".into(),
-                    started_at: None,
-                    header_elapsed: None,
-                    paths: vec![],
-                    n: 0,
-                }],
-                (),
-            ))
+        ) -> Result<Vec<CommandImported>, RecordError> {
+            Ok(vec![CommandImported {
+                command: record["command"].as_str().unwrap().into(),
+                hostname: "h".into(),
+                started_at: None,
+                header_elapsed: None,
+                paths: vec![],
+                n: 0,
+            }])
         }
     }
     struct Stored {
@@ -530,7 +526,7 @@ fn owned_json_records_decode_from_bounded_ranges_with_the_same_hash() {
     let manifest = Manifest::default();
     let records = [(0, stored.bytes.len())];
     let chunks = Drainer::new(
-        &Object,
+        &Stateless(Object),
         DrainInput {
             source: "synthetic",
             class: Class::Open,

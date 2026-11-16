@@ -6,10 +6,9 @@ fn a_message_keeps_its_ids_and_unsent_state() {
     let row = json!({"_rowid": 1, "uid": "mid.$synthetic1", "thread_id": "100", "timestamp": 1_700_000_000_123i64,
         "author": "200", "text": "hello", "thread_name": null,
         "data": "{\"text\": \"hello\", \"unsent\": true, \"reply_to_id\": null}"});
-    let (out, ()) = MessengerSqliteParser
+    let out = MessengerSqliteParser
         .parse(
             row.as_object().unwrap(),
-            &(),
             &sinex_source_core::RecordContext::none(),
         )
         .unwrap();
@@ -46,8 +45,8 @@ fn the_driver_reads_messages_with_their_thread_names() {
     let (start, end) = material.records[0];
     let raw = material.record_bytes().record(start, end).unwrap();
     let row: Map<String, Value> = serde_json::from_slice(&raw).unwrap();
-    let (out, ()) = MessengerSqliteParser
-        .parse(&row, &(), &sinex_source_core::RecordContext::none())
+    let out = MessengerSqliteParser
+        .parse(&row, &sinex_source_core::RecordContext::none())
         .unwrap();
     assert_eq!(out[0].thread_name.as_deref(), Some("Book club"));
 }

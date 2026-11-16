@@ -6,34 +6,30 @@
 //! the same items.
 use crate::sources::fields;
 use serde::{Deserialize, Serialize};
-use sinex_model::Class;
 use sinex_model::event_types::communication::ConversationMessage;
 use sinex_model::event_types::media::BookmarkSaved;
 use sinex_model::event_types::social::{PostPublished, VoteCast};
+use sinex_source_core::discovery::{DiscoverySpec, Location};
 use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordContext, RecordError};
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
+use sinex_source_core::stage::Structure;
+use sinex_source_core::{Framer, Parser, RecordContext, RecordError, RecordResult, binding};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "social.reddit",
     origin: Origin::Input(Shape::ExportArchive),
     expect: Expectation::Export,
-    expires_after: None,
     purpose: "what the operator wrote, voted on, saved and sent at Reddit",
-    class: Class::Open,
     parser: "reddit-gdpr",
-    parser_version: 1,
     event_types: &[
         "post.published",
         "vote.cast",
         "bookmark.saved",
         "conversation.message",
     ],
-    framer: sinex_source_core::Framer::export(
-        frame,
-        sinex_source_core::drivers::export_archive::Framing::Csv,
-    ),
+    framer: Framer::export(frame, Framing::Csv),
+    ..SourceSpec::DEFAULT
 };
 
 /// The members read; the rest (account metadata) are kept, not parsed.
@@ -99,8 +95,7 @@ impl Parser for RedditParser {
                 .filter(|v| !v.is_empty())
                 .cloned()
         };
-        let need =
-            |name: &str| get(name).ok_or_else(|| RecordError::new(format!("{member}: no {name}")));
+        let need = |name: &str| get(name).record_with(|| format!("{member}: no {name}"));
         let time = |name: &str| get(name).map(|t| utc(&t)).transpose();
         let service = || "reddit".to_owned();
         let event = match member.as_str() {
@@ -193,8 +188,7 @@ impl Parser for RedditParser {
                     thread_name: get("subject"),
                     participants,
                     sender: from,
-                    sent_at: time("date")?
-                        .ok_or_else(|| RecordError::new("message without a date"))?,
+                    sent_at: time("date")?.record("message without a date")?,
                     text: get("body"),
                     kind: Some("message".into()),
                     media: vec![],
@@ -211,8 +205,7 @@ impl Parser for RedditParser {
                 thread_name: get("channel_name"),
                 participants: vec![],
                 sender: get("username").unwrap_or_default(),
-                sent_at: time("created_at")?
-                    .ok_or_else(|| RecordError::new("chat without a time"))?,
+                sent_at: time("created_at")?.record("chat without a time")?,
                 text: get("message"),
                 kind: get("conversation_type"),
                 media: vec![],
@@ -230,19 +223,11 @@ impl Parser for RedditParser {
 fn utc(raw: &str) -> Result<sinex_model::Timestamp, RecordError> {
     let body = raw.trim().trim_end_matches(" UTC");
     let civil = jiff::civil::DateTime::strptime("%Y-%m-%d %H:%M:%S", body)
-        .map_err(|e| RecordError::new(format!("invalid time {raw:?}: {e}")))?;
+        .record_with(|| format!("invalid time {raw:?}"))?;
     let ts = civil
         .to_zoned(jiff::tz::TimeZone::UTC)
-        .map_err(|e| RecordError::new(e.to_string()))?;
-    sinex_model::Timestamp::from_unix_ns(ts.timestamp().as_nanosecond())
-        .map_err(|_| RecordError::new("time out of range"))
-}
-
-pub fn source() -> DeclaredSource<RedditParser> {
-    DeclaredSource {
-        spec: SPEC,
-        parser: RedditParser,
-    }
+        .record("invalid time")?;
+    sinex_model::Timestamp::from_unix_ns(ts.timestamp().as_nanosecond()).record("time out of range")
 }
 
 pub fn frame(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
@@ -265,40 +250,18 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
 }
 
 /// `stage --parser reddit PATH`: each Reddit export ZIP in PATH.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "reddit",
-        accepts: &[sinex_source_core::stage::Structure::ArchiveLayout(select)],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "input",
-                path: "reddit",
-            }],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SPEC],
-        plan: Some(|input, settings| {
-            Ok(sinex_source_core::binding::per_file(
-                &SPEC,
-                input,
-                settings,
-                false,
-                |p| p.extension().is_some_and(|e| e == "zip"),
-            ))
-        }),
-        source: |_| Ok(Box::new(source())),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::shared(driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: None,
-    };
+super::input_format! { pub FORMAT = "reddit" {
+    specs: [SPEC],
+    parser: |_b| RedditParser,
+    discovery: DiscoverySpec::system(&[Location::new("input", "reddit")]),
+    accepts: [Structure::ArchiveLayout(select)],
+    plan: |input, settings| {
+        Ok(binding::per_file(&SPEC, input, settings, false, |p| {
+            p.extension().is_some_and(|e| e == "zip")
+        }))
+    },
+    reader: shared(driver),
+} }
 
 #[cfg(test)]
 mod tests;

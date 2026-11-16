@@ -1,42 +1,43 @@
 //! Source reader outcomes stored as JSON-line materials.
+use crate::sources::input_format;
 use serde_json::{Map, Value, json};
-use sinex_model::event_types::coverage::{CoverageState, SourceCoverage};
-use sinex_model::{Class, InputRef, MaterialId, ObservationFacts, ReadingOrder, RevisionChange};
-use sinex_source_core::drivers::{Acquired, NewMaterial};
+use sinex_model::{
+    InputRef, MaterialId, ObservationFacts, ReadingOrder, RevisionChange,
+    event_types::coverage::{CoverageState, SourceCoverage},
+};
 use sinex_source_core::{
-    DeclaredSource, Expectation, Origin, Parser, RecordContext, RecordError, SourceSpec,
+    DeclaredSource, Expectation, Framer, Origin, RecordContext, RecordError, RecordResult,
+    SourceSpec, Stateless, StatelessParser,
+    discovery::DiscoverySpec,
+    drivers::{
+        Acquired, NewMaterial,
+        export_archive::{Framing, frame_lines},
+    },
 };
 
 pub const OBSERVATION: SourceSpec = SourceSpec {
     name: "source.observation",
     origin: Origin::Request,
     expect: Expectation::OnDemand,
-    expires_after: None,
     purpose: "source read outcomes and coverage observations",
-    class: Class::Open,
     parser: "source-observation",
-    parser_version: 1,
     event_types: &["source.coverage"],
-    framer: sinex_source_core::Framer::export(
-        sinex_source_core::drivers::export_archive::frame_lines,
-        sinex_source_core::drivers::export_archive::Framing::Lines,
-    ),
+    framer: Framer::export(frame_lines, Framing::Lines),
+    ..SourceSpec::DEFAULT
 };
 
 pub struct ObservationParser;
-impl Parser for ObservationParser {
+impl StatelessParser for ObservationParser {
     type Record<'a> = Map<String, Value>;
-    type Carry = ();
     type Payload = SourceCoverage;
 
     fn parse(
         &self,
         record: &Map<String, Value>,
-        _: &(),
         context: &RecordContext<'_>,
-    ) -> Result<(Vec<SourceCoverage>, ()), RecordError> {
-        let observation: SourceCoverage = serde_json::from_value(Value::Object(record.clone()))
-            .map_err(|error| RecordError::new(error.to_string()))?;
+    ) -> Result<Vec<SourceCoverage>, RecordError> {
+        let observation: SourceCoverage =
+            serde_json::from_value(Value::Object(record.clone())).record("invalid record")?;
         if observation.observed_source.is_empty()
             || observation.binding.is_empty()
             || observation.started_at > observation.ended_at
@@ -46,14 +47,14 @@ impl Parser for ObservationParser {
         {
             return Err(RecordError::new("invalid source coverage observation"));
         }
-        Ok((vec![observation], ()))
+        Ok(vec![observation])
     }
 }
 
-pub fn observation_source() -> DeclaredSource<ObservationParser> {
+pub fn observation_source() -> DeclaredSource<Stateless<ObservationParser>> {
     DeclaredSource {
         spec: OBSERVATION,
-        parser: ObservationParser,
+        parser: Stateless(ObservationParser),
     }
 }
 
@@ -100,24 +101,11 @@ pub fn observation_material(observation: SourceCoverage) -> Acquired {
     }
 }
 
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "source-observation",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&OBSERVATION],
-        plan: None,
-        source: |_| Ok(Box::new(observation_source())),
-        reader: None,
-        capture: None,
-    };
+input_format! { pub FORMAT = "source-observation" {
+    specs: [OBSERVATION], parser: |_b| Stateless(ObservationParser),
+    discovery: DiscoverySpec::DEFAULT,
+    plan: none, reader: none,
+} }
 
 #[cfg(test)]
 mod tests;

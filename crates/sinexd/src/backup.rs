@@ -89,7 +89,7 @@ pub(crate) fn split_password(database: &str) -> Result<Connection> {
             password: None,
         });
     }
-    let mut url = reqwest::Url::parse(database)
+    let mut url = url::Url::parse(database)
         .map_err(|_| Error::bad_value("invalid PostgreSQL connection URI"))?;
     let mut password = url
         .password()

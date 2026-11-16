@@ -57,7 +57,7 @@ fn visits_carry_their_url_and_unknown_times_stay_unknown() {
     let path = history();
     let (rows, manifest) = rows(&visits_driver(path, "h".into()));
     let cx = context(&manifest);
-    let (open, ()) = VisitParser.parse(&rows[0], &(), &cx).unwrap();
+    let open = VisitParser.parse(&rows[0], &cx).unwrap();
     assert!(open[0].profile.ends_with("/Default"));
     assert_eq!(open[0].url.as_deref(), Some("https://a.example/"));
     assert_eq!(open[0].title.as_deref(), Some("A"));
@@ -66,7 +66,7 @@ fn visits_carry_their_url_and_unknown_times_stay_unknown() {
         open[0].visited_at.unix_ns(),
         i128::from(NOW_WEBKIT - WEBKIT_EPOCH_OFFSET_US) * 1000
     );
-    let (closed, ()) = VisitParser.parse(&rows[1], &(), &cx).unwrap();
+    let closed = VisitParser.parse(&rows[1], &cx).unwrap();
     assert_eq!(
         (closed[0].from_visit, closed[0].duration_us),
         (Some(10), Some(1_500_000))
@@ -79,7 +79,7 @@ fn visits_carry_their_url_and_unknown_times_stay_unknown() {
 fn urls_read_counts_and_never_visited_is_unknown() {
     let path = history();
     let (rows, manifest) = rows(&urls_driver(path, "h".into()));
-    let (b, ()) = UrlParser.parse(&rows[1], &(), &context(&manifest)).unwrap();
+    let b = UrlParser.parse(&rows[1], &context(&manifest)).unwrap();
     assert_eq!(b[0].last_visited_at, None);
     assert_eq!(b[0].title, None);
     assert!(b[0].hidden);
@@ -145,7 +145,7 @@ fn old_material_without_an_observed_database_generation_is_explicitly_unknown() 
     let row = json!({"id":1,"visit_time":NOW_WEBKIT,"from_visit":0,"transition":0});
     assert!(
         VisitParser
-            .parse(row.as_object().unwrap(), &(), &context(&manifest))
+            .parse(row.as_object().unwrap(), &context(&manifest))
             .is_err()
     );
 }
@@ -176,7 +176,7 @@ fn committed_wal_visits_survive_restart_and_in_place_duration_updates() {
     file.read_exact_at(&mut bytes, 0).unwrap();
     let row: Map<String, Value> =
         serde_json::from_slice(&bytes[m.records[2].0..m.records[2].1]).unwrap();
-    let (visit, ()) = VisitParser.parse(&row, &(), &context(&m.manifest)).unwrap();
+    let visit = VisitParser.parse(&row, &context(&m.manifest)).unwrap();
     assert_eq!(visit[0].visit_id, 12);
     assert_eq!(visit[0].url.as_deref(), Some("https://a.example/"));
     let cursor = (m.cursor_at)(bytes.len()).unwrap();
@@ -203,9 +203,7 @@ fn committed_wal_visits_survive_restart_and_in_place_duration_updates() {
     let mut bytes = vec![0; file.metadata().unwrap().len() as usize];
     file.read_exact_at(&mut bytes, 0).unwrap();
     let row: Map<String, Value> = serde_json::from_slice(&bytes[..bytes.len() - 1]).unwrap();
-    let (updated, ()) = VisitParser
-        .parse(&row, &(), &context(&next.manifest))
-        .unwrap();
+    let updated = VisitParser.parse(&row, &context(&next.manifest)).unwrap();
     assert_eq!(updated[0].duration_us, Some(2_500_000));
     assert_eq!(updated[0].database_generation, visit[0].database_generation);
 }

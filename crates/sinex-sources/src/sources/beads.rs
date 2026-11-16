@@ -11,14 +11,16 @@
 //! new export with exactly the export whose records were admitted. Missing
 //! issues become removed readings even when the file changed while stopped.
 use crate::sources::fields;
+use crate::sources::input_format;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sinex_model::event_types::account::TaskRevised;
-use sinex_model::{Class, InputRef, Timestamp};
+use sinex_model::{InputRef, Timestamp, json::JsonExt};
+use sinex_source_core::discovery::{DiscoverySpec, Location};
 use sinex_source_core::drivers::DriverError;
 use sinex_source_core::drivers::api_cursor::{Api, ApiCursor, Page};
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordError};
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
+use sinex_source_core::{RecordError, RecordResult, Stateless, StatelessParser};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -26,13 +28,11 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "work.beads",
     origin: Origin::Input(Shape::ApiCursor),
     expect: Expectation::cadence_hours(1),
-    expires_after: None,
     purpose: "the issues work was planned and tracked in, beside the commits and jobs that did it",
-    class: Class::Open,
     parser: "beads-issues",
-    parser_version: 1,
     event_types: &["task.revised"],
-    framer: sinex_source_core::Framer::incremental(sinex_source_core::drivers::append_file::lines),
+    framer: sinex_source_core::Framer::LINES,
+    ..SourceSpec::DEFAULT
 };
 
 /// Fields mapped to the payload's own; the rest are kept in `extra`.
@@ -54,41 +54,38 @@ const KNOWN: &[&str] = &[
 
 pub struct BeadsParser;
 
-impl Parser for BeadsParser {
+impl StatelessParser for BeadsParser {
     type Record<'a> = Map<String, Value>;
-    type Carry = ();
     type Payload = TaskRevised;
 
     fn parse(
         &self,
         issue: &Map<String, Value>,
-        _: &(),
         _context: &sinex_source_core::RecordContext<'_>,
-    ) -> Result<(Vec<TaskRevised>, ()), RecordError> {
+    ) -> Result<Vec<TaskRevised>, RecordError> {
         if let Some(line) = issue.get("unreadable") {
             return Err(RecordError::new(format!("not a JSON line: {line}")));
         }
         // Exports with `--all` carry memories and other records too.
-        if issue.get("_type").and_then(Value::as_str) != Some("issue") {
-            return Ok((Vec::new(), ()));
+        if issue.str("_type") != Some("issue") {
+            return Ok(Vec::new());
         }
         let id = fields::text(issue, "id")?;
         let store = id
             .rsplit_once('-')
             .map(|(prefix, _)| prefix.to_owned())
-            .ok_or_else(|| RecordError::new(format!("issue ID {id:?} has no prefix")))?;
+            .record_with(|| format!("issue ID {id:?} has no prefix"))?;
         let time = |name: &str| -> Result<Option<Timestamp>, RecordError> {
             fields::optional_text(issue, name)
                 .map(|t| fields::rfc3339(&t))
                 .transpose()
         };
         let parent = issue
-            .get("dependencies")
-            .and_then(Value::as_array)
+            .array("dependencies")
             .into_iter()
             .flatten()
-            .find(|d| d.get("type").and_then(Value::as_str) == Some("parent-child"))
-            .and_then(|d| d.get("depends_on_id").and_then(Value::as_str))
+            .find(|d| d.str("type") == Some("parent-child"))
+            .and_then(|d| d.str("depends_on_id"))
             .map(str::to_owned);
         let task = TaskRevised {
             service: "beads".into(),
@@ -111,8 +108,7 @@ impl Parser for BeadsParser {
                 _ => None,
             }),
             labels: issue
-                .get("labels")
-                .and_then(Value::as_array)
+                .array("labels")
                 .into_iter()
                 .flatten()
                 .filter_map(|l| l.as_str().map(str::to_owned))
@@ -120,14 +116,7 @@ impl Parser for BeadsParser {
             assignee: fields::optional_text(issue, "assignee").filter(|a| !a.is_empty()),
             extra: fields::extra(issue, KNOWN),
         };
-        Ok((vec![task], ()))
-    }
-}
-
-pub fn source() -> DeclaredSource<BeadsParser> {
-    DeclaredSource {
-        spec: SPEC,
-        parser: BeadsParser,
+        Ok(vec![task])
     }
 }
 
@@ -219,8 +208,8 @@ impl Api for Export {
             .filter(|line| !line.is_empty())
         {
             match serde_json::from_slice::<Map<String, Value>>(line) {
-                Ok(issue) => match issue.get("id").and_then(Value::as_str) {
-                    Some(id) if issue.get("_type").and_then(Value::as_str) == Some("issue") => {
+                Ok(issue) => match issue.str("id") {
+                    Some(id) if issue.str("_type") == Some("issue") => {
                         let hash = blake3::hash(line).to_hex().to_string();
                         if previous.as_ref().and_then(|p| p.issues.get(id)) != Some(&hash) {
                             records.push(issue.clone());
@@ -233,7 +222,7 @@ impl Api for Export {
                         }
                     }
                     _ => {
-                        if issue.get("_type").and_then(Value::as_str) == Some("issue") {
+                        if issue.str("_type") == Some("issue") {
                             complete = false;
                         }
                         unreadable.push(issue);
@@ -283,34 +272,13 @@ pub fn driver(path: PathBuf, host: String) -> ApiCursor<Export> {
 }
 
 /// `stage --parser beads PATH`: a Beads JSONL export.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "beads",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "input",
-                path: "beads",
-            }],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SPEC],
-        plan: Some(|input, settings| {
-            Ok(sinex_source_core::binding::single(&SPEC, input, settings))
-        }),
-        source: |_| Ok(Box::new(source())),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::polled(driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: None,
-    };
+input_format! { pub FORMAT = "beads" {
+    specs: [SPEC],
+    parser: |_b| Stateless(BeadsParser),
+    discovery: DiscoverySpec::system(&[Location::new("input", "beads")]),
+    plan: single,
+    reader: polled(driver),
+} }
 
 #[cfg(test)]
 mod tests;

@@ -1,24 +1,19 @@
 //! One material record and parser for every capture gap. Capture callers
 //! persist these records with their spool and supply the stream's minimum class.
+use crate::RecordResult;
 use crate::registry::{Expectation, Origin, Shape};
-use crate::{Parser, RecordContext, RecordError};
+use crate::{RecordContext, RecordError};
+use crate::{Stateless, StatelessParser};
 pub use sinex_model::event_types::capture::Gap;
 
 pub struct GapParser;
 
-impl Parser for GapParser {
+impl StatelessParser for GapParser {
     type Record<'a> = &'a [u8];
-    type Carry = ();
     type Payload = Gap;
 
-    fn parse(
-        &self,
-        record: &&[u8],
-        _: &(),
-        _: &RecordContext<'_>,
-    ) -> Result<(Vec<Gap>, ()), RecordError> {
-        let gap: Gap =
-            serde_json::from_slice(record).map_err(|_| RecordError::new("invalid capture gap"))?;
+    fn parse(&self, record: &&[u8], _: &RecordContext<'_>) -> Result<Vec<Gap>, RecordError> {
+        let gap: Gap = serde_json::from_slice(record).record("invalid capture gap")?;
         if gap.stream.is_empty()
             || gap.reason.trim().is_empty()
             || gap
@@ -29,12 +24,12 @@ impl Parser for GapParser {
         {
             return Err(RecordError::new("invalid capture gap interval"));
         }
-        Ok((vec![gap], ()))
+        Ok(vec![gap])
     }
 }
 
 /// Callers supply the affected stream's class, including configured minimum classes.
-pub fn source(class: sinex_model::Class) -> crate::DeclaredSource<GapParser> {
+pub fn source(class: sinex_model::Class) -> crate::DeclaredSource<Stateless<GapParser>> {
     crate::DeclaredSource {
         spec: crate::SourceSpec {
             name: "capture.gap",
@@ -48,7 +43,7 @@ pub fn source(class: sinex_model::Class) -> crate::DeclaredSource<GapParser> {
             event_types: &["capture.gap"],
             framer: crate::Framer::incremental(crate::drivers::append_file::lines),
         },
-        parser: GapParser,
+        parser: Stateless(GapParser),
     }
 }
 

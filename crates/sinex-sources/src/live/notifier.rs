@@ -2,9 +2,9 @@
 use std::ffi::OsStr;
 use std::process::Stdio;
 
-pub(super) async fn raise(binding: &str, reason: &str) {
+pub(super) async fn raise(binding: &str, reason: &str, desktop: bool) {
     eprintln!("{binding}: error: {reason}");
-    if std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_none() {
+    if !desktop {
         return;
     }
     if !send(OsStr::new("busctl"), binding, reason).await {

@@ -5,23 +5,25 @@
 //! is the equivalence key, so an update is a newer reading of the same record.
 //! Running commands store -1 for duration and exit; those are unknown, not -1.
 use serde_json::{Map, Value};
-use sinex_model::{Class, Timestamp, event_types::CommandExecuted};
+use sinex_model::json::JsonExt;
+use sinex_model::{Timestamp, event_types::CommandExecuted};
+use sinex_source_core::RecordError;
+use sinex_source_core::RecordResult;
+use sinex_source_core::discovery::{DiscoverySpec, Location};
 use sinex_source_core::drivers::sqlite_rows::{Changes, SqliteRows};
 use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordError};
+use sinex_source_core::{Stateless, StatelessParser};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "terminal.atuin-history",
     origin: Origin::Input(Shape::SqliteRows),
     expect: Expectation::continuous_days(2),
-    expires_after: None,
     purpose: "command fusion and shell recall",
-    class: Class::Open,
     parser: "atuin-history",
-    parser_version: 1,
     event_types: &["command.executed"],
-    framer: sinex_source_core::Framer::incremental(sinex_source_core::drivers::append_file::lines),
+    framer: sinex_source_core::Framer::LINES,
+    ..SourceSpec::DEFAULT
 };
 
 const KNOWN: &[&str] = &[
@@ -42,42 +44,36 @@ const KNOWN: &[&str] = &[
 
 pub struct AtuinParser;
 
-impl Parser for AtuinParser {
+impl StatelessParser for AtuinParser {
     type Record<'a> = Map<String, Value>;
-    type Carry = ();
     type Payload = CommandExecuted;
 
     fn parse(
         &self,
         row: &Map<String, Value>,
-        _: &(),
+
         _context: &sinex_source_core::RecordContext<'_>,
-    ) -> Result<(Vec<CommandExecuted>, ()), RecordError> {
+    ) -> Result<Vec<CommandExecuted>, RecordError> {
         let text = |name: &str| -> Result<String, RecordError> {
             match row.get(name) {
                 Some(Value::String(s)) => Ok(s.clone()),
                 other => Err(RecordError::new(format!("{name} is not text: {other:?}"))),
             }
         };
-        let optional_text = |name: &str| row.get(name).and_then(Value::as_str).map(str::to_owned);
+        let optional_text = |name: &str| row.str(name).map(str::to_owned);
         let int = |name: &str| -> Result<i64, RecordError> {
-            row.get(name)
-                .and_then(Value::as_i64)
-                .ok_or_else(|| RecordError::new(format!("{name} is not an integer")))
+            row.i64(name)
+                .record_with(|| format!("{name} is not an integer"))
         };
         let time = |ns: i64| {
             Timestamp::from_unix_ns(i128::from(ns))
-                .map_err(|_| RecordError::new(format!("time {ns} out of range")))
+                .record_with(|| format!("time {ns} out of range"))
         };
         let duration = int("duration")?;
         let running = duration < 0;
         let deleted_at = match row.get("deleted_at") {
             None | Some(Value::Null) => None,
-            Some(v) => {
-                Some(time(v.as_i64().ok_or_else(|| {
-                    RecordError::new("deleted_at is not an integer")
-                })?)?)
-            }
+            Some(v) => Some(time(v.as_i64().record("deleted_at is not an integer")?)?),
         };
         let extra: Map<String, Value> = row
             .iter()
@@ -99,14 +95,14 @@ impl Parser for AtuinParser {
             shell: optional_text("shell"),
             extra,
         };
-        Ok((vec![payload], ()))
+        Ok(vec![payload])
     }
 }
 
-pub fn source() -> DeclaredSource<AtuinParser> {
+pub fn source() -> DeclaredSource<Stateless<AtuinParser>> {
     DeclaredSource {
         spec: SPEC,
-        parser: AtuinParser,
+        parser: Stateless(AtuinParser),
     }
 }
 
@@ -135,46 +131,17 @@ pub fn driver(path: PathBuf, host: String) -> SqliteRows {
 }
 
 /// `stage --parser atuin PATH`: Atuin's history database.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "atuin",
-        accepts: &[sinex_source_core::stage::Structure::SqliteTable {
-            table: "history",
-            columns: &[
-                "id",
-                "timestamp",
-                "duration",
-                "exit",
-                "command",
-                "cwd",
-                "session",
-                "hostname",
-            ],
-        }],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "data",
-                path: "atuin/history.db",
-            }],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SPEC],
-        plan: Some(|input, settings| {
-            Ok(sinex_source_core::binding::single(&SPEC, input, settings))
-        }),
-        source: |_| Ok(Box::new(source())),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::rows(driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: None,
-    };
+super::input_format! { pub FORMAT = "atuin" {
+    specs: [SPEC],
+    source: |_b| Ok(Box::new(source())),
+    discovery: DiscoverySpec::system(&[Location::new("data", "atuin/history.db")]),
+    accepts: [sinex_source_core::stage::Structure::SqliteTable {
+        table: "history",
+        columns: &["id", "timestamp", "duration", "exit", "command", "cwd", "session", "hostname"],
+    }],
+    plan: single,
+    reader: rows(driver),
+} }
 
 #[cfg(test)]
 mod tests;

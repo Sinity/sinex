@@ -49,6 +49,9 @@ static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 #[derive(Parser)]
 #[command(name = "sinexd", about = "The Sinex daemon", version = option_env!("SINEX_BUILD").unwrap_or(env!("CARGO_PKG_VERSION")))]
 struct Cli {
+    /// Public recipient file for encrypted captured materials.
+    #[arg(long, env = "SINEX_CLASS_KEY_FILE", global = true)]
+    class_key_file: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
 }
@@ -331,6 +334,32 @@ fn api_options(
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
+    let configured = (|| -> Result<_> {
+        let recipient = cli
+            .class_key_file
+            .as_ref()
+            .map(|path| {
+                let text =
+                    std::fs::read_to_string(path).map_err(|error| Error::file(path, error))?;
+                sinex_sealing::parse_recipient(&text)
+                    .map(std::sync::Arc::new)
+                    .map_err(Error::from)
+            })
+            .transpose()?;
+        let cache = std::env::var_os("XDG_CACHE_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")))
+            .ok_or_else(|| Error::not_configured("library cache requires XDG_CACHE_HOME or HOME"))?
+            .join("sinex/library");
+        Ok((recipient, cache))
+    })();
+    let (class_recipient, library_cache) = match configured {
+        Ok(configured) => configured,
+        Err(error) => {
+            eprintln!("sinexd: {error}");
+            return std::process::ExitCode::from(error.failure().kind.exit_code());
+        }
+    };
     let result = match cli.command {
         Command::Run {
             producer_grants,
@@ -354,6 +383,8 @@ async fn main() -> std::process::ExitCode {
                         telemetry_spool.unwrap_or_else(|| telemetry::spool(&store));
                     let producer_grants = ingress::fetch::load(producer_grants.as_deref())?;
                     daemon::run(daemon::Options {
+                        class_recipient,
+                        library_cache,
                         producer_grants,
                         database,
                         store,
@@ -385,7 +416,7 @@ async fn main() -> std::process::ExitCode {
             )
             .await
         }
-        Command::Admin { command } => admin::run(command).await,
+        Command::Admin { command } => admin::run(command, class_recipient, library_cache).await,
         Command::Derive {
             database,
             store,

@@ -3,7 +3,7 @@ use crate::{Error, Result};
 mod material;
 pub(crate) mod sealing;
 pub(crate) use material::{MaterialOnDemand, open, open_checked};
-use sealing::{SealingSink, Unlock, class_key, read_limits};
+use sealing::{SealingSink, Unlock, read_limits};
 use serde_json::Value;
 use sinex_model::{Batch, BatchKind, Class, MaterialId};
 use sinex_source_core::{MaterialSink, Source, drivers};
@@ -48,11 +48,7 @@ pub(crate) struct MaterialAccess {
 impl MaterialAccess {
     pub(crate) fn new(blobs: Blobs, class: Class, access: Access<'_>) -> Result<Self> {
         let sealing = if class == Class::Sealed {
-            let recipient = match access.recipient {
-                Some(recipient) => Some(recipient.clone()),
-                None => class_key()?,
-            }
-            .ok_or_else(|| {
+            let recipient = access.recipient.cloned().ok_or_else(|| {
                 Error::not_configured(
                     "its class is sealed, but no class key is configured (SINEX_CLASS_KEY_FILE)",
                 )
@@ -70,16 +66,10 @@ impl MaterialAccess {
     }
     pub(crate) fn archive(blobs: Blobs, class: Class, access: Access<'_>) -> Result<Self> {
         let recipient = if class == Class::Sealed {
-            let configured = if access.recipient.is_none() {
-                class_key()?
-            } else {
-                None
-            };
             Some(
                 access
                     .recipient
                     .cloned()
-                    .or(configured)
                     .or_else(|| access.unlock.map(Unlock::recipient))
                     .ok_or_else(|| {
                         Error::internal("sealed capture requires the class key's public recipient")

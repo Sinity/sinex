@@ -1,5 +1,6 @@
 //! File digests, media types and dimensions.
 use serde_json::Value;
+use sinex_model::json::JsonExt;
 use std::io::Read;
 use std::path::Path;
 
@@ -223,8 +224,7 @@ pub(super) fn ffprobe(path: &Path) -> Option<(Option<u32>, Option<u32>, Option<u
     }
     let v: Value = serde_json::from_slice(&out.stdout).ok()?;
     let stream = v
-        .get("streams")
-        .and_then(Value::as_array)
+        .array("streams")
         .and_then(|s| s.iter().find(|s| s.get("width").is_some()));
     let dim = |k: &str| {
         stream

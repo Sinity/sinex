@@ -3,8 +3,8 @@ use super::*;
 fn read(line: &str) -> Result<PostPublished, RecordError> {
     let item: Map<String, Value> = serde_json::from_str(line).unwrap();
     RedditArchiveParser
-        .parse(&item, &(), &sinex_source_core::RecordContext::none())
-        .map(|(mut out, ())| out.remove(0))
+        .parse(&item, &sinex_source_core::RecordContext::none())
+        .map(|mut out| out.remove(0))
 }
 
 #[devkit::test]

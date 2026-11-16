@@ -20,13 +20,10 @@ fn record(lane: &str, ts: f64, payload: Value) -> Vec<u8> {
 }
 
 fn parse(lane: &'static str, ts: f64, payload: Value) -> Result<Vec<Router>, RecordError> {
-    parser(lane)
-        .parse(
-            &record(lane, ts, payload).as_slice(),
-            &(),
-            &sinex_source_core::RecordContext::none(),
-        )
-        .map(|(out, ())| out)
+    parser(lane).parse(
+        &record(lane, ts, payload).as_slice(),
+        &sinex_source_core::RecordContext::none(),
+    )
 }
 
 fn at(rfc3339: &str) -> Timestamp {
@@ -211,7 +208,6 @@ fn records_of_another_lane_or_schema_fail() {
         parser("syslog")
             .parse(
                 &leases.as_slice(),
-                &(),
                 &sinex_source_core::RecordContext::none()
             )
             .is_err()
@@ -222,11 +218,7 @@ fn records_of_another_lane_or_schema_fail() {
     let bytes = other.to_string().into_bytes();
     assert!(
         parser("syslog")
-            .parse(
-                &bytes.as_slice(),
-                &(),
-                &sinex_source_core::RecordContext::none()
-            )
+            .parse(&bytes.as_slice(), &sinex_source_core::RecordContext::none())
             .is_err()
     );
     assert!(parse("syslog", 1.0, json!({"lines": "x"})).is_err());

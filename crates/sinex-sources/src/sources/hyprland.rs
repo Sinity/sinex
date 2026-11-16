@@ -21,6 +21,8 @@ use sinex_model::event_types::desktop::{
     WindowTitleChanged, WorkspaceSwitched,
 };
 use sinex_model::{Class, InputRef, Timestamp};
+use sinex_source_core::RecordResult;
+use sinex_source_core::discovery::{CaptureStream, CapturedBy, DiscoverySpec};
 use sinex_source_core::drivers::live_stream::{self, LiveStream, Rotation, SpoolWriter};
 use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
@@ -34,7 +36,6 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "desktop.hyprland",
     origin: Origin::Input(Shape::LiveStream),
     expect: Expectation::continuous_days(2),
-    expires_after: None,
     purpose: "focus intervals, attention and recall",
     // Window titles are free text that can contain anything.
     class: Class::Guarded,
@@ -50,7 +51,8 @@ pub const SPEC: SourceSpec = SourceSpec {
         "monitor.focused",
         "desktop.other",
     ],
-    framer: sinex_source_core::Framer::incremental(sinex_source_core::drivers::append_file::lines),
+    framer: sinex_source_core::Framer::LINES,
+    ..SourceSpec::DEFAULT
 };
 
 sinex_model::payload_enum! {
@@ -147,8 +149,7 @@ impl Parser for HyprlandParser {
     ) -> Result<(Vec<Desktop>, Carry), RecordError> {
         let pending = &carry.pending;
         let (received_at, bytes) = live_stream::received(record).map_err(RecordError::new)?;
-        let line = String::from_utf8(bytes)
-            .map_err(|_| RecordError::new("Hyprland event is not UTF-8"))?;
+        let line = String::from_utf8(bytes).record("Hyprland event is not UTF-8")?;
         let mut out = Vec::new();
         // Anything but the second half of a focus change ends a waiting first
         // half: keep what it said rather than drop it.
@@ -298,13 +299,13 @@ pub fn source() -> DeclaredSource<HyprlandParser> {
 }
 
 /// The event socket of the Hyprland instance in this session's environment.
-fn socket_path() -> Option<PathBuf> {
-    let runtime = std::env::var_os("XDG_RUNTIME_DIR")?;
-    let instance = std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE")?;
+fn socket_path(context: &sinex_source_core::discovery::DiscoveryContext) -> Option<PathBuf> {
     Some(
-        Path::new(&runtime)
+        context
+            .runtime_dir
+            .as_ref()?
             .join("hypr")
-            .join(instance)
+            .join(context.environment.get("HYPRLAND_INSTANCE_SIGNATURE")?)
             .join(".socket2.sock"),
     )
 }
@@ -334,40 +335,24 @@ fn capture(
 }
 
 /// `stage --parser hyprland SPOOL`: Hyprland's event socket, captured into SPOOL.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "hyprland",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::Session,
-            locations: &[],
-            capabilities: &["hyprland"],
-            credentials: &[],
-            streams: &[sinex_source_core::discovery::CaptureStream {
-                spool: "hyprland",
-                options: &[],
-                capabilities: &[],
-            }],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SPEC],
-        plan: Some(|spool, settings| {
-            Ok(sinex_source_core::binding::single(&SPEC, spool, settings))
-        }),
-        source: |_| Ok(Box::new(source())),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::polled(driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: Some(|b, stop| {
-            let socket = socket_path().ok_or(
+super::input_format! { pub FORMAT = "hyprland" {
+    specs: [SPEC],
+    parser: |_b| HyprlandParser,
+    discovery: DiscoverySpec {
+        captured_by: CapturedBy::Session,
+        capabilities: &["hyprland"],
+        streams: &[CaptureStream { spool: "hyprland", options: &[], capabilities: &[] }],
+        ..DiscoverySpec::DEFAULT
+    },
+    plan: single,
+    reader: polled(driver),
+    capture: |b, context, stop| {
+        let socket = socket_path(context).ok_or(
             "no Hyprland instance in this environment (HYPRLAND_INSTANCE_SIGNATURE or XDG_RUNTIME_DIR unset)",
         )?;
-            capture(&socket, &b.input, stop).map_err(|e| e.to_string())
-        }),
-    };
+        capture(&socket, &b.input, stop).map_err(|e| e.to_string())
+    },
+} }
 
 #[cfg(test)]
 mod tests;

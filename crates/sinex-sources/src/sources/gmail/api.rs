@@ -2,6 +2,7 @@
 use super::oauth::{self, Clock, Exchange, TokenProvider};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
+use sinex_model::json::JsonExt;
 use sinex_model::{InputRef, Timestamp};
 use sinex_source_core::drivers::DriverError;
 use sinex_source_core::drivers::api_cursor::{Api, Page};
@@ -118,8 +119,7 @@ fn failure(e: Error) -> DriverError {
 
 fn text<'a>(object: &'a Value, key: &str) -> Result<&'a str, DriverError> {
     object
-        .get(key)
-        .and_then(Value::as_str)
+        .str(key)
         .filter(|v| !v.is_empty())
         .ok_or_else(invalid)
 }
@@ -218,10 +218,7 @@ impl<T: Transport> Gmail<T> {
                 if text(&response, "id")? != id {
                     return Err(invalid());
                 }
-                response
-                    .get("raw")
-                    .and_then(Value::as_str)
-                    .ok_or_else(invalid)?;
+                response.str("raw").ok_or_else(invalid)?;
                 text(&response, "historyId")?;
                 text(&response, "threadId")?;
                 record(&self.account, "message", response)

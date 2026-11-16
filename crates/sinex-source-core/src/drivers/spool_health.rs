@@ -1,5 +1,6 @@
 //! Capture writes and acknowledged batches update these counts without rereading a spool.
 use serde_json::Value;
+use sinex_model::json::JsonExt;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
@@ -48,7 +49,7 @@ impl Backlog {
 
     pub fn recovered(&mut self, cursor: &Value) {
         self.subtract(self.recovery);
-        if let Some(segment) = cursor.get("segment").and_then(Value::as_u64) {
+        if let Some(segment) = cursor.u64("segment") {
             let passed_records: u64 = self
                 .segments
                 .range(..segment)
@@ -83,7 +84,7 @@ impl Backlog {
         }
         self.recovery = Counts::default();
         self.cursor = cursor.clone();
-        if let Some(last) = cursor.get("last").and_then(Value::as_str) {
+        if let Some(last) = cursor.str("last") {
             while self
                 .media
                 .first_key_value()
@@ -95,7 +96,7 @@ impl Backlog {
     }
 
     pub fn prepare(&mut self, cursor: &Value, records: u64) {
-        let segment = cursor.get("segment").and_then(Value::as_u64);
+        let segment = cursor.u64("segment");
         let passed = segment
             .map(|segment| {
                 self.segments
@@ -107,7 +108,7 @@ impl Backlog {
                     })
             })
             .unwrap_or_default();
-        let bytes = if let Some(last) = cursor.get("last").and_then(Value::as_str) {
+        let bytes = if let Some(last) = cursor.str("last") {
             self.media
                 .range(..=last.to_owned())
                 .map(|(_, size)| *size)
@@ -128,7 +129,7 @@ impl Backlog {
             offset.saturating_sub(previous)
         };
         // A completed media file is one captured record, including an empty file.
-        let records = if let Some(last) = cursor.get("last").and_then(Value::as_str) {
+        let records = if let Some(last) = cursor.str("last") {
             self.media.range(..=last.to_owned()).count() as u64
         } else {
             records + passed.records

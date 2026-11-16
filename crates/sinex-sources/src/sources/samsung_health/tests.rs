@@ -70,7 +70,7 @@ fn attachment_bins_become_one_record_each() {
         member: Some(&member),
     };
     let bins = br#"[{"score":14,"start_time":1736636340000,"end_time":1736636399000},{"score":10,"start_time":1736636280000,"end_time":1736636339000}]"#;
-    let (out, ()) = AttachmentParser.parse(&&bins[..], &(), &ctx).unwrap();
+    let out = AttachmentParser.parse(&&bins[..], &ctx).unwrap();
     assert_eq!(out.len(), 2);
     assert_eq!(out[0].category(), "stress.binning_data");
     assert_eq!(out[1].native_id, "a291:binning_data:1");
@@ -91,8 +91,8 @@ fn attachment_bins_become_one_record_each() {
         manifest: &manifest,
         member: Some(&member),
     };
-    let (out, ()) = AttachmentParser
-        .parse(&&br#"{"sleep_result_type":"STAGE"}"#[..], &(), &ctx)
+    let out = AttachmentParser
+        .parse(&&br#"{"sleep_result_type":"STAGE"}"#[..], &ctx)
         .unwrap();
     assert_eq!(out[0].native_id, "b17:extra_data");
     assert_eq!(out[0].category(), "sleep.extra_data");

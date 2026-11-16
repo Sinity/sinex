@@ -3,13 +3,14 @@ use super::REQUEST;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sinex_model::event_types::library::{Curation, LibraryRecord, Rendition, View};
+use sinex_model::json::JsonExt;
 use sinex_model::{
     Class, InputRef, MaterialId, ObservationFacts, ReadingOrder, RevisionChange, Timestamp,
 };
 use sinex_source_core::drain::RecordContext;
 use sinex_source_core::drivers::{Acquired, NewMaterial};
 use sinex_source_core::registry::DeclaredSource;
-use sinex_source_core::{Parser, RecordError};
+use sinex_source_core::{RecordError, RecordResult, Stateless, StatelessParser};
 
 /// One request line: a record tagged with its kind. Who wrote it, the
 /// channel and the time in the line are ignored; the parser fills them from
@@ -84,41 +85,36 @@ impl sinex_model::Payloads for RequestPayload {
 
 pub struct RequestParser;
 
-impl Parser for RequestParser {
+impl StatelessParser for RequestParser {
     type Record<'a> = Map<String, Value>;
-    type Carry = ();
     type Payload = RequestPayload;
 
     fn parse(
         &self,
         record: &Map<String, Value>,
-        _: &(),
         context: &RecordContext<'_>,
-    ) -> Result<(Vec<RequestPayload>, ()), RecordError> {
+    ) -> Result<Vec<RequestPayload>, RecordError> {
         let by = context
             .manifest
             .details
-            .get("actor")
-            .and_then(Value::as_str)
-            .ok_or_else(|| RecordError::new("library request manifest has no actor"))?
+            .str("actor")
+            .record("library request manifest has no actor")?
             .to_owned();
         let at = context
             .manifest
             .details
-            .get("written_at_ns")
-            .and_then(Value::as_str)
+            .str("written_at_ns")
             .and_then(|s| s.parse::<i128>().ok())
             .and_then(|ns| Timestamp::from_unix_ns(ns).ok())
-            .ok_or_else(|| RecordError::new("library request manifest has no time"))?;
+            .record("library request manifest has no time")?;
         let mut object = record.clone();
-        match object.get("record").and_then(Value::as_str) {
+        match object.str("record") {
             Some("curation") => {
                 let via = context
                     .manifest
                     .details
-                    .get("via")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| RecordError::new("library request manifest has no channel"))?
+                    .str("via")
+                    .record("library request manifest has no channel")?
                     .to_owned();
                 object.insert("author".into(), Value::String(by));
                 object.insert("via".into(), Value::String(via));
@@ -138,8 +134,8 @@ impl Parser for RequestParser {
                 );
             }
         }
-        let line: Line = serde_json::from_value(Value::Object(object))
-            .map_err(|e| RecordError::new(format!("not a library record: {e}")))?;
+        let line: Line =
+            serde_json::from_value(Value::Object(object)).record("not a library record")?;
         let record = match line {
             Line::Rendition(x) => LibraryRecord::Rendition(x),
             Line::Curation(x) => LibraryRecord::Curation(x),
@@ -149,7 +145,7 @@ impl Parser for RequestParser {
             None => None,
             Some(facts) => {
                 let facts: Vec<sinex_model::OwnedBlob> = serde_json::from_value(facts.clone())
-                    .map_err(|_| RecordError::new("invalid library request citation facts"))?;
+                    .record("invalid library request citation facts")?;
                 let mut seen = std::collections::BTreeSet::new();
                 if facts.is_empty()
                     || facts.iter().any(|fact| {
@@ -170,22 +166,20 @@ impl Parser for RequestParser {
                         facts
                             .into_iter()
                             .find(|fact| fact.blob == rendition.content)
-                            .ok_or_else(|| {
-                                RecordError::new("rendition content differs from prepared citation")
-                            })?,
+                            .record("rendition content differs from prepared citation")?,
                     ),
                     _ => None,
                 }
             }
         };
-        Ok((vec![RequestPayload { record, citation }], ()))
+        Ok(vec![RequestPayload { record, citation }])
     }
 }
 
-pub fn request_source() -> DeclaredSource<RequestParser> {
+pub fn request_source() -> DeclaredSource<Stateless<RequestParser>> {
     DeclaredSource {
         spec: REQUEST,
-        parser: RequestParser,
+        parser: Stateless(RequestParser),
     }
 }
 

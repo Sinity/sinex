@@ -97,8 +97,7 @@ impl<'a> RecordShape<'a> for &'a [u8] {
 impl<'a> RecordShape<'a> for serde_json::Map<String, serde_json::Value> {
     const STREAMING: bool = true;
     fn decode_reader(reader: &mut dyn std::io::Read) -> Result<Self, RecordError> {
-        serde_json::from_reader(reader)
-            .map_err(|error| RecordError::new(format!("record is not a JSON object: {error}")))
+        serde_json::from_reader(reader).record("record is not a JSON object")
     }
     fn decoded_hash(&self, raw_hash: [u8; 32], volatile: &[&str]) -> [u8; 32] {
         if volatile.is_empty() {
@@ -114,8 +113,7 @@ impl<'a> RecordShape<'a> for serde_json::Map<String, serde_json::Value> {
     }
 
     fn decode(raw: &'a [u8]) -> Result<Self, RecordError> {
-        serde_json::from_slice(raw)
-            .map_err(|e| RecordError::new(format!("record is not a JSON object: {e}")))
+        serde_json::from_slice(raw).record("record is not a JSON object")
     }
 
     fn hash(raw: &[u8], volatile: &[&str]) -> [u8; 32] {

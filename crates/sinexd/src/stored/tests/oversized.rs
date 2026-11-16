@@ -1,30 +1,26 @@
 use super::*;
 use crate::Result;
-use sinex_source_core::{DrainInput, Drainer, Limits, Parser, RecordContext, RecordError};
+use sinex_source_core::{DrainInput, Drainer, Limits, RecordContext, RecordError};
+use sinex_source_core::{Stateless, StatelessParser};
 use std::io::{Read, Seek, SeekFrom};
 
 struct JsonParser;
-impl Parser for JsonParser {
+impl StatelessParser for JsonParser {
     type Record<'a> = serde_json::Map<String, serde_json::Value>;
-    type Carry = ();
     type Payload = sinex_model::event_types::CommandImported;
     fn parse(
         &self,
         record: &Self::Record<'_>,
-        _: &(),
         _: &RecordContext<'_>,
-    ) -> Result<(Vec<Self::Payload>, ()), RecordError> {
-        Ok((
-            vec![sinex_model::event_types::CommandImported {
-                command: record["command"].as_str().unwrap().into(),
-                hostname: "synthetic".into(),
-                started_at: None,
-                header_elapsed: None,
-                paths: vec![],
-                n: 0,
-            }],
-            (),
-        ))
+    ) -> Result<Vec<Self::Payload>, RecordError> {
+        Ok(vec![sinex_model::event_types::CommandImported {
+            command: record["command"].as_str().unwrap().into(),
+            hostname: "synthetic".into(),
+            started_at: None,
+            header_elapsed: None,
+            paths: vec![],
+            n: 0,
+        }])
     }
 }
 struct PaddedJson {
@@ -93,7 +89,7 @@ fn oversized_stored_json_replays_with_bounded_raw_record_memory() {
         let manifest = sinex_model::Manifest::default();
         let records = [(0, length as usize)];
         let chunks = Drainer::new(
-            &JsonParser,
+            &Stateless(JsonParser),
             DrainInput {
                 source: "synthetic.json",
                 class: sinex_model::Class::Open,

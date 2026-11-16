@@ -14,7 +14,7 @@ fn read(ics: &str) -> CalendarEvent {
     let parser = CalendarParser {
         zone: jiff::tz::TimeZone::UTC,
     };
-    parser.parse(&ev, &(), &ctx).unwrap().0.remove(0)
+    parser.parse(&ev, &ctx).unwrap().remove(0)
 }
 
 #[devkit::test]
@@ -87,9 +87,8 @@ fn read_in(ics: &str, zone: &str) -> CalendarEvent {
         zone: jiff::tz::TimeZone::get(zone).unwrap(),
     };
     parser
-        .parse(&ev, &(), &sinex_source_core::RecordContext::none())
+        .parse(&ev, &sinex_source_core::RecordContext::none())
         .unwrap()
-        .0
         .remove(0)
 }
 
@@ -152,7 +151,7 @@ fn an_unknown_zone_is_a_record_failure() {
         zone: jiff::tz::TimeZone::UTC,
     };
     let error = parser
-        .parse(&ev, &(), &sinex_source_core::RecordContext::none())
+        .parse(&ev, &sinex_source_core::RecordContext::none())
         .unwrap_err();
     assert!(error.to_string().contains("unknown TZID"), "{error}");
 }

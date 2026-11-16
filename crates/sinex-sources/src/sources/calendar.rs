@@ -13,27 +13,27 @@
 //! zone, as is the start a changed instance's `RECURRENCE-ID` names; the
 //! `calendar.instances` derivation expands the series from those.
 use serde_json::{Map, Value};
+use sinex_model::Timestamp;
 use sinex_model::event_types::account::CalendarEvent;
-use sinex_model::{Class, Timestamp};
+use sinex_source_core::discovery::{DiscoverySpec, Location};
 use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordContext, RecordError, RecordShape};
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
+use sinex_source_core::{
+    Framer, RecordContext, RecordError, RecordResult, RecordShape, Stateless, StatelessParser,
+    binding,
+};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "calendar.export",
     origin: Origin::Input(Shape::ExportArchive),
     expect: Expectation::Export,
-    expires_after: None,
     purpose: "planned events beside what happened",
-    class: Class::Open,
     parser: "icalendar",
     parser_version: 2,
     event_types: &["calendar.event"],
-    framer: sinex_source_core::Framer::export(
-        frame,
-        sinex_source_core::drivers::export_archive::Framing::Delimited(EVENT),
-    ),
+    framer: Framer::export(frame, Framing::Delimited(EVENT)),
+    ..SourceSpec::DEFAULT
 };
 
 const EVENT: &[u8] = b"BEGIN:VEVENT";
@@ -62,8 +62,7 @@ impl Prop {
 
 impl<'a> RecordShape<'a> for VEvent {
     fn decode(raw: &'a [u8]) -> Result<Self, RecordError> {
-        let text = std::str::from_utf8(raw)
-            .map_err(|e| RecordError::new(format!("calendar is not UTF-8: {e}")))?;
+        let text = std::str::from_utf8(raw).record("calendar is not UTF-8")?;
         let mut props = Vec::new();
         let mut inside = false;
         let mut depth = 0usize;
@@ -179,9 +178,8 @@ impl CalendarParser {
         let date_only =
             prop.param("VALUE") == Some("DATE") || (raw.len() == 8 && !raw.contains('T'));
         let (civil, zone, label) = if date_only {
-            let d: jiff::civil::Date = jiff::civil::Date::strptime("%Y%m%d", raw).map_err(|e| {
-                RecordError::new(format!("{}: invalid date {raw:?}: {e}", prop.name))
-            })?;
+            let d: jiff::civil::Date = jiff::civil::Date::strptime("%Y%m%d", raw)
+                .record_with(|| format!("{}: invalid date {raw:?}", prop.name))?;
             (
                 d.to_datetime(jiff::civil::Time::midnight()),
                 self.zone.clone(),
@@ -192,15 +190,13 @@ impl CalendarParser {
                 Some(b) => (b, true),
                 None => (raw, false),
             };
-            let dt = jiff::civil::DateTime::strptime("%Y%m%dT%H%M%S", body).map_err(|e| {
-                RecordError::new(format!("{}: invalid date-time {raw:?}: {e}", prop.name))
-            })?;
+            let dt = jiff::civil::DateTime::strptime("%Y%m%dT%H%M%S", body)
+                .record_with(|| format!("{}: invalid date-time {raw:?}", prop.name))?;
             if utc {
                 (dt, jiff::tz::TimeZone::UTC, "UTC".to_owned())
             } else if let Some(tzid) = prop.param("TZID") {
-                let tz = jiff::tz::TimeZone::get(tzid).map_err(|e| {
-                    RecordError::new(format!("{}: unknown TZID {tzid:?}: {e}", prop.name))
-                })?;
+                let tz = jiff::tz::TimeZone::get(tzid)
+                    .record_with(|| format!("{}: unknown TZID {tzid:?}", prop.name))?;
                 (dt, tz, tzid.to_owned())
             } else {
                 (dt, self.zone.clone(), "floating".to_owned())
@@ -209,9 +205,9 @@ impl CalendarParser {
         let zoned = zone
             .to_ambiguous_zoned(civil)
             .compatible()
-            .map_err(|e| RecordError::new(format!("{}: {raw:?}: {e}", prop.name)))?;
+            .record_with(|| format!("{}: {raw:?}", prop.name))?;
         let at = Timestamp::from_unix_ns(zoned.timestamp().as_nanosecond())
-            .map_err(|_| RecordError::new(format!("{}: {raw:?} out of range", prop.name)))?;
+            .record_with(|| format!("{}: {raw:?} out of range", prop.name))?;
         Ok((at, label, date_only))
     }
 
@@ -271,17 +267,15 @@ const KNOWN: &[&str] = &[
     "DTSTAMP",
 ];
 
-impl Parser for CalendarParser {
+impl StatelessParser for CalendarParser {
     type Record<'a> = VEvent;
-    type Carry = ();
     type Payload = CalendarEvent;
 
     fn parse(
         &self,
         ev: &VEvent,
-        _: &(),
         context: &RecordContext<'_>,
-    ) -> Result<(Vec<CalendarEvent>, ()), RecordError> {
+    ) -> Result<Vec<CalendarEvent>, RecordError> {
         let calendar = context
             .path()
             .map(|p| {
@@ -296,7 +290,7 @@ impl Parser for CalendarParser {
                 .map(|p| unescape(&p.value))
                 .filter(|v| !v.is_empty())
         };
-        let uid = text("UID").ok_or_else(|| RecordError::new("VEVENT without a UID"))?;
+        let uid = text("UID").record("VEVENT without a UID")?;
         let start = get("DTSTART").map(|p| self.moment(p)).transpose()?;
         let end = match (get("DTEND"), get("DURATION"), &start) {
             (Some(p), _, _) => Some(self.moment(p)?.0),
@@ -318,53 +312,50 @@ impl Parser for CalendarParser {
                 a.push(Value::String(p.value.clone()));
             }
         }
-        Ok((
-            vec![CalendarEvent {
-                calendar,
-                uid,
-                recurrence_id: get("RECURRENCE-ID").map(|p| p.value.clone()),
-                summary: text("SUMMARY"),
-                description: text("DESCRIPTION"),
-                location: text("LOCATION"),
-                start: start.as_ref().map(|(t, _, _)| *t),
-                end,
-                all_day: start.as_ref().is_some_and(|(_, _, d)| *d),
-                zone: start.map_or_else(|| "unknown".into(), |(_, z, _)| z),
-                cancelled_at: if status.as_deref() == Some("CANCELLED") {
-                    last_modified.or_else(|| Timestamp::from_unix_secs(0).ok())
-                } else {
-                    None
-                },
-                local_zone: self.zone.iana_name().map(str::to_owned),
-                status,
-                rrule: get("RRULE").map(|p| p.value.clone()),
-                exdates: all("EXDATE").map(|p| p.value.clone()).collect(),
-                recurrence_start: get("RECURRENCE-ID")
-                    .map(|p| self.moment(p))
-                    .transpose()?
-                    .map(|(t, _, _)| t),
-                excluded_starts: self.starts(all("EXDATE"))?,
-                added_starts: self.starts(all("RDATE"))?,
-                organizer: get("ORGANIZER").map(|p| p.value.clone()),
-                attendees: all("ATTENDEE").map(|p| p.value.clone()).collect(),
-                created_at: self.stamp(get("CREATED"))?,
-                last_modified,
-                sequence: get("SEQUENCE").and_then(|p| p.value.trim().parse().ok()),
-                extra,
-            }],
-            (),
-        ))
+        Ok(vec![CalendarEvent {
+            calendar,
+            uid,
+            recurrence_id: get("RECURRENCE-ID").map(|p| p.value.clone()),
+            summary: text("SUMMARY"),
+            description: text("DESCRIPTION"),
+            location: text("LOCATION"),
+            start: start.as_ref().map(|(t, _, _)| *t),
+            end,
+            all_day: start.as_ref().is_some_and(|(_, _, d)| *d),
+            zone: start.map_or_else(|| "unknown".into(), |(_, z, _)| z),
+            cancelled_at: if status.as_deref() == Some("CANCELLED") {
+                last_modified.or_else(|| Timestamp::from_unix_secs(0).ok())
+            } else {
+                None
+            },
+            local_zone: self.zone.iana_name().map(str::to_owned),
+            status,
+            rrule: get("RRULE").map(|p| p.value.clone()),
+            exdates: all("EXDATE").map(|p| p.value.clone()).collect(),
+            recurrence_start: get("RECURRENCE-ID")
+                .map(|p| self.moment(p))
+                .transpose()?
+                .map(|(t, _, _)| t),
+            excluded_starts: self.starts(all("EXDATE"))?,
+            added_starts: self.starts(all("RDATE"))?,
+            organizer: get("ORGANIZER").map(|p| p.value.clone()),
+            attendees: all("ATTENDEE").map(|p| p.value.clone()).collect(),
+            created_at: self.stamp(get("CREATED"))?,
+            last_modified,
+            sequence: get("SEQUENCE").and_then(|p| p.value.trim().parse().ok()),
+            extra,
+        }])
     }
 }
 
 /// `start` plus an RFC 5545 duration (`PT1H30M`, `P1D`, `P2W`).
 fn add_duration(start: Timestamp, raw: &str) -> Result<Timestamp, RecordError> {
-    let bad = || RecordError::new(format!("invalid DURATION {raw:?}"));
+    let bad = || format!("invalid DURATION {raw:?}");
     let (negative, body) = match raw.strip_prefix('-') {
         Some(b) => (true, b),
         None => (false, raw.strip_prefix('+').unwrap_or(raw)),
     };
-    let body = body.strip_prefix('P').ok_or_else(bad)?;
+    let body = body.strip_prefix('P').record_with(bad)?;
     let mut secs: i64 = 0;
     let mut number = String::new();
     for c in body.chars() {
@@ -372,7 +363,7 @@ fn add_duration(start: Timestamp, raw: &str) -> Result<Timestamp, RecordError> {
             '0'..='9' => number.push(c),
             'T' => {}
             unit => {
-                let n: i64 = number.parse().map_err(|_| bad())?;
+                let n: i64 = number.parse().record_with(bad)?;
                 number.clear();
                 secs += n * match unit {
                     'W' => 604_800,
@@ -380,20 +371,13 @@ fn add_duration(start: Timestamp, raw: &str) -> Result<Timestamp, RecordError> {
                     'H' => 3_600,
                     'M' => 60,
                     'S' => 1,
-                    _ => return Err(bad()),
+                    _ => return Err(RecordError::new(bad())),
                 };
             }
         }
     }
     let delta = i128::from(if negative { -secs } else { secs }) * 1_000_000_000;
-    Timestamp::from_unix_ns(start.unix_ns() + delta).map_err(|_| bad())
-}
-
-pub fn source(zone: jiff::tz::TimeZone) -> DeclaredSource<CalendarParser> {
-    DeclaredSource {
-        spec: SPEC,
-        parser: CalendarParser { zone },
-    }
+    Timestamp::from_unix_ns(start.unix_ns() + delta).record_with(bad)
 }
 
 pub fn frame(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
@@ -416,46 +400,28 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
 
 /// `stage --parser calendar PATH`: each calendar export in PATH. Floating times are
 /// read in the binding's zone, recorded when it is planned.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "calendar",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[
-                sinex_source_core::discovery::Location {
-                    root: "input",
-                    path: "calendar",
-                },
-                sinex_source_core::discovery::Location {
-                    root: "input",
-                    path: "takeout",
-                },
-            ],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SPEC],
-        plan: Some(|input, settings| {
-            Ok(sinex_source_core::binding::per_file(
-                &SPEC,
-                input,
-                &settings.clone().with_zone()?,
-                false,
-                sinex_source_core::binding::any,
-            ))
-        }),
-        source: |b| Ok(Box::new(source(b.settings.zone()?))),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::shared(driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: None,
-    };
+super::input_format! { pub FORMAT = "calendar" {
+    specs: [SPEC],
+    parser: |b| {
+        Stateless(CalendarParser {
+            zone: b.settings.zone()?,
+        })
+    },
+    discovery: DiscoverySpec::system(&[
+        Location::new("input", "calendar"),
+        Location::new("input", "takeout"),
+    ]),
+    plan: |input, settings| {
+        Ok(binding::per_file(
+            &SPEC,
+            input,
+            &settings.clone().with_zone()?,
+            false,
+            binding::any,
+        ))
+    },
+    reader: shared(driver),
+} }
 
 #[cfg(test)]
 mod tests;

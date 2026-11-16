@@ -18,16 +18,19 @@ use sinex_model::Class;
 use sinex_model::event_types::session::{
     NotificationAction, NotificationClosed, NotificationShown,
 };
-use sinex_source_core::drivers::live_stream::{self, LiveStream};
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
+#[cfg(test)]
+use sinex_source_core::DeclaredSource;
+use sinex_source_core::RecordResult;
+use sinex_source_core::discovery::{CaptureStream, CapturedBy, DiscoverySpec};
+use sinex_source_core::drivers::live_stream;
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "desktop.notifications",
     origin: Origin::Input(Shape::LiveStream),
     expect: Expectation::continuous_days(2),
-    expires_after: None,
     purpose: "recall and the day's interruptions",
     // Message bodies are anything any program chose to show.
     class: Class::Guarded,
@@ -38,7 +41,8 @@ pub const SPEC: SourceSpec = SourceSpec {
         "notification.closed",
         "notification.action",
     ],
-    framer: sinex_source_core::Framer::incremental(sinex_source_core::drivers::append_file::lines),
+    framer: sinex_source_core::Framer::LINES,
+    ..SourceSpec::DEFAULT
 };
 
 /// The match rules capture monitors.
@@ -90,7 +94,7 @@ fn text(v: Option<&Value>) -> String {
 fn id(v: Option<&Value>) -> Result<u32, RecordError> {
     v.and_then(Value::as_u64)
         .and_then(|n| u32::try_from(n).ok())
-        .ok_or_else(|| RecordError::new("notification id is not a u32"))
+        .record("notification id is not a u32")
 }
 
 impl Parser for NotificationsParser {
@@ -217,17 +221,6 @@ impl Parser for NotificationsParser {
     }
 }
 
-pub fn source() -> DeclaredSource<NotificationsParser> {
-    DeclaredSource {
-        spec: SPEC,
-        parser: NotificationsParser,
-    }
-}
-
-pub fn driver(spool: PathBuf, host: String) -> LiveStream {
-    dbus::driver(spool, host, "dbus:session:org.freedesktop.Notifications")
-}
-
 pub fn capture(
     spool: &Path,
     stop: &sinex_source_core::capture::CaptureStop,
@@ -237,35 +230,25 @@ pub fn capture(
 
 /// `stage --parser notifications SPOOL`: desktop notifications on the session
 /// bus, captured into SPOOL.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "notifications",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::Session,
-            locations: &[],
-            capabilities: &["session_bus", "busctl"],
-            credentials: &[],
-            streams: &[sinex_source_core::discovery::CaptureStream {
-                spool: "notifications",
-                options: &[],
-                capabilities: &[],
-            }],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SPEC],
-        plan: Some(|spool, settings| {
-            Ok(sinex_source_core::binding::single(&SPEC, spool, settings))
-        }),
-        source: |_| Ok(Box::new(source())),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::polled(driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: Some(|b, stop| capture(&b.input, stop).map_err(|e| e.to_string())),
-    };
+super::input_format! { pub FORMAT = "notifications" {
+    specs: [SPEC],
+    parser: |_b| NotificationsParser,
+    discovery: DiscoverySpec {
+        captured_by: CapturedBy::Session,
+        capabilities: &["session_bus", "busctl"],
+        streams: &[CaptureStream { spool: "notifications", options: &[], capabilities: &[] }],
+        ..DiscoverySpec::DEFAULT
+    },
+    plan: single,
+    reader: |b| {
+        Ok(sinex_source_core::binding::polled(dbus::driver(
+            b.input.clone(),
+            b.settings.host.clone(),
+            "dbus:session:org.freedesktop.Notifications",
+        )))
+    },
+    capture: |b, _context, stop| capture(&b.input, stop).map_err(|e| e.to_string()),
+} }
 
 #[cfg(test)]
 mod tests;

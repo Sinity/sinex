@@ -204,7 +204,7 @@ fn drift_checks_have_no_time() {
 }
 
 fn drain_payloads(
-    parser: &ExperimentParser,
+    parser: &Stateless<ExperimentParser>,
     acquired: &sinex_source_core::drivers::Acquired,
 ) -> Vec<(String, Value)> {
     let m = acquired.material.as_ref().unwrap();
@@ -268,7 +268,7 @@ fn experiment_runs_start_and_finish() {
     let d = experiment_driver(root.clone(), "host-a".into());
     let mut state = DirState::default();
     let acquired = d.poll(&Value::Null, &mut state).unwrap();
-    let events = drain_payloads(&ExperimentParser, &acquired);
+    let events = drain_payloads(&Stateless(ExperimentParser), &acquired);
     let mut types: Vec<&str> = events.iter().map(|(t, _)| t.as_str()).collect();
     types.sort_unstable();
     assert_eq!(
@@ -298,7 +298,7 @@ fn experiment_runs_start_and_finish() {
     std::fs::remove_file(run.join("started.json")).unwrap();
     let after = d.poll(&cursor, &mut state).unwrap();
     assert!(
-        drain_payloads(&ExperimentParser, &after).is_empty(),
+        drain_payloads(&Stateless(ExperimentParser), &after).is_empty(),
         "a removed file says nothing about its run"
     );
 }

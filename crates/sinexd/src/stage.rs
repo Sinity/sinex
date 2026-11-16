@@ -650,7 +650,10 @@ pub(crate) async fn local(
         read_conn: &mut ctx.read_conn,
         blobs: &ctx.blobs,
         writer: &ctx.writer,
-        access: Access::default(),
+        access: Access {
+            recipient: ctx.writer.class_recipient.as_deref(),
+            unlock: None,
+        },
         stop,
     }
     .run(OperationId::new(), "operator", &request, plan, begun)

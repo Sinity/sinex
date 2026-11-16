@@ -578,7 +578,7 @@ async fn backup_mid_acquisition_restores_pending_spool(db: devkit::pg::TestDatab
     // Restore into an empty database, as the restore procedure does.
     // pg_restore --clean cannot drop constraints on existing hypertables.
     // The slot remains owned by this fixture throughout replacement.
-    let mut admin_url = reqwest::Url::parse(&url).unwrap();
+    let mut admin_url = url::Url::parse(&url).unwrap();
     admin_url.set_path("/postgres");
     let mut admin = PgConnection::connect(admin_url.as_str()).await.unwrap();
     let name = format!("\"{}\"", db.name.replace('"', "\"\""));
@@ -700,7 +700,7 @@ fn libpq_uri_passwords_stay_in_the_child_environment_and_plain_names_stay_plain(
             let args = command.get_args().collect::<Vec<_>>();
             assert_eq!(args.len(), 2);
             assert_eq!(args[0], OsStr::new("--dbname"));
-            let public = reqwest::Url::parse(args[1].to_str().unwrap()).unwrap();
+            let public = url::Url::parse(args[1].to_str().unwrap()).unwrap();
             assert!(public.password().is_none());
             let pairs = public.query_pairs().collect::<Vec<_>>();
             assert!(!pairs.iter().any(|(key, _)| key == "password"));
@@ -767,7 +767,7 @@ fn libpq_uri_options_preserve_spaces_and_literal_plus_signs() {
         )
         .unwrap();
         let uri = command.as_std().get_args().nth(1).unwrap();
-        let uri = reqwest::Url::parse(uri.to_str().unwrap()).unwrap();
+        let uri = url::Url::parse(uri.to_str().unwrap()).unwrap();
         // This is libpq's percent decoding, without form decoding '+' as space.
         let options = uri
             .query()
@@ -928,7 +928,7 @@ async fn restore_without_search_tables_rebuilds_search(db: devkit::pg::TestDatab
     );
 
     // Restore into an empty database, as the restore procedure does.
-    let mut admin_url = reqwest::Url::parse(&url).unwrap();
+    let mut admin_url = url::Url::parse(&url).unwrap();
     admin_url.set_path("/postgres");
     let mut admin = PgConnection::connect(admin_url.as_str()).await.unwrap();
     let name = format!("\"{}\"", db.name.replace('"', "\"\""));

@@ -18,16 +18,18 @@
 //! or update time changes. A re-run of a run older than that is seen through
 //! its pull request's checks.
 use crate::sources::fields;
+use crate::sources::input_format;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sinex_model::event_types::code::{
     GithubCheck, GithubIssue, GithubPullRequest, GithubRecord, GithubReview, GithubWorkflowRun,
 };
-use sinex_model::{Class, InputRef, Timestamp};
+use sinex_model::{InputRef, Timestamp, json::JsonExt};
+use sinex_source_core::discovery::{DiscoverySpec, Location};
 use sinex_source_core::drivers::DriverError;
 use sinex_source_core::drivers::api_cursor::{Api, ApiCursor, Page};
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordError};
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
+use sinex_source_core::{RecordError, RecordResult, Stateless, StatelessParser, binding};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -37,11 +39,8 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "code.github",
     origin: Origin::Input(Shape::ApiCursor),
     expect: Expectation::cadence_hours(6),
-    expires_after: None,
     purpose: "the outcome of work: pull requests, reviews, checks and CI runs beside the commits",
-    class: Class::Open,
     parser: "github",
-    parser_version: 1,
     event_types: &[
         "github.pull_request",
         "github.review",
@@ -49,44 +48,40 @@ pub const SPEC: SourceSpec = SourceSpec {
         "github.workflow_run",
         "github.issue",
     ],
-    framer: sinex_source_core::Framer::incremental(sinex_source_core::drivers::append_file::lines),
+    framer: sinex_source_core::Framer::LINES,
+    parser_version: 2,
+    ..SourceSpec::DEFAULT
 };
 
 pub struct GithubParser;
 
-impl Parser for GithubParser {
+impl StatelessParser for GithubParser {
     type Record<'a> = Map<String, Value>;
-    type Carry = ();
     type Payload = GithubRecord;
 
     fn parse(
         &self,
         record: &Map<String, Value>,
-        _: &(),
         _context: &sinex_source_core::RecordContext<'_>,
-    ) -> Result<(Vec<GithubRecord>, ()), RecordError> {
+    ) -> Result<Vec<GithubRecord>, RecordError> {
         let repository = fields::text(record, "repository")?;
         let object = |name: &str| {
             record
-                .get(name)
-                .and_then(Value::as_object)
-                .ok_or_else(|| RecordError::new(format!("no `{name}` object")))
+                .object(name)
+                .record_with(|| format!("no `{name}` object"))
         };
-        let out = match record.get("record").and_then(Value::as_str) {
+        let out = match record.str("record") {
             Some("pull_request") => pull_request(&repository, object("item")?)?,
             Some("checks") => {
                 let commit = fields::text(record, "commit")?;
-                let contexts = record
-                    .get("contexts")
-                    .and_then(Value::as_array)
-                    .ok_or_else(|| RecordError::new("no `contexts`"))?;
+                let contexts = record.array("contexts").record("no `contexts`")?;
                 checks(&repository, &commit, contexts)?
             }
             Some("workflow_run") => vec![workflow_run(&repository, object("item")?)?],
             Some("issue") => vec![issue(&repository, object("item")?)?],
             other => return Err(RecordError::new(format!("unknown record {other:?}"))),
         };
-        Ok((out, ()))
+        Ok(out)
     }
 }
 
@@ -110,7 +105,7 @@ fn text_at(item: &Map<String, Value>, path: &str) -> Option<String> {
 }
 
 fn required_text(item: &Map<String, Value>, path: &str) -> Result<String, RecordError> {
-    text_at(item, path).ok_or_else(|| RecordError::new(format!("no `{path}`")))
+    text_at(item, path).record_with(|| format!("no `{path}`"))
 }
 
 /// Text that is absent when empty (GitHub writes an empty body as `""`).
@@ -127,7 +122,7 @@ fn word_at(item: &Map<String, Value>, path: &str) -> Option<String> {
 fn number_at(item: &Map<String, Value>, path: &str) -> Result<u64, RecordError> {
     at(item, path)
         .and_then(Value::as_u64)
-        .ok_or_else(|| RecordError::new(format!("no number `{path}`")))
+        .record_with(|| format!("no number `{path}`"))
 }
 
 fn time_at(item: &Map<String, Value>, path: &str) -> Result<Option<Timestamp>, RecordError> {
@@ -135,7 +130,7 @@ fn time_at(item: &Map<String, Value>, path: &str) -> Result<Option<Timestamp>, R
 }
 
 fn required_time(item: &Map<String, Value>, path: &str) -> Result<Timestamp, RecordError> {
-    time_at(item, path)?.ok_or_else(|| RecordError::new(format!("no time `{path}`")))
+    time_at(item, path)?.record_with(|| format!("no time `{path}`"))
 }
 
 fn nodes<'v>(item: &'v Map<String, Value>, path: &str) -> &'v [Value] {
@@ -145,9 +140,7 @@ fn nodes<'v>(item: &'v Map<String, Value>, path: &str) -> &'v [Value] {
 }
 
 fn as_object(value: &Value) -> Result<&Map<String, Value>, RecordError> {
-    value
-        .as_object()
-        .ok_or_else(|| RecordError::new("an item is not an object"))
+    value.as_object().record("an item is not an object")
 }
 
 fn pull_request(
@@ -160,12 +153,12 @@ fn pull_request(
         number,
         title: required_text(item, "title")?,
         body: content_at(item, "body"),
-        state: word_at(item, "state").ok_or_else(|| RecordError::new("no `state`"))?,
+        state: word_at(item, "state").record("no `state`")?,
         draft: at(item, "isDraft").and_then(Value::as_bool) == Some(true),
         author: text_at(item, "author/login"),
         labels: nodes(item, "labels/nodes")
             .iter()
-            .filter_map(|l| l.get("name").and_then(Value::as_str).map(str::to_owned))
+            .filter_map(|l| l.str("name").map(str::to_owned))
             .collect(),
         created_at: required_time(item, "createdAt")?,
         updated_at: required_time(item, "updatedAt")?,
@@ -185,7 +178,7 @@ fn pull_request(
             pull_request: number,
             review_id: number_at(review, "databaseId")?,
             author: text_at(review, "author/login"),
-            state: word_at(review, "state").ok_or_else(|| RecordError::new("no review `state`"))?,
+            state: word_at(review, "state").record("no review `state`")?,
             body: content_at(review, "body"),
             commit: text_at(review, "commit/oid"),
             submitted_at: time_at(review, "submittedAt")?,
@@ -218,8 +211,7 @@ fn checks(
                     reported_as: "check_run".into(),
                     name: required_text(context, "name")?,
                     check_run: Some(number_at(context, "databaseId")?),
-                    status: word_at(context, "status")
-                        .ok_or_else(|| RecordError::new("no check `status`"))?,
+                    status: word_at(context, "status").record("no check `status`")?,
                     conclusion: word_at(context, "conclusion"),
                     app: text_at(context, "checkSuite/app/slug"),
                     workflow_run: at(context, "checkSuite/workflowRun/databaseId")
@@ -230,8 +222,7 @@ fn checks(
                     url: text_at(context, "detailsUrl"),
                 },
                 Some("StatusContext") => {
-                    let state = word_at(context, "state")
-                        .ok_or_else(|| RecordError::new("no status `state`"))?;
+                    let state = word_at(context, "state").record("no status `state`")?;
                     GithubCheck {
                         repository: repository.to_owned(),
                         commit: commit.to_owned(),
@@ -283,7 +274,7 @@ fn issue(repository: &str, item: &Map<String, Value>) -> Result<GithubRecord, Re
     let logins = |pointer: &str| -> Vec<String> {
         nodes(item, pointer)
             .iter()
-            .filter_map(|v| v.get("login").and_then(Value::as_str).map(str::to_owned))
+            .filter_map(|v| v.str("login").map(str::to_owned))
             .collect()
     };
     Ok(GithubRecord::Issue(GithubIssue {
@@ -291,27 +282,20 @@ fn issue(repository: &str, item: &Map<String, Value>) -> Result<GithubRecord, Re
         number: number_at(item, "number")?,
         title: required_text(item, "title")?,
         body: content_at(item, "body"),
-        state: word_at(item, "state").ok_or_else(|| RecordError::new("no `state`"))?,
+        state: word_at(item, "state").record("no `state`")?,
         state_reason: word_at(item, "state_reason"),
         author: text_at(item, "user/login"),
         labels: nodes(item, "labels")
             .iter()
-            .filter_map(|l| l.get("name").and_then(Value::as_str).map(str::to_owned))
+            .filter_map(|l| l.str("name").map(str::to_owned))
             .collect(),
         assignees: logins("assignees"),
-        comments: at(item, "comments").and_then(Value::as_u64).unwrap_or(0),
+        comments: item.u64("comments"),
         created_at: required_time(item, "created_at")?,
         updated_at: required_time(item, "updated_at")?,
         closed_at: time_at(item, "closed_at")?,
         url: required_text(item, "html_url")?,
     }))
-}
-
-pub fn source() -> DeclaredSource<GithubParser> {
-    DeclaredSource {
-        spec: SPEC,
-        parser: GithubParser,
-    }
 }
 
 /// How far a list ordered by update time was read: the newest update read,
@@ -443,15 +427,13 @@ fn time(raw: &str) -> Result<Timestamp, DriverError> {
 
 fn item_time(item: &Value, name: &str) -> Result<Timestamp, DriverError> {
     time(
-        item.get(name)
-            .and_then(Value::as_str)
+        item.str(name)
             .ok_or_else(|| DriverError::Read(format!("GitHub item without `{name}`")))?,
     )
 }
 
 fn item_number(item: &Value, name: &str) -> Result<u64, DriverError> {
-    item.get(name)
-        .and_then(Value::as_u64)
+    item.u64(name)
         .ok_or_else(|| DriverError::Read(format!("GitHub item without `{name}`")))
 }
 
@@ -659,7 +641,7 @@ impl Github {
             }
             let message = serde_json::from_str::<Value>(&body)
                 .ok()
-                .and_then(|v| v.get("message").and_then(Value::as_str).map(str::to_owned))
+                .and_then(|v| v.str("message").map(str::to_owned))
                 .unwrap_or(body);
             return Err(DriverError::Read(format!(
                 "GitHub {what}: HTTP {status}: {message}"
@@ -707,7 +689,7 @@ impl Github {
             .header("Content-Type", "application/json")
             .send(&body);
         let (answer, _) = self.answer("GraphQL", response)?;
-        if let Some(errors) = answer.get("errors").and_then(Value::as_array)
+        if let Some(errors) = answer.array("errors")
             && !errors.is_empty()
         {
             return Err(DriverError::Read(format!(
@@ -1064,10 +1046,6 @@ impl Github {
     }
 }
 
-pub fn driver(github: Github) -> ApiCursor<Github> {
-    ApiCursor { api: github }
-}
-
 /// The reader of a binding: the token file is required.
 fn reader(binding: &sinex_source_core::binding::Binding) -> Result<ApiCursor<Github>, String> {
     let settings = &binding.settings;
@@ -1089,34 +1067,23 @@ fn reader(binding: &sinex_source_core::binding::Binding) -> Result<ApiCursor<Git
     if let Some(seconds) = settings.number("interval_seconds") {
         github.interval = Duration::from_secs(seconds);
     }
-    Ok(driver(github))
+    Ok(ApiCursor { api: github })
 }
 
 /// `stage --parser github PATH`: the GitHub repository of the local repository at
 /// PATH.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "github",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "projects",
-                path: "",
-            }],
-            capabilities: &[],
-            credentials: &["token_file"],
-            streams: &[],
-        },
-        discover,
-        specs: || vec![&SPEC],
-        plan: Some(|input, settings| {
-            Ok(sinex_source_core::binding::single(&SPEC, input, settings))
-        }),
-        source: |_| Ok(Box::new(source())),
-        reader: Some(|b| Ok(sinex_source_core::binding::polled(reader(b)?))),
-        capture: None,
-    };
+input_format! { pub FORMAT = "github" {
+    specs: [SPEC],
+    parser: |_b| Stateless(GithubParser),
+    discovery: DiscoverySpec {
+        locations: &[Location::new("projects", "")],
+        credentials: &["token_file"],
+        ..DiscoverySpec::DEFAULT
+    },
+    discover: discover,
+    plan: single,
+    reader: |b| Ok(binding::polled(reader(b)?)),
+} }
 
 fn discover(
     format: &sinex_source_core::InputFormat,

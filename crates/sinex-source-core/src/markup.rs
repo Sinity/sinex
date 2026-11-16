@@ -261,7 +261,7 @@ fn reference(name: &str) -> Option<char> {
         "gt" => Some('>'),
         "quot" => Some('"'),
         "apos" => Some('\''),
-        "nbsp" => Some(' '),
+        "nbsp" | "emsp" | "ensp" | "thinsp" => Some(' '),
         _ => name
             .strip_prefix("#x")
             .or_else(|| name.strip_prefix("#X"))

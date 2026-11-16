@@ -9,46 +9,39 @@
 //! its sorted participants and a message is the thread, time and sender.
 use crate::sources::fields;
 use serde_json::{Map, Value};
-use sinex_model::Class;
 use sinex_model::event_types::communication::ConversationMessage;
+use sinex_model::json::JsonExt;
+use sinex_source_core::discovery::{DiscoverySpec, Location};
 use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordError};
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
+use sinex_source_core::{Framer, RecordError, RecordResult, Stateless, StatelessParser};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "communication.messenger",
     origin: Origin::Input(Shape::ExportArchive),
     expect: Expectation::Export,
-    expires_after: None,
     purpose: "conversations with people",
-    class: Class::Open,
     parser: "facebook-messenger",
-    parser_version: 1,
     event_types: &["conversation.message"],
-    framer: sinex_source_core::Framer::export(
-        frame,
-        sinex_source_core::drivers::export_archive::Framing::Whole,
-    ),
+    framer: Framer::export(frame, Framing::Whole),
+    ..SourceSpec::DEFAULT
 };
 
 pub struct MessengerParser;
 
-impl Parser for MessengerParser {
+impl StatelessParser for MessengerParser {
     type Record<'a> = Map<String, Value>;
-    type Carry = ();
     type Payload = ConversationMessage;
 
     fn parse(
         &self,
         doc: &Map<String, Value>,
-        _: &(),
         _context: &sinex_source_core::RecordContext<'_>,
-    ) -> Result<(Vec<ConversationMessage>, ()), RecordError> {
+    ) -> Result<Vec<ConversationMessage>, RecordError> {
         let messages = doc
-            .get("messages")
-            .and_then(Value::as_array)
-            .ok_or_else(|| RecordError::new("no messages array: not a Messenger thread"))?;
+            .array("messages")
+            .record("no messages array: not a Messenger thread")?;
         let older_export = messages
             .first()
             .is_some_and(|m| m.get("sender_name").is_some() || m.get("timestamp_ms").is_some())
@@ -61,11 +54,10 @@ impl Parser for MessengerParser {
             }
         };
         let mut participants: Vec<String> = doc
-            .get("participants")
-            .and_then(Value::as_array)
+            .array("participants")
             .map(|ps| {
                 ps.iter()
-                    .filter_map(|p| p.as_str().or_else(|| p.get("name").and_then(Value::as_str)))
+                    .filter_map(|p| p.as_str().or_else(|| p.str("name")))
                     .map(fix)
                     .collect()
             })
@@ -83,21 +75,18 @@ impl Parser for MessengerParser {
             .map(fix);
         let mut out = Vec::with_capacity(messages.len());
         for m in messages {
-            let m = m
-                .as_object()
-                .ok_or_else(|| RecordError::new("a message is not an object"))?;
+            let m = m.as_object().record("a message is not an object")?;
             let text_of = |a: &str, b: &str| {
                 fields::optional_text(m, a)
                     .or_else(|| fields::optional_text(m, b))
                     .map(|s| fix(&s))
             };
-            let sender = text_of("senderName", "sender_name")
-                .ok_or_else(|| RecordError::new("message without a sender"))?;
+            let sender = text_of("senderName", "sender_name").record("message without a sender")?;
             let ms = m
                 .get("timestamp")
                 .or_else(|| m.get("timestamp_ms"))
                 .and_then(Value::as_i64)
-                .ok_or_else(|| RecordError::new("message without a time"))?;
+                .record("message without a time")?;
             let sent_at = fields::from_unix_ms(ms)?;
             let unsent = m
                 .get("isUnsent")
@@ -119,11 +108,11 @@ impl Parser for MessengerParser {
                     Some(one @ Value::Object(_)) => vec![one.clone()],
                     _ => continue,
                 };
-                media.extend(items.iter().filter_map(|i| {
-                    i.as_str()
-                        .or_else(|| i.get("uri").and_then(Value::as_str))
-                        .map(str::to_owned)
-                }));
+                media.extend(
+                    items
+                        .iter()
+                        .filter_map(|i| i.as_str().or_else(|| i.str("uri")).map(str::to_owned)),
+                );
             }
             out.push(ConversationMessage {
                 service: "facebook-messenger".into(),
@@ -135,16 +124,12 @@ impl Parser for MessengerParser {
                 text: text_of("text", "content"),
                 kind: fields::optional_text(m, "type"),
                 media,
-                reactions: m
-                    .get("reactions")
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default(),
+                reactions: m.array("reactions").cloned().unwrap_or_default(),
                 message_id: fields::optional_text(m, "messageId"),
                 unsent_at: unsent.then_some(sent_at),
             });
         }
-        Ok((out, ()))
+        Ok(out)
     }
 }
 
@@ -159,13 +144,6 @@ fn repair(s: &str) -> String {
         }
     }
     s.to_owned()
-}
-
-pub fn source() -> DeclaredSource<MessengerParser> {
-    DeclaredSource {
-        spec: SPEC,
-        parser: MessengerParser,
-    }
 }
 
 pub fn frame(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
@@ -187,40 +165,13 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
 }
 
 /// `stage --parser messenger PATH`: each Messenger export in PATH.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "messenger",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "input",
-                path: "messenger",
-            }],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SPEC],
-        plan: Some(|input, settings| {
-            Ok(sinex_source_core::binding::per_file(
-                &SPEC,
-                input,
-                settings,
-                false,
-                sinex_source_core::binding::any,
-            ))
-        }),
-        source: |_| Ok(Box::new(source())),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::shared(driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: None,
-    };
+super::input_format! { pub FORMAT = "messenger" {
+    specs: [SPEC],
+    parser: |_b| Stateless(MessengerParser),
+    discovery: DiscoverySpec::system(&[Location::new("input", "messenger")]),
+    plan: per_file,
+    reader: shared(driver),
+} }
 
 #[cfg(test)]
 mod tests;

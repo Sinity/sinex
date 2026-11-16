@@ -6,6 +6,7 @@
 //! [`batches`] turns that into admission batches through a source's drain.
 use crate::{DrainInput, Limits, Source};
 use serde_json::Value;
+use sinex_model::json::JsonExt;
 use sinex_model::{
     Batch, BatchKind, InputRef, MaterialId, MaterialRef, ObservationFacts, ReadingOrder,
     RevisionChange, RunId, SourceProgress,
@@ -576,11 +577,10 @@ impl std::io::Read for Sequential<'_> {
 /// drivers whose cursors carry `material` and `through`.
 pub fn cursor_material(cursor: &Value) -> Option<(MaterialId, Option<u64>)> {
     let material = cursor
-        .get("material")
-        .and_then(Value::as_str)
+        .str("material")
         .and_then(|s| s.parse::<uuid::Uuid>().ok())
         .map(MaterialId)?;
-    Some((material, cursor.get("through").and_then(Value::as_u64)))
+    Some((material, cursor.u64("through")))
 }
 
 /// When the committed cursor stopped inside the part before a new one, record

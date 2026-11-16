@@ -8,9 +8,13 @@
 //! Timed records are numbered like zsh's ([`Seen`]); untimed ones keep their
 //! material locations and an unknown start.
 use crate::sources::shell_history::Seen;
-use sinex_model::{Class, Timestamp, event_types::CommandImported};
+#[cfg(test)]
+use sinex_model::Class;
+use sinex_model::{Timestamp, event_types::CommandImported};
+use sinex_source_core::RecordResult;
+use sinex_source_core::discovery::{DiscoverySpec, Location};
 use sinex_source_core::drivers::append_file::AppendFile;
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Parser, RecordError};
 use std::path::PathBuf;
 
@@ -18,13 +22,11 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "terminal.bash-history",
     origin: Origin::Input(Shape::AppendFile),
     expect: Expectation::continuous_days(2),
-    expires_after: None,
     purpose: "command fusion and shell recall",
-    class: Class::Open,
     parser: "bash-history",
-    parser_version: 1,
     event_types: &["command.imported"],
     framer: sinex_source_core::Framer::incremental(frame),
+    ..SourceSpec::DEFAULT
 };
 
 pub struct BashParser {
@@ -52,18 +54,17 @@ impl Parser for BashParser {
         seen: &Seen,
         _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<CommandImported>, Seen), RecordError> {
-        let text = std::str::from_utf8(record)
-            .map_err(|_| RecordError::new("bash history record is not UTF-8"))?;
+        let text = std::str::from_utf8(record).record("bash history record is not UTF-8")?;
         let text = text
             .strip_suffix('\n')
-            .ok_or_else(|| RecordError::new("unfinished bash history record"))?;
+            .record("unfinished bash history record")?;
         let (start, command) = match timestamp(text.as_bytes()) {
             Some(_) => {
                 let (line, command) = text.split_once('\n').unwrap_or((text, ""));
                 let digits = line[1..].trim_end();
                 let start = digits
                     .parse::<i64>()
-                    .map_err(|_| RecordError::new(format!("invalid bash timestamp {line:?}")))?;
+                    .record_with(|| format!("invalid bash timestamp {line:?}"))?;
                 (Some(start), command)
             }
             None => (None, text),
@@ -74,7 +75,7 @@ impl Parser for BashParser {
         let started_at = start
             .map(Timestamp::from_unix_secs)
             .transpose()
-            .map_err(|_| RecordError::new("bash start time out of range"))?;
+            .record("bash start time out of range")?;
         let (n, seen) = match start {
             Some(start) => seen.next(start, command),
             None => (0, seen.clone()),
@@ -123,13 +124,6 @@ pub fn frame(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
     (out, start)
 }
 
-pub fn source(host: String) -> DeclaredSource<BashParser> {
-    DeclaredSource {
-        spec: SPEC,
-        parser: BashParser { host },
-    }
-}
-
 pub fn driver(path: PathBuf, host: String) -> AppendFile {
     AppendFile {
         path,
@@ -139,34 +133,13 @@ pub fn driver(path: PathBuf, host: String) -> AppendFile {
 }
 
 /// `stage --parser bash PATH`: a bash history file.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "bash",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "environment",
-                path: "BASH_HISTFILE",
-            }],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SPEC],
-        plan: Some(|input, settings| {
-            Ok(sinex_source_core::binding::single(&SPEC, input, settings))
-        }),
-        source: |b| Ok(Box::new(source(b.settings.host.clone()))),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::appended(driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: None,
-    };
+super::input_format! { pub FORMAT = "bash" {
+    specs: [SPEC],
+    parser: |b| BashParser { host: b.settings.host.clone() },
+    discovery: DiscoverySpec::system(&[Location::new("environment", "BASH_HISTFILE")]),
+    plan: single,
+    reader: appended(driver),
+} }
 
 #[cfg(test)]
 mod tests;

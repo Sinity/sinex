@@ -5,10 +5,9 @@ fn parse(line: Value) -> Result<AgentctlEvent, RecordError> {
     AgentctlParser
         .parse(
             line.as_object().unwrap(),
-            &(),
             &sinex_source_core::RecordContext::none(),
         )
-        .map(|(mut out, ())| out.remove(0))
+        .map(|mut out| out.remove(0))
 }
 
 #[devkit::test]

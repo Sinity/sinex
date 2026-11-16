@@ -9,9 +9,7 @@ fn rec(block: &str) -> Map<String, Value> {
 }
 
 fn read(block: &str) -> Result<Vec<DeviceChanged>, RecordError> {
-    UdevParser
-        .parse(&rec(block), &(), &sinex_source_core::RecordContext::none())
-        .map(|(out, ())| out)
+    UdevParser.parse(&rec(block), &sinex_source_core::RecordContext::none())
 }
 
 const MONITOR_ADD: &str =

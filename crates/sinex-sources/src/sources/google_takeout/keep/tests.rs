@@ -8,10 +8,9 @@ fn notes_lists_and_trash() {
         "userEditedTimestampUsec": 1_739_887_200_000_000i64,
         "listContent": [{"text": "milk", "isChecked": true}, {"text": "eggs", "isChecked": false}],
         "labels": [{"name": "home"}], "textContentHtml": "<p>x</p>"});
-    let (out, ()) = KeepParser
+    let out = KeepParser
         .parse(
             note.as_object().unwrap(),
-            &(),
             &sinex_source_core::RecordContext::none(),
         )
         .unwrap();
@@ -25,7 +24,6 @@ fn notes_lists_and_trash() {
         KeepParser
             .parse(
                 json!({"title": "x"}).as_object().unwrap(),
-                &(),
                 &sinex_source_core::RecordContext::none()
             )
             .is_err()

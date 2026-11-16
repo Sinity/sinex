@@ -22,7 +22,7 @@ fn an_unreadable_directory_reports_partial_coverage_and_other_files_continue() {
     let partial = partial.unwrap();
     let material = partial.material.as_ref().unwrap();
     let result = drain(
-        &ScanParser,
+        &sinex_source_core::Stateless(ScanParser),
         DrainInput {
             source: SCAN.name,
             class: Class::Open,
@@ -68,7 +68,10 @@ fn an_unreadable_directory_reports_partial_coverage_and_other_files_continue() {
     );
     // The successful retry discovers changes under the unreadable directory.
     std::fs::write(nested.join("second.png"), png(30, 30)).unwrap();
-    let retry = read(&scanner.poll(&next, &mut state).unwrap(), &ScanParser);
+    let retry = read(
+        &scanner.poll(&next, &mut state).unwrap(),
+        &sinex_source_core::Stateless(ScanParser),
+    );
     assert_eq!(retry.len(), 1);
     assert!(retry[0].path.ends_with("nested/second.png"));
 }
@@ -93,7 +96,7 @@ fn a_scan_records_completion_once_after_all_parts() {
             material.manifest.details["walk_complete"],
             expected_complete
         );
-        copies += read(&acquired, &ScanParser).len();
+        copies += read(&acquired, &sinex_source_core::Stateless(ScanParser)).len();
         for &(start, end) in &material.records {
             if matches!(
                 serde_json::from_slice::<ScanLine>(&material.bytes[start..end]).unwrap(),
@@ -124,14 +127,14 @@ fn a_reused_path_gets_a_separate_key_while_the_moved_item_is_present() {
     let scanner = scan(dir.path());
     let mut state = ScanState::default();
     let first = scanner.poll(&Value::Null, &mut state).unwrap();
-    let old = read(&first, &ScanParser).remove(0);
+    let old = read(&first, &sinex_source_core::Stateless(ScanParser)).remove(0);
     let (_, cursor) = stored(&first);
     std::fs::rename(dir.path().join("a.png"), dir.path().join("b.png")).unwrap();
     let moved = scanner.poll(&cursor, &mut state).unwrap();
     let (_, cursor) = stored(&moved);
     std::fs::write(dir.path().join("a.png"), png(20, 20)).unwrap();
     let acquired = scanner.poll(&cursor, &mut state).unwrap();
-    let new = read(&acquired, &ScanParser).remove(0);
+    let new = read(&acquired, &sinex_source_core::Stateless(ScanParser)).remove(0);
     assert_ne!(new.item, old.item);
     assert_eq!(state.files["b.png"].item_key, old.item_key);
     assert!(

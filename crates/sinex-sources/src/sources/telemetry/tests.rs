@@ -9,8 +9,8 @@ fn a_spooled_sample_is_one_telemetry_event_at_its_sampling_time() {
         br#"{"component":"derivation","name":"command.fusion","measures":{"dirty_keys":3.0}}"#;
     let spooled = frame(at, line);
     let record: Map<String, Value> = serde_json::from_slice(&spooled).unwrap();
-    let (out, ()) = TelemetryParser
-        .parse(&record, &(), &sinex_source_core::RecordContext::none())
+    let out = TelemetryParser
+        .parse(&record, &sinex_source_core::RecordContext::none())
         .unwrap();
     assert_eq!(
         out,
@@ -25,7 +25,7 @@ fn a_spooled_sample_is_one_telemetry_event_at_its_sampling_time() {
     let record: Map<String, Value> = serde_json::from_slice(&bad).unwrap();
     assert!(
         TelemetryParser
-            .parse(&record, &(), &sinex_source_core::RecordContext::none())
+            .parse(&record, &sinex_source_core::RecordContext::none())
             .is_err()
     );
 }

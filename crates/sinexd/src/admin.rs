@@ -95,7 +95,11 @@ async fn schema(database: &str, mappings: Vec<String>, upgrade: bool) -> Result<
         .map_err(Error::from)
 }
 
-pub(crate) async fn run(command: Admin) -> Result<()> {
+pub(crate) async fn run(
+    command: Admin,
+    class_recipient: Option<std::sync::Arc<sinex_sealing::Recipient>>,
+    library_cache: std::path::PathBuf,
+) -> Result<()> {
     match command {
         // `sinexctl` reads the report, or the failure, from standard output.
         Admin::Diagnostics { command } => match crate::diagnostics::run(command).await {
@@ -106,7 +110,7 @@ pub(crate) async fn run(command: Admin) -> Result<()> {
                 Err(failure.into())
             }
         },
-        Admin::Table(args) => admin_table(args).await,
+        Admin::Table(args) => admin_table(args, class_recipient, library_cache).await,
         Admin::Schema {
             database,
             kind_prefixes,
@@ -205,7 +209,11 @@ pub(crate) fn password_hash(password: &str) -> Result<String> {
 
 /// Run one command-table command locally: the daemon's API, built over a
 /// local writer, called with the operator's access.
-async fn admin_table(args: Vec<String>) -> Result<()> {
+async fn admin_table(
+    args: Vec<String>,
+    class_recipient: Option<std::sync::Arc<sinex_sealing::Recipient>>,
+    library_cache: std::path::PathBuf,
+) -> Result<()> {
     use clap::{Arg, value_parser};
     let name = args
         .first()
@@ -293,12 +301,13 @@ async fn admin_table(args: Vec<String>) -> Result<()> {
     } else {
         None
     };
-    let ctx = reader_context::ReaderContext::open(
+    let mut ctx = reader_context::ReaderContext::open(
         database,
         store,
         sinex_model::time_settings::TimeSettings::from_parts(zone.clone(), day_start),
     )
     .await?;
+    ctx.writer.class_recipient = class_recipient;
     // A local command stops only when it ends.
     let (_running, stop) = tokio::sync::watch::channel(false);
     let reads = sqlx::postgres::PgPoolOptions::new()
@@ -326,6 +335,7 @@ async fn admin_table(args: Vec<String>) -> Result<()> {
         unlock: Default::default(),
         host: host.clone(),
         library_roots: Vec::new(),
+        library_cache,
     };
     if let Some(identity) = identity
         && let sinex_protocol::Reply::Failed { failure } = local

@@ -15,27 +15,24 @@
 //! It becomes a `sleep-noise` record of the session before it.
 use crate::sources::fields;
 use serde_json::{Map, Value, json};
+use sinex_model::Timestamp;
 use sinex_model::event_types::health::HealthRecord;
-use sinex_model::{Class, Timestamp};
+use sinex_source_core::discovery::{DiscoverySpec, Location};
 use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordError};
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
+use sinex_source_core::{Framer, Parser, RecordError, RecordResult};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "health.sleep-as-android",
     origin: Origin::Input(Shape::ExportArchive),
     expect: Expectation::Export,
-    expires_after: None,
     purpose: "sleep sessions and their phases",
-    class: Class::Open,
     parser: "sleep-as-android",
     parser_version: 3,
     event_types: &["health.record"],
-    framer: sinex_source_core::Framer::export(
-        frame,
-        sinex_source_core::drivers::export_archive::Framing::Csv,
-    ),
+    framer: Framer::export(frame, Framing::Csv),
+    ..SourceSpec::DEFAULT
 };
 
 pub struct SleepParser;
@@ -79,7 +76,7 @@ impl Parser for SleepParser {
         let cell = |i: usize| cells.get(i).map(|c| c.trim()).unwrap_or("");
         let id_ms: i64 = cell(0)
             .parse()
-            .map_err(|_| RecordError::new(format!("Id {:?} is not epoch milliseconds", cell(0))))?;
+            .record_with(|| format!("Id {:?} is not epoch milliseconds", cell(0)))?;
         let start = fields::from_unix_ms(id_ms)?;
         let from = naive(cell(2))?;
         // The local start written in From, read as if UTC, minus the true
@@ -93,7 +90,7 @@ impl Parser for SleepParser {
             let to = naive(cell(3))?;
             Some(
                 Timestamp::from_unix_ns(to.unix_ns() - i128::from(offset_secs) * 1_000_000_000)
-                    .map_err(|_| RecordError::new("To out of range"))?,
+                    .record("To out of range")?,
             )
         };
         let mut values = Map::new();
@@ -141,7 +138,7 @@ impl Parser for SleepParser {
                     values,
                     events,
                 )
-                .map_err(|error| RecordError::new(error.to_string()))?,
+                .record("invalid health record")?,
             ],
             Carry {
                 header: header.clone(),
@@ -155,7 +152,7 @@ impl Parser for SleepParser {
 fn noise(cells: &[String], carry: &Carry) -> Result<(Vec<HealthRecord>, Carry), RecordError> {
     let (id_ms, start, end, offset) = carry
         .session
-        .ok_or_else(|| RecordError::new("a noise row without a session before it"))?;
+        .record("a noise row without a session before it")?;
     let samples: Vec<Value> = cells[13..]
         .iter()
         .map(|c| c.trim())
@@ -163,7 +160,7 @@ fn noise(cells: &[String], carry: &Carry) -> Result<(Vec<HealthRecord>, Carry), 
         .map(|c| {
             c.parse::<f64>()
                 .map(|v| json!(v))
-                .map_err(|_| RecordError::new(format!("noise sample {c:?} is not a number")))
+                .record_with(|| format!("noise sample {c:?} is not a number"))
         })
         .collect::<Result<_, _>>()?;
     let mut values = Map::new();
@@ -180,7 +177,7 @@ fn noise(cells: &[String], carry: &Carry) -> Result<(Vec<HealthRecord>, Carry), 
                 values,
                 vec![],
             )
-            .map_err(|error| RecordError::new(error.to_string()))?,
+            .record("invalid health record")?,
         ],
         Carry {
             header: carry.header.clone(),
@@ -191,20 +188,20 @@ fn noise(cells: &[String], carry: &Carry) -> Result<(Vec<HealthRecord>, Carry), 
 
 /// `D. M. YYYY HH:MM[:SS]` read as if it were UTC.
 fn naive(raw: &str) -> Result<Timestamp, RecordError> {
-    let bad = || RecordError::new(format!("invalid local time {raw:?}"));
-    let (date, clock) = raw.rsplit_once(' ').ok_or_else(bad)?;
+    let bad = || format!("invalid local time {raw:?}");
+    let (date, clock) = raw.rsplit_once(' ').record_with(bad)?;
     let mut d = date.split('.').map(|p| p.trim().parse::<i32>());
     let (Some(Ok(day)), Some(Ok(month)), Some(Ok(year))) = (d.next(), d.next(), d.next()) else {
-        return Err(bad());
+        return Err(RecordError::new(bad()));
     };
     let mut c = clock.split(':').map(str::parse::<u8>);
     let (Some(Ok(h)), Some(Ok(m))) = (c.next(), c.next()) else {
-        return Err(bad());
+        return Err(RecordError::new(bad()));
     };
     let s = c.next().and_then(Result::ok).unwrap_or(0);
-    let month = time::Month::try_from(month as u8).map_err(|_| bad())?;
-    let date = time::Date::from_calendar_date(year, month, day as u8).map_err(|_| bad())?;
-    let time = time::Time::from_hms(h, m, s).map_err(|_| bad())?;
+    let month = time::Month::try_from(month as u8).record_with(bad)?;
+    let date = time::Date::from_calendar_date(year, month, day as u8).record_with(bad)?;
+    let time = time::Time::from_hms(h, m, s).record_with(bad)?;
     Ok(Timestamp(
         time::PrimitiveDateTime::new(date, time).assume_utc(),
     ))
@@ -217,17 +214,10 @@ fn event(raw: &str) -> Result<Value, RecordError> {
     let ms: i64 = parts
         .next()
         .and_then(|m| m.parse().ok())
-        .ok_or_else(|| RecordError::new(format!("event {raw:?} has no time")))?;
+        .record_with(|| format!("event {raw:?} has no time"))?;
     let at = fields::from_unix_ms(ms)?;
     let value = parts.next().and_then(|v| v.parse::<f64>().ok());
     Ok(json!({"kind": kind, "at": at, "value": value}))
-}
-
-pub fn source() -> DeclaredSource<SleepParser> {
-    DeclaredSource {
-        spec: SPEC,
-        parser: SleepParser,
-    }
 }
 
 pub fn frame(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
@@ -245,40 +235,13 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
 }
 
 /// `stage --parser sleep-as-android PATH`: each Sleep as Android export in PATH.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "sleep-as-android",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "input",
-                path: "sleep-as-android",
-            }],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SPEC],
-        plan: Some(|input, settings| {
-            Ok(sinex_source_core::binding::per_file(
-                &SPEC,
-                input,
-                settings,
-                false,
-                sinex_source_core::binding::any,
-            ))
-        }),
-        source: |_| Ok(Box::new(source())),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::shared(driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: None,
-    };
+super::input_format! { pub FORMAT = "sleep-as-android" {
+    specs: [SPEC],
+    parser: |_b| SleepParser,
+    discovery: DiscoverySpec::system(&[Location::new("input", "sleep-as-android")]),
+    plan: per_file,
+    reader: shared(driver),
+} }
 
 #[cfg(test)]
 mod tests;

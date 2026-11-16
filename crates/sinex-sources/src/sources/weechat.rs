@@ -7,24 +7,23 @@
 //! change takes the earlier instant. The prefix says what the line is: a nick
 //! (with a mode prefix such as `@`), ` *` for an action, `-->` for a join,
 //! `<--` for a part or quit, `--` for notices and other client lines.
+use sinex_model::Timestamp;
 use sinex_model::event_types::communication::{ChatLineKind, ChatMessage};
-use sinex_model::{Class, Timestamp};
+use sinex_source_core::discovery::{DiscoverySpec, Location};
 use sinex_source_core::drivers::append_file::AppendFile;
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordError};
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
+use sinex_source_core::{Framer, RecordError, RecordResult, Stateless, StatelessParser, binding};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "communication.weechat-log",
     origin: Origin::Input(Shape::AppendFile),
     expect: Expectation::continuous_days(7),
-    expires_after: None,
     purpose: "chat recall and correspondence history",
-    class: Class::Open,
     parser: "weechat-log",
-    parser_version: 1,
     event_types: &["chat.message"],
-    framer: sinex_source_core::Framer::incremental(framer),
+    framer: Framer::incremental(framer),
+    ..SourceSpec::DEFAULT
 };
 
 /// The buffer a line belongs to is named by its log's folder (or, for a flat
@@ -36,22 +35,16 @@ pub struct WeeChatParser {
 
 const MODES: &[char] = &['@', '+', '%', '~', '&', '!'];
 
-impl Parser for WeeChatParser {
+impl StatelessParser for WeeChatParser {
     type Record<'a> = &'a [u8];
-    type Carry = ();
     type Payload = ChatMessage;
 
     fn parse(
         &self,
         record: &&[u8],
-        carry: &(),
         context: &sinex_source_core::RecordContext<'_>,
-    ) -> Result<(Vec<ChatMessage>, ()), RecordError> {
-        self.line(
-            record,
-            carry,
-            &buffer_of(context.path().unwrap_or_default()),
-        )
+    ) -> Result<Vec<ChatMessage>, RecordError> {
+        self.line(record, &buffer_of(context.path().unwrap_or_default()))
     }
 }
 
@@ -70,35 +63,27 @@ fn buffer_of(path: &str) -> String {
 }
 
 impl WeeChatParser {
-    fn line(
-        &self,
-        record: &[u8],
-        _: &(),
-        buffer: &str,
-    ) -> Result<(Vec<ChatMessage>, ()), RecordError> {
-        let line = std::str::from_utf8(record)
-            .map_err(|_| RecordError::new("invalid UTF-8 in the log line"))?;
+    fn line(&self, record: &[u8], buffer: &str) -> Result<Vec<ChatMessage>, RecordError> {
+        let line = std::str::from_utf8(record).record("invalid UTF-8 in the log line")?;
         let line = line.strip_suffix('\n').unwrap_or(line);
         let line = line.strip_suffix('\r').unwrap_or(line);
         if line.is_empty() {
-            return Ok((vec![], ()));
+            return Ok(vec![]);
         }
         let mut parts = line.splitn(3, '\t');
         let date = parts.next().unwrap_or_default();
-        let prefix = parts
-            .next()
-            .ok_or_else(|| RecordError::new("no prefix field"))?;
+        let prefix = parts.next().record("no prefix field")?;
         let text = parts.next().unwrap_or_default().to_owned();
         let civil: jiff::civil::DateTime = date
             .parse()
-            .map_err(|e| RecordError::new(format!("invalid time {date:?}: {e}")))?;
+            .record_with(|| format!("invalid time {date:?}"))?;
         let zoned = self
             .zone
             .to_ambiguous_zoned(civil)
             .compatible()
-            .map_err(|e| RecordError::new(format!("time {date:?} in {:?}: {e}", self.zone)))?;
+            .record_with(|| format!("time {date:?} in {:?}", self.zone))?;
         let sent_at = Timestamp::from_unix_ns(zoned.timestamp().as_nanosecond())
-            .map_err(|_| RecordError::new("time out of range"))?;
+            .record("time out of range")?;
         let first_word = || text.split([' ', '(']).next().map(str::to_owned);
         let (kind, nick, mode) = match prefix {
             "-->" => (ChatLineKind::Join, first_word(), None),
@@ -120,24 +105,14 @@ impl WeeChatParser {
                 )
             }
         };
-        Ok((
-            vec![ChatMessage {
-                buffer: buffer.to_owned(),
-                sent_at,
-                nick,
-                prefix: mode,
-                text,
-                kind,
-            }],
-            (),
-        ))
-    }
-}
-
-pub fn source(zone: jiff::tz::TimeZone) -> DeclaredSource<WeeChatParser> {
-    DeclaredSource {
-        spec: SPEC,
-        parser: WeeChatParser { zone },
+        Ok(vec![ChatMessage {
+            buffer: buffer.to_owned(),
+            sent_at,
+            nick,
+            prefix: mode,
+            text,
+            kind,
+        }])
     }
 }
 
@@ -164,43 +139,28 @@ pub fn driver(path: PathBuf, host: String) -> AppendFile {
 
 /// `stage --parser weechat PATH`: each WeeChat log under PATH, read in the
 /// binding's zone (WeeChat writes local times), recorded when it is planned.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "weechat",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "data",
-                path: "weechat/logs",
-            }],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SPEC],
-        plan: Some(|input, settings| {
-            Ok(sinex_source_core::binding::per_file(
-                &SPEC,
-                input,
-                &settings.clone().with_zone()?,
-                true,
-                |p| {
-                    p.extension()
-                        .is_some_and(|e| e == "log" || e == "weechatlog")
-                },
-            ))
-        }),
-        source: |b| Ok(Box::new(source(b.settings.zone()?))),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::appended(driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: None,
-    };
+super::input_format! { pub FORMAT = "weechat" {
+    specs: [SPEC],
+    parser: |b| {
+        Stateless(WeeChatParser {
+            zone: b.settings.zone()?,
+        })
+    },
+    discovery: DiscoverySpec::system(&[Location::new("data", "weechat/logs")]),
+    plan: |input, settings| {
+        Ok(binding::per_file(
+            &SPEC,
+            input,
+            &settings.clone().with_zone()?,
+            true,
+            |p| {
+                p.extension()
+                    .is_some_and(|e| e == "log" || e == "weechatlog")
+            },
+        ))
+    },
+    reader: appended(driver),
+} }
 
 #[cfg(test)]
 mod tests;

@@ -1,28 +1,37 @@
 //! Authored signal rules, the host deliverer's outcomes and the evaluator
 //! reports other products forward.
+use crate::sources::input_format;
 use serde_json::{Map, Value, json};
-use sinex_model::event_types::signal::{ReportReceived, SignalRecord};
-use sinex_model::{Class, Timestamp};
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, SourceSpec};
-use sinex_source_core::{Parser, RecordContext, RecordError};
+use sinex_model::{
+    InputRef, MaterialId, ObservationFacts, ReadingOrder, RevisionChange, Timestamp,
+    event_types::signal::{ReportReceived, SignalRecord},
+    json::JsonExt,
+};
+use sinex_source_core::{
+    DeclaredSource, Expectation, Framer, Origin, RecordContext, RecordError, RecordResult,
+    SourceSpec, Stateless, StatelessParser,
+    discovery::DiscoverySpec,
+    drivers::{
+        Acquired, NewMaterial,
+        export_archive::{Framing, frame_lines},
+    },
+};
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "sinex.signals",
     parser: "signals",
-    parser_version: 1,
     origin: Origin::Request,
     expect: Expectation::OnDemand,
-    expires_after: None,
     purpose: "authored signal rules, delivery outcomes and forwarded evaluator reports",
-    class: Class::Open,
     event_types: &["signal.rule", "signal.outcome", "signal.report"],
-    framer: sinex_source_core::Framer::export(
+    framer: Framer::export(
         frame_complete,
-        sinex_source_core::drivers::export_archive::Framing::Custom {
+        Framing::Custom {
             name: "signals-json-values",
             frame,
         },
     ),
+    ..SourceSpec::DEFAULT
 };
 
 /// Host JSON lines and a producer's complete JSON frame share exact byte
@@ -100,33 +109,29 @@ fn frame(bytes: &[u8], eof: bool) -> (Vec<(usize, usize)>, usize) {
 }
 
 pub struct SignalParser;
-impl Parser for SignalParser {
+impl StatelessParser for SignalParser {
     type Record<'a> = Map<String, Value>;
-    type Carry = ();
     type Payload = SignalRecord;
     fn parse(
         &self,
         record: &Map<String, Value>,
-        _: &(),
         context: &RecordContext<'_>,
-    ) -> Result<(Vec<SignalRecord>, ()), RecordError> {
+    ) -> Result<Vec<SignalRecord>, RecordError> {
         let detail = |name: &str| {
             context
                 .manifest
                 .details
-                .get(name)
-                .and_then(Value::as_str)
-                .ok_or_else(|| RecordError::new(format!("signal material lacks its {name}")))
+                .str(name)
+                .record_with(|| format!("signal material lacks its {name}"))
         };
-        if record.get("kind").and_then(Value::as_str) == Some("signals") {
+        if record.str("kind") == Some("signals") {
             let at = context
                 .manifest
                 .details
                 .get("received_at")
                 .cloned()
-                .ok_or_else(|| RecordError::new("signal frame lacks receipt clock"))?;
-            let at: Timestamp =
-                serde_json::from_value(at).map_err(|error| RecordError::new(error.to_string()))?;
+                .record("signal frame lacks receipt clock")?;
+            let at: Timestamp = serde_json::from_value(at).record("invalid record")?;
             return forwarded_reports(
                 &Value::Object(record.clone()),
                 detail("authenticated_producer")?,
@@ -135,8 +140,8 @@ impl Parser for SignalParser {
             )
             .map(|records| (records, ()));
         }
-        let mut record: SignalRecord = serde_json::from_value(Value::Object(record.clone()))
-            .map_err(|error| RecordError::new(error.to_string()))?;
+        let mut record: SignalRecord =
+            serde_json::from_value(Value::Object(record.clone())).record("invalid record")?;
         match &mut record {
             SignalRecord::Rule(rule) => {
                 rule.active.author = match detail("actor")? {
@@ -159,7 +164,7 @@ impl Parser for SignalParser {
             }
             SignalRecord::Outcome(_) => {}
         }
-        Ok((vec![record], ()))
+        Ok(vec![record])
     }
 }
 
@@ -171,8 +176,8 @@ pub fn forwarded_reports(
     family: &str,
     at: Timestamp,
 ) -> Result<Vec<SignalRecord>, RecordError> {
-    let sinex_protocol::Ingress::Signals { reports, .. } = serde_json::from_value(frame.clone())
-        .map_err(|error| RecordError::new(error.to_string()))?
+    let sinex_protocol::Ingress::Signals { reports, .. } =
+        serde_json::from_value(frame.clone()).record("invalid record")?
     else {
         return Err(RecordError::new("not a signal frame"));
     };
@@ -211,10 +216,10 @@ pub fn forwarded_reports(
         .collect()
 }
 
-pub fn source() -> DeclaredSource<SignalParser> {
+pub fn source() -> DeclaredSource<Stateless<SignalParser>> {
     DeclaredSource {
         spec: SPEC,
-        parser: SignalParser,
+        parser: Stateless(SignalParser),
     }
 }
 
@@ -224,9 +229,7 @@ pub fn material(
     via: &str,
     host: &str,
     at: Timestamp,
-) -> sinex_source_core::drivers::Acquired {
-    use sinex_model::{InputRef, MaterialId, ObservationFacts, ReadingOrder, RevisionChange};
-    use sinex_source_core::drivers::{Acquired, NewMaterial};
+) -> Acquired {
     let mut bytes = Vec::new();
     let mut framed = Vec::new();
     for record in records {
@@ -271,24 +274,11 @@ pub fn material(
     }
 }
 
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "signals",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SPEC],
-        plan: None,
-        source: |_| Ok(Box::new(source())),
-        reader: None,
-        capture: None,
-    };
+input_format! { pub FORMAT = "signals" {
+    specs: [SPEC], parser: |_b| Stateless(SignalParser),
+    discovery: DiscoverySpec::DEFAULT,
+    plan: none, reader: none,
+} }
 
 #[cfg(test)]
 mod tests;

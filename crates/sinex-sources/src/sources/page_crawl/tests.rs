@@ -70,3 +70,11 @@ fn a_new_crawl_starts_its_url_list_again_and_keeps_the_material_sequence() {
     assert_eq!(next.material, Some(material));
     assert_eq!(next.part_index, 10);
 }
+
+#[devkit::test]
+fn page_title_decodes_numeric_references() {
+    assert_eq!(
+        title(b"<title>A&#x2019;s &#8212; B</title>"),
+        Some("A’s — B".into())
+    );
+}

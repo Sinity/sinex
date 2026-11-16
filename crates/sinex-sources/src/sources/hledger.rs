@@ -4,17 +4,19 @@ pub mod framing;
 mod includes;
 mod posting;
 
+use crate::sources::input_format;
 use serde::{Deserialize, Serialize};
+use sinex_model::json::JsonExt;
 use sinex_model::{
     Class,
     event_types::finance::{
         IncludedFrom, JournalDirective, JournalImported, JournalRecord, Posting, TransactionPosted,
     },
 };
-use sinex_source_core::binding::{self, InputFormat};
+use sinex_source_core::discovery::{DiscoverySpec, Location};
 use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
 use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordContext, RecordError};
+use sinex_source_core::{Parser, RecordContext, RecordError, RecordResult};
 use std::path::PathBuf;
 
 const TRANSACTIONS: Framing = Framing::Custom {
@@ -26,17 +28,16 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "finance.hledger",
     origin: Origin::Input(Shape::ExportArchive),
     expect: Expectation::continuous_days(30),
-    expires_after: None,
     purpose: "journal transactions and their postings",
     class: Class::Guarded,
     parser: "hledger",
-    parser_version: 1,
     event_types: &[
         "transaction.posted",
         "journal.directive",
         "journal.imported",
     ],
     framer: sinex_source_core::Framer::export(framing::complete, TRANSACTIONS),
+    ..SourceSpec::DEFAULT
 };
 
 pub struct HledgerParser {
@@ -92,25 +93,22 @@ impl Parser for HledgerParser {
         carry: &Carry,
         context: &RecordContext<'_>,
     ) -> Result<(Vec<JournalRecord>, Carry), RecordError> {
-        let text = std::str::from_utf8(record)
-            .map_err(|_| RecordError::new("journal block is not UTF-8"))?;
+        let text = std::str::from_utf8(record).record("journal block is not UTF-8")?;
         let member = context
             .member
             .map(|m| {
                 let index = m
                     .details
-                    .get("member_index")
-                    .and_then(serde_json::Value::as_u64)
-                    .ok_or_else(|| RecordError::new("export member index is missing"))?;
+                    .u64("member_index")
+                    .record("export member index is missing")?;
                 Ok::<_, RecordError>((m.path.clone(), index))
             })
             .transpose()?;
         let member_duplicate = match context.member {
             Some(member) => member
                 .details
-                .get("member_duplicate")
-                .and_then(serde_json::Value::as_u64)
-                .ok_or_else(|| RecordError::new("export member duplicate number is missing"))?,
+                .u64("member_duplicate")
+                .record("export member duplicate number is missing")?,
             None => 0,
         };
         let mut next = if carry.member == member {
@@ -135,7 +133,7 @@ impl Parser for HledgerParser {
             hash.clone(),
             duplicate
                 .checked_add(1)
-                .ok_or_else(|| RecordError::new("journal duplicate number exceeds u64"))?,
+                .record("journal duplicate number exceeds u64")?,
         );
         if self.input_format != "journal" {
             return Ok((
@@ -166,7 +164,7 @@ impl Parser for HledgerParser {
                         .0
                         .trim()
                         .parse::<i16>()
-                        .map_err(|_| RecordError::new("invalid journal year"))?,
+                        .record("invalid journal year")?,
                 );
             }
             let includes = self
@@ -236,9 +234,7 @@ impl Parser for HledgerParser {
             (None, rest)
         };
         let (code, rest) = if let Some(code) = rest.strip_prefix('(') {
-            let (code, rest) = code
-                .split_once(')')
-                .ok_or_else(|| RecordError::new("unfinished transaction code"))?;
+            let (code, rest) = code.split_once(')').record("unfinished transaction code")?;
             (Some(code.into()), rest.trim_start())
         } else {
             (None, rest)
@@ -325,29 +321,22 @@ fn resolve_date(raw: &str, year: Option<i16>) -> Result<Option<String>, RecordEr
     let separator = raw
         .chars()
         .find(|c| matches!(c, '-' | '/' | '.'))
-        .ok_or_else(|| RecordError::new("invalid journal date"))?;
+        .record("invalid journal date")?;
     let fields = raw.split(separator).collect::<Vec<_>>();
     let (year, month, day) = match fields.as_slice() {
         [y, m, d] => (
-            Some(
-                y.parse::<i16>()
-                    .map_err(|_| RecordError::new("invalid journal date"))?,
-            ),
+            Some(y.parse::<i16>().record("invalid journal date")?),
             *m,
             *d,
         ),
         [m, d] => (year, *m, *d),
         _ => return Err(RecordError::new("invalid journal date")),
     };
-    let month = month
-        .parse::<i8>()
-        .map_err(|_| RecordError::new("invalid journal date"))?;
-    let day = day
-        .parse::<i8>()
-        .map_err(|_| RecordError::new("invalid journal date"))?;
+    let month = month.parse::<i8>().record("invalid journal date")?;
+    let day = day.parse::<i8>().record("invalid journal date")?;
     // A leap year checks a partial February 29 without inventing a year.
-    let date = jiff::civil::Date::new(year.unwrap_or(2000), month, day)
-        .map_err(|_| RecordError::new("invalid journal date"))?;
+    let date =
+        jiff::civil::Date::new(year.unwrap_or(2000), month, day).record("invalid journal date")?;
     Ok(year.map(|_| date.to_string()))
 }
 
@@ -373,20 +362,6 @@ fn split_comment(raw: &str) -> (&str, Option<String>) {
     (raw, None)
 }
 
-pub fn source(host: String, journal: String) -> DeclaredSource<HledgerParser> {
-    DeclaredSource {
-        spec: SPEC,
-        parser: HledgerParser {
-            host,
-            journal,
-            initial_year: None,
-            input_format: "journal".into(),
-            included_from: None,
-            includes: Default::default(),
-        },
-    }
-}
-
 pub fn driver(path: PathBuf, host: String) -> ExportArchive {
     ExportArchive {
         path,
@@ -397,29 +372,54 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
     }
 }
 
-pub const FORMAT: InputFormat = InputFormat {
-    name: "hledger",
-    accepts: &[],
-    discovery: sinex_source_core::discovery::DiscoverySpec {
-        captured_by: sinex_source_core::discovery::CapturedBy::System,
-        locations: &[
-            sinex_source_core::discovery::Location {
-                root: "environment",
-                path: "LEDGER_FILE",
-            },
-            sinex_source_core::discovery::Location {
-                root: "home",
-                path: ".hledger.journal",
-            },
-            sinex_source_core::discovery::Location {
-                root: "declared",
-                path: "finance",
-            },
-        ],
-        capabilities: &[],
-        credentials: &[],
-        streams: &[],
+input_format! { pub FORMAT = "hledger" {
+    specs: [SPEC],
+    source: |b| {
+        let mut parser = HledgerParser {
+            host: b.settings.host.clone(),
+            journal: b
+                .settings
+                .option("journal")
+                .unwrap_or(&b.input.display().to_string())
+                .into(),
+            initial_year: None,
+            input_format: "journal".into(),
+            included_from: None,
+            includes: Default::default(),
+        };
+        let input_format = b.settings.option("journal_format").unwrap_or("journal");
+        if !matches!(input_format, "journal" | "timeclock" | "timedot") {
+            return Err("unknown journal format".into());
+        }
+        parser.input_format = input_format.into();
+        parser.initial_year = b
+            .settings
+            .options
+            .i64("initial_year")
+            .and_then(|n| i16::try_from(n).ok());
+        parser.included_from = b
+            .settings
+            .options
+            .get("included_from")
+            .filter(|v| !v.is_null())
+            .map(|v| serde_json::from_value(v.clone()))
+            .transpose()
+            .map_err(|e| e.to_string())?;
+        parser.includes = b
+            .settings
+            .options
+            .get("includes")
+            .map(|v| serde_json::from_value(v.clone()))
+            .transpose()
+            .map_err(|e| e.to_string())?
+            .unwrap_or_default();
+        Ok(Box::new(DeclaredSource { spec: SPEC, parser }))
     },
+    discovery: DiscoverySpec::system(&[
+        Location::new("environment", "LEDGER_FILE"),
+        Location::new("home", ".hledger.journal"),
+        Location::new("declared", "finance"),
+    ]),
     discover: |format, context| {
         let mut context = context.clone();
         let config = context.sources.entry(SPEC.name.into()).or_default();
@@ -428,53 +428,9 @@ pub const FORMAT: InputFormat = InputFormat {
         config.options = options.into();
         crate::discovery::discover_format(format, &context)
     },
-    specs: || vec![&SPEC],
-    plan: Some(includes::plan),
-    source: |b| {
-        let mut source = source(
-            b.settings.host.clone(),
-            b.settings
-                .option("journal")
-                .unwrap_or(&b.input.display().to_string())
-                .into(),
-        );
-        let input_format = b.settings.option("journal_format").unwrap_or("journal");
-        if !matches!(input_format, "journal" | "timeclock" | "timedot") {
-            return Err("unknown journal format".into());
-        }
-        source.parser.input_format = input_format.into();
-        source.parser.initial_year = b
-            .settings
-            .options
-            .get("initial_year")
-            .and_then(serde_json::Value::as_i64)
-            .and_then(|n| i16::try_from(n).ok());
-        source.parser.included_from = b
-            .settings
-            .options
-            .get("included_from")
-            .filter(|v| !v.is_null())
-            .map(|v| serde_json::from_value(v.clone()))
-            .transpose()
-            .map_err(|e| e.to_string())?;
-        source.parser.includes = b
-            .settings
-            .options
-            .get("includes")
-            .map(|v| serde_json::from_value(v.clone()))
-            .transpose()
-            .map_err(|e| e.to_string())?
-            .unwrap_or_default();
-        Ok(Box::new(source))
-    },
-    reader: Some(|b| {
-        Ok(binding::shared(driver(
-            b.input.clone(),
-            b.settings.host.clone(),
-        )))
-    }),
-    capture: None,
-};
+    plan: |input, settings| includes::plan(input, settings),
+    reader: shared(driver),
+} }
 
 #[cfg(test)]
 pub(crate) mod tests;

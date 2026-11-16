@@ -19,27 +19,28 @@
 use crate::sources::fields;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
+use sinex_model::Timestamp;
 use sinex_model::event_types::health::HealthRecord;
-use sinex_model::{Class, Timestamp};
+use sinex_model::json::JsonExt;
+use sinex_source_core::discovery::{DiscoverySpec, Location};
 use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
 use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordContext, RecordError};
+use sinex_source_core::stage::Structure;
+use sinex_source_core::{
+    Framer, Parser, RecordContext, RecordError, RecordResult, Stateless, StatelessParser, binding,
+};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "health.samsung-export",
     origin: Origin::Input(Shape::ExportArchive),
     expect: Expectation::Export,
-    expires_after: None,
     purpose: "sleep, heart, activity and body measurements",
-    class: Class::Open,
     parser: "samsung-health-export",
     parser_version: 2,
     event_types: &["health.record"],
-    framer: sinex_source_core::Framer::export(
-        frame,
-        sinex_source_core::drivers::export_archive::Framing::Csv,
-    ),
+    framer: Framer::export(frame, Framing::Csv),
+    ..SourceSpec::DEFAULT
 };
 
 /// The `jsons/` members: the columns Samsung stores beside a row.
@@ -47,16 +48,11 @@ pub const ATTACHMENTS: SourceSpec = SourceSpec {
     name: "health.samsung-export",
     origin: Origin::Input(Shape::ExportArchive),
     expect: Expectation::Export,
-    expires_after: None,
     purpose: "sleep, heart, activity and body measurements",
-    class: Class::Open,
     parser: "samsung-health-attachments",
-    parser_version: 1,
     event_types: &["health.record"],
-    framer: sinex_source_core::Framer::export(
-        whole,
-        sinex_source_core::drivers::export_archive::Framing::Whole,
-    ),
+    framer: Framer::export(whole, Framing::Whole),
+    ..SourceSpec::DEFAULT
 };
 
 /// The member being read, its type (line 1) and header (line 2).
@@ -87,7 +83,7 @@ impl Parser for SamsungParser {
             let category = cells
                 .first()
                 .map(|t| category_of(t))
-                .ok_or_else(|| RecordError::new("Samsung Health file without its type line"))?;
+                .record("Samsung Health file without its type line")?;
             return Ok((
                 vec![],
                 Carry {
@@ -117,28 +113,18 @@ impl Parser for SamsungParser {
             }
         }
         let native_id = values
-            .get("datauuid")
-            .and_then(Value::as_str)
+            .str("datauuid")
             .map(str::to_owned)
-            .ok_or_else(|| {
-                RecordError::new(format!("{} row without a datauuid", carry.category))
-            })?;
+            .record_with(|| format!("{} row without a datauuid", carry.category))?;
         let time = |name: &str| -> Result<Option<Timestamp>, RecordError> {
-            values
-                .get(name)
-                .and_then(Value::as_str)
-                .map(utc)
-                .transpose()
+            values.str(name).map(utc).transpose()
         };
         let start = match time("start_time")? {
             Some(t) => Some(t),
             None => time("day_time")?.or(time("create_time")?),
         };
         let end = time("end_time")?;
-        let offset_minutes = values
-            .get("time_offset")
-            .and_then(Value::as_str)
-            .and_then(offset);
+        let offset_minutes = values.str("time_offset").and_then(offset);
         Ok((
             vec![
                 HealthRecord::new(
@@ -151,7 +137,7 @@ impl Parser for SamsungParser {
                     values,
                     vec![],
                 )
-                .map_err(|error| RecordError::new(error.to_string()))?,
+                .record("invalid health record")?,
             ],
             carry.clone(),
         ))
@@ -189,12 +175,11 @@ pub(crate) fn typed(cell: &str) -> Value {
 fn utc(raw: &str) -> Result<Timestamp, RecordError> {
     let civil = jiff::civil::DateTime::strptime("%Y-%m-%d %H:%M:%S%.f", raw.trim())
         .or_else(|_| jiff::civil::DateTime::strptime("%Y-%m-%d %H:%M:%S", raw.trim()))
-        .map_err(|e| RecordError::new(format!("invalid time {raw:?}: {e}")))?;
+        .record_with(|| format!("invalid time {raw:?}"))?;
     let z = civil
         .to_zoned(jiff::tz::TimeZone::UTC)
-        .map_err(|e| RecordError::new(e.to_string()))?;
-    Timestamp::from_unix_ns(z.timestamp().as_nanosecond())
-        .map_err(|_| RecordError::new("time out of range"))
+        .record("invalid time")?;
+    Timestamp::from_unix_ns(z.timestamp().as_nanosecond()).record("time out of range")
 }
 
 /// `UTC+0200` → 120.
@@ -213,39 +198,26 @@ fn offset(raw: &str) -> Option<i32> {
     Some(sign * (h * 60 + m))
 }
 
-pub fn source() -> DeclaredSource<SamsungParser> {
-    DeclaredSource {
-        spec: SPEC,
-        parser: SamsungParser,
-    }
-}
-
 /// Reads one `jsons/<type>/<x>/<datauuid>.<column>.json` member.
 pub struct AttachmentParser;
 
-impl Parser for AttachmentParser {
+impl StatelessParser for AttachmentParser {
     type Record<'a> = &'a [u8];
-    type Carry = ();
     type Payload = HealthRecord;
 
     fn parse(
         &self,
         record: &&[u8],
-        _: &(),
         context: &RecordContext<'_>,
-    ) -> Result<(Vec<HealthRecord>, ()), RecordError> {
+    ) -> Result<Vec<HealthRecord>, RecordError> {
         let path = context.path().unwrap_or_default();
-        let (category, row, column) = attachment_of(path).ok_or_else(|| {
-            RecordError::new(format!(
-                "{path}: not a jsons/<type>/<x>/<datauuid>.<column>.json member"
-            ))
+        let (category, row, column) = attachment_of(path).record_with(|| {
+            format!("{path}: not a jsons/<type>/<x>/<datauuid>.<column>.json member")
         })?;
-        let value: Value =
-            serde_json::from_slice(record).map_err(|e| RecordError::new(format!("{path}: {e}")))?;
+        let value: Value = serde_json::from_slice(record).record_with(|| format!("{path}"))?;
         let category = format!("{category}.{column}");
         let millis = |v: &Map<String, Value>, name: &str| {
-            v.get(name)
-                .and_then(Value::as_i64)
+            v.i64(name)
                 .and_then(|ms| Timestamp::from_unix_ns(i128::from(ms) * 1_000_000).ok())
         };
         let record_of = |native_id: String, value: Value| {
@@ -263,7 +235,7 @@ impl Parser for AttachmentParser {
                 values,
                 vec![],
             )
-            .map_err(|error| RecordError::new(error.to_string()))
+            .record("invalid health record")
         };
         let records = match value {
             Value::Array(items) => items
@@ -273,7 +245,7 @@ impl Parser for AttachmentParser {
                 .collect::<Result<_, _>>()?,
             other => vec![record_of(format!("{row}:{column}"), other)?],
         };
-        Ok((records, ()))
+        Ok(records)
     }
 }
 
@@ -288,13 +260,6 @@ fn attachment_of(path: &str) -> Option<(String, &str, &str)> {
     let category = category_of(parts.next()?);
     let (row, column) = file.split_once('.')?;
     Some((category, row, column.rsplit('.').next().unwrap_or(column)))
-}
-
-pub fn attachments_source() -> DeclaredSource<AttachmentParser> {
-    DeclaredSource {
-        spec: ATTACHMENTS,
-        parser: AttachmentParser,
-    }
 }
 
 pub fn whole(bytes: &[u8]) -> (Vec<(usize, usize)>, usize) {
@@ -335,52 +300,45 @@ pub fn driver(path: PathBuf, host: String) -> ExportArchive {
 }
 
 /// `stage --parser samsung-health PATH`: each Samsung Health export ZIP under PATH.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "samsung-health",
-        accepts: &[sinex_source_core::stage::Structure::ArchiveLayout(select)],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "input",
-                path: "samsung-health",
-            }],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SPEC, &ATTACHMENTS],
-        plan: Some(|input, settings| {
-            let zip = |p: &std::path::Path| p.extension().is_some_and(|e| e == "zip");
-            let mut out = sinex_source_core::binding::per_file(&SPEC, input, settings, true, zip);
-            out.extend(
-                sinex_source_core::binding::per_file(&ATTACHMENTS, input, settings, true, zip)
-                    .into_iter()
-                    .map(|b| b.named("attachments")),
-            );
-            Ok(out)
-        }),
-        source: |b| {
-            if b.parser == ATTACHMENTS.parser {
-                Ok(Box::new(attachments_source()))
-            } else {
-                Ok(Box::new(source()))
-            }
-        },
-        reader: Some(|b| {
-            let read = if b.parser == ATTACHMENTS.parser {
-                attachments_driver
-            } else {
-                driver
-            };
-            Ok(sinex_source_core::binding::shared(read(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: None,
-    };
+super::input_format! { pub FORMAT = "samsung-health" {
+    specs: [SPEC, ATTACHMENTS],
+    source: |b| {
+        if b.parser == ATTACHMENTS.parser {
+            Ok(Box::new(DeclaredSource {
+                spec: ATTACHMENTS,
+                parser: Stateless(AttachmentParser),
+            }))
+        } else {
+            Ok(Box::new(DeclaredSource {
+                spec: SPEC,
+                parser: SamsungParser,
+            }))
+        }
+    },
+    discovery: DiscoverySpec::system(&[Location::new("input", "samsung-health")]),
+    accepts: [Structure::ArchiveLayout(select)],
+    plan: |input, settings| {
+        let zip = |p: &std::path::Path| p.extension().is_some_and(|e| e == "zip");
+        let mut out = binding::per_file(&SPEC, input, settings, true, zip);
+        out.extend(
+            binding::per_file(&ATTACHMENTS, input, settings, true, zip)
+                .into_iter()
+                .map(|b| b.named("attachments")),
+        );
+        Ok(out)
+    },
+    reader: |b| {
+        let read = if b.parser == ATTACHMENTS.parser {
+            attachments_driver
+        } else {
+            driver
+        };
+        Ok(binding::shared(read(
+            b.input.clone(),
+            b.settings.host.clone(),
+        )))
+    },
+} }
 
 #[cfg(test)]
 mod tests;

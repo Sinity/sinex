@@ -58,3 +58,6 @@ impl JsonExt for Map<String, Value> {
         self.get(key).and_then(Value::as_object)
     }
 }
+
+#[cfg(test)]
+mod tests;

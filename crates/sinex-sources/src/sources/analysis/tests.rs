@@ -27,7 +27,7 @@ fn analysis_requests_round_trip_with_manifest_authorship() {
         .unwrap();
     let written = material.bytes.clone();
     let decoded = drain(
-        &RequestParser,
+        &Stateless(RequestParser),
         DrainInput {
             source: REQUEST.name,
             class: REQUEST.class,

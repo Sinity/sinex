@@ -1,5 +1,6 @@
 use super::*;
-use crate::{DeclaredSource, Expectation, Origin, Parser, RecordError, Shape, SourceSpec};
+use crate::{DeclaredSource, Expectation, Origin, RecordError, Shape, SourceSpec};
+use crate::{Stateless, StatelessParser};
 use sinex_model::event_types::CommandImported;
 use sinex_model::{Class, Timestamp};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -7,28 +8,23 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 static PARSED: AtomicUsize = AtomicUsize::new(0);
 
 struct Counting;
-impl Parser for Counting {
+impl StatelessParser for Counting {
     type Record<'a> = &'a [u8];
-    type Carry = ();
     type Payload = CommandImported;
     fn parse(
         &self,
         record: &&[u8],
-        _: &(),
         _: &crate::RecordContext<'_>,
-    ) -> Result<(Vec<CommandImported>, ()), RecordError> {
+    ) -> Result<Vec<CommandImported>, RecordError> {
         PARSED.fetch_add(1, Ordering::SeqCst);
-        Ok((
-            vec![CommandImported {
-                command: String::from_utf8_lossy(record).trim_end().into(),
-                hostname: "h".into(),
-                started_at: Some(Timestamp::from_unix_secs(1).unwrap()),
-                header_elapsed: Some(0),
-                paths: vec![],
-                n: 0,
-            }],
-            (),
-        ))
+        Ok(vec![CommandImported {
+            command: String::from_utf8_lossy(record).trim_end().into(),
+            hostname: "h".into(),
+            started_at: Some(Timestamp::from_unix_secs(1).unwrap()),
+            header_elapsed: Some(0),
+            paths: vec![],
+            n: 0,
+        }])
     }
 }
 
@@ -73,7 +69,7 @@ fn batches_are_drained_lazily() {
             event_types: &["command.imported"],
             framer: crate::Framer::incremental(lines),
         },
-        parser: Counting,
+        parser: Stateless(Counting),
     };
     let records = 100_000;
     let bytes: Vec<u8> = (0..records)
@@ -203,7 +199,7 @@ fn backfill_of_a_large_file_peaks_well_under_its_size() {
             event_types: &["command.imported"],
             framer: crate::Framer::incremental(lines),
         },
-        parser: Counting,
+        parser: Stateless(Counting),
     };
     let driver = AppendFile {
         path: path.clone(),
@@ -277,7 +273,7 @@ fn stored_original_length_does_not_replace_decoded_record_coordinates() {
             event_types: &["command.imported"],
             framer: crate::Framer::incremental(lines),
         },
-        parser: Counting,
+        parser: Stateless(Counting),
     };
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("original");
@@ -354,7 +350,7 @@ fn cursor_read_failure_is_reported_before_a_batch_and_stops_later_progress() {
             event_types: &["command.imported"],
             framer: crate::Framer::incremental(lines),
         },
-        parser: Counting,
+        parser: Stateless(Counting),
     };
     let acquired = Acquired {
         memory: None,

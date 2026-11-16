@@ -8,26 +8,32 @@
 //! commitments, activities and reviews, read on `SqliteRows`, one table per
 //! binding; every row can change (a commitment's status), so each poll
 //! compares them all.
+use crate::sources::input_format;
 use serde_json::{Map, Value};
-use sinex_model::event_types::operator::{LogEntry, SteeringRow};
-use sinex_model::{Class, Timestamp};
-use sinex_source_core::drivers::append_file::AppendFile;
-use sinex_source_core::drivers::sqlite_rows::{Changes, SqliteRows};
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordError};
-use std::path::PathBuf;
+use sinex_model::{
+    Timestamp,
+    event_types::operator::{LogEntry, SteeringRow},
+};
+use sinex_source_core::{
+    Binding, DeclaredSource, Expectation, Framer, Origin, RecordContext, RecordError, RecordResult,
+    Shape, Source, SourceSpec, Stateless, StatelessParser, binding,
+    discovery::{DiscoverySpec, Location},
+    drivers::{
+        append_file::AppendFile,
+        sqlite_rows::{Changes, SqliteRows},
+    },
+};
 
 pub const RAW_LOG: SourceSpec = SourceSpec {
     name: "operator.raw-log",
     origin: Origin::Input(Shape::AppendFile),
     expect: Expectation::continuous_days(7),
-    expires_after: None,
     purpose: "the operator's quick notes, as primary data",
-    class: Class::Open,
     parser: "operator-raw-log",
     parser_version: 2,
     event_types: &["operator_log.entry"],
-    framer: sinex_source_core::Framer::incremental(frame_log),
+    framer: Framer::incremental(frame_log),
+    ..SourceSpec::DEFAULT
 };
 
 const ENTRY: &[u8] = b"\n- **";
@@ -60,25 +66,20 @@ pub struct RawLogParser {
     pub zone: jiff::tz::TimeZone,
 }
 
-impl Parser for RawLogParser {
+impl StatelessParser for RawLogParser {
     type Record<'a> = &'a [u8];
-    type Carry = ();
     type Payload = LogEntry;
 
     fn parse(
         &self,
         record: &&[u8],
-        _: &(),
-        _context: &sinex_source_core::RecordContext<'_>,
-    ) -> Result<(Vec<LogEntry>, ()), RecordError> {
-        let text = std::str::from_utf8(record)
-            .map_err(|e| RecordError::new(format!("entry is not UTF-8: {e}")))?;
-        let rest = text
-            .strip_prefix("- **")
-            .ok_or_else(|| RecordError::new("not a log entry"))?;
+        _context: &RecordContext<'_>,
+    ) -> Result<Vec<LogEntry>, RecordError> {
+        let text = std::str::from_utf8(record).record("entry is not UTF-8")?;
+        let rest = text.strip_prefix("- **").record("not a log entry")?;
         let (stamp, body) = rest
             .split_once("**")
-            .ok_or_else(|| RecordError::new("entry without a closing ** after its time"))?;
+            .record("entry without a closing ** after its time")?;
         // A heading that is a label or only a day (`SPECIAL:`, `2025-08-18`):
         // the entry is kept with an unknown time and the heading as its
         // label. A time without seconds reads as `:00`.
@@ -94,45 +95,24 @@ impl Parser for RawLogParser {
                     "entry heading {stamp:?} is not a time or a label"
                 )));
             }
-            return Ok((
-                vec![LogEntry {
-                    written_at: None,
-                    label: Some(label.to_owned()),
-                    text: body.trim().to_owned(),
-                }],
-                (),
-            ));
+            return Ok(vec![LogEntry {
+                written_at: None,
+                label: Some(label.to_owned()),
+                text: body.trim().to_owned(),
+            }]);
         };
         let zoned = self
             .zone
             .to_ambiguous_zoned(civil)
             .compatible()
-            .map_err(|e| RecordError::new(format!("{stamp:?}: {e}")))?;
+            .record_with(|| format!("{stamp:?}"))?;
         let written_at = Timestamp::from_unix_ns(zoned.timestamp().as_nanosecond())
-            .map_err(|_| RecordError::new("time out of range"))?;
-        Ok((
-            vec![LogEntry {
-                written_at: Some(written_at),
-                label: None,
-                text: body.trim().to_owned(),
-            }],
-            (),
-        ))
-    }
-}
-
-pub fn raw_log(zone: jiff::tz::TimeZone) -> DeclaredSource<RawLogParser> {
-    DeclaredSource {
-        spec: RAW_LOG,
-        parser: RawLogParser { zone },
-    }
-}
-
-pub fn raw_log_driver(path: PathBuf, host: String) -> AppendFile {
-    AppendFile {
-        path,
-        host,
-        framer: sinex_source_core::Framer::incremental(frame_log),
+            .record("time out of range")?;
+        Ok(vec![LogEntry {
+            written_at: Some(written_at),
+            label: None,
+            text: body.trim().to_owned(),
+        }])
     }
 }
 
@@ -149,15 +129,12 @@ const fn steering_spec(parser: &'static str) -> SourceSpec {
         name: "operator.steering",
         origin: Origin::Input(Shape::SqliteRows),
         expect: Expectation::continuous_days(30),
-        expires_after: None,
         purpose: "commitments, forecasts and reviews the operator keeps",
-        class: Class::Open,
         parser,
         parser_version: 3,
         event_types: &["steering.row"],
-        framer: sinex_source_core::Framer::incremental(
-            sinex_source_core::drivers::append_file::lines,
-        ),
+        framer: Framer::LINES,
+        ..SourceSpec::DEFAULT
     }
 }
 
@@ -165,89 +142,46 @@ pub struct SteeringParser {
     pub table: &'static str,
 }
 
-impl Parser for SteeringParser {
+impl StatelessParser for SteeringParser {
     type Record<'a> = Map<String, Value>;
-    type Carry = ();
     type Payload = SteeringRow;
 
     fn parse(
         &self,
         row: &Map<String, Value>,
-        _: &(),
-        _context: &sinex_source_core::RecordContext<'_>,
-    ) -> Result<(Vec<SteeringRow>, ()), RecordError> {
+        _context: &RecordContext<'_>,
+    ) -> Result<Vec<SteeringRow>, RecordError> {
         let mut values = row.clone();
         // The SQLite-row driver's own field, not a column of the table.
         values.remove("_rowid");
         let payload =
             SteeringRow::from_row(self.table, Value::Object(values)).map_err(RecordError::new)?;
-        Ok((vec![payload], ()))
+        Ok(vec![payload])
     }
 }
 
-pub fn steering(table: &'static str) -> Option<DeclaredSource<SteeringParser>> {
+pub fn steering(table: &'static str) -> Option<DeclaredSource<Stateless<SteeringParser>>> {
     let spec = STEERING
         .iter()
         .find(|s| s.parser.strip_prefix("steering-") == Some(table))?
         .clone();
     Some(DeclaredSource {
         spec,
-        parser: SteeringParser { table },
+        parser: Stateless(SteeringParser { table }),
     })
-}
-
-pub fn steering_driver(path: PathBuf, host: String, table: &'static str) -> SqliteRows {
-    SqliteRows {
-        path,
-        host,
-        table,
-        from: None,
-        required: &["id"],
-        // A small store whose every row can change: all of it, each poll.
-        changes: Changes::InPlace {
-            mutable: "1 = 1",
-            full_pass_secs: 3600,
-        },
-    }
 }
 
 /// `stage --parser raw-log PATH`: the operator's raw log, read in the binding's
 /// zone, recorded when it is planned.
-pub const RAW_LOG_FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "raw-log",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "declared",
-                path: "raw-log",
-            }],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&RAW_LOG],
-        plan: Some(|input, settings| {
-            Ok(sinex_source_core::binding::single(
-                &RAW_LOG,
-                input,
-                &settings.clone().with_zone()?,
-            ))
-        }),
-        source: |b| Ok(Box::new(raw_log(b.settings.zone()?))),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::appended(raw_log_driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: None,
-    };
+input_format! { pub RAW_LOG_FORMAT = "raw-log" {
+    specs: [RAW_LOG], parser: |b| Stateless(RawLogParser { zone: b.settings.zone()? }),
+    discovery: DiscoverySpec::system(&[Location::new("declared", "raw-log")]),
+    plan: |input, settings| Ok(binding::single(&RAW_LOG, input, &settings.clone().with_zone()?)),
+    reader: |b| Ok(binding::appended(AppendFile { path: b.input.clone(), host: b.settings.host.clone(), framer: Framer::incremental(frame_log) })),
+} }
 
 /// The steering table a binding reads, from its spec name.
-fn steering_table(b: &sinex_source_core::binding::Binding) -> Result<&'static str, String> {
+fn steering_table(b: &Binding) -> Result<&'static str, String> {
     ["commitments", "activities", "reviews"]
         .into_iter()
         .find(|t| b.parser.strip_prefix("steering-") == Some(*t))
@@ -255,48 +189,23 @@ fn steering_table(b: &sinex_source_core::binding::Binding) -> Result<&'static st
 }
 
 /// `stage --parser steering PATH`: the steering store's three tables.
-pub const STEERING_FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "steering",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "declared",
-                path: "steering",
-            }],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || STEERING.iter().collect(),
-        plan: Some(|input, settings| {
-            // One binding, and so one cursor, per table.
-            Ok(STEERING
-                .iter()
-                .map(|spec| {
-                    let table = spec.parser.strip_prefix("steering-").unwrap_or(spec.parser);
-                    sinex_source_core::binding::Binding::of(spec, input, settings.clone())
-                        .named(table)
-                })
-                .collect())
-        }),
-        source: |b| {
-            let table = steering_table(b)?;
-            steering(table)
-                .map(|s| Box::new(s) as Box<dyn sinex_source_core::Source>)
-                .ok_or_else(|| format!("{table}: not a steering table"))
-        },
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::rows(steering_driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-                steering_table(b)?,
-            )))
-        }),
-        capture: None,
-    };
+input_format! { pub STEERING_FORMAT = "steering" {
+    specs: || STEERING.iter().collect(), source: |b| {
+        let table = steering_table(b)?;
+        steering(table).map(|s| Box::new(s) as Box<dyn Source>)
+            .ok_or_else(|| format!("{table}: not a steering table"))
+    },
+    discovery: DiscoverySpec::system(&[Location::new("declared", "steering")]),
+    plan: |input, settings| Ok(STEERING.iter().map(|spec| {
+        let table = spec.parser.strip_prefix("steering-").unwrap_or(spec.parser);
+        Binding::of(spec, input, settings.clone()).named(table)
+    }).collect()),
+    reader: |b| Ok(binding::rows(SqliteRows {
+        path: b.input.clone(), host: b.settings.host.clone(), table: steering_table(b)?,
+        from: None, required: &["id"],
+        changes: Changes::InPlace { mutable: "1 = 1", full_pass_secs: 3600 },
+    })),
+} }
 
 #[cfg(test)]
 mod tests;

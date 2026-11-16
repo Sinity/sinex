@@ -1,29 +1,33 @@
 //! Authenticated moment marks and saved queries stored as JSON-line materials.
+use crate::sources::input_format;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use sinex_model::event_types::query::{Mark, QueryRecord, Saved};
 use sinex_model::{
     Class, InputRef, MaterialId, ObservationFacts, ReadingOrder, RevisionChange, Timestamp,
+    event_types::query::{Mark, QueryRecord, Saved},
+    json::JsonExt,
 };
-use sinex_source_core::drain::RecordContext;
-use sinex_source_core::drivers::{Acquired, NewMaterial};
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, SourceSpec};
-use sinex_source_core::{Parser, RecordError};
+use sinex_source_core::{
+    DeclaredSource, Expectation, Framer, Origin, RecordContext, RecordError, RecordResult,
+    SourceSpec, Stateless, StatelessParser,
+    discovery::DiscoverySpec,
+    drivers::{
+        Acquired, NewMaterial,
+        export_archive::{Framing, frame_lines},
+    },
+};
 
 pub const REQUEST: SourceSpec = SourceSpec {
     name: "query.request",
     origin: Origin::Request,
     expect: Expectation::OnDemand,
-    expires_after: None,
     purpose: "moment marks and saved queries",
     class: Class::Guarded,
     parser: "query-request",
     parser_version: 2,
     event_types: &["operator.mark", "query.saved"],
-    framer: sinex_source_core::Framer::export(
-        sinex_source_core::drivers::export_archive::frame_lines,
-        sinex_source_core::drivers::export_archive::Framing::Lines,
-    ),
+    framer: Framer::export(frame_lines, Framing::Lines),
+    ..SourceSpec::DEFAULT
 };
 
 #[derive(Serialize, Deserialize)]
@@ -33,42 +37,37 @@ enum Line {
     Saved(Saved),
 }
 pub struct RequestParser;
-impl Parser for RequestParser {
+impl StatelessParser for RequestParser {
     type Record<'a> = Map<String, Value>;
-    type Carry = ();
     type Payload = QueryRecord;
     fn parse(
         &self,
         record: &Map<String, Value>,
-        _: &(),
         context: &RecordContext<'_>,
-    ) -> Result<(Vec<QueryRecord>, ()), RecordError> {
+    ) -> Result<Vec<QueryRecord>, RecordError> {
         let actor = context
             .manifest
             .details
-            .get("actor")
-            .and_then(Value::as_str)
+            .str("actor")
             .filter(|s| !s.trim().is_empty())
-            .ok_or_else(|| RecordError::new("query manifest has no actor"))?;
+            .record("query manifest has no actor")?;
         let at = context
             .manifest
             .details
-            .get("written_at_ns")
-            .and_then(Value::as_str)
+            .str("written_at_ns")
             .and_then(|s| s.parse::<i128>().ok())
             .and_then(|ns| Timestamp::from_unix_ns(ns).ok())
-            .ok_or_else(|| RecordError::new("query manifest has no time"))?;
+            .record("query manifest has no time")?;
         let host = context
             .manifest
             .detail("host")
             .as_str()
             .filter(|s| !s.is_empty())
-            .ok_or_else(|| RecordError::new("query manifest has no host"))?;
+            .record("query manifest has no host")?;
         let mut object = record.clone();
         object.insert("by".into(), json!(actor));
         object.insert("written_at".into(), json!(at));
-        let line: Line = serde_json::from_value(Value::Object(object))
-            .map_err(|e| RecordError::new(e.to_string()))?;
+        let line: Line = serde_json::from_value(Value::Object(object)).record("invalid record")?;
         let payload = match line {
             Line::Mark(mut x) => {
                 x.host = host.into();
@@ -89,17 +88,17 @@ impl Parser for RequestParser {
                         parameters: x.parameters.clone(),
                     },
                 )
-                .map_err(|e| RecordError::new(e.to_string()))?;
+                .record("invalid record")?;
                 QueryRecord::Saved(x)
             }
         };
-        Ok((vec![payload], ()))
+        Ok(vec![payload])
     }
 }
-pub fn request_source() -> DeclaredSource<RequestParser> {
+pub fn request_source() -> DeclaredSource<Stateless<RequestParser>> {
     DeclaredSource {
         spec: REQUEST,
-        parser: RequestParser,
+        parser: Stateless(RequestParser),
     }
 }
 
@@ -146,24 +145,11 @@ pub fn request_material(record: QueryRecord, actor: &str, host: &str, at: Timest
         cursor_without_material: Value::Null,
     }
 }
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "query",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&REQUEST],
-        plan: None,
-        source: |_| Ok(Box::new(request_source())),
-        reader: None,
-        capture: None,
-    };
+input_format! { pub FORMAT = "query" {
+    specs: [REQUEST], parser: |_b| Stateless(RequestParser),
+    discovery: DiscoverySpec::DEFAULT,
+    plan: none, reader: none,
+} }
 
 #[cfg(test)]
 mod tests;

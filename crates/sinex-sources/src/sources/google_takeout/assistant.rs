@@ -9,24 +9,25 @@
 //! wrote the same notes an hour later, in the operator's zone, so its
 //! readings are separate notes. The time is read as UTC.
 use serde_json::{Map, Value};
+use sinex_model::Timestamp;
 use sinex_model::event_types::account::{NoteItem, NoteObserved};
-use sinex_model::{Class, Timestamp};
 use sinex_source_core::drivers::export_archive::{ExportArchive, Framing, PART_BYTES};
 use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordContext, RecordError};
+use sinex_source_core::{
+    Framer, RecordContext, RecordError, RecordResult, Stateless, StatelessParser,
+};
 use std::path::PathBuf;
 
 pub const SPEC: SourceSpec = SourceSpec {
     name: "google.assistant",
     origin: Origin::Input(Shape::ExportArchive),
     expect: Expectation::Export,
-    expires_after: None,
     purpose: "notes and lists kept through Google Assistant",
-    class: Class::Open,
     parser: "google-assistant-notes",
     parser_version: 2,
     event_types: &["note.observed"],
-    framer: sinex_source_core::Framer::export(frame, Framing::Whole),
+    framer: Framer::export(frame, Framing::Whole),
+    ..SourceSpec::DEFAULT
 };
 
 pub struct AssistantParser;
@@ -41,15 +42,14 @@ fn made_at(path: &str) -> Result<Timestamp, RecordError> {
         .rev()
         .nth(22)
         .map(|(i, _)| &stem[i..])
-        .ok_or_else(|| RecordError::new(format!("{name}: no time in the file name")))?;
+        .record_with(|| format!("{name}: no time in the file name"))?;
     let civil = jiff::civil::DateTime::strptime("%Y-%m-%dT%H_%M_%S%.f", time)
-        .map_err(|e| RecordError::new(format!("{name}: time {time:?}: {e}")))?;
+        .record_with(|| format!("{name}: time {time:?}"))?;
     let at = civil
         .to_zoned(jiff::tz::TimeZone::UTC)
-        .map_err(|e| RecordError::new(format!("{name}: {e}")))?
+        .record_with(|| format!("{name}"))?
         .timestamp();
-    Timestamp::from_unix_ns(at.as_nanosecond())
-        .map_err(|_| RecordError::new(format!("{name}: time out of range")))
+    Timestamp::from_unix_ns(at.as_nanosecond()).record_with(|| format!("{name}: time out of range"))
 }
 
 fn rows(bytes: &[u8]) -> Result<Vec<Vec<String>>, RecordError> {
@@ -61,7 +61,7 @@ fn rows(bytes: &[u8]) -> Result<Vec<Vec<String>>, RecordError> {
         .records()
         .map(|row| {
             row.map(|r| r.iter().map(str::to_owned).collect())
-                .map_err(|e| RecordError::new(format!("not CSV: {e}")))
+                .record("not CSV")
         })
         .collect()
 }
@@ -72,22 +72,18 @@ fn cell(row: Option<&Vec<String>>, index: usize) -> Option<String> {
         .cloned()
 }
 
-impl Parser for AssistantParser {
+impl StatelessParser for AssistantParser {
     type Record<'a> = &'a [u8];
-    type Carry = ();
     type Payload = NoteObserved;
 
     fn parse(
         &self,
         record: &&[u8],
-        _: &(),
         context: &RecordContext<'_>,
-    ) -> Result<(Vec<NoteObserved>, ()), RecordError> {
+    ) -> Result<Vec<NoteObserved>, RecordError> {
         let created_at = made_at(context.path().unwrap_or_default())?;
         let rows = rows(record)?;
-        let header = rows
-            .first()
-            .ok_or_else(|| RecordError::new("an empty file"))?;
+        let header = rows.first().record("an empty file")?;
         let mut extra = Map::new();
         extra.insert("time_note".into(), Value::String(
             "The filename has no UTC offset. It is read as UTC; some export versions write local time.".into(),
@@ -124,31 +120,28 @@ impl Parser for AssistantParser {
         if let Some(state) = state {
             extra.insert("state".into(), Value::String(state));
         }
-        Ok((
-            vec![NoteObserved {
-                service: "google-assistant".into(),
-                created_at,
-                edited_at: None,
-                title,
-                text,
-                items,
-                labels: vec![],
-                color: None,
-                pinned: None,
-                archived: None,
-                trashed_at: None,
-                attachments: vec![],
-                extra,
-            }],
-            (),
-        ))
+        Ok(vec![NoteObserved {
+            service: "google-assistant".into(),
+            created_at,
+            edited_at: None,
+            title,
+            text,
+            items,
+            labels: vec![],
+            color: None,
+            pinned: None,
+            archived: None,
+            trashed_at: None,
+            attachments: vec![],
+            extra,
+        }])
     }
 }
 
-pub fn source() -> DeclaredSource<AssistantParser> {
+pub fn source() -> DeclaredSource<Stateless<AssistantParser>> {
     DeclaredSource {
         spec: SPEC,
-        parser: AssistantParser,
+        parser: Stateless(AssistantParser),
     }
 }
 

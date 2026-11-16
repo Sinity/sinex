@@ -16,15 +16,17 @@
 //!   those sources, not something a single row can show.
 //!
 //! The correction parameters live in [`CORRECTIONS`], one declaration.
+use crate::sources::input_format;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sinex_model::event_types::desktop::{
     ActivityWatchOther, BrowserTabActive, PresenceSpan, WindowSpan,
 };
-use sinex_model::{Class, Timestamp};
+use sinex_model::{Class, Timestamp, json::JsonExt};
+use sinex_source_core::discovery::{DiscoverySpec, Location};
 use sinex_source_core::drivers::sqlite_rows::{Changes, SqliteRows};
-use sinex_source_core::registry::{DeclaredSource, Expectation, Origin, Shape, SourceSpec};
-use sinex_source_core::{Parser, RecordError};
+use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
+use sinex_source_core::{Parser, RecordError, RecordResult};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use time::OffsetDateTime;
@@ -34,7 +36,6 @@ pub const SPEC: SourceSpec = SourceSpec {
     name: "desktop.activitywatch",
     origin: Origin::Input(Shape::SqliteRows),
     expect: Expectation::continuous_days(2),
-    expires_after: None,
     purpose: "attention, presence and recall",
     class: Class::Guarded,
     parser: "activitywatch-events",
@@ -45,7 +46,8 @@ pub const SPEC: SourceSpec = SourceSpec {
         "browser.tab_active",
         "activitywatch.other",
     ],
-    framer: sinex_source_core::Framer::incremental(sinex_source_core::drivers::append_file::lines),
+    framer: sinex_source_core::Framer::LINES,
+    ..SourceSpec::DEFAULT
 };
 
 /// The corrections applied while reading.
@@ -117,7 +119,7 @@ fn timestamp_ns(value: Option<&Value>) -> Option<i128> {
 }
 
 fn ts(ns: i128) -> Result<Timestamp, RecordError> {
-    Timestamp::from_unix_ns(ns).map_err(|_| RecordError::new("ActivityWatch time out of range"))
+    Timestamp::from_unix_ns(ns).record("ActivityWatch time out of range")
 }
 
 impl Parser for ActivityWatchParser {
@@ -131,32 +133,19 @@ impl Parser for ActivityWatchParser {
         open: &OpenSpans,
         _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<Activity>, OpenSpans), RecordError> {
-        let id = row
-            .get("rowid")
-            .and_then(Value::as_i64)
-            .ok_or_else(|| RecordError::new("row has no rowid"))?;
-        let bucket = row
-            .get("bucket")
-            .and_then(Value::as_str)
-            .ok_or_else(|| RecordError::new("row has no bucket"))?
-            .to_owned();
-        let bucket_type = row.get("bucket_type").and_then(Value::as_str).unwrap_or("");
-        let started_ns = timestamp_ns(row.get("starttime"))
-            .ok_or_else(|| RecordError::new("starttime is not a time"))?;
-        let ended_ns = timestamp_ns(row.get("endtime"))
-            .ok_or_else(|| RecordError::new("endtime is not a time"))?;
+        let id = row.i64("rowid").record("row has no rowid")?;
+        let bucket = row.str("bucket").record("row has no bucket")?.to_owned();
+        let bucket_type = row.str("bucket_type").unwrap_or("");
+        let started_ns = timestamp_ns(row.get("starttime")).record("starttime is not a time")?;
+        let ended_ns = timestamp_ns(row.get("endtime")).record("endtime is not a time")?;
         let data: Map<String, Value> = match row.get("data") {
-            Some(Value::String(raw)) => serde_json::from_str(raw)
-                .map_err(|e| RecordError::new(format!("data is not a JSON object: {e}")))?,
+            Some(Value::String(raw)) => {
+                serde_json::from_str(raw).record("data is not a JSON object")?
+            }
             Some(Value::Object(o)) => o.clone(),
             _ => return Err(RecordError::new("row has no data")),
         };
-        let field = |name: &str| {
-            data.get(name)
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_owned()
-        };
+        let field = |name: &str| data.str(name).unwrap_or("").to_owned();
 
         let is = |type_name: &str, prefix: &str| {
             bucket_type == type_name || (bucket_type.is_empty() && bucket.starts_with(prefix))
@@ -243,9 +232,9 @@ impl Parser for ActivityWatchParser {
                 browser,
                 url: field("url"),
                 title: field("title"),
-                incognito: data.get("incognito").and_then(Value::as_bool),
-                audible: data.get("audible").and_then(Value::as_bool),
-                tab_count: data.get("tabCount").and_then(Value::as_i64),
+                incognito: data.bool("incognito"),
+                audible: data.bool("audible"),
+                tab_count: data.i64("tabCount"),
             })
         } else {
             Activity::Other(ActivityWatchOther {
@@ -258,20 +247,6 @@ impl Parser for ActivityWatchParser {
         };
         Ok((vec![event], next))
     }
-}
-
-pub fn source() -> DeclaredSource<ActivityWatchParser> {
-    DeclaredSource {
-        spec: SPEC,
-        parser: ActivityWatchParser,
-    }
-}
-
-pub fn default_path() -> Option<PathBuf> {
-    let data = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))?;
-    Some(data.join("activitywatch/aw-server-rust/sqlite.db"))
 }
 
 pub fn driver(path: PathBuf, host: String) -> SqliteRows {
@@ -292,34 +267,13 @@ pub fn driver(path: PathBuf, host: String) -> SqliteRows {
 }
 
 /// `stage --parser activitywatch PATH`: `aw-server-rust`'s database.
-pub const FORMAT: sinex_source_core::binding::InputFormat =
-    sinex_source_core::binding::InputFormat {
-        name: "activitywatch",
-        accepts: &[],
-        discovery: sinex_source_core::discovery::DiscoverySpec {
-            captured_by: sinex_source_core::discovery::CapturedBy::System,
-            locations: &[sinex_source_core::discovery::Location {
-                root: "data",
-                path: "activitywatch/aw-server-rust/sqlite.db",
-            }],
-            capabilities: &[],
-            credentials: &[],
-            streams: &[],
-        },
-        discover: crate::discovery::discover_format,
-        specs: || vec![&SPEC],
-        plan: Some(|input, settings| {
-            Ok(sinex_source_core::binding::single(&SPEC, input, settings))
-        }),
-        source: |_| Ok(Box::new(source())),
-        reader: Some(|b| {
-            Ok(sinex_source_core::binding::rows(driver(
-                b.input.clone(),
-                b.settings.host.clone(),
-            )))
-        }),
-        capture: None,
-    };
+input_format! { pub FORMAT = "activitywatch" {
+    specs: [SPEC],
+    parser: |_b| ActivityWatchParser,
+    discovery: DiscoverySpec::system(&[Location::new("data", "activitywatch/aw-server-rust/sqlite.db")]),
+    plan: single,
+    reader: rows(driver),
+} }
 
 #[cfg(test)]
 mod tests;

@@ -16,6 +16,7 @@ use super::{Acquired, DriverError};
 use crate::binding::Reader;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
+use sinex_model::json::JsonExt;
 use sinex_model::{InputRef, MaterialId, RevisionChange, Timestamp};
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, Write};
@@ -199,8 +200,7 @@ pub fn capture_lines(
 /// Decode a spooled record: when it arrived and the bytes that arrived.
 pub fn received(record: &Map<String, Value>) -> Result<(Timestamp, Vec<u8>), String> {
     let ns: i128 = record
-        .get("received_ns")
-        .and_then(Value::as_str)
+        .str("received_ns")
         .and_then(|s| s.parse().ok())
         .ok_or("spooled record has no received_ns")?;
     let at = Timestamp::from_unix_ns(ns).map_err(|e| format!("received_ns out of range: {e}"))?;
@@ -325,11 +325,7 @@ impl Reader for LiveStream {
                     serde_json::to_value(Cursor { inner, ..state }).expect("cursor serializes");
                 return Ok(acquired);
             };
-            let parts_here = state
-                .inner
-                .get("part_index")
-                .and_then(Value::as_u64)
-                .map_or(0, |p| p as u32 + 1);
+            let parts_here = state.inner.u64("part_index").map_or(0, |p| p as u32 + 1);
             let had_material = state.inner.get("material").is_some_and(|m| !m.is_null());
             state = Cursor {
                 segment: next,
@@ -351,15 +347,12 @@ impl Reader for LiveStream {
             let mut removed = 0;
             for index in segments(&self.spool)? {
                 let path = segment_path(&self.spool, index);
-                let keep = committed
-                    .get("keep_files")
-                    .and_then(Value::as_array)
-                    .is_some_and(|paths| {
-                        paths.iter().any(|p| {
-                            serde_json::from_value::<Vec<u8>>(p.clone())
-                                .is_ok_and(|keep| path.as_os_str().as_bytes() == keep.as_slice())
-                        })
-                    });
+                let keep = committed.array("keep_files").is_some_and(|paths| {
+                    paths.iter().any(|p| {
+                        serde_json::from_value::<Vec<u8>>(p.clone())
+                            .is_ok_and(|keep| path.as_os_str().as_bytes() == keep.as_slice())
+                    })
+                });
                 if index < state.segment && !keep {
                     std::fs::remove_file(segment_path(&self.spool, index))?;
                     removed += 1;
