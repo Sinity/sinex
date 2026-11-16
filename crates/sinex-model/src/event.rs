@@ -103,7 +103,7 @@ impl Event {
         }
         let equivalence_key = match payload.key_kind() {
             KeyKind::Location => None,
-            KeyKind::Fields(fields) => Some(EquivalenceKey::of(P::EVENT_TYPE, fields, &value)),
+            KeyKind::Fields(fields) => EquivalenceKey::of(P::EVENT_TYPE, fields, &value),
         };
         if let Origin::Derived { parents } = &origin {
             if parents.is_empty() {

@@ -221,8 +221,14 @@ async fn dump(
             stderr_path.display(),
         )));
     }
-    File::open(output.join(name))
-        .and_then(|f| f.sync_all())
+    sync_file(&output.join(name)).await
+}
+
+async fn sync_file(path: &Path) -> Result<()> {
+    tokio::fs::File::open(path)
+        .await?
+        .sync_all()
+        .await
         .map_err(Error::from)
 }
 
@@ -470,17 +476,22 @@ pub(crate) async fn prepare(
     stopped(&stop)?;
     // Both pg_dump calls imported the same still-live snapshot of this database.
     snapshot.close().await?;
-    for directory in ["main", "keys"] {
-        File::open(output.join(directory)).and_then(|f| f.sync_all())?;
-    }
-    // Each Borg repository carries the same immutable pairing identity and file digests.
-    record(&output.join("main/manifest.json"), &manifest)?;
-    record(&output.join("keys/manifest.json"), &manifest)?;
-    for directory in [output.join("main"), output.join("keys")] {
-        File::open(directory).and_then(|f| f.sync_all())?;
-    }
-    record(&output.join("manifest.json"), &manifest)?;
-    File::open(output).and_then(|f| f.sync_all())?;
+    let publish_output = output.to_owned();
+    let manifest = tokio::task::spawn_blocking(move || -> Result<Manifest> {
+        for directory in ["main", "keys"] {
+            File::open(publish_output.join(directory)).and_then(|f| f.sync_all())?;
+        }
+        // Each backup part carries the same file identities and digests.
+        record(&publish_output.join("main/manifest.json"), &manifest)?;
+        record(&publish_output.join("keys/manifest.json"), &manifest)?;
+        for directory in [publish_output.join("main"), publish_output.join("keys")] {
+            File::open(directory).and_then(|f| f.sync_all())?;
+        }
+        record(&publish_output.join("manifest.json"), &manifest)?;
+        File::open(publish_output).and_then(|f| f.sync_all())?;
+        Ok(manifest)
+    })
+    .await??;
     Ok(manifest)
 }
 

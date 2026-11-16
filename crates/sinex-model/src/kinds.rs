@@ -227,7 +227,7 @@ impl KindDeclaration {
             .as_ref()
             .ok_or("historical declaration has no rules")?
             .fields(payload);
-        let equivalence_key = fields.map(|fields| {
+        let equivalence_key = fields.and_then(|fields| {
             let fields: Vec<&str> = fields.iter().map(String::as_str).collect();
             EquivalenceKey::of(&self.kind.name, &fields, payload)
         });

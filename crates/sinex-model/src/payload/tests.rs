@@ -11,7 +11,7 @@ fn key_depends_on_type_fields_and_order() {
     );
     assert_ne!(k, EquivalenceKey::of("u", &["a", "b"], &p));
     assert_ne!(k, EquivalenceKey::of("t", &["b", "a"], &p));
-    assert_eq!(k.0.len(), 64);
+    assert_eq!(k.unwrap().0.len(), 64);
 }
 
 #[devkit::test]
@@ -25,7 +25,7 @@ fn equivalence_key_independent_of_object_key_order() {
     assert_eq!(key, EquivalenceKey::of("t", &["id"], &reverse));
     // The bytes are common's canonical JSON under the event type as its tag.
     assert_eq!(
-        key.0,
+        key.unwrap().0,
         blake3::hash(b"t\0[{\"x\":1,\"y\":[2]}]")
             .to_hex()
             .to_string()
@@ -33,10 +33,14 @@ fn equivalence_key_independent_of_object_key_order() {
 }
 
 #[devkit::test]
-fn missing_key_field_is_null() {
+fn missing_key_field_uses_location_but_explicit_null_is_keyed() {
+    assert_eq!(EquivalenceKey::of("t", &["a"], &json!({})), None);
+    assert_eq!(EquivalenceKey::of("t", &["a", "b"], &json!({"a": 1})), None);
     assert_eq!(
-        EquivalenceKey::of("t", &["a"], &json!({})),
         EquivalenceKey::of("t", &["a"], &json!({"a": null}))
+            .unwrap()
+            .0,
+        blake3::hash(b"t\0[null]").to_hex().to_string()
     );
 }
 

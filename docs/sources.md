@@ -153,6 +153,8 @@ does not shorten restoration.
 
 ## Capture survival
 
+Shell integration reports that the session socket cannot receive are written whole to a queue beside the socket. When capture starts or resumes, it appends queued reports to its regular spool, syncs that spool, and removes the queued files. A send that stopped partway through may be repeated; the command execution key identifies the same command. The queue has the lifetime of the configured socket directory; with a runtime directory it survives listener restarts within that login, rather than a reboot.
+
 Capture survives everything downstream of it: the broker, the database, admission and upgrades.
 
 The session producer uses one dedicated async scheduler worker so transport tasks keep running while the main loop reads spools synchronously. Captures run on their own threads, and source startup and health snapshots use the blocking pool. The async worker count is independent of the host CPU count.
@@ -166,6 +168,8 @@ The session producer uses one dedicated async scheduler worker so transport task
 - **Restarts** resume from committed progress and stored material, including CSV headers, JSON context and partially read archive parts. A reader holds an acquired material while admission retries.
 - **Child processes** run with interruptible lifetimes and a recorded exit status; a nonzero exit is a failed attempt, never an empty reading.
 - **Upgrades** may pause capture briefly; the spool covers the pause. A deploy that drops nothing is welcome but not required, and is not a reason for process topology.
+
+Desktop notification capture keeps delivery hints from the sender and records `signal_origin` with the sending product and delivery identifier in the extra fields. Standing rules exclude these notifications before grouping, so a notification delivered by a product cannot trigger another notice.
 
 ## Gaps
 
@@ -182,6 +186,7 @@ Every interval in which a stream may have missed data is one `capture.gap` event
 
 - Sequence numbers are assigned before enqueueing, so omissions stay countable. `bus.connection` events hold connection start and end only.
 - Numbered lake envelopes compare valid records of the same host, lane and declared boot or session generation. A gap shown this way is a `capture.gap` event with reason `sequence`, located at the later source record. `sequence.first_missing` and `sequence.last_missing` are inclusive; their difference plus one is the missing count. A parse failure makes the interval through the next valid record unknown. An unqualified decrease leaves the generation unknown; an explicit generation change starts a new baseline. Committed parser carry preserves comparisons across restarts of the binding. A new rotated binding begins with unknown continuity rather than inferring loss before its first record.
+- An inotify rescan flag records `capture.gap` with the watched roots, unknown start and end, and reason `inotify_overflow`, then scans the roots again to install watches for new directories.
 - **A gap is recorded, never filled by invention.** Where a provider signals lost history (an expired Gmail history ID, an expired Health Connect token, an IMAP UIDVALIDITY reset, an inotify overflow), one full read of that input runs and its result is a newer reading; it cannot reconstruct the lost intermediate changes.
 - **Continuity per interval.** Each source over each interval has a coverage state ([completeness](#completeness)). An empty result over an unknown interval is never "nothing happened".
 
@@ -243,6 +248,8 @@ Decided target (2026-11-01). Three questions always have an exact answer: what d
 **Redundancy is by design.** The same fact seen by several sources stays several records; [fusion](derivations.md#fusion) relates them where a family is defined. Only double import of the same content is prevented. (ruling 2025-06-12, cc:979c375c-989d-4b8a-8891-1541aaafe1d0:32f70e17-ab5f-4687-a6a3-ccff649985ae).
 
 **Sinex observes itself as a source.** Its own telemetry is captured as `sinex.telemetry` events backed by materials, through the same admission, commit log, visibility, replay and query path as every source ([storage](admission.md#storage-representation)). Activity derivations select their declared kinds and never treat these samples as operator activity. One snapshot of several gauges is one record. The write rate is bounded by declared sampling of current gauges, and nothing Sinex logs about its own capture is captured back into a loop.
+
+Google Assistant exports name recordings with local clock values but supply no zone alongside each filename. Their readings carry `extra.time_note` so a reader sees that the event time can differ from the local clock time.
 
 ## Common record rules
 

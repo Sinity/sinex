@@ -204,7 +204,8 @@ pub(super) fn rule_reference(name: &str) -> String {
         RuleWritten::EVENT_TYPE,
         &["name"],
         &serde_json::json!({ "name": name }),
-    );
+    )
+    .expect("rule name is present");
     sinex_model::query::citation(
         "key",
         &format!(

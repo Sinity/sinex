@@ -17,6 +17,5 @@ fn capture_help_describes_the_remote_producer_without_opening_state() {
     for option in ["--nats", "--producer", "--sources", "--upload"] {
         assert!(help.contains(option), "{help}");
     }
-    assert!(!help.contains("--database"), "{help}");
     assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
 }

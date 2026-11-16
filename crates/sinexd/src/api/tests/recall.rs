@@ -387,7 +387,10 @@ async fn recall_does_not_write(db: devkit::pg::TestDatabase) {
     ] {
         let (_, recall) = call_unbounded(&w, Some(READ), request).await;
         assert_eq!(recall["outcome"], "ok", "{recall}");
-        assert!(recall["result"]["context_pack"].is_null(), "{recall}");
+        assert_eq!(
+            recall["result"]["machine"]["read_as"], recall["result"]["resolved"]["commit_seq"],
+            "{recall}"
+        );
         assert!(recall["result"]["text"].is_string(), "{recall}");
         assert!(recall["result"]["presentation"]["sections"].is_array());
     }
@@ -683,7 +686,8 @@ async fn archived_parent_recall_is_an_explicit_historical_preview(db: devkit::pg
         false
     );
     assert_eq!(historical["result"]["resolved"]["commit_seq"], before);
-    assert!(historical["result"]["context_pack"].is_null());
+    assert_eq!(historical["result"]["machine"]["read_as"], before);
+    assert_eq!(historical["result"]["machine"]["historical_preview"], true);
     assert!(
         historical["result"]["historical_preview"]["raw_citations"]
             .as_array()

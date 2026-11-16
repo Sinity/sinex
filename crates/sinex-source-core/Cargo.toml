@@ -37,5 +37,6 @@ devkit.workspace = true
 workspace = true
 
 [features]
+test-support = []
 archives = ["dep:zip", "dep:flate2"]
 sqlite = ["dep:rusqlite"]

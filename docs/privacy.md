@@ -79,6 +79,8 @@ A rule is an insert-only, versioned row with author and time:
 | `withhold` | the field is absent, with a marker saying it was withheld |
 | `seal` | the value is stored encrypted ([sealing](#sealing)) |
 
+A query alias shows the same withheld marker in each promoted payload field. Filtering and sorting still use the typed value, so withholding does not turn the marker into searchable text.
+
 ### Classes
 
 A class is a named outcome the operator defines: an action plus the grants that lift it. A class `guarded` might mean "mask unless the caller holds the `guarded` grant". There are no built-in classes and no class minimum on any kind.

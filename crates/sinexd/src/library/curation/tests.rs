@@ -391,8 +391,9 @@ async fn a_plan_is_not_admitted_after_curation_changed_under_it(db: devkit::pg::
         time_settings: sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
             .unwrap(),
     };
+    let turn = w.writer.lock_curation().await;
     let refused = library
-        .store_planned(&mut w.conn, stale, "operator", at, "curate")
+        .store_planned(&mut w.conn, stale, "operator", at, "curate", &turn)
         .await
         .unwrap_err();
     assert!(
@@ -451,8 +452,9 @@ async fn a_stale_base_or_withdrawal_expectation_is_refused_inside_admission(
             time_settings: sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
                 .unwrap(),
         };
+        let turn = w.writer.lock_curation().await;
         let refused = library
-            .store_planned(&mut w.conn, stale, "operator", at, "curate")
+            .store_planned(&mut w.conn, stale, "operator", at, "curate", &turn)
             .await
             .unwrap_err();
         assert!(refused.to_string().contains("is not current"), "{refused}");
@@ -532,7 +534,7 @@ async fn store_raw(w: &mut World, records: Vec<Curation>) {
                 via: "test",
                 at: Timestamp::now(),
                 cited: Vec::new(),
-                curation: false,
+                curation: None,
             },
         )
         .await

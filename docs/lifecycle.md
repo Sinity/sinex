@@ -68,6 +68,7 @@ Replay reads stored bytes again. It is a rescan of materials, not a procedure ov
 
 ## Undo
 
+- **Undo refuses an unreadable replay selection.** The stored scope must name the selected materials as a list of material IDs. An absent or malformed selection changes nothing.
 - **Undo a replay**: archive the replay's chain (the readings it admitted, with their descendants), then restore the previous one (the readings it archived), as one operation, `undo <operation>`. It can be repeated forever, in either direction. It is refused, naming the records, if a later operation has made other readings of those records live; archiving those first makes it possible. (ruling 2026-03-06, codex:019cbc74-e62a-7d93-987c-4848ca636a75@2026-03-06T00:00Z).
 - **Undo an archive or a restore**: the inverse move, with the [restore refusals](#restore).
 - **Undo an import**: archive the material, which archives everything read from it.
@@ -170,3 +171,5 @@ Every user act that changes state is an **operation**: stage, archive, restore, 
 - **Operations have no workflow states**: no preview, approval, expiry or cancel lifecycle. A multi-batch operation's saved position is progress, not a state; it ends ok or `stopped_early`, and a stopped one resumes from its position. A `--compare` is a read and writes nothing.
 - **The actor is computed by the daemon** from the authenticated caller: the operator, an agent session with its harness and session ID, an outside producer's credential, or `sinexd` itself. No command supplies it. Writes through the API keep their actor. How callers are authenticated is in [callers](interfaces.md#callers).
 - **No act is refused because the caller is an agent.** Agents have the same lifecycle powers as the operator; what differs is the recorded actor.
+
+A stage keeps reading after its start answer. A failure writing progress ends the stage `stopped_early`, with the error available through `stage-show`. If writing a successful end fails, the stage records a stopped-early end instead. Background failures are logged, including a writer failure that prevents recording the end.

@@ -30,8 +30,8 @@ enum Command {
     /// NATS ingress, until stopped.
     Run(Run),
     /// Report one finished command execution to the integration socket (run
-    /// by the shell integration's hooks). Never waits on Sinex: when nothing
-    /// listens, the report is dropped.
+    /// by the shell integration's hooks). Reports wait in a local queue when
+    /// the listener cannot receive them.
     #[command(hide = true)]
     ReportCommand(ReportCommand),
     /// Print one clipboard frame for the content on standard input (run by
@@ -198,7 +198,7 @@ fn report_command(report: ReportCommand) -> Result<(), String> {
         session: report.session,
         atuin_id: report.atuin_id.filter(|id| !id.is_empty()),
     });
-    session_socket::send(&socket, &line, probe).map_err(|e| e.to_string())
+    session_socket::send_or_queue(&socket, &line, probe).map_err(|e| e.to_string())
 }
 
 fn fail(e: String) -> ExitCode {

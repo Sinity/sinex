@@ -80,3 +80,16 @@ fn a_file_without_a_time_or_header_fails() {
     ));
     assert!(!select("Takeout/My Activity/Assistant/MyActivity.html"));
 }
+
+#[devkit::test]
+fn assistant_export_readings_carry_local_time_note() {
+    let note = read(
+        "Takeout/Assistant Notes and Lists/2019-02-10T21_35_06.574.csv",
+        "Note title,Note content,Note state\n,buy stamps,Active\n",
+    )
+    .unwrap();
+    assert_eq!(
+        note.extra["time_note"],
+        "The filename has no UTC offset. It is read as UTC; some export versions write local time."
+    );
+}

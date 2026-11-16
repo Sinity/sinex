@@ -75,6 +75,8 @@ Every write follows one order, so a crash at any point leaves a state the normal
 3. Every derived store (derivation runner, read models, publisher) saves the position of what it applied in the same transaction as the applied rows.
 4. Source cursors and producer positions are saved only for committed rows.
 
+Writer jobs carry a reply channel typed for their result. Signal and library-curation writes require the turn held while their caller plans them; the same turn stays held through the write.
+
 **The writer's use of the segment log.** The single writer appends a group's new blobs, issues one sync per group on a dedicated thread overlapped with the next group, and commits the extents in the same transaction as the rows that cite them. Deduplication checks the hash index plus the hashes appended in groups not yet committed. A segment opens at its last committed extent and truncates any tail; a tombstoned extent that is marked but not yet punched is punched on open. The container format (seekable zstd frames, plain or sealed, member access, hash checks) is [hashed-blobs](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/hashed-blobs/README.md).
 
 **Crash states.** A crash leaves at most one of the following, and the normal code resumes each:

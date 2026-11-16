@@ -47,7 +47,8 @@ impl Library<'_> {
                 "written": plan::written(&records),
             })),
             Outcome::Written(planned) => {
-                self.store_planned(conn, planned, actor, at, "curate").await
+                self.store_planned(conn, planned, actor, at, "curate", &_planning)
+                    .await
             }
         }
     }
@@ -59,6 +60,7 @@ impl Library<'_> {
         actor: &str,
         at: Timestamp,
         action: &str,
+        turn: &crate::writer::CurationTurn,
     ) -> R<Value> {
         let placed: Vec<Value> = planned
             .placed
@@ -93,7 +95,7 @@ impl Library<'_> {
                     },
                     at,
                     cited: Vec::new(),
-                    curation: true,
+                    curation: Some(turn),
                 },
             )
             .await?;
@@ -146,7 +148,7 @@ impl Library<'_> {
                 via: VIA_API,
                 at: now,
                 cited: Vec::new(),
-                curation: false,
+                curation: None,
             },
         )
         .await?;
@@ -250,7 +252,7 @@ impl Library<'_> {
                 .count();
             if !planned.records.is_empty() {
                 let answer = self
-                    .store_planned(conn, planned, actor, at, "import")
+                    .store_planned(conn, planned, actor, at, "import", &_planning)
                     .await?;
                 requests.push(answer["request"].clone());
             }

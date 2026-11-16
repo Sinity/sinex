@@ -67,11 +67,10 @@ impl Api {
             crate::analysis::recall::sections(&answer, &parents),
             4000,
         );
-        answer["machine"] = json!({"context_pack":null,"read_as":presentation.context.as_of,
+        answer["machine"] = json!({"read_as":presentation.context.as_of,
             "sections":presentation.sections.iter().filter(|section| section.title=="Machine").collect::<Vec<_>>()});
         answer["text"] = json!(presentation.markdown);
         answer["presentation"] = json!(presentation);
-        answer["context_pack"] = Value::Null;
         answer["producer_versions"] = versions;
         Ok(answer)
     }
@@ -119,9 +118,8 @@ impl Api {
             "day_start":selected.answer.resolved.day_start,"time_setting_version":time_setting_version,
             "grants":caller.grants.split(',').filter(|grant| !grant.is_empty()).collect::<Vec<_>>(),
             "raw_citations":selected.parents.iter().map(|parent| format!("sinex:ev/{parent}")).collect::<Vec<_>>()});
-        answer["context_pack"] = Value::Null;
         answer["text"] = json!(presentation.markdown);
-        answer["machine"] = json!({"context_pack":null,"read_as":presentation.context.as_of,"historical_preview":true,
+        answer["machine"] = json!({"read_as":presentation.context.as_of,"historical_preview":true,
             "sections":presentation.sections.iter().filter(|section| section.title=="Machine").collect::<Vec<_>>()});
         answer["presentation"] = json!(presentation);
         answer["producer_versions"] = versions;

@@ -97,7 +97,7 @@ fn capture_until(
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o600))?;
         let writer = Arc::new(Mutex::new(SpoolWriter::open(spool, Rotation::default())?));
-        capture_connections(listener, writer, || stop.stopped())
+        capture_connections(listener, writer, socket, || stop.stopped())
     })();
     let cleanup = std::fs::remove_file(socket);
     match result {
@@ -118,6 +118,7 @@ const SYNC_EVERY: Duration = Duration::from_secs(1);
 fn capture_connections(
     listener: UnixListener,
     writer: Arc<Mutex<SpoolWriter>>,
+    socket: &Path,
     mut stop: impl FnMut() -> bool,
 ) -> std::io::Result<u64> {
     listener.set_nonblocking(true)?;
@@ -126,6 +127,13 @@ fn capture_connections(
     let mut last_sync = Instant::now();
     let mut failure = None;
     loop {
+        match drain_reports(socket, &writer) {
+            Ok(lines) => count += lines,
+            Err(error) => {
+                failure = Some(error);
+                break;
+            }
+        }
         // Check stop between bounded batches even when new clients keep
         // the accept queue populated. Only accepted readers are drained.
         for _ in 0..ACCEPT_BATCH {
@@ -432,9 +440,62 @@ pub fn git_identity(cwd: &Path, timeout: Duration) -> Option<GitIdentity> {
     })
 }
 
-/// Write one line to the integration socket. When nothing listens, or the
-/// write takes longer than `timeout`, the line is dropped: a shell never
-/// waits on Sinex.
+/// Send a shell report, keeping the complete line beside the socket when the
+/// listener cannot receive it. Capture drains these files into the same spool.
+pub fn send_or_queue(socket: &Path, line: &Value, timeout: Duration) -> std::io::Result<()> {
+    if send(socket, line, timeout).is_ok() {
+        return Ok(());
+    }
+    let pending = socket.with_extension("pending");
+    std::fs::create_dir_all(&pending)?;
+    std::fs::File::open(pending.parent().expect("pending directory has a parent"))?.sync_all()?;
+    let name = uuid::Uuid::now_v7().to_string();
+    let partial = pending.join(format!(".{name}.partial"));
+    let complete = pending.join(format!("{name}.json"));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&partial)?;
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    file.write_all(&serde_json::to_vec(line)?)?;
+    sinex_source_core::drivers::media::place(&pending, &partial, &complete)
+}
+
+fn drain_reports(socket: &Path, writer: &Arc<Mutex<SpoolWriter>>) -> std::io::Result<u64> {
+    let pending = socket.with_extension("pending");
+    let entries = match std::fs::read_dir(&pending) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(error),
+    };
+    let mut reports = entries
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    reports.retain(|path| {
+        path.extension()
+            .is_some_and(|extension| extension == "json")
+    });
+    reports.sort();
+    if reports.is_empty() {
+        return Ok(0);
+    }
+    let mut writer = writer
+        .lock()
+        .map_err(|_| std::io::Error::other("spool lock poisoned"))?;
+    for path in &reports {
+        writer.append(Timestamp::now(), &std::fs::read(path)?)?;
+    }
+    writer.sync()?;
+    for path in &reports {
+        std::fs::remove_file(path)?;
+    }
+    std::fs::File::open(&pending)?.sync_all()?;
+    Ok(reports.len() as u64)
+}
+
+/// Write one line to the integration socket, bounded by its send timeout.
 pub fn send(socket: &Path, line: &Value, timeout: Duration) -> std::io::Result<()> {
     use std::io::Write;
     let mut stream = UnixStream::connect(socket)?;

@@ -471,17 +471,22 @@ impl Staging<'_> {
                     }
                 }
             }
-            self.writer
+            if let Err(error) = self
+                .writer
                 .stage(StageWrite::Progress {
                     operation,
                     inventory: progress.inventory(),
                 })
-                .await?;
+                .await
+            {
+                failures.push(error.to_string());
+                break;
+            }
         }
         if let Err(error) = rounds.end(&mut *self.read_conn).await {
             failures.push(error.to_string());
         }
-        let result = if failures.is_empty() {
+        let mut result = if failures.is_empty() {
             OperationResult::Ok
         } else {
             OperationResult::StoppedEarly
@@ -493,7 +498,8 @@ impl Staging<'_> {
             accounting: total,
         };
         let inventory = progress.inventory();
-        self.writer
+        if let Err(error) = self
+            .writer
             .stage(StageWrite::End {
                 operation,
                 result,
@@ -501,7 +507,23 @@ impl Staging<'_> {
                 inventory: inventory.clone(),
                 refusals: failures.clone(),
             })
-            .await?;
+            .await
+        {
+            if result == OperationResult::StoppedEarly {
+                return Err(error.into());
+            }
+            failures.push(error.to_string());
+            result = OperationResult::StoppedEarly;
+            self.writer
+                .stage(StageWrite::End {
+                    operation,
+                    result,
+                    counts: counts.clone(),
+                    inventory: inventory.clone(),
+                    refusals: failures.clone(),
+                })
+                .await?;
+        }
         let sources: BTreeMap<String, SourceTotals> = per_source
             .iter()
             .map(|(s, t)| (s.clone(), t.report()))

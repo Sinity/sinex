@@ -11,7 +11,7 @@ sinexctl recall last --cwd /src/tide # the latest shell session there
 sinexctl note "check bench disk" --when here
 ```
 
-Decided target (2026-11-01). The current build answers `recall` with a time-ordered list of every event in the window, and keeps `context`, `brief` and `mark` as separate verbs with their own MCP tools. The decided design below replaces them: one verb, recall classes instead of a row list, recipes compiled into stored packs, and one `note` kind.
+Decided target (2026-11-01). The current build answers `recall` with a time-ordered list of every event in the window, and keeps `context`, `brief` and `mark` as separate verbs with their own MCP tools. Interactive recall returns rows, text, a presentation and the read position. It stores no pack; stored recall packs remain a later product decision. The decided design below replaces them: one verb, recall classes instead of a row list, recipes compiled into stored packs, and one `note` kind.
 
 ## Purpose
 

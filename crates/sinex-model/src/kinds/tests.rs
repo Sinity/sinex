@@ -273,3 +273,92 @@ fn declared_search_modes_use_one_spelling_and_reject_flags() {
             .any(|hint| hint.field == "/key" && hint.class == Class::Guarded)
     );
 }
+
+#[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema, crate::EventPayload)]
+#[event(type = "test.optional_key", key = ["id"], replace = newer)]
+struct OptionalKey {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
+    value: String,
+}
+
+#[test]
+fn keyed_kind_with_missing_field_uses_location() {
+    for offset in [0, 1] {
+        let location = RecordLocation {
+            material: MaterialId::new(),
+            record_offset: offset,
+        };
+        let event = crate::Event::build(
+            &OptionalKey {
+                id: None,
+                value: "reading".into(),
+            },
+            "test",
+            Origin::Record {
+                location,
+                output_index: 0,
+            },
+            ReadingOrder(0),
+            [0; 32],
+            Class::Open,
+        )
+        .unwrap();
+        assert_eq!(event.equivalence_key, None);
+        assert_eq!(
+            event.origin,
+            Origin::Record {
+                location,
+                output_index: 0
+            }
+        );
+    }
+    let event = crate::Event::build(
+        &OptionalKey {
+            id: Some("record-1".into()),
+            value: "reading".into(),
+        },
+        "test",
+        Origin::Record {
+            location: RecordLocation {
+                material: MaterialId::new(),
+                record_offset: 0,
+            },
+            output_index: 0,
+        },
+        ReadingOrder(0),
+        [0; 32],
+        Class::Open,
+    )
+    .unwrap();
+    assert_eq!(
+        event.equivalence_key,
+        crate::EquivalenceKey::of("test.optional_key", &["id"], &json!({"id": "record-1"}))
+    );
+}
+
+#[test]
+fn submitted_payload_missing_key_field_uses_location() {
+    let declaration = OptionalKey::declaration();
+    assert_eq!(
+        declaration
+            .evaluate(&json!({"value": "first"}), Class::Open)
+            .unwrap()
+            .equivalence_key,
+        None
+    );
+    assert_eq!(
+        declaration
+            .evaluate(&json!({"value": "second"}), Class::Open)
+            .unwrap()
+            .equivalence_key,
+        None
+    );
+    assert_eq!(
+        declaration
+            .evaluate(&json!({"id": "record-1", "value": "third"}), Class::Open)
+            .unwrap()
+            .equivalence_key,
+        crate::EquivalenceKey::of("test.optional_key", &["id"], &json!({"id": "record-1"}))
+    );
+}

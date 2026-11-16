@@ -31,11 +31,11 @@ fn timed_imports_keep_the_original_wire_key() {
     .unwrap();
     assert_eq!(
         event.equivalence_key,
-        Some(EquivalenceKey::of(
+        EquivalenceKey::of(
             "command.imported",
             &["hostname", "started_at", "command", "n"],
             &old
-        ))
+        )
     );
     assert_eq!(event.ts_orig.quality, TimeQuality::Intrinsic);
 }

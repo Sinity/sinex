@@ -264,3 +264,67 @@ async fn telemetry_uses_admission_commit_order_and_visibility(db: devkit::pg::Te
             .is_empty()
     );
 }
+
+#[devkit::test]
+async fn focus_alias_marks_withheld_fields(db: devkit::pg::TestDatabase) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let payload = sinex_model::event_types::desktop::WindowSpan {
+        scope: None,
+        host: None,
+        bucket: "window-watcher".into(),
+        span_id: 1,
+        started_at: Timestamp::from_unix_secs(BASE).unwrap(),
+        ended_at: Timestamp::from_unix_secs(BASE + 60).unwrap(),
+        app: "editor".into(),
+        title: "draft".into(),
+        merged: 1,
+    };
+    let event = Event::build(
+        &payload,
+        "desktop.test",
+        Origin::Record {
+            location: RecordLocation {
+                material: MaterialId::new(),
+                record_offset: 0,
+            },
+            output_index: 0,
+        },
+        ReadingOrder(0),
+        [0; 32],
+        Class::Guarded,
+    )
+    .unwrap();
+    let batch = Batch {
+        run: RunId::new(),
+        kind: BatchKind::Api {
+            actor: "test".into(),
+        },
+        records: vec![RecordOutcome::Events {
+            location: None,
+            events: vec![event],
+        }],
+        archive: vec![],
+    };
+    let mut tx = conn.begin().await.unwrap();
+    tx.admit(&batch, &NoDerivations).await.unwrap();
+    tx.commit().await.unwrap();
+    let withheld = json!({"withheld": "guarded"});
+    let answer = ask(&mut conn, "focus").await;
+    assert_eq!(answer.total, 1);
+    for field in ["app", "title", "start", "end", "duration"] {
+        assert_eq!(column(&answer, field), [withheld.clone()], "{field}");
+    }
+    let selected = ask(
+        &mut conn,
+        "focus | fields title as caption, duration | sort by duration",
+    )
+    .await;
+    assert_eq!(column(&selected, "caption"), [withheld.clone()]);
+    assert_eq!(column(&selected, "duration"), [withheld]);
+    let filtered = ask(&mut conn, "focus where app = editor").await;
+    assert_eq!(filtered.total, 0);
+    let grouped = ask(&mut conn, "focus | count").await;
+    assert_eq!(grouped.total, 1);
+}

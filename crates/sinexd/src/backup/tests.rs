@@ -997,3 +997,39 @@ async fn restore_without_search_tables_rebuilds_search(db: devkit::pg::TestDatab
         head_at_cut
     );
 }
+
+#[test]
+fn backup_sync_leaves_the_async_worker_available() {
+    use std::future::Future;
+    use std::task::{Context, Poll, Wake, Waker};
+    struct WakeTask;
+    impl Wake for WakeTask {
+        fn wake(self: std::sync::Arc<Self>) {}
+    }
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .max_blocking_threads(1)
+        .enable_all()
+        .build()
+        .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("dump");
+    std::fs::write(&path, b"synthetic dump").unwrap();
+    let (started, running) = tokio::sync::oneshot::channel();
+    let (release, released) = std::sync::mpsc::channel();
+    runtime.block_on(async {
+        let blocking = tokio::task::spawn_blocking(move || {
+            started.send(()).unwrap();
+            released.recv().unwrap();
+        });
+        running.await.unwrap();
+        let mut syncing = Box::pin(sync_file(&path));
+        let waker = Waker::from(std::sync::Arc::new(WakeTask));
+        let mut context = Context::from_waker(&waker);
+        let first = syncing.as_mut().poll(&mut context);
+        // Release before asserting so a failed assertion cannot strand the worker.
+        release.send(()).unwrap();
+        assert!(matches!(first, Poll::Pending));
+        blocking.await.unwrap();
+        syncing.await.unwrap();
+    });
+}

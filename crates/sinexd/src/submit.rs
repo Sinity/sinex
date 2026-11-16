@@ -1,6 +1,8 @@
 //! One path from an acquisition to the writer, for bindings and API requests.
 use crate::stage::Totals;
-use crate::writer::{AdmissionCheck, Priority, StageCheckpoint, WriterHandle};
+use crate::writer::{
+    AdmissionCheck, CurationTurn, Priority, SignalTurn, StageCheckpoint, WriterHandle,
+};
 use crate::{Error, Result};
 use serde_json::Value;
 use sinex_model::{Class, MaterialId, RecordOutcome, RunId};
@@ -58,6 +60,7 @@ impl Submitter<'_> {
         &self,
         acquired: drivers::Acquired,
         checkpoint: sinex_store::signals::Commit,
+        turn: &SignalTurn,
     ) -> Result<Submission> {
         let mut checkpoint = Some(checkpoint);
         self.submit_using(
@@ -71,7 +74,10 @@ impl Submitter<'_> {
                     let checkpoint = checkpoint.ok_or_else(|| {
                         Error::internal("signal transition spans multiple admission batches")
                     })?;
-                    Ok(self.writer.submit_signals(Some(batch), checkpoint).await?)
+                    Ok(self
+                        .writer
+                        .submit_signals(turn, Some(batch), checkpoint)
+                        .await?)
                 }
             },
         )
@@ -79,14 +85,18 @@ impl Submitter<'_> {
     }
 
     /// Submit planned library curation records, verified in admission.
-    pub(crate) async fn submit_curation(&self, acquired: drivers::Acquired) -> Result<Submission> {
+    pub(crate) async fn submit_curation(
+        &self,
+        acquired: drivers::Acquired,
+        turn: &CurationTurn,
+    ) -> Result<Submission> {
         self.submit_using(
             acquired,
             Value::Null,
             &mut Totals::default(),
             |batch, check, _| async move {
                 self.writer
-                    .submit_curation(self.priority, batch, check)
+                    .submit_curation(turn, self.priority, batch, check)
                     .await
                     .map_err(Error::from)
             },
@@ -245,6 +255,7 @@ pub(crate) async fn request_curation(
     binding: &str,
     host: &str,
     acquired: drivers::Acquired,
+    turn: &CurationTurn,
 ) -> Result<Submission> {
     request_inner(
         conn,
@@ -254,16 +265,16 @@ pub(crate) async fn request_curation(
         binding,
         host,
         acquired,
-        Admission::Curation,
+        Admission::Curation(turn),
     )
     .await
 }
 
 /// What a request's admission must also hold.
-enum Admission {
+enum Admission<'a> {
     Plain,
-    Signals(sinex_store::signals::Commit),
-    Curation,
+    Signals(&'a SignalTurn, sinex_store::signals::Commit),
+    Curation(&'a CurationTurn),
 }
 
 pub(crate) async fn request_checkpoint(
@@ -275,6 +286,7 @@ pub(crate) async fn request_checkpoint(
     host: &str,
     acquired: drivers::Acquired,
     checkpoint: sinex_store::signals::Commit,
+    turn: &SignalTurn,
 ) -> Result<Submission> {
     request_inner(
         conn,
@@ -284,7 +296,7 @@ pub(crate) async fn request_checkpoint(
         binding,
         host,
         acquired,
-        Admission::Signals(checkpoint),
+        Admission::Signals(turn, checkpoint),
     )
     .await
 }
@@ -297,7 +309,7 @@ async fn request_inner(
     binding: &str,
     host: &str,
     acquired: drivers::Acquired,
-    admission: Admission,
+    admission: Admission<'_>,
 ) -> Result<Submission> {
     crate::request_deadline::finish_read(conn).await?;
     let spec = source.spec();
@@ -334,7 +346,7 @@ async fn request_inner(
         let class = request_class(conn, source.as_ref())
             .await?
             .max(match &admission {
-                Admission::Signals(commit) => commit.class,
+                Admission::Signals(_, commit) => commit.class,
                 _ => Class::Open,
             });
         let material = crate::material_access::MaterialAccess::new(
@@ -356,10 +368,12 @@ async fn request_inner(
             registered: None,
         };
         match admission {
-            Admission::Signals(checkpoint) => {
-                submitter.submit_checkpoint(acquired, checkpoint).await
+            Admission::Signals(turn, checkpoint) => {
+                submitter
+                    .submit_checkpoint(acquired, checkpoint, turn)
+                    .await
             }
-            Admission::Curation => Ok(submitter.submit_curation(acquired).await?),
+            Admission::Curation(turn) => Ok(submitter.submit_curation(acquired, turn).await?),
             Admission::Plain => Ok(submitter
                 .submit(acquired, Value::Null, &mut Totals::default())
                 .await?),

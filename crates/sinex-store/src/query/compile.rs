@@ -26,6 +26,7 @@ pub(crate) struct Compiled {
     pub count: SqlFragment,
     pub columns: Vec<String>,
     pub keys: Vec<(String, bool)>,
+    withheld_columns: Vec<String>,
 }
 
 // Only conjunctions make a word predicate necessary for every selected row.
@@ -62,11 +63,13 @@ impl Compiled {
                     .iter()
                     .enumerate()
                     .map(|(index, name)| {
-                        format!(
-                            "'{}', q.{}",
-                            name.replace('\'', "''"),
-                            quote(&format!("_value{}", chunk_index * 50 + index))
-                        )
+                        let value = format!("q.{}", quote(&format!("_value{}", chunk_index * 50 + index)));
+                        let value = if self.withheld_columns.contains(name) {
+                            format!("CASE WHEN q.\"_withheld\" IS NOT NULL THEN q.\"_withheld\" ELSE to_jsonb({value}) END")
+                        } else {
+                            format!("to_jsonb({value})")
+                        };
+                        format!("'{}', {value}", name.replace('\'', "''"))
                     })
                     .collect();
                 format!("jsonb_build_object({})", pairs.join(", "))
@@ -366,6 +369,10 @@ impl<'c> Compiler<'c> {
         if let Some(a) = alias {
             output.extend(a.fields.iter().map(FieldRef::Field));
         }
+        let mut withheld_columns: Vec<String> = alias
+            .into_iter()
+            .flat_map(|a| a.fields.iter().map(|f| f.name.to_owned()))
+            .collect();
         let mut needed = output.clone();
         if let Some(filter) = &q.filter {
             expr_fields(filter, &mut needed);
@@ -437,6 +444,15 @@ impl<'c> Compiler<'c> {
             c.push(format!(" AS {}", quote(&alias)));
             select.push(c);
         }
+        let withheld = if table.is_events() {
+            Self::template(
+                &base,
+                "CASE WHEN {t}.payload ? 'withheld' THEN {t}.payload END",
+            )
+        } else {
+            "NULL::jsonb".into()
+        };
+        select.push(SqlFragment::text(format!("{withheld} AS \"_withheld\"")));
         let mut id = SqlFragment::text(Self::template(&base, fields::tiebreak(table)));
         id.push(" AS \"_id\"");
         select.push(id);
@@ -539,6 +555,7 @@ impl<'c> Compiler<'c> {
         let mut sort: Option<Vec<sinex_model::query::SortKey>> = None;
         let mut limit: Option<u64> = None;
         let mut internal: Vec<String> = vec![
+            "_withheld".into(),
             "_id".into(),
             "_event_id".into(),
             "_t".into(),
@@ -835,6 +852,7 @@ impl<'c> Compiler<'c> {
                     ));
                     identified.append(f).push(") g_identity");
                     rel = identified;
+                    withheld_columns.clear();
                     columns = names;
                     renamed = group_names;
                     ordinal = None;
@@ -964,6 +982,17 @@ impl<'c> Compiler<'c> {
                             .param(n as i64);
                     }
                     rel = selected_fields;
+                    withheld_columns = operands
+                        .iter()
+                        .filter_map(|operand| {
+                            let mut fields = Vec::new();
+                            operand_fields(operand, &mut fields);
+                            fields
+                                .iter()
+                                .any(|field| withheld_columns.contains(&column_name(field)))
+                                .then(|| operand.column())
+                        })
+                        .collect();
                     columns = operands.iter().map(Operand::column).collect();
                     renamed = selected_names;
                     ordinal = Some(next_ordinal);
@@ -1046,6 +1075,7 @@ impl<'c> Compiler<'c> {
             count,
             columns,
             keys,
+            withheld_columns,
         })
     }
 

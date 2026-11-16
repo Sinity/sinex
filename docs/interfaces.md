@@ -63,7 +63,7 @@ function are common
   capture health.
 - **Version.** The server reports its version; the client warns on a mismatch.
 - **The daemon is required.** Commands go through `sinexd`. Only the declared
-  offline diagnostics (`verify`, `status --offline`, `store verify --offline`) read the
+  offline diagnostics (`verify`, `status --offline`, `store verify`) read the
   database directly through the reader role, and completion works from the published
   catalog file. (ruling 2026-09-14, cc:652ae14f-a036-496b-abfa-42e7574c9ec9:b8a68d64-772f-4d8c-8e95-435ce601d245).
 
@@ -194,6 +194,8 @@ act or by session undo. Programs that derive continuously use the ingress as
   ([agent arrival](recall.md#agent-arrival)).
 
 ## CLI
+
+The CLI and MCP server use a current-thread async runtime. One-shot requests run on the main thread.
 
 `sinexctl` is product UI, not developer tooling. (ruling 2026-02-12, claude.ai:7abe2ed3-2651-4e23-a23a-48a61c82bb85:019c5366-a07e-7623-9477-9d8a857b0aa3).
 

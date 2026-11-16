@@ -287,7 +287,8 @@ fn key(note: &NoteDocument) -> sinex_model::EquivalenceKey {
             NoteDocument::EVENT_TYPE,
             fields,
             &serde_json::to_value(note).unwrap(),
-        ),
+        )
+        .unwrap(),
         sinex_model::KeyKind::Location => panic!("this fixture has a known vault"),
     }
 }

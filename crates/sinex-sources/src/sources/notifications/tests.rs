@@ -137,3 +137,23 @@ fn other_traffic_is_read_without_events() {
         .is_empty()
     );
 }
+
+#[devkit::test]
+fn dbus_notification_with_delivery_hint_records_signal_origin() {
+    for product in ["sinex", "polylogue"] {
+        let line = serde_json::json!({"type":"method_call", "member":"Notify", "payload":{
+            "type":"susssasa{sv}i", "data":[product,0,"","Notice","Details",[],
+                {format!("x-{product}-delivery"): {"type":"s", "data":"delivery-1"}},-1]}});
+        let events = parse(&line.to_string());
+        assert_eq!(
+            shown(&events[0]).extra["signal_origin"],
+            serde_json::json!({"product":product,"delivery":"delivery-1"})
+        );
+        assert_eq!(
+            shown(&events[0]).hints[format!("x-{product}-delivery")],
+            "delivery-1"
+        );
+    }
+    let (events, _) = read(&[(1.0, NOTIFY), (1.1, &reply(41, ":1.9", 7))]);
+    assert!(shown(&events[0]).extra.is_empty());
+}

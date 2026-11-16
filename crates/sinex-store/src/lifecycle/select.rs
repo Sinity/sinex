@@ -195,13 +195,29 @@ pub(super) async fn source_batch(
 
 /// The materials an operation read readings into: a replay's selection.
 async fn admitted_in(conn: &mut PgConnection, operation: Uuid) -> Result<Vec<Uuid>> {
-    let scope: Option<serde_json::Value> =
-        sqlx::query_scalar!("SELECT scope FROM core.operations WHERE id = $1", operation)
-            .fetch_optional(&mut *conn)
-            .await?;
-    Ok(scope
-        .and_then(|scope| serde_json::from_value(scope["selected_materials"].clone()).ok())
-        .unwrap_or_default())
+    let row = sqlx::query!(
+        "SELECT kind, scope FROM core.operations WHERE id = $1",
+        operation
+    )
+    .fetch_optional(&mut *conn)
+    .await?
+    .ok_or_else(|| Error::Invalid(format!("no operation {operation}")))?;
+    if row.kind == "replay" {
+        replay_materials(&row.scope)
+    } else {
+        Ok(Vec::new())
+    }
+}
+
+fn replay_materials(scope: &serde_json::Value) -> Result<Vec<Uuid>> {
+    let selected = scope
+        .get("selected_materials")
+        .ok_or_else(|| Error::Invalid("replay scope has no selected_materials".into()))?;
+    serde_json::from_value(selected.clone()).map_err(|error| {
+        Error::Invalid(format!(
+            "unreadable replay scope selected_materials: {error}"
+        ))
+    })
 }
 
 /// Refusals of the whole request, checked before the first batch: named
@@ -270,13 +286,13 @@ pub(super) async fn whole_request(conn: &mut PgConnection, op: &Operation) -> Re
             }
         }
         Scope::Operation { operation } => {
-            let kind: Option<String> = sqlx::query_scalar!(
-                "SELECT kind FROM core.operations WHERE id = $1",
+            let stored = sqlx::query!(
+                "SELECT kind, scope FROM core.operations WHERE id = $1",
                 operation.0
             )
             .fetch_optional(&mut *conn)
             .await?;
-            match kind.as_deref() {
+            match stored.as_ref().map(|row| row.kind.as_str()) {
                 None => refusals.push(Refusal {
                     member: operation.0,
                     reason: "no such operation".into(),
@@ -285,6 +301,14 @@ pub(super) async fn whole_request(conn: &mut PgConnection, op: &Operation) -> Re
                     member: operation.0,
                     reason: "a tombstone is irreversible".into(),
                 }),
+                Some("replay") if op.act == Act::Undo => {
+                    if let Err(error) = replay_materials(&stored.expect("stored replay").scope) {
+                        refusals.push(Refusal {
+                            member: operation.0,
+                            reason: error.to_string(),
+                        });
+                    }
+                }
                 Some(_) => {}
             }
         }

@@ -165,5 +165,5 @@ pub trait Parser: Send + Sync + 'static {
 #[cfg(test)]
 mod test_parser;
 
-#[cfg(test)]
-mod test_support;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;

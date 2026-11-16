@@ -32,7 +32,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     // Message bodies are anything any program chose to show.
     class: Class::Guarded,
     parser: "dbus-notifications",
-    parser_version: 2,
+    parser_version: 3,
     event_types: &[
         "notification.shown",
         "notification.closed",
@@ -148,6 +148,18 @@ impl Parser for NotificationsParser {
                     .and_then(|n| u32::try_from(n).ok())
                     .filter(|n| *n != 0);
                 let icon = text(a.get(2));
+                let hints = a[6].as_object().cloned().unwrap_or_default();
+                let mut extra = Map::new();
+                if let Some((product, delivery)) = signals::notifications::signal_origin(
+                    hints
+                        .iter()
+                        .filter_map(|(key, value)| Some((key.as_str(), value.as_str()?))),
+                ) {
+                    extra.insert(
+                        "signal_origin".into(),
+                        serde_json::json!({"product": product, "delivery": delivery}),
+                    );
+                }
                 let shown = NotificationShown {
                     captured_by: sinex_model::event_types::session::CaptureProgram::Sinex,
                     received_at,
@@ -166,13 +178,13 @@ impl Parser for NotificationsParser {
                                 .collect()
                         })
                         .unwrap_or_default(),
-                    hints: a[6].as_object().cloned().unwrap_or_default(),
+                    hints,
                     expire_timeout_ms: a[7]
                         .as_i64()
                         .and_then(|n| i32::try_from(n).ok())
                         .unwrap_or(-1),
                     sender: m.sender.clone(),
-                    extra: Map::new(),
+                    extra,
                 };
                 match m.serial {
                     Some(serial) => {

@@ -449,12 +449,14 @@ impl PausedProducer {
         for (index, file) in files.iter().enumerate() {
             relative(&file.path)?;
             let path = output.join(&file.path);
-            std::fs::create_dir_all(path.parent().ok_or("captured file has no parent")?)
+            tokio::fs::create_dir_all(path.parent().ok_or("captured file has no parent")?)
+                .await
                 .map_err(|e| e.to_string())?;
-            let mut out = std::fs::OpenOptions::new()
+            let mut out = tokio::fs::OpenOptions::new()
                 .create_new(true)
                 .write(true)
                 .open(path)
+                .await
                 .map_err(|e| e.to_string())?;
             let mut offset = 0;
             let mut hash = blake3::Hasher::new();
@@ -478,14 +480,16 @@ impl PausedProducer {
                         && !data.is_empty()
                         && data.len() as u64 <= file.bytes - offset =>
                     {
-                        out.write_all(&data).map_err(|e| e.to_string())?;
+                        tokio::io::AsyncWriteExt::write_all(&mut out, &data)
+                            .await
+                            .map_err(|e| e.to_string())?;
                         hash.update(&data);
                         offset += data.len() as u64;
                     }
                     other => return Err(format!("producer transfer incomplete: {other:?}")),
                 }
             }
-            out.sync_all().map_err(|e| e.to_string())?;
+            out.sync_all().await.map_err(|e| e.to_string())?;
             if hash.finalize().to_hex().as_str() != file.blake3 {
                 return Err("producer artifact digest differs".into());
             }
@@ -505,8 +509,11 @@ impl PausedProducer {
             }
         }
         for directory in directories.into_iter().rev() {
-            std::fs::File::open(directory)
-                .and_then(|f| f.sync_all())
+            tokio::fs::File::open(directory)
+                .await
+                .map_err(|e| e.to_string())?
+                .sync_all()
+                .await
                 .map_err(|e| e.to_string())?;
         }
         Ok(files)

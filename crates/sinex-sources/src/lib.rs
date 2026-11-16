@@ -7,4 +7,4 @@ pub mod stage;
 pub mod unimplemented;
 
 #[cfg(test)]
-mod test_support;
+use sinex_source_core::test_support;

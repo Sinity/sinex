@@ -94,7 +94,7 @@ from another export therefore compares with its existing live reading.
 
 ### Key kinds
 
-Each kind declares exactly one key kind, or explicitly none; the builder cannot omit the declaration. A source may declare its own key for its events of a kind. The key includes the source, so two sources' keys never meet. One shared function builds every key from exactly the declared fields: BLAKE3 of the event type, a zero byte, and the declared fields' values as a JSON array in [canonical JSON](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/canonical-json/README.md) (object keys sorted at every depth, numbers as the parsed value holds them), so a key field holding an object gives the same key whatever order its members arrived in.
+Each kind declares exactly one key kind, or explicitly none; the builder cannot omit the declaration. A source may declare its own key for its events of a kind. The database scopes each key by source, so two sources' keys never meet. One shared function builds every key from exactly the declared fields: BLAKE3 of the event type, a zero byte, and the declared fields' values as a JSON array in [canonical JSON](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/canonical-json/README.md) (object keys sorted at every depth, numbers as the parsed value holds them), so a key field holding an object gives the same key whatever order its members arrived in.
 
 | Key kind | Key | Used by |
 |---|---|---|
@@ -105,6 +105,8 @@ Each kind declares exactly one key kind, or explicitly none; the builder cannot 
 | none | declared explicitly; record coordinates are the only identity, and a new capture is a new record | live streams with no natural identity (clipboard, notifications, window manager, D-Bus) |
 
 A key never contains content, for a kind whose readings supersede (content belongs in the record hash); the material the record arrived in; the processing order or run; or the producer version. Any of these would make the same record look new.
+
+If any declared key field is absent, the record uses its location instead. An explicit `null` is a field value and is hashed as `null`; missing and null fields are distinct. The key stores only the full BLAKE3 digest, not the original values.
 
 ### What admission does with a key
 

@@ -265,3 +265,41 @@ fn empty_query_exits_1() {
     assert_eq!(printed["rows"], json!([]));
     server.join().unwrap();
 }
+
+#[devkit::test]
+fn a_one_shot_request_uses_one_thread() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let child = Command::new(env!("CARGO_BIN_EXE_sinexctl"))
+        .args([
+            "--endpoint",
+            &endpoint,
+            "--token-file",
+            "/dev/null",
+            "--json",
+            "status",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let (mut stream, _) = listener.accept().unwrap();
+    request(&mut stream);
+    let threads = std::fs::read_dir(format!("/proc/{}/task", child.id()))
+        .unwrap()
+        .count();
+    let body = json!({"outcome": "ok", "result": {"daemon": "running"}}).to_string();
+    write!(
+        stream,
+        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+    .unwrap();
+    drop(stream);
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        threads, 1,
+        "one-shot requests run on the process's main thread"
+    );
+}

@@ -82,38 +82,58 @@ pub(crate) struct ReplaySequence {
     pub check: AdmissionCheck,
 }
 
+type Reply<T> = oneshot::Sender<Result<T, WriteError>>;
+
 enum WriterJob {
-    Admit(Batch),
-    Signals(Option<Batch>, Box<sinex_store::signals::Commit>),
-    Checked(Batch, AdmissionCheck),
-    Curation(Batch, AdmissionCheck),
-    Source(Batch, AdmissionCheck, Option<StageCheckpoint>),
-    Replay(Box<ReplaySequence>),
+    Admit(Batch, Reply<Outcome>),
+    Signals(
+        Option<Batch>,
+        Box<sinex_store::signals::Commit>,
+        Reply<Outcome>,
+    ),
+    Checked(Batch, AdmissionCheck, Reply<Outcome>),
+    Curation(Batch, AdmissionCheck, Reply<Outcome>),
+    Source(
+        Batch,
+        AdmissionCheck,
+        Option<StageCheckpoint>,
+        Reply<Outcome>,
+    ),
+    Replay(Box<ReplaySequence>, Reply<(Vec<Outcome>, Diff)>),
     Lifecycle {
         operation: Box<lifecycle::Operation>,
         progress: Progress,
         roots: lifecycle::Roots,
+        reply: Reply<LifecycleStep>,
     },
     LifecycleEnd {
         operation: OperationId,
         refusals: Vec<Refusal>,
+        reply: Reply<()>,
     },
     RecordReplay {
         operation: OperationId,
         actor: String,
         scope: Value,
         refusals: Vec<Value>,
+        reply: Reply<()>,
     },
-    Stage(StageWrite),
+    Stage(StageWrite, Reply<()>),
     BackupHold {
         operation: OperationId,
         actor: String,
-        snapshot: bool,
+        reply: Reply<sinex_model::backup::Hold>,
+    },
+    BackupSnapshot {
+        operation: OperationId,
+        actor: String,
+        reply: Reply<sinex_store::backup::Snapshot>,
     },
     BackupRelease {
         hold: OperationId,
         operation: OperationId,
         actor: String,
+        reply: Reply<sinex_model::backup::Hold>,
     },
 }
 
@@ -168,21 +188,16 @@ pub(crate) struct LifecycleStep {
     pub held: Duration,
 }
 
-enum Done {
-    Admitted(Outcome),
-    Replayed(Vec<Outcome>, Diff),
-    Lifecycle(LifecycleStep),
-    Backup(
-        sinex_model::backup::Hold,
-        Option<Box<sinex_store::backup::Snapshot>>,
-    ),
-}
-
 struct Job {
     queued_at: std::time::Instant,
     work: WriterJob,
-    reply: oneshot::Sender<Result<Done, WriteError>>,
 }
+
+/// Held while signal decisions are planned and committed.
+pub(crate) struct SignalTurn(tokio::sync::OwnedMutexGuard<()>);
+
+/// Held while library curation is planned and committed.
+pub(crate) struct CurationTurn(tokio::sync::OwnedMutexGuard<()>);
 
 /// Where producers hand batches to the writer.
 #[derive(Clone)]
@@ -205,14 +220,14 @@ impl WriterHandle {
         self.source_publication.clone()
     }
 
-    pub(crate) async fn lock_signals(&self) -> tokio::sync::OwnedMutexGuard<()> {
-        self.signals.clone().lock_owned().await
+    pub(crate) async fn lock_signals(&self) -> SignalTurn {
+        SignalTurn(self.signals.clone().lock_owned().await)
     }
 
     /// Held while a library curation request is planned and admitted, so
     /// requests from this daemon never plan against each other's snapshot.
-    pub(crate) async fn lock_curation(&self) -> tokio::sync::OwnedMutexGuard<()> {
-        self.curation.clone().lock_owned().await
+    pub(crate) async fn lock_curation(&self) -> CurationTurn {
+        CurationTurn(self.curation.clone().lock_owned().await)
     }
 
     /// Shared by keyed computations in commands and the background runner.
@@ -226,31 +241,23 @@ impl WriterHandle {
         batch: Batch,
         check: AdmissionCheck,
     ) -> Result<Outcome, WriteError> {
-        match self
-            .send(priority, WriterJob::Checked(batch, check))
-            .await?
-        {
-            Done::Admitted(outcome) => Ok(outcome),
-            _ => unreachable!("checked admission returns its outcome"),
-        }
+        self.ask(priority, |reply| WriterJob::Checked(batch, check, reply))
+            .await
     }
-    /// Admit planned library curation records only if they still place as
-    /// planned (their bases current, their slots theirs), checked inside the
-    /// admitting transaction.
+
+    /// The turn spans planning and admission of the curation records.
     pub(crate) async fn submit_curation(
         &self,
+        turn: &CurationTurn,
         priority: Priority,
         batch: Batch,
         check: AdmissionCheck,
     ) -> Result<Outcome, WriteError> {
-        match self
-            .send(priority, WriterJob::Curation(batch, check))
-            .await?
-        {
-            Done::Admitted(outcome) => Ok(outcome),
-            _ => unreachable!("guarded admission returns its outcome"),
-        }
+        let _ = &turn.0;
+        self.ask(priority, |reply| WriterJob::Curation(batch, check, reply))
+            .await
     }
+
     /// A source advances past refused content, retaining its bytes and failures.
     pub(crate) async fn submit_source(
         &self,
@@ -259,37 +266,26 @@ impl WriterHandle {
         check: AdmissionCheck,
         stage: Option<StageCheckpoint>,
     ) -> Result<Outcome, WriteError> {
-        // Enter before queueing, never inside the writer: backup requests its
-        // snapshot while publication is paused. Acquisition and parsing do not
-        // hold this guard, so backup can pause between committed batches.
+        // Backup pauses publication before asking this writer for its snapshot.
         let _publication = self.source_publication.enter().await;
-        match self
-            .send(priority, WriterJob::Source(batch, check, stage))
-            .await?
-        {
-            Done::Admitted(outcome) => Ok(outcome),
-            _ => unreachable!("source admission returns its outcome"),
-        }
+        self.ask(priority, |reply| {
+            WriterJob::Source(batch, check, stage, reply)
+        })
+        .await
     }
 
-    /// Signal events and their evaluator, host policy and notification
-    /// checkpoint are one transaction. Effects run only after this method
-    /// acknowledges it. `batch` holds outcome and report records, when any.
+    /// Signal records and their checkpoint commit together, under the planning turn.
     pub(crate) async fn submit_signals(
         &self,
+        turn: &SignalTurn,
         batch: Option<Batch>,
         checkpoint: sinex_store::signals::Commit,
     ) -> Result<Outcome, WriteError> {
-        match self
-            .send(
-                Priority::Live,
-                WriterJob::Signals(batch, Box::new(checkpoint)),
-            )
-            .await?
-        {
-            Done::Admitted(outcome) => Ok(outcome),
-            _ => unreachable!("signal admission returns its outcome"),
-        }
+        let _ = &turn.0;
+        self.ask(Priority::Live, |reply| {
+            WriterJob::Signals(batch, Box::new(checkpoint), reply)
+        })
+        .await
     }
 
     /// Submit a batch and wait until it is committed (or refused).
@@ -298,13 +294,11 @@ impl WriterHandle {
         priority: Priority,
         batch: Batch,
     ) -> Result<Outcome, WriteError> {
-        match self.send(priority, WriterJob::Admit(batch)).await? {
-            Done::Admitted(outcome) => Ok(outcome),
-            _ => unreachable!("an admission answers with its outcome"),
-        }
+        self.ask(priority, |reply| WriterJob::Admit(batch, reply))
+            .await
     }
 
-    /// Replay one sequence in one transaction; in compare mode nothing is kept.
+    /// Replay one sequence in one transaction; comparisons keep no changes.
     pub(crate) async fn replay(
         &self,
         mut sequence: ReplaySequence,
@@ -317,13 +311,11 @@ impl WriterHandle {
             }
             check()
         });
-        let result = match self
-            .send(Priority::Derived, WriterJob::Replay(Box::new(sequence)))
-            .await?
-        {
-            Done::Replayed(outcomes, diff) => Ok((outcomes, diff)),
-            _ => unreachable!("a replay answers with its outcomes"),
-        };
+        let result = self
+            .ask(Priority::Derived, |reply| {
+                WriterJob::Replay(Box::new(sequence), reply)
+            })
+            .await;
         drop(pending);
         result
     }
@@ -335,65 +327,44 @@ impl WriterHandle {
         scope: Value,
         refusals: Vec<Value>,
     ) -> Result<(), WriteError> {
-        self.send(
-            Priority::Derived,
-            WriterJob::RecordReplay {
-                operation,
-                actor,
-                scope,
-                refusals,
-            },
-        )
-        .await?;
-        Ok(())
+        self.ask(Priority::Derived, |reply| WriterJob::RecordReplay {
+            operation,
+            actor,
+            scope,
+            refusals,
+            reply,
+        })
+        .await
     }
 
-    /// Write a stage's log entry or one of its unparsed files, in its own
-    /// transaction.
+    /// Write a stage's log entry or unparsed file in its own transaction.
     pub(crate) async fn stage(&self, write: StageWrite) -> Result<(), WriteError> {
-        self.send(Priority::Derived, WriterJob::Stage(write))
-            .await?;
-        Ok(())
+        self.ask(Priority::Derived, |reply| WriterJob::Stage(write, reply))
+            .await
     }
 
     pub(crate) async fn backup_hold(
         &self,
         actor: &str,
     ) -> Result<sinex_model::backup::Hold, WriteError> {
-        match self
-            .send(
-                Priority::Derived,
-                WriterJob::BackupHold {
-                    operation: OperationId::new(),
-                    actor: actor.into(),
-                    snapshot: false,
-                },
-            )
-            .await?
-        {
-            Done::Backup(hold, _) => Ok(hold),
-            _ => unreachable!("a backup hold returns its boundary"),
-        }
+        self.ask(Priority::Derived, |reply| WriterJob::BackupHold {
+            operation: OperationId::new(),
+            actor: actor.into(),
+            reply,
+        })
+        .await
     }
 
     pub(crate) async fn backup_snapshot(
         &self,
         actor: &str,
     ) -> Result<sinex_store::backup::Snapshot, WriteError> {
-        match self
-            .send(
-                Priority::Derived,
-                WriterJob::BackupHold {
-                    operation: OperationId::new(),
-                    actor: actor.into(),
-                    snapshot: true,
-                },
-            )
-            .await?
-        {
-            Done::Backup(_, Some(snapshot)) => Ok(*snapshot),
-            _ => unreachable!("a backup preparation returns its exported snapshot"),
-        }
+        self.ask(Priority::Derived, |reply| WriterJob::BackupSnapshot {
+            operation: OperationId::new(),
+            actor: actor.into(),
+            reply,
+        })
+        .await
     }
 
     pub(crate) async fn backup_release(
@@ -401,63 +372,49 @@ impl WriterHandle {
         hold: OperationId,
         actor: &str,
     ) -> Result<sinex_model::backup::Hold, WriteError> {
-        match self
-            .send(
-                Priority::Derived,
-                WriterJob::BackupRelease {
-                    hold,
-                    operation: OperationId::new(),
-                    actor: actor.into(),
-                },
-            )
-            .await?
-        {
-            Done::Backup(hold, _) => Ok(hold),
-            _ => unreachable!("a backup release returns its stored boundary"),
-        }
+        self.ask(Priority::Derived, |reply| WriterJob::BackupRelease {
+            hold,
+            operation: OperationId::new(),
+            actor: actor.into(),
+            reply,
+        })
+        .await
     }
 
-    /// Run one batch of a lifecycle operation in its own transaction.
     pub(crate) async fn lifecycle_step(
         &self,
         operation: &lifecycle::Operation,
         progress: Progress,
         roots: lifecycle::Roots,
     ) -> Result<LifecycleStep, WriteError> {
-        match self
-            .send(
-                Priority::Derived,
-                WriterJob::Lifecycle {
-                    operation: Box::new(operation.clone()),
-                    progress,
-                    roots,
-                },
-            )
-            .await?
-        {
-            Done::Lifecycle(step) => Ok(step),
-            _ => unreachable!("a lifecycle batch answers with its step"),
-        }
+        self.ask(Priority::Derived, |reply| WriterJob::Lifecycle {
+            operation: Box::new(operation.clone()),
+            progress,
+            roots,
+            reply,
+        })
+        .await
     }
 
-    /// End an operation `stopped_early`, recording what refused it.
+    /// End an operation stopped early, recording what refused it.
     pub(crate) async fn lifecycle_stopped(
         &self,
         operation: OperationId,
         refusals: Vec<Refusal>,
     ) -> Result<(), WriteError> {
-        self.send(
-            Priority::Derived,
-            WriterJob::LifecycleEnd {
-                operation,
-                refusals,
-            },
-        )
-        .await?;
-        Ok(())
+        self.ask(Priority::Derived, |reply| WriterJob::LifecycleEnd {
+            operation,
+            refusals,
+            reply,
+        })
+        .await
     }
 
-    async fn send(&self, priority: Priority, work: WriterJob) -> Result<Done, WriteError> {
+    async fn ask<R>(
+        &self,
+        priority: Priority,
+        make: impl FnOnce(Reply<R>) -> WriterJob,
+    ) -> Result<R, WriteError> {
         let (reply, answer) = oneshot::channel();
         let channel = match priority {
             Priority::Live => &self.live,
@@ -469,8 +426,7 @@ impl WriterHandle {
         crate::request_deadline::admit().map_err(|_| WriteError::ReadDeadline)?;
         permit.send(Job {
             queued_at,
-            work,
-            reply,
+            work: make(reply),
         });
         answer.await.map_err(|_| WriteError::Stopped)?
     }
@@ -577,144 +533,234 @@ pub(crate) async fn run_notifying(
             released_punches = false;
         }
         let queue_time = job.queued_at.elapsed();
-        let offered = match &job.work {
-            WriterJob::Admit(batch)
-            | WriterJob::Signals(Some(batch), _)
-            | WriterJob::Checked(batch, _)
-            | WriterJob::Curation(batch, _)
-            | WriterJob::Source(batch, _, _) => Some(batch.event_count()),
-            _ => None,
-        };
         let service_started = std::time::Instant::now();
-        let mut result = match job.work {
-            WriterJob::Admit(batch) => admit_checked(
-                &mut connection,
-                &batch,
-                keys.as_ref(),
-                store,
-                &|| Ok(()),
-                false,
-            )
-            .await
-            .map(Done::Admitted),
-            WriterJob::Signals(batch, checkpoint) => admit_signals(
-                &mut connection,
-                batch.as_ref(),
-                keys.as_ref(),
-                store,
-                &checkpoint,
-            )
-            .await
-            .map(Done::Admitted),
-            WriterJob::Curation(batch, check) => admit_with_checkpoint(
-                &mut connection,
-                &batch,
-                keys.as_ref(),
-                store,
-                &*check,
-                false,
-                Saved::Curation,
-            )
-            .await
-            .map(Done::Admitted),
-            WriterJob::Checked(batch, check) => admit_checked(
-                &mut connection,
-                &batch,
-                keys.as_ref(),
-                store,
-                &*check,
-                false,
-            )
-            .await
-            .map(Done::Admitted),
-            WriterJob::Source(batch, check, stage) => admit_with_checkpoint(
-                &mut connection,
-                &batch,
-                keys.as_ref(),
-                store,
-                &*check,
-                true,
-                stage.as_ref().map_or(Saved::Nothing, Saved::Stage),
-            )
-            .await
-            .map(Done::Admitted),
-            WriterJob::Replay(mut sequence) => {
-                replay_sequence(&mut connection, &mut sequence, keys.as_ref())
+        macro_rules! answer {
+            ($reply:expr, $result:expr) => {{
+                let result = $result;
+                if !answer(&mut connection, &url, store, &commits, $reply, result).await {
+                    return;
+                }
+            }};
+        }
+        macro_rules! batch_answer {
+            ($reply:expr, $events:expr, $result:expr) => {{
+                let result = $result;
+                let result = batch_timings(result, $events, queue_time, service_started.elapsed());
+                answer!($reply, result);
+            }};
+        }
+        match job.work {
+            WriterJob::Admit(batch, reply) => {
+                batch_answer!(
+                    reply,
+                    Some(batch.event_count()),
+                    admit_checked(
+                        &mut connection,
+                        &batch,
+                        keys.as_ref(),
+                        store,
+                        &|| Ok(()),
+                        false
+                    )
                     .await
-                    .map(|(o, d)| Done::Replayed(o, d))
+                );
+            }
+            WriterJob::Signals(batch, checkpoint, reply) => {
+                batch_answer!(
+                    reply,
+                    batch.as_ref().map(Batch::event_count),
+                    admit_signals(
+                        &mut connection,
+                        batch.as_ref(),
+                        keys.as_ref(),
+                        store,
+                        &checkpoint
+                    )
+                    .await
+                );
+            }
+            WriterJob::Curation(batch, check, reply) => {
+                batch_answer!(
+                    reply,
+                    Some(batch.event_count()),
+                    admit_with_checkpoint(
+                        &mut connection,
+                        &batch,
+                        keys.as_ref(),
+                        store,
+                        &*check,
+                        false,
+                        Saved::Curation
+                    )
+                    .await
+                );
+            }
+            WriterJob::Checked(batch, check, reply) => {
+                batch_answer!(
+                    reply,
+                    Some(batch.event_count()),
+                    admit_checked(
+                        &mut connection,
+                        &batch,
+                        keys.as_ref(),
+                        store,
+                        &*check,
+                        false
+                    )
+                    .await
+                );
+            }
+            WriterJob::Source(batch, check, stage, reply) => {
+                batch_answer!(
+                    reply,
+                    Some(batch.event_count()),
+                    admit_with_checkpoint(
+                        &mut connection,
+                        &batch,
+                        keys.as_ref(),
+                        store,
+                        &*check,
+                        true,
+                        stage.as_ref().map_or(Saved::Nothing, Saved::Stage)
+                    )
+                    .await
+                );
+            }
+            WriterJob::Replay(mut sequence, reply) => {
+                answer!(
+                    reply,
+                    replay_sequence(&mut connection, &mut sequence, keys.as_ref()).await
+                );
             }
             WriterJob::RecordReplay {
                 operation,
                 actor,
                 scope,
                 refusals,
-            } => record_replay(&mut connection, operation, &actor, &scope, &refusals)
-                .await
-                .map(Done::Admitted),
+                reply,
+            } => {
+                answer!(
+                    reply,
+                    record_replay(&mut connection, operation, &actor, &scope, &refusals)
+                        .await
+                        .map(drop)
+                );
+            }
             WriterJob::Lifecycle {
                 operation,
                 progress,
                 roots,
-            } => lifecycle_step(
-                &mut connection,
-                &operation,
-                progress,
-                roots,
-                keys.as_ref(),
-                store,
-            )
-            .await
-            .map(Done::Lifecycle),
+                reply,
+            } => {
+                answer!(
+                    reply,
+                    lifecycle_step(
+                        &mut connection,
+                        &operation,
+                        progress,
+                        roots,
+                        keys.as_ref(),
+                        store
+                    )
+                    .await
+                );
+            }
             WriterJob::LifecycleEnd {
                 operation,
                 refusals,
-            } => lifecycle_end(&mut connection, operation, &refusals)
-                .await
-                .map(Done::Admitted),
+                reply,
+            } => {
+                answer!(
+                    reply,
+                    lifecycle_end(&mut connection, operation, &refusals)
+                        .await
+                        .map(drop)
+                );
+            }
             WriterJob::BackupHold {
                 operation,
                 actor,
-                snapshot,
-            } => backup_hold(&mut connection, &url, operation, &actor, snapshot).await,
+                reply,
+            } => {
+                answer!(
+                    reply,
+                    sinex_store::backup::hold(&mut connection, operation, &actor)
+                        .await
+                        .map(|(hold, _)| hold)
+                        .map_err(WriteError::from)
+                );
+            }
+            WriterJob::BackupSnapshot {
+                operation,
+                actor,
+                reply,
+            } => {
+                answer!(
+                    reply,
+                    backup_snapshot(&mut connection, &url, operation, &actor).await
+                );
+            }
             WriterJob::BackupRelease {
                 hold,
                 operation,
                 actor,
+                reply,
             } => {
                 let result = sinex_store::backup::release(&mut connection, hold, operation, &actor)
                     .await
-                    .map(|hold| Done::Backup(hold, None))
                     .map_err(WriteError::from);
                 if result.is_ok() {
                     released_punches = true;
                 }
-                result
+                answer!(reply, result);
             }
-            WriterJob::Stage(write) => stage_write(&mut connection, write)
-                .await
-                .map(Done::Admitted),
-        };
-        if matches!(
-            &result,
-            Err(WriteError::Refused(_) | WriteError::Unavailable(_))
-        ) && connection.ping().await.is_err()
-            && let Ok(fresh) = PgConnection::connect(&url).await
-        {
-            // The lock went with the lost connection; without it this
-            // process is no longer the writer.
-            match claim(fresh).await {
-                Ok(fresh) => connection = fresh.with_blobs(store.cloned()),
-                Err(error) => {
-                    let _ = job.reply.send(Err(WriteError::Refused(error.to_string())));
-                    return;
-                }
+            WriterJob::Stage(write, reply) => {
+                answer!(reply, stage_write(&mut connection, write).await.map(drop));
             }
         }
-        if let Ok(Done::Admitted(outcome)) = &mut result {
-            outcome.timings.insert("queue", queue_time);
-            outcome.timings.insert("service", service_started.elapsed());
+    }
+}
+
+/// Reconnect a lost writer before releasing the caller's typed answer.
+async fn answer<R>(
+    connection: &mut AdmissionContext,
+    url: &str,
+    store: Option<&Blobs>,
+    commits: &watch::Sender<u64>,
+    reply: Reply<R>,
+    result: Result<R, WriteError>,
+) -> bool {
+    if matches!(
+        &result,
+        Err(WriteError::Refused(_) | WriteError::Unavailable(_))
+    ) && connection.ping().await.is_err()
+        && let Ok(fresh) = PgConnection::connect(url).await
+    {
+        match claim(fresh).await {
+            Ok(fresh) => *connection = fresh.with_blobs(store.cloned()),
+            Err(error) => {
+                let _ = reply.send(Err(WriteError::Refused(error.to_string())));
+                return false;
+            }
         }
-        if let (Some(events), Ok(Done::Admitted(outcome))) = (offered, &result)
+    }
+    if result.is_ok() {
+        commits.send_modify(|n| *n += 1);
+    }
+    let _ = reply.send(result);
+    true
+}
+
+fn batch_timings(
+    mut result: Result<Outcome, WriteError>,
+    events: Option<usize>,
+    queue: Duration,
+    service: Duration,
+) -> Result<Outcome, WriteError> {
+    if let Ok(outcome) = &mut result {
+        outcome.timings.insert("queue", queue);
+        outcome.timings.insert("service", service);
+        if let Some(events) = events
             && std::env::var_os("SINEX_BENCH_TIMINGS").is_some()
         {
             let timings: std::collections::BTreeMap<_, _> = outcome
@@ -727,17 +773,13 @@ pub(crate) async fn run_notifying(
                 serde_json::json!({"admission_batch": {
                     "events": events, "admitted": outcome.admitted,
                     "repeats": outcome.repeats, "replaced": outcome.replaced,
-                    "older": outcome.older,
-                    "superseded": outcome.superseded, "failures": outcome.failures,
-                    "timings_ms": timings
+                    "older": outcome.older, "superseded": outcome.superseded,
+                    "failures": outcome.failures, "timings_ms": timings
                 }})
             );
         }
-        if result.is_ok() {
-            commits.send_modify(|n| *n += 1);
-        }
-        let _ = job.reply.send(result);
     }
+    result
 }
 
 async fn admit_checked(
@@ -1287,30 +1329,21 @@ fn tracing_punch_error(error: &sinex_store::Error) {
     eprintln!("deferred backup punch: {error}");
 }
 
-async fn backup_hold(
+async fn backup_snapshot(
     connection: &mut AdmissionContext,
     url: &str,
     operation: OperationId,
     actor: &str,
-    snapshot: bool,
-) -> Result<Done, WriteError> {
+) -> Result<sinex_store::backup::Snapshot, WriteError> {
     let (hold, created) = sinex_store::backup::hold(connection, operation, actor).await?;
-    let snapshot = if snapshot {
-        if !created {
-            return Err(WriteError::Refused(
-                "a fresh exported snapshot needs a fresh backup operation".into(),
-            ));
-        }
-        // This is still one writer job. No admission can move the backup's fixed position until
-        // pg_export_snapshot has taken its first consistent read after the hold commit.
-        let exporter = PgConnection::connect(url)
-            .await
-            .map_err(|error| WriteError::Unavailable(error.to_string()))?;
-        Some(Box::new(
-            sinex_store::backup::Snapshot::export(exporter, hold.clone(), url.to_owned()).await?,
-        ))
-    } else {
-        None
-    };
-    Ok(Done::Backup(hold, snapshot))
+    if !created {
+        return Err(WriteError::Refused(
+            "a fresh exported snapshot needs a fresh backup operation".into(),
+        ));
+    }
+    // No queued write advances the boundary before the exporting transaction opens.
+    let exporter = PgConnection::connect(url)
+        .await
+        .map_err(|error| WriteError::Unavailable(error.to_string()))?;
+    Ok(sinex_store::backup::Snapshot::export(exporter, hold, url.to_owned()).await?)
 }

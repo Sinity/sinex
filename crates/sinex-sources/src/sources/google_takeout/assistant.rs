@@ -24,7 +24,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     purpose: "notes and lists kept through Google Assistant",
     class: Class::Open,
     parser: "google-assistant-notes",
-    parser_version: 1,
+    parser_version: 2,
     event_types: &["note.observed"],
     framer: sinex_source_core::Framer::export(frame, Framing::Whole),
 };
@@ -89,6 +89,9 @@ impl Parser for AssistantParser {
             .first()
             .ok_or_else(|| RecordError::new("an empty file"))?;
         let mut extra = Map::new();
+        extra.insert("time_note".into(), Value::String(
+            "The filename has no UTC offset. It is read as UTC; some export versions write local time.".into(),
+        ));
         let (title, text, state, items) = match header.first().map(String::as_str) {
             Some("Note title") => {
                 let row = rows.get(1);

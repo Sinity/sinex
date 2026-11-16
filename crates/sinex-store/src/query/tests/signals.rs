@@ -469,3 +469,68 @@ async fn keyless_record_coordinates_survive_rereading_and_distinguish_outputs(
     assert_ne!(after.rows[1].identity, original);
     assert_ne!(after.rows[0].reference, before.rows[0].reference);
 }
+
+#[devkit::test]
+async fn rule_over_notifications_ignores_signal_origin_events(db: devkit::pg::TestDatabase) {
+    use sinex_model::event_types::session::{CaptureProgram, NotificationShown};
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let mut kept = Vec::new();
+    for (index, product) in [None, Some("sinex"), Some("polylogue")]
+        .into_iter()
+        .enumerate()
+    {
+        let payload = NotificationShown {
+            captured_by: CaptureProgram::Sinex,
+            received_at: Timestamp::from_unix_secs(BASE).unwrap(),
+            app: "fixture".into(), summary: "Notice".into(), body: "Details".into(),
+            icon: None, notification_id: Some(index as u32), replaces_id: None,
+            actions: vec![], hints: Default::default(), expire_timeout_ms: -1,
+            sender: ":1.2".into(),
+            extra: product.map(|product| serde_json::json!({"signal_origin": {"product":product,"delivery":"delivery-1"}}).as_object().unwrap().clone()).unwrap_or_default(),
+        };
+        let event = Event::build(
+            &payload,
+            "desktop.notifications",
+            Origin::Record {
+                location: RecordLocation {
+                    material: MaterialId::new(),
+                    record_offset: 0,
+                },
+                output_index: 0,
+            },
+            ReadingOrder(1),
+            [index as u8; 32],
+            Class::Open,
+        )
+        .unwrap();
+        if product.is_none() {
+            kept.push(event.id);
+        }
+        assert_eq!(admit_signal_fixture(&mut conn, event).await.admitted, 1);
+    }
+    let seq = current_seq(&mut conn).await.unwrap();
+    let answer = standing_query(
+        &mut conn,
+        "events where event_type = notification.shown | fields payload.app",
+        &ctx(),
+        seq,
+    )
+    .await
+    .unwrap();
+    assert_eq!(answer.rows.len(), 1);
+    assert_eq!(answer.parents, kept);
+    assert_eq!(answer.rows[0].result["app"], "fixture");
+    let grouped = standing_query(
+        &mut conn,
+        "events where event_type = notification.shown | group by payload.app | count",
+        &ctx(),
+        seq,
+    )
+    .await
+    .unwrap();
+    assert_eq!(grouped.rows.len(), 1);
+    assert_eq!(grouped.rows[0].result["count"], 1);
+    assert_eq!(grouped.parents, kept);
+}

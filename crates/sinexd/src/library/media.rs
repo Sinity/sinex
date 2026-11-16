@@ -164,7 +164,7 @@ impl Library<'_> {
                 via: super::VIA_API,
                 at: Timestamp::now(),
                 cited: vec![stored],
-                curation: false,
+                curation: None,
             },
         )
         .await?;

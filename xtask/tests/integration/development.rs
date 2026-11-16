@@ -39,17 +39,14 @@ fn public_commands_reject_missing_scope_and_unknown_capture() {
 }
 
 #[test]
-fn test_command_owns_fuzz_regressions() {
+fn test_command_describes_building_and_running_tests() {
     let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
-        .arg("--help")
+        .args(["test", "--help"])
         .output()
         .unwrap();
     assert!(output.status.success());
     let help = String::from_utf8(output.stdout).unwrap();
-    assert!(help.contains("test"));
-    assert!(
-        !help
-            .lines()
-            .any(|line| line.trim_start().starts_with("fuzz"))
-    );
+    for description in ["--no-run", "cargo nextest run", "schema template"] {
+        assert!(help.contains(description), "{help}");
+    }
 }

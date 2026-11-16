@@ -194,8 +194,11 @@ fn start_capture_with_writer() -> (
     ));
     let (stop, stopped) = std::sync::mpsc::channel();
     let shared = writer.clone();
+    let capture_socket = socket.clone();
     let handle = std::thread::spawn(move || {
-        capture_connections(listener, writer, || stopped.try_recv().is_ok())
+        capture_connections(listener, writer, &capture_socket, || {
+            stopped.try_recv().is_ok()
+        })
     });
     (socket, spool, stop, handle, shared)
 }
@@ -314,7 +317,7 @@ fn spool_errors_are_returned_after_readers_finish() {
     let mut client = UnixStream::connect(dir.join("s.sock")).unwrap();
     client.write_all(b"record\n").unwrap();
     drop(client);
-    let error = capture_connections(listener, writer, || true).unwrap_err();
+    let error = capture_connections(listener, writer, &dir.join("s.sock"), || true).unwrap_err();
     assert!(error.to_string().contains("spool lock poisoned"));
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -417,7 +420,7 @@ fn stop_is_checked_between_accept_batches_with_more_clients_pending() {
         })
         .collect();
     assert_eq!(
-        capture_connections(listener, writer, || true).unwrap(),
+        capture_connections(listener, writer, &socket, || true).unwrap(),
         ACCEPT_BATCH as u64
     );
     let material = driver(dir.join("spool"), "h".into())
@@ -485,4 +488,61 @@ fn git_identity_roots_equal_across_products() {
     let identity = git_identity(dir.path(), Duration::from_secs(20)).expect("a repository");
     assert_eq!(identity.root_commits, both);
     assert_eq!(identity.branch.as_deref(), Some("main"));
+}
+
+#[devkit::test]
+fn command_reported_while_listener_down_arrives_after_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("session.sock");
+    let spool = dir.path().join("spool");
+    let line = json!({"source":"shell", "event":"command", "execution":"command-1",
+        "shell":"bash", "host":"fixture", "command":"echo recorded", "started_at":"2026-01-01T00:00:00Z"});
+    send_or_queue(&socket, &line, Duration::from_millis(200)).unwrap();
+    assert_eq!(capture(&socket, &spool, Some(Duration::ZERO)).unwrap(), 1);
+    let material = driver(spool.clone(), "fixture".into())
+        .poll(&Value::Null)
+        .unwrap()
+        .material
+        .unwrap();
+    assert_eq!(material.records.len(), 1);
+    let (start, end) = material.records[0];
+    let record = serde_json::from_slice(&crate::test_support::body(&material)[start..end]).unwrap();
+    let (events, ()) = SessionSocketParser
+        .parse(&record, &(), &sinex_source_core::RecordContext::none())
+        .unwrap();
+    let Produced::Command(report) = &events[0] else {
+        panic!("reported command")
+    };
+    assert_eq!(report.command, "echo recorded");
+    assert_eq!(report.execution, "command-1");
+    assert_eq!(capture(&socket, &spool, Some(Duration::ZERO)).unwrap(), 0);
+}
+
+#[devkit::test]
+fn send_deadline_queues_the_complete_report() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("session.sock");
+    let _listener = UnixListener::bind(&socket).unwrap();
+    // A listening peer that never reads cannot accept this complete report
+    // into its socket buffer before the send deadline.
+    let line = json!({"source":"shell", "event":"command", "command":"x".repeat(8 << 20)});
+    send_or_queue(&socket, &line, Duration::from_millis(1)).unwrap();
+    let spool = dir.path().join("spool");
+    let writer = Arc::new(Mutex::new(
+        SpoolWriter::open(&spool, Rotation::default()).unwrap(),
+    ));
+    assert_eq!(drain_reports(&socket, &writer).unwrap(), 1);
+    let material = driver(spool, "fixture".into())
+        .poll(&Value::Null)
+        .unwrap()
+        .material
+        .unwrap();
+    assert_eq!(material.records.len(), 1);
+    let (start, end) = material.records[0];
+    let record = serde_json::from_slice(&crate::test_support::body(&material)[start..end]).unwrap();
+    assert_eq!(
+        serde_json::from_slice::<Value>(&live_stream::received(&record).unwrap().1).unwrap(),
+        line
+    );
+    assert_eq!(drain_reports(&socket, &writer).unwrap(), 0);
 }

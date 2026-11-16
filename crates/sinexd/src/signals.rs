@@ -264,7 +264,7 @@ async fn step(host: &Host<'_>, resumed: bool) -> Result<Step> {
     // A conflicting commit retries the step. A basis that changed after the
     // check above is found by the next step's check and withdrawn there, so
     // the same frozen inputs are never retried twice.
-    match persist(api, &mut conn, records, commit, now).await {
+    match persist(api, &mut conn, records, commit, now, &_serial).await {
         Ok(()) => Ok(Step::Committed),
         Err(Error::Write(WriteError::Stale(_))) => Ok(Step::Again),
         Err(error) => Err(error),
@@ -664,6 +664,7 @@ async fn persist(
     records: Vec<SignalRecord>,
     mut commit: Commit,
     at: Timestamp,
+    turn: &crate::writer::SignalTurn,
 ) -> Result<()> {
     drop_begun_notices(&mut commit.checkpoint);
     let writer = api
@@ -671,7 +672,7 @@ async fn persist(
         .as_ref()
         .ok_or_else(|| Error::not_configured("signals require the writer"))?;
     if records.is_empty() {
-        writer.submit_signals(None, commit).await?;
+        writer.submit_signals(turn, None, commit).await?;
         return Ok(());
     }
     crate::submit::request_checkpoint(
@@ -683,6 +684,7 @@ async fn persist(
         &api.host,
         sinex_sources::sources::signals::material(&records, "sinexd", "host", &api.host, at),
         commit,
+        turn,
     )
     .await?;
     Ok(())
@@ -725,6 +727,7 @@ async fn persist_update(
             checkpoint: state,
         },
         at,
+        &_serial,
     )
     .await?;
     let _ = update.persisted.send(());
@@ -815,6 +818,7 @@ async fn forget(host: &Host<'_>, id: &str) -> Result<()> {
             checkpoint: state,
         },
         Timestamp::now(),
+        &_serial,
     )
     .await
 }
@@ -853,6 +857,7 @@ async fn record_effect(
             checkpoint: state,
         },
         at,
+        &_serial,
     )
     .await?;
     Ok(true)

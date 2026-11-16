@@ -46,3 +46,21 @@ fn doctor_reports_a_sibling_daemon_failure_with_empty_stderr() {
     assert!(error.contains("diagnostics doctor failed"), "{error}");
     assert!(error.contains('7'), "{error}");
 }
+
+#[test]
+fn store_verify_runs_offline_without_an_extra_flag() {
+    let directory = tempfile::tempdir().unwrap();
+    let cli = directory.path().join("sinexctl");
+    std::fs::copy(env!("CARGO_BIN_EXE_sinexctl"), &cli).unwrap();
+    let daemon = directory.path().join("sinexd");
+    std::fs::write(&daemon, "#!/bin/sh\n[ \"$1 $2\" = \"admin diagnostics\" ] || exit 8\nshift 2\n[ \"$1\" = \"verify-store\" ] || exit 9\nprintf '%s\\n' '{\"ok\":true,\"verified\":7}'\n").unwrap();
+    std::fs::set_permissions(&daemon, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let output = Command::new(cli)
+        .args(["store", "verify", "--database", "synthetic", "--store"])
+        .arg(directory.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["verified"], 7);
+}

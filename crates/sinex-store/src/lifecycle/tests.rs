@@ -1014,6 +1014,45 @@ async fn replay(
 }
 
 #[devkit::test]
+async fn undo_of_operation_with_unreadable_scope_is_refused(db: devkit::pg::TestDatabase) {
+    let mut conn = context(&db).await;
+    let m = material(&mut conn, &blob(31)).await;
+    let old = reading("replayed", 1, 1, m, 0);
+    admit(&mut conn, &batch(vec![old.clone()])).await;
+    let new = reading("replayed", 1, 2, m, 0);
+    let (replayed, _) = replay(&mut conn, m, &[new.clone()]).await;
+    for scope in [
+        json!({}),
+        json!({"selected_materials": "unreadable"}),
+        json!({"selected_materials": ["invalid-id"]}),
+    ] {
+        sqlx::query("UPDATE core.operations SET scope = $2 WHERE id = $1")
+            .bind(replayed.0)
+            .bind(scope)
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        let Ended::Refused(refusals) = operate(
+            &mut conn,
+            Act::Undo,
+            Scope::Operation {
+                operation: replayed,
+            },
+            16,
+        )
+        .await
+        else {
+            panic!("undo must refuse an unreadable replay selection")
+        };
+        assert_eq!(refusals.len(), 1);
+        assert_eq!(refusals[0].member, replayed.0);
+        assert!(refusals[0].reason.contains("scope"), "{:?}", refusals);
+        assert_eq!(state(&mut conn, &old).await, "archived");
+        assert_eq!(state(&mut conn, &new).await, "live");
+    }
+}
+
+#[devkit::test]
 async fn undo_swaps_forever(db: devkit::pg::TestDatabase) {
     let mut conn = context(&db).await;
     let m = material(&mut conn, &blob(4)).await;

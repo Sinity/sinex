@@ -382,14 +382,26 @@ impl Api {
                 },
                 stop,
             };
-            match saved {
+            let outcome = match saved {
                 Some(saved) => {
                     staging
                         .resume(operation, &request, plan, &saved, begun)
                         .await
                 }
                 None => staging.run(operation, &actor, &request, plan, begun).await,
+            };
+            match &outcome {
+                Ok(report) if !report.failures.is_empty() => {
+                    eprintln!(
+                        "<3>sinexd: stage {} stopped early: {}",
+                        operation.0,
+                        report.failures.join("; ")
+                    );
+                }
+                Err(error) => eprintln!("<3>sinexd: stage {} failed: {error}", operation.0),
+                _ => {}
             }
+            outcome
         });
         if !follow && let Ok(started) = started.await {
             return Ok(Reply::Ok {

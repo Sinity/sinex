@@ -600,6 +600,14 @@ impl Api {
     /// The media library's commands (`crate::library`). Reads see only what
     /// the caller may, through the same visibility as every other read.
     async fn library(&self, request: Request, caller: &Caller) -> Result<Value> {
+        if caller.actor != "operator"
+            && let Request::LibraryAdd { path, .. } | Request::LibraryImport { path } = &request
+        {
+            let items = crate::stage::items(std::slice::from_ref(path), &[])?;
+            let roots = self.source_config.agent_stage_roots(&self.host);
+            tokio::task::spawn_blocking(move || crate::stage::within_roots(&items, &roots))
+                .await??;
+        }
         let mut conn = self.acquire(caller).await?;
         crate::library::dispatch(
             &mut conn,

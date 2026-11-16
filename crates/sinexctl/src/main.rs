@@ -108,7 +108,6 @@ fn cli() -> Command {
             Command::new("store").about("The content store").subcommand(
                 Command::new("verify")
                     .about("Read every stored blob back and check it against its name (offline)")
-                    .arg(Arg::new("offline").long("offline").action(ArgAction::SetTrue).required(true))
                     .arg(Arg::new("database").long("database").required(true))
                     .arg(Arg::new("store").long("store").required(true).value_parser(clap::value_parser!(PathBuf))),
             ),
@@ -291,7 +290,7 @@ fn report_exit(report: &Value) -> ExitCode {
     }
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
     let matches = cli().get_matches();
     let json = matches.get_flag("json");
@@ -340,10 +339,7 @@ async fn main() -> ExitCode {
         "store" => {
             let Some(("verify", v)) = sub.subcommand() else {
                 return fail(
-                    &local(
-                        FailureKind::BadRequest,
-                        "store takes a subcommand: verify --offline",
-                    ),
+                    &local(FailureKind::BadRequest, "store takes a subcommand: verify"),
                     json,
                 );
             };

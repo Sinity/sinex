@@ -40,17 +40,16 @@ pub enum ReplaceRule {
 pub struct EquivalenceKey(pub String);
 
 impl EquivalenceKey {
-    /// The key for `payload` under `fields`. A missing field is part of the key
-    /// as `null`, so a record without its identity field is still keyed
-    /// consistently rather than dropped.
-    pub fn of(event_type: &str, fields: &[&str], payload: &Value) -> Self {
+    /// The key for `payload` under `fields`, or no key when a declared field
+    /// is absent. An explicit `null` remains a value in the key.
+    pub fn of(event_type: &str, fields: &[&str], payload: &Value) -> Option<Self> {
         let values: Vec<&Value> = fields
             .iter()
-            .map(|f| payload.get(*f).unwrap_or(&Value::Null))
-            .collect();
+            .map(|field| payload.get(*field))
+            .collect::<Option<_>>()?;
         let hash = canonical_json::canonical_hash(event_type, &values)
             .expect("JSON values always serialize");
-        Self(hash.to_hex().to_string())
+        Some(Self(hash.to_hex().to_string()))
     }
 }
 

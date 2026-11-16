@@ -187,3 +187,99 @@ async fn an_agent_stages_only_under_the_allowed_roots(db: devkit::pg::TestDataba
         "unparsed"
     );
 }
+
+#[devkit::test]
+async fn library_add_outside_declared_roots_refused(db: devkit::pg::TestDatabase) {
+    let dir = tempfile::tempdir().unwrap();
+    let allowed = dir.path().join("allowed");
+    let outside = dir.path().join("outside");
+    std::fs::create_dir(&allowed).unwrap();
+    std::fs::create_dir(&outside).unwrap();
+    let w = staging_from(db, &allowed).await;
+    for method in ["library-add", "library-import"] {
+        let (_, refused) =
+            call_unbounded(&w, Some(AGENT), json!({"method": method, "path": outside})).await;
+        assert_eq!(refused["outcome"], "failed", "{refused}");
+        assert!(
+            refused["failure"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("outside the places an agent may stage from"),
+            "{refused}"
+        );
+        for (token, path) in [(AGENT, &allowed), (OPERATOR, &outside)] {
+            let (_, accepted) =
+                call_unbounded(&w, Some(token), json!({"method": method, "path": path})).await;
+            assert_eq!(accepted["outcome"], "ok", "{accepted}");
+        }
+    }
+}
+
+#[devkit::test]
+async fn background_stage_writer_failure_ends_stopped_early(db: devkit::pg::TestDatabase) {
+    let dir = tempfile::tempdir().unwrap();
+    let w = staging_from(db, dir.path()).await;
+    let mut completed = sqlx::postgres::PgListener::connect_with(&w.reads)
+        .await
+        .unwrap();
+    completed.listen("stage_finished").await.unwrap();
+    for (name, condition) in [
+        (
+            "progress",
+            "NEW.result IS NULL AND OLD.progress <> NEW.progress",
+        ),
+        ("end", "NEW.result = 'ok'"),
+    ] {
+        sqlx::raw_sql(&format!(
+            r#"
+            CREATE OR REPLACE FUNCTION reject_stage_write() RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN
+                IF NEW.kind = 'stage' THEN
+                    IF {condition} THEN
+                        RAISE EXCEPTION 'synthetic {name} write failure';
+                    END IF;
+                    IF NEW.result IS NOT NULL THEN
+                        PERFORM pg_notify('stage_finished', NEW.id::text);
+                    END IF;
+                END IF;
+                RETURN NEW;
+            END $$;
+            DROP TRIGGER IF EXISTS reject_stage_write ON core.operations;
+            CREATE TRIGGER reject_stage_write BEFORE UPDATE ON core.operations
+                FOR EACH ROW EXECUTE FUNCTION reject_stage_write();
+        "#
+        ))
+        .execute(&w.reads)
+        .await
+        .unwrap();
+        let input = dir.path().join(format!("{name}.bin"));
+        std::fs::write(&input, b"synthetic bytes with no parser").unwrap();
+        let (_, started) =
+            call_unbounded(&w, Some(AGENT), json!({"method": "stage", "path": [input]})).await;
+        assert_eq!(started["outcome"], "ok", "{started}");
+        let operation = started["result"]["operation"].as_str().unwrap();
+        let notification =
+            tokio::time::timeout(std::time::Duration::from_secs(10), completed.recv())
+                .await
+                .expect("background stage records its terminal failure")
+                .unwrap();
+        assert_eq!(notification.payload(), operation);
+        let (_, shown) = call_unbounded(
+            &w,
+            Some(READ),
+            json!({"method": "stage-show", "operation": operation}),
+        )
+        .await;
+        assert_eq!(shown["result"]["result"], "stopped_early", "{shown}");
+        let failures = shown["result"]["failures"].as_array().unwrap();
+        assert_eq!(failures.len(), 1);
+        assert!(
+            failures[0]
+                .as_str()
+                .unwrap()
+                .contains(&format!("synthetic {name} write failure")),
+            "{shown}"
+        );
+        assert_eq!(shown["result"]["counts"]["stored_without_parser"], 1);
+    }
+}

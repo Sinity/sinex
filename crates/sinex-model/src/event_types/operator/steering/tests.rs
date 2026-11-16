@@ -58,11 +58,7 @@ fn known_rows_keep_the_existing_wire_identity_and_exact_values() {
         assert_eq!(event.record_hash, [7; 32]);
         assert_eq!(
             event.equivalence_key,
-            Some(EquivalenceKey::of(
-                "steering.row",
-                &["table", "record_id"],
-                &wire
-            ))
+            EquivalenceKey::of("steering.row", &["table", "record_id"], &wire)
         );
         assert_eq!(
             event.ts_orig.quality,

@@ -43,7 +43,7 @@ struct Stored<'a> {
     cited: Vec<sinex_model::OwnedBlob>,
     /// Planned curation records, verified against the stored ones inside
     /// the admitting transaction.
-    curation: bool,
+    curation: Option<&'a crate::writer::CurationTurn>,
 }
 
 impl Library<'_> {
@@ -85,7 +85,7 @@ impl Library<'_> {
         // per await site, enough to overflow a 2 MiB thread stack.
         let source = std::sync::Arc::new(library_source::request_source());
         let result = match stored.curation {
-            true => {
+            Some(turn) => {
                 Box::pin(crate::submit::request_curation(
                     conn,
                     self.writer,
@@ -94,10 +94,11 @@ impl Library<'_> {
                     &binding,
                     self.host,
                     acquired,
+                    turn,
                 ))
                 .await?
             }
-            false => {
+            None => {
                 Box::pin(crate::submit::request(
                     conn,
                     self.writer,

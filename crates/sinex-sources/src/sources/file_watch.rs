@@ -36,8 +36,8 @@ pub const SPEC: SourceSpec = SourceSpec {
     // Paths name projects, people and documents.
     class: Class::Guarded,
     parser: "file-watch",
-    parser_version: 1,
-    event_types: &["file.changed"],
+    parser_version: 2,
+    event_types: &["file.changed", "capture.gap"],
     framer: sinex_source_core::Framer::incremental(sinex_source_core::drivers::append_file::lines),
 };
 
@@ -195,26 +195,7 @@ fn capture_until(
         let wait = Duration::from_millis(100);
         match rx.recv_timeout(wait) {
             Ok(Ok(event)) => {
-                let Some((change, is_dir)) = change_of(&event.kind) else {
-                    continue;
-                };
-                let paths: Vec<Value> = event.paths.iter().map(|p| path_json(p)).collect();
-                spool_line(
-                    &mut writer,
-                    &json!({"kind": change, "paths": paths, "is_dir": is_dir}),
-                )?;
-                count += 1;
-                // A new directory (made here or moved in) gets its watches.
-                if matches!(change, "created" | "moved_to" | "renamed")
-                    && let Some(path) = event.paths.last()
-                    && path.is_dir()
-                    && !path.is_symlink()
-                    && !path.file_name().is_some_and(|name| {
-                        roots.skip.iter().any(|s| s.as_bytes() == name.as_bytes())
-                    })
-                {
-                    watch_tree(path, &mut writer, &mut count)?;
-                }
+                capture_event(&event, roots, &mut writer, &mut count, &mut watch_tree)?;
             }
             Ok(Err(e)) => {
                 spool_line(
@@ -235,6 +216,55 @@ fn capture_until(
     Ok(count)
 }
 
+fn capture_event(
+    event: &notify::Event,
+    roots: &Roots,
+    writer: &mut SpoolWriter,
+    count: &mut u64,
+    watch_tree: &mut impl FnMut(&Path, &mut SpoolWriter, &mut u64) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    if event.need_rescan() {
+        let paths: Vec<Value> = roots.roots.iter().map(|path| path_json(path)).collect();
+        spool_line(writer, &json!({"kind": "overflow", "paths": paths}))?;
+        *count += 1;
+        for root in &roots.roots {
+            watch_tree(root, writer, count)?;
+        }
+        return Ok(());
+    }
+    let Some((change, is_dir)) = change_of(&event.kind) else {
+        return Ok(());
+    };
+    let paths: Vec<Value> = event.paths.iter().map(|path| path_json(path)).collect();
+    spool_line(
+        writer,
+        &json!({"kind": change, "paths": paths, "is_dir": is_dir}),
+    )?;
+    *count += 1;
+    if matches!(change, "created" | "moved_to" | "renamed")
+        && let Some(path) = event.paths.last()
+        && path.is_dir()
+        && !path.is_symlink()
+        && !path.file_name().is_some_and(|name| {
+            roots
+                .skip
+                .iter()
+                .any(|skip| skip.as_bytes() == name.as_bytes())
+        })
+    {
+        watch_tree(path, writer, count)?;
+    }
+    Ok(())
+}
+
+sinex_model::payload_enum! {
+    #[derive(Clone, Debug, PartialEq)]
+    pub enum FileWatchEvent {
+        Changed(FileChanged),
+        Gap(sinex_model::event_types::capture::Gap),
+    }
+}
+
 pub struct FileWatchParser;
 
 fn split_path(value: Option<&Value>) -> (Option<String>, Option<String>) {
@@ -251,14 +281,14 @@ fn split_path(value: Option<&Value>) -> (Option<String>, Option<String>) {
 impl Parser for FileWatchParser {
     type Record<'a> = Map<String, Value>;
     type Carry = ();
-    type Payload = FileChanged;
+    type Payload = FileWatchEvent;
 
     fn parse(
         &self,
         record: &Map<String, Value>,
         _: &(),
         _context: &sinex_source_core::RecordContext<'_>,
-    ) -> Result<(Vec<FileChanged>, ()), RecordError> {
+    ) -> Result<(Vec<FileWatchEvent>, ()), RecordError> {
         let (received_at, line) = live_stream::received(record).map_err(RecordError::new)?;
         let change: Map<String, Value> = serde_json::from_slice(&line)
             .map_err(|e| RecordError::new(format!("watch record is not JSON: {e}")))?;
@@ -272,6 +302,20 @@ impl Parser for FileWatchParser {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
+        if kind == "overflow" {
+            return Ok((
+                vec![FileWatchEvent::Gap(
+                    sinex_model::event_types::capture::Gap {
+                        stream: format!("file-watch:{}", Value::Array(paths)),
+                        start: None,
+                        end: None,
+                        reason: "inotify_overflow".into(),
+                        sequence: None,
+                    },
+                )],
+                (),
+            ));
+        }
         let is_dir = change.get("is_dir").and_then(Value::as_bool);
         let note = change
             .get("note")
@@ -296,7 +340,7 @@ impl Parser for FileWatchParser {
         } else {
             paths.iter().map(|p| event(Some(p), None)).collect()
         };
-        Ok((out, ()))
+        Ok((out.into_iter().map(FileWatchEvent::Changed).collect(), ()))
     }
 }
 

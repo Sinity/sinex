@@ -58,3 +58,33 @@ fn place_moves_whole_bytes_and_syncs_the_directory_after_renaming() {
     assert!(place(&missing, &from, &to).is_err());
     assert_eq!(std::fs::read(&to).unwrap(), b"again");
 }
+
+#[devkit::test]
+fn publish_segment_syncs_before_rename() {
+    let dir = tempfile::tempdir().unwrap();
+    let partial = dir.path().join("segment.audio.ogg.partial");
+    // This readable file cannot be synced. Its final name must never appear
+    // when syncing fails, even though a rename of the link would succeed.
+    std::os::unix::fs::symlink("/dev/null", &partial).unwrap();
+    let error = publish_segment(
+        dir.path(),
+        &partial,
+        "segment.audio",
+        "ogg",
+        &json!({"kind": "audio"}),
+    )
+    .unwrap_err();
+    assert_eq!(error.raw_os_error(), Some(22));
+    assert_eq!(
+        std::fs::read_link(&partial).unwrap(),
+        PathBuf::from("/dev/null")
+    );
+    assert_eq!(complete(dir.path()).unwrap(), Vec::new());
+    assert_eq!(
+        serde_json::from_slice::<Value>(
+            &std::fs::read(dir.path().join("segment.audio.json")).unwrap()
+        )
+        .unwrap(),
+        json!({"kind": "audio"})
+    );
+}
