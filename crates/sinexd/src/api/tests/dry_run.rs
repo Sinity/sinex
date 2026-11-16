@@ -84,8 +84,14 @@ async fn replay_dry_run_changes_nothing(db: devkit::pg::TestDatabase) {
     )
     .await;
     assert_eq!(staged["outcome"], "ok", "{staged}");
-    let material = staged["result"]["inventory"]["files"][0]["material"]
-        .as_str()
-        .unwrap();
+    let (_, materials) = call_unbounded(
+        &world,
+        Some(OPERATOR),
+        json!({"method":"query","query":"materials where parser = zsh | fields id"}),
+    )
+    .await;
+    assert_eq!(materials["outcome"], "ok", "{materials}");
+    assert_eq!(materials["result"]["total"], 1, "{materials}");
+    let material = materials["result"]["rows"][0]["id"].as_str().unwrap();
     preview(&world, json!({"method":"replay","material":[material]})).await;
 }

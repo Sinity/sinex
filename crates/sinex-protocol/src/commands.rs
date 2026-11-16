@@ -204,7 +204,7 @@ pub const COMMANDS: &[Command] = &[
     },
     Command {
         examples: &[
-            "sinexctl query 'events since 1h'",
+            "sinexctl query 'events where since:1h'",
             "sinexctl query --page-size 25 'commands | sort by when desc'",
         ],
         name: "query",
@@ -245,7 +245,7 @@ pub const COMMANDS: &[Command] = &[
             opt(
                 "day",
                 ArgKind::Text,
-                "YYYY-MM-DD or a stored context-pack citation; default today",
+                "YYYY-MM-DD or a saved brief's ID; default today",
             ),
             opt(
                 "bytes",
@@ -293,7 +293,7 @@ pub const COMMANDS: &[Command] = &[
             pos_opt(
                 "query",
                 ArgKind::Rest,
-                "event clauses, for example where source = machine.journald since 1h",
+                "event clauses, for example where source = machine.journald AND since:1h",
             ),
             PAGE,
             CURSOR,
@@ -433,7 +433,7 @@ pub const COMMANDS: &[Command] = &[
     Command {
         examples: &["sinexctl forecast-report"],
         name: "forecast-report",
-        summary: "Brier score and calibration of visible resolved forecasts",
+        summary: "Brier score (lower is better) and how often predicted probabilities came true, for visible resolved forecasts",
         access: Access::Read,
         mcp: true,
         args: &[],
@@ -488,7 +488,7 @@ pub const COMMANDS: &[Command] = &[
         mcp: false,
     },
     Command {
-        examples: &["sinexctl save recent-commands 'commands since 1h'"],
+        examples: &["sinexctl save recent-commands 'commands where since:1h'"],
         name: "save",
         summary: "Save a named query with scalar parameters ($name), attributed to the caller.",
         args: &[
@@ -840,7 +840,7 @@ pub const COMMANDS: &[Command] = &[
             "sinexctl privacy-rule sample-rule --source terminal.atuin --kind command.executed --field /command --matcher terms --pattern sample --class open --action mask",
         ],
         name: "privacy-rule",
-        summary: "Add a privacy rule, or a new version of the rule with this name. Applies to new readings; replay applies it to the past.",
+        summary: "Add a privacy rule, or a new version of the rule with this name. Applies to newly parsed events; replay applies it to the past.",
         args: &[
             pos(
                 "name",
@@ -934,7 +934,7 @@ pub const COMMANDS: &[Command] = &[
     Command {
         examples: &["sinexctl analysis-catalog"],
         name: "analysis-catalog",
-        summary: "The analysis catalog: metrics with the events they count and the sources that observe them, registered methods, recipes.",
+        summary: "Available analyses and metrics, with the events they count and the sources that observe them.",
         args: &[],
         access: Access::Read,
         mcp: true,
@@ -963,7 +963,7 @@ pub const COMMANDS: &[Command] = &[
     Command {
         examples: &["sinexctl analysis-panel 2026-09-01 2026-09-14 --metric shell.commands"],
         name: "analysis-panel",
-        summary: "Metric cells per logical day from the daily metric figures, each with its observation state, and the coverage behind them.",
+        summary: "Daily metric values, whether each day was observed, and how much of it the sources recorded.",
         args: &[
             pos("first", ArgKind::Text, "first logical day, YYYY-MM-DD"),
             pos("last", ArgKind::Text, "last logical day, included"),
@@ -1030,7 +1030,7 @@ pub const COMMANDS: &[Command] = &[
     Command {
         examples: &["sinexctl library-item library:example"],
         name: "library-item",
-        summary: "One library item: its revisions, renditions, copies on disk, shown tags and properties, ratings, views and collections.",
+        summary: "One library item: its versions, converted copies, copies on disk, shown tags and properties, ratings, views and collections.",
         args: &[pos("item", ArgKind::Text, "the item ID")],
         access: Access::Read,
         mcp: true,
@@ -1043,7 +1043,7 @@ pub const COMMANDS: &[Command] = &[
         summary: "Curate the library in one atomic request: every write is committed or none is. \
 Acts: tag, untag, reject, set, note, rate, collect, uncollect, move, judge, define_scale, define_property, define_tag, relate, dismiss, withdraw, undo. \
 Each write is an object with `act` and its fields, e.g. {\"act\":\"tag\",\"target\":{\"item\":\"library:…\"},\"tag\":\"place:harbour\"}. \
-Answers the records written with their revisions, or a refusal naming the current revision.",
+Answers the records written with their versions, or a refusal naming the current version.",
         args: &[
             Arg {
                 required: true,
@@ -1076,7 +1076,7 @@ Answers the records written with their revisions, or a refusal naming the curren
     Command {
         examples: &["sinexctl library-rank stars --next-size 3"],
         name: "library-rank",
-        summary: "Items ranked on a scale from comparisons (Plackett–Luce), with intervals, rank ranges, support, groups, fit status, and the next set worth judging.",
+        summary: "Items ranked from comparisons on a scale, with uncertainty intervals, rank ranges, how settled the ranking is, and the next set worth judging.",
         args: &[
             pos("scale", ArgKind::Text, "the scale's name"),
             opt(
@@ -1097,7 +1097,7 @@ Answers the records written with their revisions, or a refusal naming the curren
             opt(
                 "rule",
                 ArgKind::Text,
-                "how the next set is chosen: information (default), random or uncompared-first",
+                "how the next set is chosen: information (default, pick the comparison that teaches most), random or uncompared-first",
             ),
         ],
         access: Access::Read,
@@ -1112,7 +1112,7 @@ Answers the records written with their revisions, or a refusal naming the curren
             opt(
                 "rendition",
                 ArgKind::Text,
-                "a rendition ID instead of the original",
+                "a converted copy's ID instead of the original",
             ),
         ],
         access: Access::Read,
@@ -1133,7 +1133,7 @@ Answers the records written with their revisions, or a refusal naming the curren
     Command {
         examples: &["sinexctl library-preview library:example"],
         name: "library-preview",
-        summary: "Make a preview rendition of an item (a still of a video, a small image).",
+        summary: "Make a preview copy of an item (a still of a video, a small image).",
         args: &[pos("item", ArgKind::Text, "the item ID")],
         access: Access::Agent,
         mcp: false,

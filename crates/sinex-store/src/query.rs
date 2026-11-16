@@ -2,7 +2,7 @@
 //! `show`, and read-only SQL. Each page uses one read-only repeatable snapshot.
 //! Continuations keep the original question, clock and event position; a
 //! changed visible ordered answer requires a fresh query. Rows use the table's
-//! field names; times are UTC.
+//! field names; times use the query context zone.
 mod compile;
 pub mod continuation;
 mod cursor;
@@ -577,12 +577,7 @@ impl ReadPage {
     }
     fn resolved(&self) -> Resolved {
         Resolved {
-            now: self
-                .ctx
-                .now
-                .to_zoned(self.ctx.zone.clone())
-                .strftime("%Y-%m-%d %H:%M:%S%:z")
-                .to_string(),
+            now: self.ctx.now.to_string(),
             zone: self.ctx.zone_name(),
             day_start: self.ctx.day_start.to_string(),
             commit_seq: self.seq,

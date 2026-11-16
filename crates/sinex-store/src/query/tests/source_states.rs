@@ -279,7 +279,7 @@ async fn answer_times_share_the_context_zone(db: devkit::pg::TestDatabase) {
         None, &context, &Page::default(),
     ).await.unwrap();
     assert_eq!(answer.resolved.zone, "Europe/Warsaw");
-    assert_eq!(answer.resolved.now, "2026-10-25 03:00:00+01:00");
+    assert_eq!(answer.resolved.now, "2026-10-25T02:00:00Z");
     assert!(
         answer.read_as.contains("2026-10-25 02:30:00+02:00"),
         "{}",

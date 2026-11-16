@@ -1,6 +1,12 @@
 //! Source counts and paged rows use the same relations at the selected position.
 
-pub(super) const SOURCES: &str = r#"(
+use sinex_model::{EventPayload, event_types::coverage::SourceCoverage};
+use std::sync::LazyLock;
+
+pub(super) static SOURCES: LazyLock<String> =
+    LazyLock::new(|| SOURCES_SQL.replace("{coverage_kind}", SourceCoverage::EVENT_TYPE));
+
+const SOURCES_SQL: &str = r#"(
     SELECT s.*,
       CASE
         WHEN s.exclusion IS NOT NULL THEN 'excluded'
@@ -34,8 +40,8 @@ pub(super) const SOURCES: &str = r#"(
         (array_agg(e.payload->>'reason' ORDER BY e.commit_seq DESC)
           FILTER (WHERE e.payload->>'state' = 'missing'))[1] AS last_error
       FROM core.visible_events e
-      WHERE e.event_type = 'source.coverage'
-        AND e.kind_version = (SELECT max(version) FROM registry.event_types WHERE name = 'source.coverage')
+      WHERE e.event_type = '{coverage_kind}'
+        AND e.kind_version = (SELECT max(version) FROM registry.event_types WHERE name = '{coverage_kind}')
         AND e.payload->>'observed_source' = s.name
         AND e.commit_seq <= {seq} AND NOT audit.is_archived_at(e.id, {seq})
     ) c

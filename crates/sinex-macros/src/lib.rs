@@ -21,6 +21,7 @@
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::quote;
+use syn::ext::IdentExt;
 use syn::{Data, DeriveInput, Fields, Ident, LitStr, Type, parse_macro_input};
 
 #[proc_macro_derive(EventPayload, attributes(event))]
@@ -100,10 +101,19 @@ fn expand_tag_name(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream>
         let text = match serde_value(&variant.attrs, "rename")? {
             Some(text) => text,
             None => {
-                let name = ident.to_string();
+                let name = ident.unraw().to_string();
                 let renamed = match rename_all.as_ref().map(LitStr::value).as_deref() {
-                    Some("snake_case") => snake(&name),
-                    Some("kebab-case") => snake(&name).replace('_', "-"),
+                    Some(rule @ ("snake_case" | "kebab-case")) => {
+                        let mut text = String::new();
+                        for (index, character) in name.chars().enumerate() {
+                            if index > 0 && character.is_uppercase() {
+                                text.push(if rule == "snake_case" { '_' } else { '-' });
+                            }
+                            // Serde lowercases only ASCII in variant names.
+                            text.push(character.to_ascii_lowercase());
+                        }
+                        text
+                    }
                     _ => name,
                 };
                 LitStr::new(&renamed, ident.span())

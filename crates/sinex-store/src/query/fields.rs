@@ -22,7 +22,7 @@ pub(crate) fn from(table: Table) -> &'static str {
              LEFT JOIN raw.revisions {t}_v ON {t}_v.id = {t}.revision_id"
         }
         Table::Runs => "core.runs {t} LEFT JOIN core.manifests {t}_m ON {t}_m.id = {t}.manifest_id",
-        Table::Sources => super::source_views::SOURCES,
+        Table::Sources => super::source_views::SOURCES.as_str(),
         Table::Operations => "core.operations {t}",
         Table::Failures => {
             "raw.failures {t} LEFT JOIN raw.materials {t}_m ON {t}_m.id = {t}.material_id \

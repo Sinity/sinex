@@ -502,7 +502,7 @@ async fn shutdown_releases_source_and_backup_waiting_on_publication(db: devkit::
     .await
     .expect("real API listener");
     let output = root.path().join("backup");
-    request.write_all(format!("GET /v1/backup/prepare?output={} HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer operator\r\nConnection: close\r\n\r\n", output.display()).as_bytes()).await.unwrap();
+    request.write_all(format!("GET /v1/backup/prepare?to={} HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer operator\r\nConnection: close\r\n\r\n", output.display()).as_bytes()).await.unwrap();
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             // This new reader can wait only once the backup's write guard is queued.

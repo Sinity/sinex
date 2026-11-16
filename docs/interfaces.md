@@ -453,7 +453,7 @@ reader sooner.
 50-row page. `source_states` counts rows in each [input state](sources.md#input-states).
 The same source relation supplies offline status and the `doctor` sources check.
 `doctor` reports the search backlog and failures in the last 24 hours as information;
-the failure detail points to `sinexctl query 'failures since 24h'`.
+the failure detail points to `sinexctl query 'failures where since:24h'`.
 
 The wider status design covers:
 

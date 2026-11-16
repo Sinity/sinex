@@ -311,6 +311,9 @@ fn tag_name_matches_the_serde_tag() {
     #[serde(tag = "outcome", rename_all = "snake_case")]
     enum Example {
         AlreadyDone,
+        Ångström,
+        #[allow(non_camel_case_types)]
+        r#type,
         #[serde(rename = "waiting-for-input")]
         Waiting {
             count: usize,
@@ -318,6 +321,8 @@ fn tag_name_matches_the_serde_tag() {
     }
     for (example, expected) in [
         (Example::AlreadyDone, "already_done"),
+        (Example::Ångström, "Ångström"),
+        (Example::r#type, "type"),
         (Example::Waiting { count: 3 }, "waiting-for-input"),
     ] {
         assert_eq!(example.outcome(), expected);

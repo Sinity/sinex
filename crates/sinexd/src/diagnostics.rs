@@ -109,7 +109,7 @@ async fn doctor(database: &str, store: &Path) -> Value {
                         "failures",
                         true,
                         format!(
-                            "{} records failed in the last 24 hours; `sinexctl query 'failures since 24h'` lists them",
+                            "{} records failed in the last 24 hours; `sinexctl query 'failures where since:24h'` lists them",
                             s.failures_24h
                         ),
                     );

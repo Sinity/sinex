@@ -169,7 +169,7 @@ async fn doctor_keeps_search_lag_and_past_failures_informational(db: devkit::pg:
     assert_eq!(failures["ok"], true, "{body}");
     assert_eq!(
         failures["detail"],
-        "1 records failed in the last 24 hours; `sinexctl query 'failures since 24h'` lists them"
+        "1 records failed in the last 24 hours; `sinexctl query 'failures where since:24h'` lists them"
     );
     let sources = checks
         .iter()
