@@ -736,24 +736,11 @@ impl Api {
         )
         .await?;
         let signals = json!({"configured":self.source_config.signals.is_some(),"rules":rule_rows.into_iter().map(|(id,payload)|json!({"citation":format!("sinex:ev/{id}"),"rule":payload})).collect::<Vec<_>>()});
-        drop(conn);
-        let sources = match self
-            .query(
-                caller,
-                "sources | sort by binding",
-                Page {
-                    size: Some(1000),
-                    cursor: None,
-                },
-            )
-            .await
-        {
-            Ok(Reply::Ok { result }) => result.get("rows").cloned().unwrap_or(Value::Null),
-            Ok(Reply::StoppedEarly { failure, .. } | Reply::Failed { failure }) => {
-                json!({ "unavailable": failure })
-            }
-            Err(error) => json!({ "unavailable": error.failure() }),
+        let sources = match sinex_store::query::source_rows(&mut conn, &self.context()).await {
+            Ok(rows) => json!(rows),
+            Err(error) => json!({ "unavailable": Error::from(error).failure() }),
         };
+        drop(conn);
         let context = self.source_config.context(&self.host);
         let discovery =
             tokio::task::spawn_blocking(move || sinex_sources::discovery::status(&context))

@@ -671,6 +671,61 @@ async fn sources_lists_every_source_with_events(db: devkit::pg::TestDatabase) {
 }
 
 #[devkit::test]
+async fn status_source_rows_match_paged_rows_without_calendar_scratch(
+    db: devkit::pg::TestDatabase,
+) {
+    let url = db.url(None);
+    let mut writer = crate::AdmissionContext::connect(&url).await.unwrap();
+    world(&mut writer).await;
+    sqlx::query("INSERT INTO registry.sources(name,shapes,version,event_types,purpose,expectation) SELECT 'test.bulk-' || lpad(n::text,4,'0'),ARRAY['export-archive'],1,ARRAY['synthetic.record'],'synthetic source status','export' FROM generate_series(0,1000) n")
+        .execute(&mut *writer).await.unwrap();
+    // This source view exposes aggregate metadata under both grants. Keep
+    // the same fields and order as its public query in each scope.
+    for grants in ["", "guarded"] {
+        let mut direct = sqlx::PgConnection::connect(&url).await.unwrap();
+        set_grants(&mut direct, grants).await.unwrap();
+        let rows = source_rows(&mut direct, &ctx()).await.unwrap();
+        assert!(rows.len() > 1000);
+        let has_calendar: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM pg_class WHERE relnamespace = pg_my_temp_schema() AND relname = 'sinex_query_days')")
+            .fetch_one(&mut direct).await.unwrap();
+        assert!(
+            !has_calendar,
+            "source status does not prepare calendar scratch"
+        );
+        let mut public = sqlx::PgConnection::connect(&url).await.unwrap();
+        set_grants(&mut public, grants).await.unwrap();
+        let mut page = Page {
+            size: Some(211),
+            cursor: None,
+        };
+        let mut paged = Vec::new();
+        loop {
+            let answer = run(
+                &mut public,
+                "sources | sort by binding",
+                None,
+                &ctx(),
+                &page,
+            )
+            .await
+            .unwrap();
+            paged.extend(answer.rows);
+            match answer.page.cursor {
+                Some(cursor) => page.cursor = Some(cursor),
+                None => break,
+            }
+        }
+        assert_eq!(rows, paged, "same ordered fields under grants {grants:?}");
+        let has_calendar: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM pg_class WHERE relnamespace = pg_my_temp_schema() AND relname = 'sinex_query_days')")
+            .fetch_one(&mut public).await.unwrap();
+        assert!(
+            has_calendar,
+            "public query arms the calendar regression control"
+        );
+    }
+}
+
+#[devkit::test]
 async fn time_functions_bucket_in_the_zone_with_logical_days(db: devkit::pg::TestDatabase) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
