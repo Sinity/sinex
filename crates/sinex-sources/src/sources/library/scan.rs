@@ -66,8 +66,17 @@ struct MetadataFile {
     host: String,
     root: String,
     path: String,
+    #[serde(deserialize_with = "file_observation")]
     facts: ObservationFacts,
     removed_at: Option<Timestamp>,
+}
+
+// The tagged scan enum uses Serde's buffered deserializer, which cannot read
+// i128 nanoseconds. JSON's value deserializer retains those integer facts.
+fn file_observation<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<ObservationFacts, D::Error> {
+    serde_json::from_value(Value::deserialize(deserializer)?).map_err(serde::de::Error::custom)
 }
 
 impl MetadataFile {
