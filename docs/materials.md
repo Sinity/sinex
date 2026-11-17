@@ -6,7 +6,7 @@ Sinex keeps the exact bytes it captured as **materials** and reads events out of
 
 A material is stored, immutable, self-contained bytes. Every event read from a source can be re-derived from one of its materials, and replay reads the stored copy, never the original path.
 
-Admission syncs its material and the owned bytes of its normalized admitted
+Admission syncs its material and the owned bytes of its normalized offered
 events before committing their rows and source position. Preparation for a
 different source does not join that sync. A source keeps its original or staged
 input until admission confirms the commit; shutdown can discard unadmitted

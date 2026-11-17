@@ -326,6 +326,13 @@ pub(crate) async fn admit(
         .timings
         .insert("removed_at_source", started.elapsed());
 
+    // This batch owns the offered bytes even when classification suppresses
+    // a reading. Kind evaluation, not producer metadata, supplies the names.
+    required_blobs.extend(
+        events
+            .iter()
+            .flat_map(|event| event.owned_blobs.iter().map(|blob| blob.blob.clone())),
+    );
     if !events.is_empty() {
         let classified = classify::stage_and_classify(conn, &events, &mut outcome).await?;
         let started = std::time::Instant::now();
@@ -352,11 +359,6 @@ pub(crate) async fn admit(
                 &provenance,
             )
             .await?;
-            // Kind evaluation owns blob references; producer metadata can differ.
-            for ordinal in &classified.admit {
-                let event = &events[usize::try_from(*ordinal).expect("non-negative ordinal")];
-                required_blobs.extend(event.owned_blobs.iter().map(|blob| blob.blob.clone()));
-            }
         }
         resolved = classified.resolved;
     }

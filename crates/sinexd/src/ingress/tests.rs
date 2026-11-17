@@ -2333,6 +2333,8 @@ async fn append_integrity_failure_keeps_ingress_unacknowledged_and_spooled(
             manifest: Default::default(),
         }),
     };
+    let staged = frame_bytes::directory(root.path(), "node", frame_name).join(&blob[7..]);
+    let original_encoding = std::fs::read(&staged).unwrap();
     let result = ingest
         .handle("node", &serde_json::to_vec(&frame).unwrap())
         .await;
@@ -2347,8 +2349,27 @@ async fn append_integrity_failure_keeps_ingress_unacknowledged_and_spooled(
         recorded.is_empty(),
         "storage failure cannot record an acknowledged content refusal"
     );
-    let staged = frame_bytes::directory(root.path(), "node", frame_name).join(&blob[7..]);
-    assert_eq!(std::fs::read(staged).unwrap(), original);
+    assert_eq!(std::fs::read(&staged).unwrap(), original_encoding);
+    let retained = frame_bytes::prepared(
+        root.path(),
+        "node",
+        frame_name,
+        &blob,
+        original.len() as u64,
+    )
+    .unwrap();
+    let mut reader = retained
+        .reader(
+            None,
+            hashed_blobs::ReadLimits {
+                frame_bytes: hashed_blobs::DEFAULT_FRAME,
+                index_bytes: 65536,
+            },
+        )
+        .unwrap();
+    let mut decoded = Vec::new();
+    std::io::Read::read_to_end(&mut reader, &mut decoded).unwrap();
+    assert_eq!(decoded, original);
     drop(ingest);
     drop(writer);
     task.await.unwrap();

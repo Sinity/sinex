@@ -185,16 +185,33 @@ async fn paired_dumps_and_segment_copy_keep_the_hold_state_while_the_writer_adva
             tokio::task::yield_now().await;
         }
     }).await.expect("real pg_dump holds admission template while waiting on dump_pause");
-    blobs
-        .put(b"post-boundary append must not be copied")
-        .unwrap();
-    let outcome = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        writer.submit(
-            crate::writer::Priority::Live,
-            live_batch("after-hold-admission"),
-        ),
-    )
+    let later = b"post-boundary append must not be copied";
+    let later_blob = blobs.put(later).unwrap();
+    let outcome = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        writer
+            .stage(crate::writer::StageWrite::Unparsed(Box::new(
+                sinex_store::stages::Unparsed {
+                    id: sinex_model::MaterialId::new(),
+                    binding: "synthetic-after-hold".into(),
+                    input: sinex_model::InputRef {
+                        kind: "file".into(),
+                        locator: "synthetic-after-hold".into(),
+                        host: "test".into(),
+                    },
+                    observation: Default::default(),
+                    blob: later_blob,
+                    length: later.len() as u64,
+                    manifest: Default::default(),
+                },
+            )))
+            .await?;
+        writer
+            .submit(
+                crate::writer::Priority::Live,
+                live_batch("after-hold-admission"),
+            )
+            .await
+    })
     .await
     .expect("admission completes while pg_dump retains its locks")
     .unwrap();

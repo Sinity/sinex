@@ -665,6 +665,10 @@ async fn admission_syncs_normalized_owned_bytes_without_draining_other_preparati
         .unwrap()
         .with_blobs(Some(blobs.clone()));
     let mut declaration = declared("example.with-bytes", 1);
+    let schema = declaration.payload_schema.as_mut().unwrap();
+    schema["properties"]["blob"] = json!({"type":"string"});
+    schema["properties"]["size"] = json!({"type":"integer", "minimum":0});
+    declaration.replace_rule = Some(sinex_model::ReplaceRule::ReplaceWhenNewer);
     declaration
         .owned_blobs
         .push(sinex_model::kinds::OwnedBlobRule {
@@ -688,7 +692,7 @@ async fn admission_syncs_normalized_owned_bytes_without_draining_other_preparati
             },
             output_index: 0,
         },
-        ReadingOrder(1),
+        ReadingOrder(2),
         [0; 32],
         Class::Open,
     );
@@ -715,11 +719,33 @@ async fn admission_syncs_normalized_owned_bytes_without_draining_other_preparati
         .await
         .unwrap();
     assert_eq!(after, end);
+    let older_bytes = b"older offered original bytes";
+    let older_blob = blobs.put(older_bytes).unwrap();
+    let mut older = offered.clone();
+    if let RecordOutcome::Events { events, .. } = &mut older.records[0] {
+        events[0].id = EventId::new();
+        events[0].reading_order = ReadingOrder(1);
+        events[0].record_hash = [1; 32];
+        events[0].payload["blob"] = json!(older_blob);
+        events[0].payload["size"] = json!(older_bytes.len());
+    }
+    assert_eq!(admit_one(&mut conn, &older).await.older, 1);
+    let stored: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM core.blob_extents WHERE hash=$1)")
+            .bind(&older_blob)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+    assert!(
+        stored,
+        "suppression does not omit this batch's offered bytes"
+    );
     conn.close().await.unwrap();
     drop(blobs);
     let reopened = crate::Blobs::open(root.path()).unwrap();
     let mut conn = sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
     reopened.recover(&mut conn).await.unwrap();
     assert_eq!(reopened.read(&owned).unwrap(), bytes);
+    assert_eq!(reopened.read(&older_blob).unwrap(), older_bytes);
     assert!(!reopened.contains(&unrelated).unwrap());
 }
