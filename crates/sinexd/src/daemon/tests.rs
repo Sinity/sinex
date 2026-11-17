@@ -601,14 +601,14 @@ async fn source_copy_cancellation_keeps_pending_frame_and_progress_for_retry(
     let original = b"synthetic pending source bytes\n";
     let blob = blobs.put(original).unwrap();
     let mut observer = connect(&url, "sinex.test").await.unwrap();
-    sqlx::raw_sql("CREATE TABLE public.source_copy_mutation(ord bigint); CREATE FUNCTION public.hold_source_copy() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN INSERT INTO public.source_copy_mutation VALUES(NEW.ord); PERFORM pg_advisory_xact_lock(927164); RETURN NEW; END $$; CREATE TRIGGER hold_source_copy AFTER INSERT ON core.admission_stage FOR EACH ROW WHEN (NEW.ord=0) EXECUTE FUNCTION public.hold_source_copy()")
-        .execute(&mut observer).await.unwrap();
+    let mut connection = writer::claim(connect(&url, "sinex.test").await.unwrap())
+        .await
+        .unwrap();
+    sqlx::raw_sql("CREATE TABLE public.source_copy_mutation(ord bigint); CREATE FUNCTION public.hold_source_copy() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN INSERT INTO public.source_copy_mutation VALUES(NEW.ord); PERFORM pg_advisory_xact_lock(927164); RETURN NEW; END $$; CREATE TRIGGER hold_source_copy AFTER INSERT ON pg_temp.admission_stage FOR EACH ROW WHEN (NEW.ord=0) EXECUTE FUNCTION public.hold_source_copy()")
+        .execute(&mut *connection).await.unwrap();
     let mut blocker = connect(&url, "sinex.test").await.unwrap();
     sqlx::query("SELECT pg_advisory_lock(927164)")
         .execute(&mut blocker)
-        .await
-        .unwrap();
-    let mut connection = writer::claim(connect(&url, "sinex.test").await.unwrap())
         .await
         .unwrap();
     let pid = sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid()")
@@ -699,7 +699,7 @@ async fn source_copy_cancellation_keeps_pending_frame_and_progress_for_retry(
             .await
     });
     tokio::time::timeout(Duration::from_secs(5),async {loop {
-        let held=sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND query LIKE 'COPY core.admission_stage%' AND wait_event_type='Lock')").bind(pid).fetch_one(&mut observer).await.unwrap();
+        let held=sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND query LIKE 'COPY pg_temp.admission_stage%' AND wait_event_type='Lock')").bind(pid).fetch_one(&mut observer).await.unwrap();
         if held {break;} tokio::task::yield_now().await;
     }}).await.expect("real source COPY reached its held first row");
     tokio::time::timeout(

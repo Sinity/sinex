@@ -57,7 +57,7 @@ let
         pg_ctl -D "$PGDATA" -o "-k $PGHOST -c listen_addresses= -c shared_preload_libraries=timescaledb -c timescaledb.telemetry_level=off -c timescaledb.enable_chunk_skipping=on -p $PGPORT" -w start > /dev/null
         trap 'pg_ctl -D "$PGDATA" -m immediate -w stop >/dev/null || true' EXIT
         createdb foundation
-        export DATABASE_URL="postgresql:///foundation?host=$PGHOST&port=$PGPORT"
+        export DATABASE_URL="postgresql:///foundation?host=$PGHOST&port=$PGPORT&options=-csearch_path%3Dcore%2Cpublic"
         ${schema}/bin/sinex-schema apply "$DATABASE_URL"
         psql -d postgres -v ON_ERROR_STOP=1 \
           -c "ALTER DATABASE foundation SET default_transaction_read_only = on" \

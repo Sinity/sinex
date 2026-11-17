@@ -80,8 +80,8 @@ async fn negative_sql_ordinals_are_refused_by_each_coordinate_table(db: devkit::
     );
     let statements = [
         "INSERT INTO core.live_locations SELECT material_id,record_offset,event_type,-1,event_id,reading_order,record_hash FROM core.live_locations LIMIT 1",
-        "INSERT INTO core.admission_stage (ord,id,event_type,source,material_id,record_offset,output_index,ts_quality,payload,replace_rule,reading_order,record_hash,record_state,class) SELECT 0,id,event_type,source,material_id,record_offset,-1,ts_quality,payload,'suppress_repeat',reading_order,record_hash,record_state,class FROM core.events LIMIT 1",
-        "INSERT INTO core.admission_stage (ord,id,event_type,source,material_id,record_offset,output_index,ts_quality,payload,replace_rule,reading_order,record_hash,record_state,class) SELECT -1,id,event_type,source,material_id,record_offset,0,ts_quality,payload,'suppress_repeat',reading_order,record_hash,record_state,class FROM core.events LIMIT 1",
+        "INSERT INTO pg_temp.admission_stage (ord,id,event_type,source,material_id,record_offset,output_index,ts_quality,payload,replace_rule,reading_order,record_hash,record_state,class) SELECT 0,id,event_type,source,material_id,record_offset,-1,ts_quality,payload,'suppress_repeat',reading_order,record_hash,record_state,class FROM core.events LIMIT 1",
+        "INSERT INTO pg_temp.admission_stage (ord,id,event_type,source,material_id,record_offset,output_index,ts_quality,payload,replace_rule,reading_order,record_hash,record_state,class) SELECT -1,id,event_type,source,material_id,record_offset,0,ts_quality,payload,'suppress_repeat',reading_order,record_hash,record_state,class FROM core.events LIMIT 1",
     ];
     let constraints = [
         "output_index_in_range",
@@ -157,16 +157,18 @@ async fn largest_stored_output_round_trips_through_live_lookup_and_show(
         crate::query::show(&mut conn, &reference).await.unwrap()["output"],
         output
     );
-    crate::stage::copy(&mut conn, &[(i64::MAX, &event)])
+    let mut tx = conn.begin().await.unwrap();
+    crate::stage::copy(tx.connection(), &[(i64::MAX, &event)])
         .await
         .unwrap();
     let staged: (i64, i64) =
-        sqlx::query_as("SELECT ord,output_index FROM core.admission_stage WHERE ord=$1")
+        sqlx::query_as("SELECT ord,output_index FROM pg_temp.admission_stage WHERE ord=$1")
             .bind(i64::MAX)
-            .fetch_one(&mut conn)
+            .fetch_one(tx.connection())
             .await
             .unwrap();
     assert_eq!(staged, (i64::MAX, i64::MAX));
+    tx.rollback().await.unwrap();
     let archive = sinex_model::lifecycle::Act::Archive;
     crate::lifecycle::move_events(&mut conn, archive, vec![EventId(id)], &NoDerivations).await;
     assert_eq!(

@@ -14,7 +14,9 @@ async fn rows(conn: &mut PgConnection, sql: &str) -> Vec<Row> {
         .unwrap()
 }
 async fn stage(conn: &mut PgConnection, events: &[Event]) {
-    conn.execute("TRUNCATE core.admission_stage").await.unwrap();
+    conn.execute("TRUNCATE pg_temp.admission_stage")
+        .await
+        .unwrap();
     let numbered = events
         .iter()
         .enumerate()
@@ -46,16 +48,19 @@ fn input(
 async fn classification_probes_preserve_rank_removal_and_location_semantics(
     db: devkit::pg::TestDatabase,
 ) {
-    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut writer = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let mut conn = writer.begin().await.unwrap();
     let material = MaterialId::new();
     let live = Uuid::now_v7();
     sqlx::query("INSERT INTO core.live_equivalence VALUES ('synthetic-classifier','command.executed',core.encode_equivalence_key('key'),$1,10,$2)")
-        .bind(live).bind(&[1u8;32][..]).execute(&mut conn).await.unwrap();
+        .bind(live).bind(&[1u8;32][..]).execute(&mut *conn).await.unwrap();
     sqlx::query("INSERT INTO core.live_locations VALUES ($1,7,'command.executed',0,$2,10,$3)")
         .bind(material.0)
         .bind(live)
         .bind(&[1u8; 32][..])
-        .execute(&mut conn)
+        .execute(&mut *conn)
         .await
         .unwrap();
     // Each case has its own stage, so the expected decision tests live
@@ -137,12 +142,15 @@ async fn classification_probes_preserve_rank_removal_and_location_semantics(
 
 #[devkit::test]
 async fn classification_matches_offered_rows_among_many_live_keys(db: devkit::pg::TestDatabase) {
-    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut writer = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let mut conn = writer.begin().await.unwrap();
     let material = MaterialId::new();
     sqlx::query("INSERT INTO core.live_equivalence SELECT 'synthetic-classifier','command.executed',core.encode_equivalence_key('key-'||g),uuidv7(),10,decode(repeat('01',32),'hex') FROM generate_series(1,8192)g")
-        .execute(&mut conn).await.unwrap();
+        .execute(&mut *conn).await.unwrap();
     sqlx::query("INSERT INTO core.live_locations SELECT $1,g,'command.executed',0,uuidv7(),10,decode(repeat('01',32),'hex') FROM generate_series(1,8192)g")
-        .bind(material.0).execute(&mut conn).await.unwrap();
+        .bind(material.0).execute(&mut *conn).await.unwrap();
     let mut events = Vec::new();
     let mut expected = Vec::new();
     for i in 1..=64 {
@@ -165,12 +173,12 @@ async fn classification_matches_offered_rows_among_many_live_keys(db: devkit::pg
     }
     stage(&mut conn, &events).await;
     conn.execute(
-        "ANALYZE core.live_equivalence; ANALYZE core.live_locations; ANALYZE core.admission_stage",
+        "ANALYZE core.live_equivalence; ANALYZE core.live_locations; ANALYZE pg_temp.admission_stage",
     )
     .await
     .unwrap();
     let actual = sqlx::query_file!("src/admission/classification.sql")
-        .fetch_all(&mut conn)
+        .fetch_all(&mut *conn)
         .await
         .unwrap();
     assert_eq!(

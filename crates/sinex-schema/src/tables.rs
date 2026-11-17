@@ -604,9 +604,9 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         SEARCH_TRIGRAM_TEXT.into(),
         SEARCH_REFUSALS.into(),
         SEARCH_POSITION.into(),
-        // Admission's staging table. Permanent and unlogged so compile-time
-        // checked queries can name it; only the one writer uses it, inside its
-        // transaction, and truncates it first.
+        // Admission's declared layout for checked SQL and logical restore.
+        // The writer clones it into its session's temporary schema; batch
+        // payloads never enter this shared template.
         format!("CREATE UNLOGGED TABLE core.admission_stage (
   ord bigint PRIMARY KEY CHECK (ord >= 0),
   id uuid NOT NULL,

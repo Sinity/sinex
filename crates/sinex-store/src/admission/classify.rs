@@ -31,7 +31,7 @@ pub(super) async fn stage_and_classify(
     outcome: &mut Outcome,
 ) -> Result<Classified> {
     let started = std::time::Instant::now();
-    sqlx::query!("TRUNCATE core.admission_stage")
+    sqlx::query("TRUNCATE pg_temp.admission_stage")
         .execute(&mut *conn)
         .await?;
     outcome.timings.insert("reset", started.elapsed());
@@ -126,9 +126,9 @@ pub(super) async fn keep_known(
              WHERE coalesce(st.payload->f, 'null'::jsonb) = 'null'::jsonb
                AND coalesce(e.payload->f, 'null'::jsonb) <> 'null'::jsonb) AS payload
            FROM jsonb_to_recordset($1::jsonb) AS r(ord bigint, live_id uuid, fields jsonb)
-           JOIN core.admission_stage st ON st.ord = r.ord
+           JOIN admission_stage st ON st.ord = r.ord
            JOIN core.events e ON e.id = r.live_id)
-           UPDATE core.admission_stage st
+           UPDATE admission_stage st
            SET payload = st.payload || kept.payload,
                class = CASE
                  WHEN st.class = 'sealed' OR kept.class = 'sealed' THEN 'sealed'

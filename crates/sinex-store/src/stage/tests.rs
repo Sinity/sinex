@@ -35,7 +35,9 @@ fn event(n: i64, payload: serde_json::Value) -> Event {
 
 #[devkit::test]
 async fn streaming_copy_round_trips_json_and_every_escaped_field(db: devkit::pg::TestDatabase) {
-    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
     let mut deep = serde_json::json!({"empty_array":[],"empty_object":{}});
     for _ in 0..64 {
         deep = serde_json::json!([deep]);
@@ -148,7 +150,9 @@ async fn streaming_copy_round_trips_json_and_every_escaped_field(db: devkit::pg:
 
 #[devkit::test]
 async fn streaming_copy_admits_one_huge_field_and_many_rows(db: devkit::pg::TestDatabase) {
-    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
     let mut events = vec![event(
         1,
         serde_json::json!({"huge":"\"\\\n🦀".repeat(1<<20)}),
@@ -158,7 +162,9 @@ async fn streaming_copy_admits_one_huge_field_and_many_rows(db: devkit::pg::Test
     let mut tx = conn.begin().await.unwrap();
     {
         let copy = tx
-            .copy_in_raw(&format!("COPY core.admission_stage ({COLUMNS}) FROM STDIN"))
+            .copy_in_raw(&format!(
+                "COPY pg_temp.admission_stage ({COLUMNS}) FROM STDIN"
+            ))
             .await
             .unwrap();
         let mut encoder = CopyText::new(copy);
@@ -168,14 +174,14 @@ async fn streaming_copy_admits_one_huge_field_and_many_rows(db: devkit::pg::Test
         encoder.finish().await.unwrap();
     }
     assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM core.admission_stage")
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM pg_temp.admission_stage")
             .fetch_one(&mut *tx)
             .await
             .unwrap(),
         events.len() as i64
     );
     let payload = sqlx::query_scalar::<_, serde_json::Value>(
-        "SELECT payload FROM core.admission_stage WHERE ord=0",
+        "SELECT payload FROM pg_temp.admission_stage WHERE ord=0",
     )
     .fetch_one(&mut *tx)
     .await
@@ -188,7 +194,9 @@ async fn streaming_copy_admits_one_huge_field_and_many_rows(db: devkit::pg::Test
 async fn streaming_copy_encoding_and_database_errors_rollback_and_retry(
     db: devkit::pg::TestDatabase,
 ) {
-    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
     let good = event(1, serde_json::json!({"text":"valid".repeat(COPY_BYTES)}));
     for invalid in 0..3 {
         let mut bad = event(2, serde_json::json!({"text":"unfinished"}));
@@ -208,7 +216,7 @@ async fn streaming_copy_encoding_and_database_errors_rollback_and_retry(
         }
         tx.rollback().await.unwrap();
         assert_eq!(
-            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM core.admission_stage")
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM pg_temp.admission_stage")
                 .fetch_one(&mut conn)
                 .await
                 .unwrap(),
@@ -217,7 +225,7 @@ async fn streaming_copy_encoding_and_database_errors_rollback_and_retry(
         let mut tx = conn.begin().await.unwrap();
         copy(&mut tx, &[(0, &good)]).await.unwrap();
         assert_eq!(
-            sqlx::query_scalar::<_, uuid::Uuid>("SELECT id FROM core.admission_stage")
+            sqlx::query_scalar::<_, uuid::Uuid>("SELECT id FROM pg_temp.admission_stage")
                 .fetch_one(&mut *tx)
                 .await
                 .unwrap(),
@@ -233,14 +241,14 @@ async fn canceled_streaming_copy_releases_transaction_and_writer_for_retry(
 ) {
     let url = db.url(None);
     let mut observer = PgConnection::connect(&url).await.unwrap();
-    sqlx::raw_sql("CREATE TABLE public.copy_mutation(ord bigint); CREATE FUNCTION public.hold_copy_row() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN INSERT INTO public.copy_mutation VALUES(NEW.ord); PERFORM pg_advisory_xact_lock(927163); RETURN NEW; END $$; CREATE TRIGGER hold_copy_row AFTER INSERT ON core.admission_stage FOR EACH ROW WHEN (NEW.ord=0) EXECUTE FUNCTION public.hold_copy_row()")
-        .execute(&mut observer).await.unwrap();
+    let mut writer = crate::AdmissionContext::connect(&url).await.unwrap();
+    sqlx::raw_sql("CREATE TABLE public.copy_mutation(ord bigint); CREATE FUNCTION public.hold_copy_row() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN INSERT INTO public.copy_mutation VALUES(NEW.ord); PERFORM pg_advisory_xact_lock(927163); RETURN NEW; END $$; CREATE TRIGGER hold_copy_row AFTER INSERT ON pg_temp.admission_stage FOR EACH ROW WHEN (NEW.ord=0) EXECUTE FUNCTION public.hold_copy_row()")
+        .execute(&mut *writer).await.unwrap();
     let mut blocker = PgConnection::connect(&url).await.unwrap();
     sqlx::query("SELECT pg_advisory_lock(927163)")
         .execute(&mut blocker)
         .await
         .unwrap();
-    let mut writer = crate::AdmissionContext::connect(&url).await.unwrap();
     let pid = sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid()")
         .fetch_one(&mut *writer)
         .await
@@ -300,13 +308,20 @@ async fn canceled_streaming_copy_releases_transaction_and_writer_for_retry(
     let mut fresh = crate::AdmissionContext::connect(&url).await.unwrap();
     let mut tx = fresh.begin().await.unwrap();
     copy(tx.connection(), &[(0, &retry)]).await.unwrap();
-    tx.commit().await.unwrap();
     assert_eq!(
-        sqlx::query_scalar::<_, uuid::Uuid>("SELECT id FROM core.admission_stage")
-            .fetch_one(&mut *fresh)
+        sqlx::query_scalar::<_, uuid::Uuid>("SELECT id FROM pg_temp.admission_stage")
+            .fetch_one(tx.connection())
             .await
             .unwrap(),
         retry.id.0
+    );
+    tx.commit().await.unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM pg_temp.admission_stage")
+            .fetch_one(&mut *fresh)
+            .await
+            .unwrap(),
+        0
     );
     fresh.close().await.unwrap();
 }

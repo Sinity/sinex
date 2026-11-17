@@ -42,7 +42,7 @@ pub(super) async fn insert_admitted(
     sqlx::query!(
         r#"WITH a AS (
              SELECT s.*, $1::bigint + row_number() OVER (ORDER BY s.ord) - 1 AS seq
-             FROM core.admission_stage s)
+             FROM admission_stage s)
            INSERT INTO core.events (id, event_type, source, run_id, material_id, record_offset, output_index,
              parents, ts_orig, ts_quality, commit_seq, payload, equivalence_key, reading_order,
              record_hash, record_state, class, kind_version, validation, producer_family, producer_identity, producer_host, producer_frame, source_version, source_fingerprint)
@@ -66,7 +66,7 @@ pub(super) async fn insert_admitted(
     let started = std::time::Instant::now();
     sqlx::query!(
         r#"INSERT INTO core.event_children (parent, child)
-           SELECT DISTINCT unnest(s.parents), s.id FROM core.admission_stage s
+           SELECT DISTINCT unnest(s.parents), s.id FROM admission_stage s
            WHERE s.ord = ANY($1) AND s.parents IS NOT NULL"#,
         admit_ords,
     )
@@ -76,7 +76,7 @@ pub(super) async fn insert_admitted(
     sqlx::query!(
         r#"INSERT INTO core.source_counts AS c (source, events, first_event, last_event, last_seen)
            SELECT source, count(*), min(ts_orig), max(ts_orig), max(uuid_extract_timestamp(id))
-           FROM core.admission_stage GROUP BY source
+           FROM admission_stage GROUP BY source
            ON CONFLICT (source) DO UPDATE SET events = c.events + EXCLUDED.events,
              first_event = least(c.first_event, EXCLUDED.first_event),
              last_event = greatest(c.last_event, EXCLUDED.last_event),
@@ -100,7 +100,7 @@ pub(super) async fn insert_admitted(
     sqlx::query!(
         r#"INSERT INTO core.live_equivalence (source, event_type, equivalence_key, event_id, reading_order, record_hash)
            SELECT s.source, s.event_type, core.encode_equivalence_key(s.equivalence_key), s.id, s.reading_order, s.record_hash
-           FROM core.admission_stage s
+           FROM admission_stage s
            WHERE s.equivalence_key IS NOT NULL
            ORDER BY s.source, s.event_type, core.encode_equivalence_key(s.equivalence_key)
            ON CONFLICT (source, event_type, equivalence_key) DO UPDATE
@@ -117,7 +117,7 @@ pub(super) async fn insert_admitted(
     sqlx::query!(
         r#"INSERT INTO core.live_locations (material_id, record_offset, event_type, output_index, event_id, reading_order, record_hash)
            SELECT s.material_id, s.record_offset, s.event_type, s.output_index, s.id, s.reading_order, s.record_hash
-           FROM core.admission_stage s
+           FROM admission_stage s
            WHERE s.equivalence_key IS NULL AND s.material_id IS NOT NULL
            ORDER BY s.material_id, s.record_offset, s.event_type, s.output_index
            ON CONFLICT (material_id, record_offset, event_type, output_index) DO UPDATE

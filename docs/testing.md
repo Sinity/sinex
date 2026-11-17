@@ -140,6 +140,7 @@ These properties hold for every input; the tests named are where to look when
 one changes:
 
 - An admission batch commits whole or not at all, and commit positions are dense, in batch order and never regress (`events_and_progress_commit_together`, `commit_seq_is_dense_and_in_batch_order`, `a_second_transaction_waits_for_the_first_to_commit`).
+- Admission commits while a real snapshot-importing `pg_dump` retains its shared staging-template lock, with the dump held at a later relation until admission finishes (`paired_dumps_and_segment_copy_keep_the_hold_state_while_the_writer_advances`). Private batch payloads disappear at commit (`private_stage_discards_payloads_at_commit_and_reopens_from_template`); the full backup restore test resumes source admission through the restored template.
 - One writer: a second claim is refused (`only_one_connection_can_claim_the_writer`).
 - A crash at every point between segment append, sync, commit and truncate leaves no committed row citing missing bytes, and a normal restart reaches the uninterrupted run's state (`sinexd/tests/integration/crash.rs`: `synced_uncommitted_segment_tail_is_truncated_on_restart`, `partial_segment_append_recovers_without_advancing_its_cursor`, the `stage_killed_*`, `replay_killed_*` and `publisher_killed_*` cases).
 - A source cursor never passes an unadmitted record, and a refused record keeps its failure tied to its bytes (`source_content_refusals_keep_material_failures_and_advance_the_cursor`).

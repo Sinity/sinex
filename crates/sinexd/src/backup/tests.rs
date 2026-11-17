@@ -134,45 +134,79 @@ async fn paired_dumps_and_segment_copy_keep_the_hold_state_while_the_writer_adva
         std::sync::Arc::new(sinex_store::NoDerivations),
         Some(blobs.clone()),
     ));
-    let mut snapshot = writer.backup_snapshot("operator").await.unwrap();
-    let hold = snapshot.hold.id;
-    assert_eq!(snapshot.database.name, db.name);
-    // This writer job shows that the snapshot did not keep the
-    // admission lock for the duration of copying and dumping.
-    blobs
-        .put(b"post-boundary append must not be copied")
-        .unwrap();
-    let outcome = writer
-        .submit(
-            crate::writer::Priority::Live,
-            live_batch("after-hold-admission"),
-        )
+    // pg_dump takes relation locks in OID order. This later relation stops
+    // the real dump after it has locked the declared admission template.
+    sqlx::query("CREATE TABLE public.dump_pause (id bigint)")
+        .execute(&mut conn)
         .await
         .unwrap();
-    assert_eq!(outcome.admitted, 1);
-    key(&mut conn, "later-key", b"later-wrapped-key").await;
+    let mut snapshot = writer.backup_snapshot("operator").await.unwrap();
     let at_hold: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events")
         .fetch_one(snapshot.connection())
         .await
         .unwrap();
+    assert_eq!(at_hold, 0);
+    let hold = snapshot.hold.id;
+    assert_eq!(snapshot.database.name, db.name);
+    let mut blocker = PgConnection::connect(&url).await.unwrap();
+    sqlx::raw_sql("BEGIN; LOCK TABLE public.dump_pause IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut blocker)
+        .await
+        .unwrap();
+    let blocker_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut blocker)
+        .await
+        .unwrap();
+    let copied_source = source.path().to_owned();
+    let copied_artifact = artifact.clone();
+    let (_stop, stop) = watch::channel(false);
+    let copying = tokio::spawn(async move {
+        prepare(
+            snapshot,
+            &copied_source,
+            &copied_artifact,
+            stop,
+            "synthetic-source-revision".into(),
+            Vec::new(),
+            Some(Vec::new()),
+        )
+        .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let held: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_locks l JOIN pg_stat_activity a ON a.pid=l.pid WHERE l.relation='core.admission_stage'::regclass AND l.mode='AccessShareLock' AND l.granted AND a.application_name='pg_dump' AND $1=ANY(pg_blocking_pids(a.pid)))")
+                .bind(blocker_pid).fetch_one(&mut conn).await.unwrap();
+            if held { break; }
+            assert!(!copying.is_finished(), "dump must reach its held relation");
+            tokio::task::yield_now().await;
+        }
+    }).await.expect("real pg_dump holds admission template while waiting on dump_pause");
+    blobs
+        .put(b"post-boundary append must not be copied")
+        .unwrap();
+    let outcome = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        writer.submit(
+            crate::writer::Priority::Live,
+            live_batch("after-hold-admission"),
+        ),
+    )
+    .await
+    .expect("admission completes while pg_dump retains its locks")
+    .unwrap();
+    assert_eq!(outcome.admitted, 1);
+    assert!(
+        !copying.is_finished(),
+        "dump remains blocked until admission commits"
+    );
+    key(&mut conn, "later-key", b"later-wrapped-key").await;
     let current: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events")
         .fetch_one(&mut conn)
         .await
         .unwrap();
-    assert_eq!(at_hold, 0);
     assert_eq!(current, 1);
-    let (_stop, stop) = watch::channel(false);
-    let manifest = prepare(
-        snapshot,
-        source.path(),
-        &artifact,
-        stop,
-        "synthetic-source-revision".into(),
-        Vec::new(),
-        Some(Vec::new()),
-    )
-    .await
-    .unwrap();
+    sqlx::query("ROLLBACK").execute(&mut blocker).await.unwrap();
+    let manifest = copying.await.unwrap().unwrap();
     assert_private_roots(&artifact);
     assert_eq!(manifest.boundary.id, hold);
     assert!(manifest.producers_complete);

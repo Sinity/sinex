@@ -1090,3 +1090,59 @@ async fn built_in_sources_keep_labels_and_transport_provenance_on_first_insert(
 }
 
 mod classification;
+
+#[devkit::test]
+async fn private_stage_discards_payloads_at_commit_and_reopens_from_template(
+    db: devkit::pg::TestDatabase,
+) {
+    let url = db.url(None);
+    let mut writer = crate::AdmissionContext::connect(&url).await.unwrap();
+    let first = keyed("private-stage", 1, 1, 1);
+    let mut tx = writer.begin().await.unwrap();
+    assert_eq!(
+        tx.admit(&batch(vec![first]), &NoDerivations)
+            .await
+            .unwrap()
+            .admitted,
+        1
+    );
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_temp.admission_stage")
+        .fetch_one(tx.connection())
+        .await
+        .unwrap();
+    assert_eq!(count, 1);
+    tx.commit().await.unwrap();
+    for table in ["pg_temp.admission_stage", "core.admission_stage"] {
+        let count: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM {table}"))
+            .fetch_one(&mut *writer)
+            .await
+            .unwrap();
+        assert_eq!(count, 0, "{table}");
+    }
+    // Simulate scratch left by the earlier shared-table writer. Claim clears
+    // it once without depending on an exclusive lock on the template.
+    let legacy = keyed("legacy-stage", 3, 1, 1);
+    let mut tx = writer.begin().await.unwrap();
+    crate::stage::copy(tx.connection(), &[(0, &legacy)])
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO core.admission_stage SELECT * FROM pg_temp.admission_stage")
+        .execute(tx.connection())
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    writer.close().await.unwrap();
+    let mut next = crate::AdmissionContext::connect(&url).await.unwrap();
+    let legacy_count: i64 = sqlx::query_scalar("SELECT count(*) FROM core.admission_stage")
+        .fetch_one(&mut *next)
+        .await
+        .unwrap();
+    assert_eq!(legacy_count, 0);
+
+    assert_eq!(
+        admit_one(&mut next, &batch(vec![keyed("private-stage", 2, 1, 1)]))
+            .await
+            .admitted,
+        1
+    );
+}
