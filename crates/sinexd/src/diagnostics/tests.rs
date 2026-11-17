@@ -73,6 +73,9 @@ async fn doctor_counts_located_files_using_current_paths_after_replay(
         .fetch_one(&mut ctx.read_conn).await.unwrap();
     check_missing(&url, &store, 0).await;
     std::fs::remove_file(root.join("a.mp4")).unwrap();
+    std::os::unix::fs::symlink("a.mp4", root.join("a.mp4")).unwrap();
+    check_missing(&url, &store, 0).await;
+    std::fs::remove_file(root.join("a.mp4")).unwrap();
     check_missing(&url, &store, 0).await; // one remaining copy satisfies the same content
     std::fs::write(root.join("a.mp4"), media(b'b')).unwrap();
     capture(&mut ctx, &root).await;
@@ -104,4 +107,28 @@ async fn doctor_counts_located_files_using_current_paths_after_replay(
     std::fs::remove_file(root.join("raw-%FF.mp4")).unwrap();
     check_missing(&url, &store, 3).await; // raw-byte path still exists, unlike its display twin
     ctx.close().await.unwrap();
+}
+
+#[devkit::test]
+fn available_copy_wins_over_uninspectable_copy_in_either_order() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("available"), b"stored elsewhere").unwrap();
+    std::os::unix::fs::symlink("cycle", dir.path().join("cycle")).unwrap();
+    let record = |name: &str| diagnostics::LocatedFilePath {
+        content: "blake3:synthetic".into(),
+        root: Some(dir.path().to_str().unwrap().into()),
+        native_root: None,
+        path: Some(name.into()),
+        native_path: None,
+    };
+    for names in [["cycle", "available"], ["available", "cycle"]] {
+        assert_eq!(
+            missing_located_files(names.into_iter().map(record).collect()).unwrap(),
+            0
+        );
+    }
+    assert!(
+        missing_located_files(vec![record("cycle")]).is_err(),
+        "unknown must not be reported as a missing copy"
+    );
 }

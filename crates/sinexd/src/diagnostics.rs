@@ -10,13 +10,12 @@ use std::path::Path;
 
 /// Count retained located contents with no current recorded file available here.
 /// This checks paths, not the contents of external media; nothing is rehashed.
-async fn missing_located_files(conn: &mut sqlx::PgConnection) -> Result<usize> {
+fn missing_located_files(rows: Vec<diagnostics::LocatedFilePath>) -> Result<usize> {
     use std::collections::BTreeMap;
-    let rows = diagnostics::located_file_paths(conn).await?;
     let mut available = BTreeMap::new();
     for row in rows {
-        let found = available.entry(row.content).or_insert(false);
-        if *found {
+        let found = available.entry(row.content).or_insert(Ok(false));
+        if matches!(&*found, Ok(true)) {
             continue;
         }
         let (Some(root), Some(path)) = (row.root, row.path) else {
@@ -36,16 +35,24 @@ async fn missing_located_files(conn: &mut sqlx::PgConnection) -> Result<usize> {
             .into());
         }
         match std::fs::metadata(root.join(path)) {
-            Ok(metadata) => *found = metadata.is_file(),
+            Ok(metadata) if metadata.is_file() => *found = Ok(true),
+            Ok(_) => {}
             Err(error)
                 if matches!(
                     error.kind(),
                     std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
                 ) => {}
-            Err(error) => return Err(error.into()),
+            // One inaccessible copy cannot conceal another available copy.
+            Err(error) => *found = Err(error),
         }
     }
-    Ok(available.values().filter(|found| !**found).count())
+    let mut missing = 0;
+    for found in available.into_values() {
+        if !found? {
+            missing += 1;
+        }
+    }
+    Ok(missing)
 }
 
 fn recorded_path(display: String, native: Option<String>) -> std::io::Result<std::path::PathBuf> {
@@ -173,7 +180,11 @@ async fn doctor(database: &str, store: &Path) -> Value {
                         ),
                     );
                     if s.schema_version.is_some() {
-                        match missing_located_files(&mut conn).await {
+                        let missing = diagnostics::located_file_paths(&mut conn)
+                            .await
+                            .map_err(Error::from)
+                            .and_then(missing_located_files);
+                        match missing {
                             Ok(missing) => check(
                                 "located_files",
                                 true,

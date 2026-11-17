@@ -36,6 +36,9 @@ content it can satisfy; replaying an older listing does not make that earlier
 observation current. Removed paths and paths now containing another recorded
 content do not satisfy their old hashes. This checks file presence from the
 recorded facts, without rehashing media or checking another machine remotely.
+An available copy satisfies the content even when another path cannot be
+inspected. If no copy can be established and a path cannot be inspected,
+doctor reports the lookup error rather than declaring the content missing.
 
 ### Fields
 
