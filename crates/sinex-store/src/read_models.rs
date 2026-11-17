@@ -76,6 +76,10 @@ pub async fn apply_search_text(conn: &mut PgConnection, events: &[Committed]) ->
     let mut batch = conn.begin().await?;
     match insert_search_rows(&mut batch, &ids, &texts, &trigram).await {
         Ok(()) => batch.commit().await?,
+        Err(error) if !refused_by_index(&error) => {
+            batch.rollback().await?;
+            return Err(error);
+        }
         Err(_) => {
             batch.rollback().await?;
             // One event's text can be refused (a full-text vector over the

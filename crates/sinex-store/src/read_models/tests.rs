@@ -361,3 +361,72 @@ async fn search_refused_text_passes(db: devkit::pg::TestDatabase) {
         refused[0].1
     );
 }
+
+async fn failed_search_batch_keeps_its_page(db: devkit::pg::TestDatabase, sqlstate: &str) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    admit_search_kinds(&mut conn, sinex_model::Class::Open).await;
+    let before = search_position(&mut conn).await.unwrap();
+    let head = crate::query::current_seq(&mut conn).await.unwrap();
+    // A bulk-only failure would disappear if the consumer incorrectly split
+    // this page into single-row writes.
+    sqlx::raw_sql(&format!(
+        "CREATE FUNCTION public.fail_search_batch() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN
+           IF (SELECT count(*) FROM proposed) > 1 THEN
+             RAISE EXCEPTION 'synthetic search batch failure' USING ERRCODE = '{sqlstate}';
+           END IF;
+           RETURN NULL;
+         END $$;
+         CREATE TRIGGER fail_search_batch AFTER INSERT ON core.search_text
+           REFERENCING NEW TABLE AS proposed FOR EACH STATEMENT
+           EXECUTE FUNCTION public.fail_search_batch()"
+    ))
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    let error = catch_up_search_text(&mut conn).await.unwrap_err();
+    let crate::Error::Database(sqlx::Error::Database(error)) = error else {
+        panic!("expected the database batch failure");
+    };
+    assert_eq!(error.code().as_deref(), Some(sqlstate));
+    assert_eq!(search_position(&mut conn).await.unwrap(), before);
+    let counts: (i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM core.search_text),
+                (SELECT count(*) FROM core.search_trigram),
+                (SELECT count(*) FROM core.search_refusals)",
+    )
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(counts, (0, 0, 0), "the whole search page must roll back");
+    sqlx::raw_sql(
+        "DROP TRIGGER fail_search_batch ON core.search_text;
+                   DROP FUNCTION public.fail_search_batch()",
+    )
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(catch_up_search_text(&mut conn).await.unwrap(), head);
+    let indexed: i64 = sqlx::query_scalar("SELECT count(*) FROM core.search_text")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(indexed, 3, "normal retry indexes every offered row");
+    let refused: i64 = sqlx::query_scalar("SELECT count(*) FROM core.search_refusals")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(refused, 0, "a transient failure is not a row refusal");
+}
+
+#[devkit::test]
+async fn cancelled_search_batch_retries_the_whole_page(db: devkit::pg::TestDatabase) {
+    failed_search_batch_keeps_its_page(db, "57014").await;
+}
+
+#[devkit::test]
+async fn serialization_failure_retries_the_whole_search_page(db: devkit::pg::TestDatabase) {
+    failed_search_batch_keeps_its_page(db, "40001").await;
+}
