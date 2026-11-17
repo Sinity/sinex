@@ -22,6 +22,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     purpose: "configured document bytes for recall and text extraction",
     class: Class::Guarded,
     parser: "documents",
+    parser_version: 2,
     event_types: &["document.captured"],
     framer: Framer::export(frame_whole, Framing::Whole),
     ..SourceSpec::DEFAULT
@@ -31,6 +32,8 @@ pub const SPEC: SourceSpec = SourceSpec {
 #[serde(default, deny_unknown_fields)]
 pub struct Options {
     pub excluded_roots: Vec<PathBuf>,
+    /// Video and audio keep their hash and file facts instead of copied bytes.
+    pub locate_media: bool,
 }
 
 impl Options {
@@ -50,6 +53,12 @@ impl StatelessParser for DocumentParser {
     const READS_BLANK_RECORDS: bool = true;
 
     fn record_hash(&self, raw: &[u8], context: &RecordContext<'_>) -> [u8; 32] {
+        if let Some(member) = context.member
+            && member.details.bool("located") == Some(true)
+            && let Some(node) = &member.node
+        {
+            return context.hash_with_path(&node.content_hash);
+        }
         context.hash_with_path(raw)
     }
 
@@ -74,7 +83,27 @@ impl StatelessParser for DocumentParser {
                 .transpose()
         };
         let removed_at = time("removed_at_ns")?;
-        let digest = removed_at.is_none().then(|| blake3::hash(record));
+        let located = member.details.bool("located").unwrap_or(false);
+        let located_node = if located {
+            if removed_at.is_some() || !record.is_empty() || member.length != 0 {
+                return Err(RecordError::new(
+                    "located file needs an empty listing member",
+                ));
+            }
+            Some(
+                member
+                    .node
+                    .as_ref()
+                    .record("located file needs recorded file facts")?,
+            )
+        } else {
+            None
+        };
+        let digest = if let Some(node) = located_node {
+            Some(blake3::Hash::from(node.content_hash))
+        } else {
+            removed_at.is_none().then(|| blake3::hash(record))
+        };
         let content = digest
             .as_ref()
             .map(|hash| format!("blake3:{}", hash.to_hex()));
@@ -99,12 +128,25 @@ impl StatelessParser for DocumentParser {
                 .clone()
                 .record("document needs its recorded root")?,
             path: member.path.clone(),
-            size: removed_at.is_none().then_some(record.len() as u64),
+            size: located_node
+                .map(|node| node.size)
+                .or_else(|| removed_at.is_none().then_some(record.len() as u64)),
             modified_at: time("mtime_ns")?,
-            media_type: removed_at.is_none().then(|| media_type(record).into()),
+            media_type: if located {
+                Some(
+                    member
+                        .details
+                        .str("media_type")
+                        .record("located file needs its media type")?
+                        .into(),
+                )
+            } else {
+                removed_at.is_none().then(|| media_type(record).into())
+            },
             native_path_bytes: member.details.str("native_path_bytes").map(str::to_owned),
             content,
             removed_at,
+            located,
         }])
     }
 }
@@ -129,8 +171,14 @@ pub fn driver(root: PathBuf, host: String) -> DirSnapshot {
         host,
         select: |_| true,
         part_bytes: 64 << 20,
+        locate: None,
         removed_at_source: false,
     }
+}
+
+fn locate_audio_video(head: &[u8]) -> Option<&'static str> {
+    let kind = crate::media_type::sniff(head);
+    (kind.starts_with("audio/") || kind.starts_with("video/")).then_some(kind)
 }
 
 fn discover(format: &InputFormat, context: &DiscoveryContext) -> Vec<DiscoveredInput> {
@@ -180,8 +228,19 @@ fn discover(format: &InputFormat, context: &DiscoveryContext) -> Vec<DiscoveredI
                     .extend(excluded.iter().map(|path| path.as_path().to_path_buf()));
                 options.excluded_roots.sort();
                 options.excluded_roots.dedup();
+                options.locate_media = context.input_roots.get("downloads").is_some_and(|roots| {
+                    roots.iter().any(|root| {
+                        std::fs::canonicalize(root).unwrap_or_else(|_| root.clone()) == resolved
+                    })
+                });
+                let suffix = if options.locate_media {
+                    "located"
+                } else {
+                    "directory"
+                };
                 binding.settings.options =
                     serde_json::to_value(options).expect("document options serialize");
+                *binding = Binding::of(&SPEC, path, binding.settings.clone()).named(suffix);
             }
         }
     }
@@ -197,7 +256,7 @@ super::input_format! { pub FORMAT = "documents" {
     ]),
     discover: discover,
     plan: |input, settings| {
-        Options::from_settings(settings)?;
+        let options = Options::from_settings(settings)?;
         if input.as_os_str().is_empty() {
             return Err("document acquisition needs a root".into());
         }
@@ -206,14 +265,16 @@ super::input_format! { pub FORMAT = "documents" {
             return Err("document acquisition needs a directory root".into());
         }
         Ok(vec![
-            Binding::of(&SPEC, &input, settings.clone()).named("directory"),
+            Binding::of(&SPEC, &input, settings.clone()).named(if options.locate_media { "located" } else { "directory" }),
         ])
     },
     reader: |binding| {
-        let excluded = Options::from_settings(&binding.settings)?.excluded_roots;
+        let options = Options::from_settings(&binding.settings)?;
+        let mut driver = driver(binding.input.clone(), binding.settings.host.clone());
+        driver.locate = options.locate_media.then_some(locate_audio_video);
         Ok(binding::walked_excluding(
-            driver(binding.input.clone(), binding.settings.host.clone()),
-            excluded,
+            driver,
+            options.excluded_roots,
         ))
     },
 } }

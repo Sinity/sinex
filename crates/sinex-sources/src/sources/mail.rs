@@ -331,6 +331,7 @@ pub fn mbox_driver(path: PathBuf, host: String) -> ExportArchive {
 
 pub fn maildir_driver(root: PathBuf, host: String) -> DirSnapshot {
     DirSnapshot {
+        locate: None,
         removed_at_source: true,
         root,
         host,

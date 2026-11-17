@@ -240,3 +240,75 @@ async fn imported_text_refusal_keeps_bytes_and_advances_before_the_next_revision
     assert_eq!(failures, 1);
     ctx.close().await.unwrap();
 }
+
+#[devkit::test]
+async fn located_document_listing_is_admitted_and_replayed_without_external_media(
+    db: devkit::pg::TestDatabase,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("downloads");
+    std::fs::create_dir(&root).unwrap();
+    let mut media = b"\0\0\0\x20ftypisom".to_vec();
+    media.resize((2 << 20) + 7, 0x93);
+    std::fs::write(root.join("movie.mp4"), &media).unwrap();
+    std::fs::write(root.join("note.txt"), b"ordinary stored bytes").unwrap();
+    let mut ctx = ReaderContext::open(
+        &db.url(None),
+        &dir.path().join("store"),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).unwrap(),
+    )
+    .await
+    .unwrap();
+    let binding = ingest(
+        &mut ctx,
+        &documents::FORMAT,
+        &root,
+        json!({"locate_media":true}),
+    )
+    .await;
+    assert!(binding.name.contains("#located@"));
+    let before = live(&mut ctx, "document.captured").await;
+    assert_eq!(before.len(), 2);
+    let media_event = before
+        .iter()
+        .find(|payload| payload["located"] == true)
+        .unwrap();
+    assert_eq!(
+        media_event["content"],
+        format!("blake3:{}", blake3::hash(&media).to_hex())
+    );
+    assert_eq!(media_event["size"], media.len());
+    let rows: Vec<(String,i64,Value)> = sqlx::query_as("SELECT m.blob,m.length,m.manifest FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id WHERE i.binding=$1")
+        .bind(&binding.name).fetch_all(&mut ctx.read_conn).await.unwrap();
+    assert_eq!(rows.len(), 1);
+    let (blob, length, manifest) = &rows[0];
+    assert!(*length < 16384, "media bytes entered the committed store");
+    let manifest: sinex_model::Manifest = serde_json::from_value(manifest.clone()).unwrap();
+    let listed = manifest
+        .members
+        .iter()
+        .find(|member| member.path == "movie.mp4")
+        .unwrap();
+    assert_eq!(listed.length, 0);
+    assert_eq!(
+        ctx.blobs
+            .read_range(blob, listed.stream_offset, listed.length)
+            .unwrap(),
+        Vec::<u8>::new()
+    );
+    let note = manifest
+        .members
+        .iter()
+        .find(|member| member.path == "note.txt")
+        .unwrap();
+    assert_eq!(
+        ctx.blobs
+            .read_range(blob, note.stream_offset, note.length)
+            .unwrap(),
+        b"ordinary stored bytes"
+    );
+    std::fs::remove_dir_all(&root).unwrap();
+    replay(&mut ctx, &binding).await;
+    assert_eq!(live(&mut ctx, "document.captured").await, before);
+    ctx.close().await.unwrap();
+}

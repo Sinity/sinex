@@ -15,6 +15,20 @@ A material is stored, immutable, self-contained bytes. Every event read from a s
 - **Imported originals are kept whole.** An export ZIP is one material, stored as received, with its members addressed inside it ([sources](sources.md)).
 - **A name is not identity.** Equal bytes may be several materials sharing one stored blob. The supplied name and declared type belong to the material, not to the bytes.
 
+### Located files
+
+For video and audio in a declared Downloads root, the directory capture keeps
+the file's BLAKE3 hash, size, media type, path and file metadata in a listing
+member. The member holds no file bytes. Its `document.captured` reading has
+`located: true`; its original-source citation resolves to that listing, which
+can be replayed independently of the external file. The external file is not
+a material, and replay cannot reconstruct its bytes.
+
+A changed file records its new hash. A move records the same hash at the new
+path and a removal at the old path; earlier readings retain the earlier facts.
+Other files in that root and files in ordinary document roots keep their
+stored bytes. The external originals need their own custody and backup.
+
 ### Fields
 
 | Field | Meaning |

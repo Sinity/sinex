@@ -299,6 +299,7 @@ pub fn driver(root: PathBuf, host: String) -> DirSnapshot {
     DirSnapshot {
         root,
         host,
+        locate: None,
         removed_at_source: false,
         select,
         part_bytes: 64 << 20,

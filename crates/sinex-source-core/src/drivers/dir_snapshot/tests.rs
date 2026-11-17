@@ -18,6 +18,7 @@ fn driver(root: PathBuf, part_bytes: usize) -> DirSnapshot {
         host: "h".into(),
         select: |p| p.ends_with(".md"),
         part_bytes,
+        locate: None,
         removed_at_source: false,
     }
 }

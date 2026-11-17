@@ -505,6 +505,7 @@ async fn bundle_checkpoint_roundtrip(db: devkit::pg::TestDatabase, removed_at_so
                         host: "synthetic".into(),
                         select: |name| name.ends_with(".md"),
                         part_bytes: 4096,
+                        locate: None,
                         removed_at_source: true,
                     },
                 ),

@@ -289,3 +289,198 @@ fn typed_document_options_preserve_excluded_roots_and_refuse_json_strings() {
         assert!((FORMAT.plan.unwrap())(root.path(), &settings).is_err());
     }
 }
+
+fn located_driver(root: PathBuf) -> DirSnapshot {
+    let mut driver = driver(root, "example-host".into());
+    driver.locate = Some(locate_audio_video);
+    driver
+}
+
+fn media_fixture() -> Vec<u8> {
+    let mut bytes = b"\0\0\0\x20ftypisom".to_vec();
+    bytes.resize((2 << 20) + 7, 0x93);
+    bytes
+}
+
+fn accepted_cursor(acquired: &sinex_source_core::Acquired) -> Value {
+    let material = acquired.material.as_ref().unwrap();
+    (material.cursor_at)(material.records.last().unwrap().1).unwrap()
+}
+
+#[devkit::test]
+fn located_media_is_recorded_without_bytes_and_other_files_keep_their_bytes() {
+    let root = tempfile::tempdir().unwrap();
+    let media = media_fixture();
+    // Classification follows bytes, including when the extension is misleading.
+    std::fs::write(root.path().join("movie.bin"), &media).unwrap();
+    std::fs::write(root.path().join("note.txt"), b"retained note").unwrap();
+    let driver = located_driver(root.path().into());
+    let mut state = DirState::default();
+    let first = driver.poll(&Value::Null, &mut state).unwrap();
+    let material = first.material.as_ref().unwrap();
+    let listed = material
+        .manifest
+        .members
+        .iter()
+        .find(|m| m.path == "movie.bin")
+        .unwrap();
+    assert_eq!(listed.length, 0);
+    assert_eq!(listed.details["located"], true);
+    assert_eq!(listed.node.as_ref().unwrap().size, media.len() as u64);
+    assert!(listed.node.as_ref().unwrap().sparse.is_none());
+    let sinex_source_core::drivers::StoredBytes::FramedFile(stored) =
+        material.stored.as_ref().unwrap()
+    else {
+        panic!()
+    };
+    assert!(
+        stored.metadata().unwrap().len() < 16384,
+        "media payload was copied into the listing"
+    );
+    // An independent tar reader sees the facts in the original listing bytes.
+    // The evidence is not only a reconstruction from database manifest fields.
+    let mut listing = stored.try_clone().unwrap();
+    std::io::Seek::rewind(&mut listing).unwrap();
+    let mut archive = tar::Archive::new(listing);
+    let mut entries = archive.entries().unwrap();
+    let mut media_entry = entries.next().unwrap().unwrap();
+    assert_eq!(media_entry.size(), 0);
+    let facts: std::collections::BTreeMap<_, _> = media_entry
+        .pax_extensions()
+        .unwrap()
+        .unwrap()
+        .map(|entry| {
+            let entry = entry.unwrap();
+            (entry.key_bytes().to_vec(), entry.value_bytes().to_vec())
+        })
+        .collect();
+    assert_eq!(facts[b"SINEX.located".as_slice()], b"true");
+    assert_eq!(
+        facts[b"SINEX.content_hash".as_slice()],
+        blake3::hash(&media).to_hex().as_bytes()
+    );
+    assert_eq!(
+        facts[b"SINEX.size".as_slice()],
+        media.len().to_string().as_bytes()
+    );
+    assert_eq!(facts[b"SINEX.media_type".as_slice()], b"video/mp4");
+    let events = parse(&first);
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].payload["located"], true);
+    assert_eq!(events[0].payload["media_type"], "video/mp4");
+    assert_eq!(events[0].payload["size"], media.len());
+    assert_eq!(
+        events[0].payload["content"],
+        format!("blake3:{}", blake3::hash(&media).to_hex())
+    );
+    assert_eq!(events[1].payload["located"], false);
+    assert_eq!(
+        events[1].payload["content"],
+        format!("blake3:{}", blake3::hash(b"retained note").to_hex())
+    );
+    assert!(
+        driver
+            .poll(&accepted_cursor(&first), &mut state)
+            .unwrap()
+            .material
+            .is_none()
+    );
+    std::fs::remove_file(root.path().join("movie.bin")).unwrap();
+    // Replaying the listing needs no read of the external original.
+    assert_eq!(parse(&first)[0].payload, events[0].payload);
+}
+
+#[devkit::test]
+fn a_moved_located_file_keeps_its_hash_and_records_the_old_path_removed() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("before.mp4"), media_fixture()).unwrap();
+    let driver = located_driver(root.path().into());
+    let mut state = DirState::default();
+    let first = driver.poll(&Value::Null, &mut state).unwrap();
+    let original = parse(&first).remove(0);
+    std::fs::rename(
+        root.path().join("before.mp4"),
+        root.path().join("after.mp4"),
+    )
+    .unwrap();
+    let moved = driver.poll(&accepted_cursor(&first), &mut state).unwrap();
+    let events = parse(&moved);
+    let present = events
+        .iter()
+        .find(|e| e.payload["path"] == "after.mp4")
+        .unwrap();
+    let removed = events
+        .iter()
+        .find(|e| e.payload["path"] == "before.mp4")
+        .unwrap();
+    assert_eq!(present.payload["content"], original.payload["content"]);
+    assert_eq!(present.payload["located"], true);
+    assert_eq!(removed.record_state, sinex_model::RecordState::Removed);
+    assert_ne!(
+        present.record_hash, original.record_hash,
+        "path remains part of record identity"
+    );
+}
+
+#[devkit::test]
+fn located_record_hash_follows_content_even_at_the_same_path_and_size() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("movie.mp4");
+    let mut bytes = media_fixture();
+    std::fs::write(&path, &bytes).unwrap();
+    let driver = located_driver(root.path().into());
+    let mut state = DirState::default();
+    let first = driver.poll(&Value::Null, &mut state).unwrap();
+    bytes[8192] ^= 0xff;
+    std::fs::write(&path, &bytes).unwrap();
+    let changed = driver.poll(&accepted_cursor(&first), &mut state).unwrap();
+    let old = parse(&first).remove(0);
+    let new = parse(&changed).remove(0);
+    assert_eq!(old.payload["size"], new.payload["size"]);
+    assert_ne!(old.payload["content"], new.payload["content"]);
+    assert_ne!(
+        old.record_hash, new.record_hash,
+        "empty listing bytes must not mark changed media as repeated"
+    );
+}
+
+#[devkit::test]
+fn only_discovered_download_roots_get_a_fresh_located_binding() {
+    let root = tempfile::tempdir().unwrap();
+    let documents = root.path().join("documents");
+    let downloads = root.path().join("downloads");
+    std::fs::create_dir(&documents).unwrap();
+    std::fs::create_dir(&downloads).unwrap();
+    let mut context = sinex_source_core::discovery::DiscoveryContext {
+        host: "example-host".into(),
+        ..Default::default()
+    };
+    context
+        .input_roots
+        .insert("documents".into(), vec![documents.clone()]);
+    context
+        .input_roots
+        .insert("downloads".into(), vec![downloads.clone()]);
+    let found = discover(&FORMAT, &context);
+    let binding = |path: &Path| {
+        found
+            .iter()
+            .find(|i| i.input.as_deref() == Some(path))
+            .unwrap()
+            .bindings
+            .first()
+            .unwrap()
+    };
+    assert!(binding(&downloads).name.contains("#located@"));
+    assert!(
+        Options::from_settings(&binding(&downloads).settings)
+            .unwrap()
+            .locate_media
+    );
+    assert!(binding(&documents).name.contains("#directory@"));
+    assert!(
+        !Options::from_settings(&binding(&documents).settings)
+            .unwrap()
+            .locate_media
+    );
+}

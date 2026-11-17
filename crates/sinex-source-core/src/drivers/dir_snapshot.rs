@@ -60,6 +60,9 @@ pub struct DirSnapshot {
     /// Whether a removed file's last reading is recorded as removed at the
     /// source, for parsers that cannot read the removal from its marker.
     pub removed_at_source: bool,
+    /// A media type records a file by hash and facts, with no stored file bytes.
+    /// The classifier receives at most its first 4,096 bytes.
+    pub locate: Option<fn(&[u8]) -> Option<&'static str>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -308,6 +311,7 @@ impl DirSnapshot {
                 &mut bundle,
                 *size,
                 *changed,
+                self.locate,
             )?;
             let captured = match captured {
                 Ok(Some(captured)) => captured,
@@ -357,6 +361,11 @@ impl DirSnapshot {
                 "mtime_ns": captured.node.mtime_ns,
                 "node": captured.node,
             }));
+            if let Some(media_type) = captured.located {
+                let member = members.last_mut().expect("member added");
+                member["located"] = json!(true);
+                member["media_type"] = json!(media_type);
+            }
             paths::add_path_bytes(members.last_mut().expect("member added"), relative);
             length = tar::position(&mut bundle)?;
             records.push((offset, end));

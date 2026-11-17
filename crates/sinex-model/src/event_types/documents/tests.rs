@@ -12,6 +12,7 @@ fn removed_document_and_unknown_mtime_remain_distinct() {
         media_type: Some("application/octet-stream".into()),
         content: Some("blake3:example".into()),
         removed_at: None,
+        located: false,
     };
     assert_eq!(p.ts_orig().quality, TimeQuality::Unknown);
     assert_eq!(p.record_state(), RecordState::Present);

@@ -4,7 +4,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2, type = "document.captured", key = location, replace = newer,
+#[event(version = 3, type = "document.captured", key = location, replace = newer,
     time = modified_at, quality = file_mtime, removed_when = removed_at)]
 pub struct DocumentCaptured {
     pub host: String,
@@ -16,6 +16,9 @@ pub struct DocumentCaptured {
     pub media_type: Option<String>,
     pub content: Option<String>,
     pub removed_at: Option<Timestamp>,
+    /// The original file stays at its path; the material holds its hash and facts.
+    #[serde(default)]
+    pub located: bool,
 }
 
 #[cfg(test)]

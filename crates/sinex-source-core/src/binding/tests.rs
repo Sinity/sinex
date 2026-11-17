@@ -69,6 +69,7 @@ fn removal_readers_require_original_locations_before_finishing_restore() {
         host: "fixture".into(),
         select: |_| true,
         part_bytes: 4096,
+        locate: None,
         removed_at_source,
     };
     let facts = driver(false)

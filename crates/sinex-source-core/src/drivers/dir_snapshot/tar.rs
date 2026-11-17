@@ -14,6 +14,7 @@ pub(super) struct Captured {
     pub offset: usize,
     pub length: usize,
     pub node: FileNode,
+    pub located: Option<&'static str>,
 }
 
 /// The outer error belongs to the archive; the inner error belongs to the file.
@@ -23,6 +24,7 @@ pub(super) fn capture(
     output: &mut Archive,
     size: u64,
     changed: i128,
+    locate: Option<fn(&[u8]) -> Option<&'static str>>,
 ) -> Result<Result<Option<Captured>, String>, DriverError> {
     let mut input = match File::open(path) {
         Ok(file) => file,
@@ -69,6 +71,38 @@ pub(super) fn capture(
         extended_attributes: Vec::new(),
         sparse,
     };
+    let located = if let Some(classify) = locate {
+        let mut head = [0; 4096];
+        let count = usize::try_from(size.min(head.len() as u64)).expect("bounded head");
+        if let Err(error) = input.read_exact(&mut head[..count]) {
+            return Ok(Err(error.to_string()));
+        }
+        let media_type = classify(&head[..count]);
+        if let Err(error) = input.rewind() {
+            return Ok(Err(error.to_string()));
+        }
+        media_type
+    } else {
+        None
+    };
+    if located.is_some() {
+        // These extents describe the external file, not bytes in this tar.
+        node.sparse = None;
+        let mut hash = blake3::Hasher::new();
+        let mut buffer = [0; 64 * 1024];
+        let mut left = size;
+        while left > 0 {
+            let limit = usize::try_from(left.min(buffer.len() as u64)).expect("bounded read");
+            let count = match input.read(&mut buffer[..limit]) {
+                Ok(0) => return Ok(Ok(None)),
+                Ok(count) => count,
+                Err(error) => return Ok(Err(error.to_string())),
+            };
+            hash.update(&buffer[..count]);
+            left -= count as u64;
+        }
+        node.content_hash = *hash.finalize().as_bytes();
+    }
     let mut fields = BTreeMap::from([
         (b"path".to_vec(), relative.as_os_str().as_bytes().to_vec()),
         (
@@ -81,6 +115,20 @@ pub(super) fn capture(
         ),
         (b"ctime".to_vec(), time(change_time(&before)).into_bytes()),
     ]);
+    if let Some(media_type) = located {
+        // The listing is self-contained source evidence, including without
+        // its database manifest. PAX headers retain the external file facts.
+        fields.insert(b"SINEX.located".to_vec(), b"true".to_vec());
+        fields.insert(
+            b"SINEX.content_hash".to_vec(),
+            blake3::Hash::from(node.content_hash)
+                .to_hex()
+                .as_bytes()
+                .to_vec(),
+        );
+        fields.insert(b"SINEX.size".to_vec(), size.to_string().into_bytes());
+        fields.insert(b"SINEX.media_type".to_vec(), media_type.as_bytes().to_vec());
+    }
     if relative.to_str().is_none() {
         fields.insert(b"hdrcharset".to_vec(), b"BINARY".to_vec());
     }
@@ -97,26 +145,30 @@ pub(super) fn capture(
             }
         }
     }
-    let length = match &node.sparse {
-        None => size,
-        Some(extents) => {
-            let mut map = extents
-                .iter()
-                .flat_map(|extent| [extent.offset.to_string(), extent.length.to_string()])
-                .collect::<Vec<_>>();
-            // The trailing zero range keeps a hole reaching the logical EOF.
-            map.extend([size.to_string(), "0".into()]);
-            fields.insert(b"GNU.sparse.map".to_vec(), map.join(",").into_bytes());
-            fields.insert(b"GNU.sparse.size".to_vec(), size.to_string().into_bytes());
-            fields.insert(
-                b"GNU.sparse.numblocks".to_vec(),
-                (extents.len() + 1).to_string().into_bytes(),
-            );
-            fields.insert(
-                b"GNU.sparse.name".to_vec(),
-                relative.as_os_str().as_bytes().to_vec(),
-            );
-            extents.iter().map(|extent| extent.length).sum()
+    let length = if located.is_some() {
+        0
+    } else {
+        match &node.sparse {
+            None => size,
+            Some(extents) => {
+                let mut map = extents
+                    .iter()
+                    .flat_map(|extent| [extent.offset.to_string(), extent.length.to_string()])
+                    .collect::<Vec<_>>();
+                // The trailing zero range keeps a hole reaching the logical EOF.
+                map.extend([size.to_string(), "0".into()]);
+                fields.insert(b"GNU.sparse.map".to_vec(), map.join(",").into_bytes());
+                fields.insert(b"GNU.sparse.size".to_vec(), size.to_string().into_bytes());
+                fields.insert(
+                    b"GNU.sparse.numblocks".to_vec(),
+                    (extents.len() + 1).to_string().into_bytes(),
+                );
+                fields.insert(
+                    b"GNU.sparse.name".to_vec(),
+                    relative.as_os_str().as_bytes().to_vec(),
+                );
+                extents.iter().map(|extent| extent.length).sum()
+            }
         }
     };
     node.extended_attributes = extensions(output, fields).map_err(DriverError::from)?;
@@ -136,6 +188,22 @@ pub(super) fn capture(
     let offset = position(output)?
         .checked_add(512)
         .ok_or_else(|| DriverError::Read("tar offset exceeds addressable size".into()))?;
+    if located.is_some() {
+        // Keep a distinct tar coordinate for each zero-length listing record.
+        output
+            .append(&header, std::io::empty())
+            .map_err(DriverError::from)?;
+        return match input.metadata() {
+            Ok(after) if same_file(&before, &after) => Ok(Ok(Some(Captured {
+                offset,
+                length: 0,
+                node,
+                located,
+            }))),
+            Ok(_) => Ok(Ok(None)),
+            Err(error) => Ok(Err(error.to_string())),
+        };
+    }
     let mut ranges = Ranges {
         input: &mut input,
         ranges: node
@@ -175,6 +243,7 @@ pub(super) fn capture(
             length: usize::try_from(length)
                 .map_err(|_| DriverError::Read("file exceeds addressable size".into()))?,
             node,
+            located: None,
         }))),
         Ok(_) => Ok(Ok(None)),
         Err(error) => Ok(Err(error.to_string())),

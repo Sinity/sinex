@@ -1,6 +1,7 @@
 //! Source families and the live capture loop, built over sinex-source-core.
 pub mod discovery;
 pub mod live;
+mod media_type;
 pub mod sources;
 #[cfg(feature = "full")]
 pub mod stage;
