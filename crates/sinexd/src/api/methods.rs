@@ -32,6 +32,7 @@ pub(crate) use sql::SqlCursors;
 pub(crate) struct Api {
     pub reads: PgPool,
     pub writer: Option<WriterHandle>,
+    pub backup_copy: std::sync::Arc<tokio::sync::Mutex<()>>,
     pub backup_producers: Option<(async_nats::Client, sinex_protocol::Subjects, Vec<String>)>,
     /// The content store.
     pub blobs: sinex_store::Blobs,

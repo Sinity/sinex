@@ -68,3 +68,40 @@ async fn dropping_an_unbounded_call_closes_its_http_driver() {
     let _ = call.await;
     server.await.unwrap();
 }
+
+#[tokio::test]
+async fn backup_keeps_a_stop_event_buffered_with_the_snapshot() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut bytes = Vec::new();
+        while !bytes.windows(4).any(|window| window == b"\r\n\r\n") {
+            let mut buffer = [0; 1024];
+            let count = socket.read(&mut buffer).await.unwrap();
+            assert!(count > 0);
+            bytes.extend_from_slice(&buffer[..count]);
+        }
+        let failure =
+            serde_json::to_string(&Failure::new(FailureKind::Cancelled, "synthetic shutdown"))
+                .unwrap();
+        let body = format!("event: snapshot\ndata: {{}}\n\nevent: error\ndata: {failure}\n\n");
+        socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
+    });
+    let client = Client {
+        endpoint: Endpoint::Tcp(address.to_string()),
+        token: "synthetic".into(),
+        deadline: command_surface::Deadline::None,
+    };
+    let (job, mut stream) = client.backup_start("/synthetic-output").await.unwrap();
+    assert_eq!(job, "{}");
+    assert!(
+        stream
+            .stopped()
+            .await
+            .to_string()
+            .contains("synthetic shutdown")
+    );
+    server.await.unwrap();
+}

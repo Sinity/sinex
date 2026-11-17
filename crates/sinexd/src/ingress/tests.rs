@@ -2038,6 +2038,7 @@ async fn daemon_status_counts_refusals_by_producer_source_and_event_type(
     );
     let (_running, stop) = tokio::sync::watch::channel(false);
     let api = crate::api::Api {
+        backup_copy: Default::default(),
         backup_producers: None,
         derivations: crate::derivation_runner::Catalog::new(&Default::default()).unwrap(),
         source_config: Default::default(),

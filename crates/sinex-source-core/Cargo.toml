@@ -7,6 +7,7 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
+sinex-process.workspace = true
 hashed-blobs.workspace = true
 sinex-model.workspace = true
 sinex-protocol.workspace = true
@@ -23,7 +24,7 @@ base64.workspace = true
 jiff.workspace = true
 csv = "1"
 tempfile = "3"
-rustix = { version = "1", features = ["process", "fs"] }
+rustix = { version = "1", features = ["fs"] }
 rusqlite = { workspace = true, optional = true }
 zip = { version = "2", default-features = false, features = ["deflate"], optional = true }
 tar = "0.4"

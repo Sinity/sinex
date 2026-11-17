@@ -697,11 +697,11 @@ async fn backup_prepare(
             json,
         );
     };
-    let (job, stream) = match client.backup_start(output).await {
+    let (job, mut stream) = match client.backup_start(output).await {
         Ok(job) => job,
         Err(e) => return fail(&e.failure("backup"), json),
     };
-    let copied = diagnostics::backup_copy(&job).await;
+    let copied = diagnostics::backup_copy(&job, stream.stopped()).await;
     // The copy is done with the snapshot; closing the stream ends it.
     drop(stream);
     match copied {

@@ -474,6 +474,7 @@ async fn shutdown_releases_source_and_backup_waiting_on_publication(db: devkit::
         .unwrap();
     let (stop, stopped) = watch::channel(false);
     let api = Api {
+        backup_copy: Default::default(),
         backup_producers: Some((client, subjects, vec![producer])),
         source_config: Default::default(),
         read_failures: Default::default(),

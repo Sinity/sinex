@@ -5,9 +5,8 @@ use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-mod process;
-pub use process::Child;
-use process::Registration;
+pub use sinex_process::Child;
+use sinex_process::Control;
 
 pub struct CaptureStop {
     state: Arc<CaptureStatus>,
@@ -22,7 +21,7 @@ struct CaptureStatus {
 #[derive(Default)]
 struct Inner {
     stopped: bool,
-    children: Vec<Weak<Registration>>,
+    children: Vec<Weak<Control>>,
     readers: Vec<std::os::unix::net::UnixStream>,
 }
 
@@ -70,7 +69,7 @@ impl CaptureStop {
         }
         let child = Child::spawn(command)?;
         inner.children.retain(|child| child.strong_count() > 0);
-        inner.children.push(Arc::downgrade(&child.registration));
+        inner.children.push(Arc::downgrade(&child.control()));
         Ok(Some(child))
     }
 

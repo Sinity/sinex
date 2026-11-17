@@ -426,33 +426,85 @@ async fn backup_prepare(
     let api = state.api.clone();
     tokio::spawn(async move {
         let caller = api.caller(granted).await;
-        let mut stop = api.stop.clone();
-        let methods::StartedBackup { snapshot, job } =
-            match api.backup_start(&caller, params.to).await {
-                Ok(job) => job,
-                Err(error) => {
-                    let failure =
-                        serde_json::to_string(&error.failure()).expect("failures serialize");
-                    let _ = tx
-                        .send(Ok(Event::default().event("error").data(failure)))
-                        .await;
-                    return;
-                }
-            };
-        let hold = job.boundary.id;
-        let description = serde_json::to_string(&job).expect("a backup copy job serializes");
-        if tx
-            .send(Ok(Event::default().event("snapshot").data(description)))
-            .await
-            .is_ok()
-        {
-            tokio::select! {
-                () = tx.closed() => {}
-                _ = stop.wait_for(|stopped| *stopped) => {}
+        let stop = api.stop.clone();
+        let stopped = |mut stop: watch::Receiver<bool>| async move {
+            let _ = stop.wait_for(|stopped| *stopped).await;
+        };
+        // The guard is the active-copy owner and a shutdown completion barrier.
+        let _copy = tokio::select! {
+            biased;
+            _ = stopped(stop.clone()) => return,
+            () = tx.closed() => return,
+            copy = api.backup_copy.clone().lock_owned() => copy,
+        };
+        let writer = match api.writer() {
+            Ok(writer) => writer.clone(),
+            Err(error) => {
+                let failure = serde_json::to_string(&error.failure()).expect("failure serializes");
+                let _ = tx
+                    .send(Ok(Event::default().event("error").data(failure)))
+                    .await;
+                return;
             }
-        }
-        if let Err(error) = snapshot.close().await {
-            eprintln!("sinexd backup {hold}: closing the exported snapshot: {error}");
+        };
+        let operation = sinex_model::OperationId::new();
+        let application = crate::backup::policy::application(operation);
+        let result: Result<()> = async {
+            writer.backup_pause().await?;
+            let (cancel, cancelled) = watch::channel(false);
+            let preparing = api.backup_start(&caller, params.to, operation, cancelled);
+            tokio::pin!(preparing);
+            let started = tokio::select! {
+                biased;
+                _ = stopped(stop.clone()) => {
+                    let _ = cancel.send(true);
+                    preparing.await
+                }
+                () = tx.closed() => {
+                    let _ = cancel.send(true);
+                    preparing.await
+                }
+                started = &mut preparing => started,
+            }?;
+            let methods::StartedBackup { snapshot, job } = started;
+            let description = serde_json::to_string(&job).expect("a backup copy job serializes");
+            if tx.send(Ok(Event::default().event("snapshot").data(description))).await.is_ok() {
+                tokio::select! {
+                    () = tx.closed() => {}
+                    _ = stopped(stop.clone()) => {
+                        // The ordinary client stops and reaps its copy before
+                        // closing this stream. This is the existing error event.
+                        let failure = command_surface::Failure::new(command_surface::FailureKind::Cancelled,
+                            "the daemon is stopping the backup copy");
+                        let failure = serde_json::to_string(&failure).expect("failure serializes");
+                        if tx.send(Ok(Event::default().event("error").data(failure))).await.is_ok() {
+                            tx.closed().await;
+                        }
+                    }
+                }
+            }
+            snapshot.close().await?;
+            Ok(())
+        }.await;
+        // Closing the exporter precedes cancellation of any surviving imports.
+        // Only after their actual departure can compression run again.
+        let cleaned = writer
+            .backup_finish(Some(application))
+            .await
+            .map_err(Error::from);
+        let result = match (result, cleaned) {
+            (Err(error), Err(cleanup)) => {
+                Err(error.with_note(format!("backup cleanup failed: {cleanup}")))
+            }
+            (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+            (Ok(()), Ok(())) => Ok(()),
+        };
+        if let Err(error) = result {
+            eprintln!("sinexd backup {operation}: {error}");
+            let failure = serde_json::to_string(&error.failure()).expect("failure serializes");
+            let _ = tx
+                .send(Ok(Event::default().event("error").data(failure)))
+                .await;
         }
     });
     Sse::new(ReceiverStream::new(rx))
@@ -468,6 +520,12 @@ pub(crate) async fn serve(
     read_models: watch::Receiver<()>,
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> Result<()> {
+    let backup_copy = api.backup_copy.clone();
+    let (stop, stopped) = watch::channel(false);
+    let api = Api {
+        stop: stopped.clone(),
+        ..api
+    };
     let app = router(api, config.tokens, commits, read_models);
     if let Some(parent) = config.socket.parent() {
         std::fs::create_dir_all(parent).map_err(|e| Error::file(parent, e))?;
@@ -488,7 +546,6 @@ pub(crate) async fn serve(
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&config.socket, std::fs::Permissions::from_mode(0o600))
         .map_err(|e| Error::file(&config.socket, e))?;
-    let (stop, stopped) = watch::channel(false);
     let mut unix_stop = stopped.clone();
     let unix_task = tokio::spawn(
         axum::serve(unix, app.clone())
@@ -520,6 +577,8 @@ pub(crate) async fn serve(
     };
     shutdown.await;
     let _ = stop.send(true);
+    // No detached copy can keep policy or snapshot ownership past API shutdown.
+    drop(backup_copy.lock().await);
     unix_task.await??;
     if let Some(t) = tcp_task {
         t.await??;

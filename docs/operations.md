@@ -197,6 +197,19 @@ names the hold and whether the release succeeded.
 
 Admission continues while `pg_dump` holds its relation locks: batch payloads use the writer's temporary staging table, which logical dumps omit. The dump includes the declared empty staging template; the restored writer clones that layout through its normal claim path.
 
+Only one copy job runs at a time. Its stream owns the pause of Timescale's
+core compression policy; a durable backup hold does not. Any already running
+policy finishes before producers pause or a snapshot is exported, while
+admission remains available. The client watches
+that stream while copying. On daemon error, connection loss or a normal stop
+signal, it stops and reaps its admin process group before closing the stream.
+The daemon then closes the exporter, waits for its tagged import/dump database
+sessions to depart, and reschedules compression. Startup does the same database
+cleanup only after acquiring the exclusive writer claim, before capture resumes.
+Job connection names are fixed, untruncated tags derived from the existing hold
+identity, restricted to the same database and user. Closing the exporter also
+invalidates late imports of that job; pg_dump imports before taking table locks.
+
 A backup records the dump's commit position and schema version, the blob-only change counter, and the committed segment prefixes it protects. Both the main and wrapped-key dumps belong to one exported PostgreSQL snapshot of the same database; the keys are the `privacy.data_keys` table, not a second database.
 
 ```

@@ -467,3 +467,155 @@ async fn backup_snapshot_lives_as_long_as_the_clients_stream(db: devkit::pg::Tes
         .await
         .expect("the daemon closes the snapshot once the client goes away");
 }
+
+async fn compression_scheduled(w: &World) -> Vec<bool> {
+    let jobs: Vec<bool> = sqlx::query_scalar("SELECT scheduled FROM timescaledb_information.jobs WHERE proc_name='policy_compression' AND hypertable_schema='core'")
+        .fetch_all(&w.reads).await.unwrap();
+    assert!(!jobs.is_empty());
+    jobs
+}
+
+async fn wait_for_compression(w: &World, enabled: bool) {
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            if compression_scheduled(w)
+                .await
+                .iter()
+                .all(|actual| *actual == enabled)
+            {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("copy cleanup must restore compression scheduling");
+}
+
+#[devkit::test]
+async fn active_copy_owns_policy_until_shutdown_client_cleanup(db: devkit::pg::TestDatabase) {
+    let broker = devkit::nats::test_nats().unwrap();
+    let client = async_nats::connect(broker.url()).await.unwrap();
+    let w = world_with_api(
+        db,
+        Default::default(),
+        PgPoolOptions::new().max_connections(READ_CONNECTIONS),
+        |api| {
+            api.backup_producers = Some((client, sinex_protocol::Subjects::sinex(), vec![]));
+        },
+    )
+    .await;
+    let root = tempfile::tempdir().unwrap();
+    let (job, mut body) = open_backup(&w, &root.path().join("first")).await;
+    let job: sinex_model::backup::CopyJob = serde_json::from_value(job.unwrap()).unwrap();
+    assert!(
+        compression_scheduled(&w)
+            .await
+            .iter()
+            .all(|enabled| !enabled)
+    );
+    w._stop.send_replace(true);
+    let mut event = String::new();
+    read_until(&mut body, &mut event, "event: error").await;
+    // Merely notifying the client must not reschedule under its live copy.
+    assert!(
+        compression_scheduled(&w)
+            .await
+            .iter()
+            .all(|enabled| !enabled)
+    );
+    drop(body);
+    wait_for_compression(&w, true).await;
+    let hold = sinex_store::backup::get(&mut *w.reads.acquire().await.unwrap(), job.boundary.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        hold.released_at.is_none(),
+        "the durable hold outlives copy scheduling"
+    );
+}
+
+#[devkit::test]
+async fn concurrent_copies_serialize_policy_and_preparation_refusal_restores_it(
+    db: devkit::pg::TestDatabase,
+) {
+    use futures::FutureExt;
+    let broker = devkit::nats::test_nats().unwrap();
+    let client = async_nats::connect(broker.url()).await.unwrap();
+    let w = world_with_api(
+        db,
+        Default::default(),
+        PgPoolOptions::new().max_connections(READ_CONNECTIONS),
+        |api| {
+            api.backup_producers = Some((client, sinex_protocol::Subjects::sinex(), vec![]));
+        },
+    )
+    .await;
+    let root = tempfile::tempdir().unwrap();
+    let (first, body) = open_backup(&w, &root.path().join("first")).await;
+    first.unwrap();
+    let second_output = root.path().join("second");
+    let second = open_backup(&w, &second_output);
+    tokio::pin!(second);
+    assert!(
+        second.as_mut().now_or_never().is_none(),
+        "another copy must wait for the active lifecycle"
+    );
+    assert!(
+        compression_scheduled(&w)
+            .await
+            .iter()
+            .all(|enabled| !enabled)
+    );
+    drop(body);
+    let (second, body) = tokio::time::timeout(std::time::Duration::from_secs(10), second)
+        .await
+        .unwrap();
+    second.unwrap();
+    assert!(
+        compression_scheduled(&w)
+            .await
+            .iter()
+            .all(|enabled| !enabled)
+    );
+    drop(body);
+    wait_for_compression(&w, true).await;
+    let occupied = root.path().join("already-exists");
+    std::fs::create_dir(&occupied).unwrap();
+    let (refused, body) = open_backup(&w, &occupied).await;
+    assert!(refused.is_err());
+    drop(body);
+    wait_for_compression(&w, true).await;
+}
+
+#[devkit::test]
+async fn client_cancellation_during_preparation_restores_policy(db: devkit::pg::TestDatabase) {
+    let broker = devkit::nats::test_nats().unwrap();
+    let client = async_nats::connect(broker.url()).await.unwrap();
+    let w = world_with_api(
+        db,
+        Default::default(),
+        PgPoolOptions::new().max_connections(READ_CONNECTIONS),
+        |api| {
+            api.backup_producers = Some((client, sinex_protocol::Subjects::sinex(), vec![]));
+        },
+    )
+    .await;
+    let publication = w.writer.source_publication();
+    let blocked = publication.pause().await;
+    let root = tempfile::tempdir().unwrap();
+    let request = HttpRequest::get(format!(
+        "/v1/backup/prepare?to={}",
+        url_escape(root.path().join("cancelled").to_str().unwrap())
+    ))
+    .header("authorization", format!("Bearer {OPERATOR}"))
+    .body(Body::empty())
+    .unwrap();
+    let response = w.app.clone().oneshot(request).await.unwrap();
+    wait_for_compression(&w, false).await;
+    drop(response);
+    // Cleanup must not need the publication guard it was waiting to acquire.
+    wait_for_compression(&w, true).await;
+    drop(blocked);
+}

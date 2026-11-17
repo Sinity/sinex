@@ -9,24 +9,24 @@ use std::process::{ChildStdout, Command, ExitStatus};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-// Reaping releases a group ID. Keep capture spawns outside that final drain
+// Reaping releases a group ID. Keep owned spawns outside that final drain
 // so another owned group cannot reuse it before cleanup finishes.
 static SPAWN_REAP: Mutex<()> = Mutex::new(());
 
 pub struct Child {
     child: std::process::Child,
-    pub(super) registration: Arc<Registration>,
+    control: Arc<Control>,
     status: Option<ExitStatus>,
 }
 
-pub(super) struct Registration(Mutex<Option<Pid>>);
+pub struct Control(Mutex<Option<Pid>>);
 
-impl Registration {
-    pub(crate) fn interrupt(&self) {
+impl Control {
+    pub fn interrupt(&self) {
         self.signal(Signal::INT);
     }
 
-    pub(crate) fn kill(&self) {
+    pub fn kill(&self) {
         self.signal(Signal::KILL);
     }
 
@@ -36,13 +36,13 @@ impl Registration {
         }
     }
 
-    pub(crate) fn running(&self) -> bool {
+    pub fn running(&self) -> bool {
         self.0.lock().unwrap_or_else(|e| e.into_inner()).is_some()
     }
 }
 
 impl Child {
-    pub(super) fn spawn(command: &mut Command) -> io::Result<Self> {
+    pub fn spawn(command: &mut Command) -> io::Result<Self> {
         let _spawning = SPAWN_REAP.lock().unwrap_or_else(|e| e.into_inner());
         // A nonzero value enables Linux's process-wide child-subreaper flag.
         set_child_subreaper(Some(Pid::INIT))?;
@@ -50,9 +50,17 @@ impl Child {
         let pid = Pid::from_raw(child.id() as i32).expect("a child has a positive PID");
         Ok(Self {
             child,
-            registration: Arc::new(Registration(Mutex::new(Some(pid)))),
+            control: Arc::new(Control(Mutex::new(Some(pid)))),
             status: None,
         })
+    }
+
+    pub fn control(&self) -> Arc<Control> {
+        self.control.clone()
+    }
+
+    pub fn stdin(&mut self) -> Option<std::process::ChildStdin> {
+        self.child.stdin.take()
     }
 
     pub fn stdout(&mut self) -> Option<ChildStdout> {
@@ -60,7 +68,7 @@ impl Child {
     }
 
     pub fn interrupt(&self) {
-        self.registration.interrupt();
+        self.control.interrupt();
     }
 
     pub fn wait(&mut self) -> io::Result<ExitStatus> {
@@ -68,11 +76,7 @@ impl Child {
             return Ok(status);
         }
         loop {
-            let mut registered = self
-                .registration
-                .0
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
+            let mut registered = self.control.0.lock().unwrap_or_else(|e| e.into_inner());
             let pid = registered.expect("unreaped child stays registered");
             // Observe exit without reaping: the leader still holds its PID
             // while we stop descendants and remove the group registration.
@@ -101,11 +105,7 @@ impl Child {
 
 impl Drop for Child {
     fn drop(&mut self) {
-        let mut pid = self
-            .registration
-            .0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut pid = self.control.0.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(process) = *pid {
             let _reaping = SPAWN_REAP.lock().unwrap_or_else(|e| e.into_inner());
             let _ = kill_process_group(process, Signal::KILL);

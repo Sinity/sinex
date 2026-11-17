@@ -1,5 +1,6 @@
 //! One local immutable core artifact, prepared under a live exported SQL snapshot.
 use crate::{Error, Result};
+use sinex_model::OperationId;
 use sinex_model::backup::{File as ManifestFile, Manifest};
 use sinex_store::backup::{self, Snapshot};
 use std::fs::{File, OpenOptions};
@@ -8,6 +9,7 @@ use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Component, Path};
 use tokio::sync::watch;
 
+pub(crate) use sinex_store::backup::policy;
 mod segment_copy;
 
 fn file(path: &Path) -> Result<File> {
@@ -366,16 +368,11 @@ pub(crate) fn refuse_incomplete(output: &Path, manifest: &Manifest) -> Result<()
 /// the client's unit and its priority, and they end when the client ends.
 pub(crate) async fn copy(job: sinex_model::backup::CopyJob) -> Result<Manifest> {
     use sqlx::Connection;
-    let connection = sqlx::PgConnection::connect(&job.database_url)
+    let database_url = copy_url(&job.database_url, job.boundary.id)?;
+    let connection = sqlx::PgConnection::connect(&database_url)
         .await
         .map_err(|e| Error::from(e).within("backup database"))?;
-    let snapshot = Snapshot::import(
-        connection,
-        job.snapshot,
-        job.boundary,
-        job.database_url.clone(),
-    )
-    .await?;
+    let snapshot = Snapshot::import(connection, job.snapshot, job.boundary, database_url).await?;
     if snapshot.database != job.database {
         return Err(Error::bad_request(
             "the backup snapshot belongs to a different database",
@@ -486,3 +483,17 @@ pub(crate) async fn prepare(
 
 #[cfg(test)]
 mod tests;
+
+pub(super) fn copy_url(database: &str, hold: OperationId) -> crate::Result<String> {
+    let mut url = url::Url::parse(database).map_err(|e| crate::Error::bad_value(e.to_string()))?;
+    let pairs: Vec<_> = url
+        .query_pairs()
+        .filter(|(key, _)| key != "application_name")
+        .map(|(key, value)| (key.into_owned(), value.into_owned()))
+        .collect();
+    url.set_query(None);
+    url.query_pairs_mut()
+        .extend_pairs(pairs)
+        .append_pair("application_name", &policy::application(hold));
+    Ok(url.to_string())
+}

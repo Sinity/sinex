@@ -176,6 +176,7 @@ async fn serve(
     let writer_conn = connect(&o.database, "sinex.writer").await?;
     *writer_connected = true;
     let mut writer_conn = writer::claim(writer_conn).await?;
+    crate::backup::policy::recover(&mut writer_conn).await?;
     blobs.recover(&mut writer_conn).await?;
     // Finish removing bytes a tombstone freed before sources resume.
     let (removed, left) = sinex_store::lifecycle::remove_unreferenced(&mut writer_conn, &blobs)
@@ -350,6 +351,7 @@ async fn serve(
         .map_err(|e| Error::from(e).within("read pool"))?;
     let read_failures = crate::binding_runner::ReadFailures::default();
     let reader_api = Api {
+        backup_copy: Default::default(),
         backup_producers: Some((
             client.clone(),
             subjects.clone(),

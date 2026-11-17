@@ -1,7 +1,32 @@
 //! Backup requests use the existing writer; a snapshot and a hold are distinct lifetimes.
 use super::{Api, Caller, Reply, json};
 use crate::{Error, Result};
+use futures::StreamExt;
 use sinex_model::OperationId;
+use tokio::sync::watch;
+
+async fn cancelled(cancel: &mut watch::Receiver<bool>) {
+    let _ = cancel.wait_for(|stopped| *stopped).await;
+}
+
+fn stopped() -> Error {
+    command_surface::Failure::new(
+        command_surface::FailureKind::Cancelled,
+        "backup preparation stopped",
+    )
+    .into()
+}
+
+async fn release_producers(paused: &[(usize, sinex_transport::backup::PausedProducer)]) {
+    for (_, producer) in paused {
+        if let Err(error) = producer.release().await {
+            eprintln!(
+                "backup producer {} release failed: {error}",
+                producer.producer
+            );
+        }
+    }
+}
 
 impl Api {
     pub(super) async fn backup(&self, caller: &Caller, request: super::Request) -> Result<Reply> {
@@ -90,6 +115,8 @@ impl Api {
         &self,
         caller: &Caller,
         output: String,
+        operation: OperationId,
+        mut cancel: watch::Receiver<bool>,
     ) -> Result<StartedBackup> {
         let writer = self.writer()?;
         if self.backup_producers.is_none() {
@@ -101,49 +128,77 @@ impl Api {
         let revision = crate::build_identity::current()?;
         crate::request_deadline::admit()?;
         crate::backup::create(&output)?;
+        eprintln!("sinexd backup: waiting for running core compression policies before snapshot");
+        let idle = async {
+            let mut connection = self.reads.acquire().await?;
+            crate::backup::policy::wait_for_idle(&mut connection).await?;
+            Ok::<_, Error>(())
+        };
+        tokio::select! {
+            result=idle => result?,
+            _=cancelled(&mut cancel) => return Err(stopped()),
+        }
+
         // Discovery can walk historical input directories. Finish it
         // before starting the producers' paused publication lifetime.
         let config = self.source_config.clone();
         let host = self.host.clone();
         let spool = config.context(&host).spool;
-        let configured = tokio::task::spawn_blocking(move || {
+        let discovery = tokio::task::spawn_blocking(move || {
             crate::binding_runner::plan(&config, &host)
                 .map(|bindings| bindings.into_iter().map(|(_, binding)| binding).collect())
-        })
-        .await??;
+        });
+        let configured = tokio::select! {
+            result = discovery => result??,
+            _ = cancelled(&mut cancel) => return Err(stopped()),
+        };
         let source_publication = writer.source_publication();
-        let local_guard = source_publication.pause().await;
+        let local_guard = tokio::select! {
+            guard = source_publication.pause() => guard,
+            _ = cancelled(&mut cancel) => return Err(stopped()),
+        };
         let mut paused = Vec::new();
         let mut producer_snapshots = Vec::new();
         if let Some((client, subjects, producers)) = &self.backup_producers {
-            let results = futures::future::join_all(producers.iter().map(|producer| async move {
-                (
-                    producer,
-                    sinex_transport::backup::PausedProducer::pause(
-                        client.clone(),
-                        subjects.clone(),
-                        producer.clone(),
+            let mut requests: futures::stream::FuturesUnordered<_> = producers
+                .iter()
+                .enumerate()
+                .map(|(index, producer)| async move {
+                    (
+                        index,
+                        producer,
+                        sinex_transport::backup::PausedProducer::pause(
+                            client.clone(),
+                            subjects.clone(),
+                            producer.clone(),
+                        )
+                        .await,
                     )
-                    .await,
-                )
-            }))
-            .await;
-            for (producer, result) in results {
-                match result {
-                    Ok(paused_producer) => paused.push(paused_producer),
-                    Err(reason) => producer_snapshots.push(sinex_model::backup::ProducerSnapshot {
-                        producer: producer.clone(),
-                        run_id: None,
-                        files: Vec::new(),
-                        unavailable: Some(reason),
-                    }),
+                })
+                .collect();
+            while !requests.is_empty() {
+                tokio::select! {
+                    biased;
+                    response = requests.next() => {
+                        let (index, producer, response) = response.expect("nonempty requests");
+                        match response {
+                            Ok(producer) => paused.push((index, producer)),
+                            Err(reason) => producer_snapshots.push(sinex_model::backup::ProducerSnapshot {
+                                producer: producer.clone(), run_id: None, files: Vec::new(), unavailable: Some(reason),
+                            }),
+                        }
+                    }
+                    _ = cancelled(&mut cancel) => {
+                        drop(requests);
+                        release_producers(&paused).await;
+                        return Err(stopped());
+                    }
                 }
             }
+            paused.sort_by_key(|(index, _)| *index);
         }
         if !producer_snapshots.is_empty() {
-            for producer in &paused {
-                let _ = producer.release().await;
-            }
+            release_producers(&paused).await;
             return Err(Error::bad_request(format!(
                 "required producers did not pause: {}",
                 producer_snapshots
@@ -159,12 +214,10 @@ impl Api {
         }
         let paused_at = std::time::Instant::now();
         eprintln!("sinexd backup: producers paused; taking core snapshot");
-        let mut snapshot = match writer.backup_snapshot(caller.actor).await {
+        let mut snapshot = match writer.backup_snapshot(operation, caller.actor).await {
             Ok(snapshot) => snapshot,
             Err(e) => {
-                for producer in &paused {
-                    let _ = producer.release().await;
-                }
+                release_producers(&paused).await;
                 return Err(e.into());
             }
         };
@@ -184,54 +237,62 @@ impl Api {
             }
         };
         if let Err(error) = crate::backup::record_boundary(&output, &snapshot.hold) {
-            for producer in &paused {
-                let _ = producer.release().await;
-            }
+            release_producers(&paused).await;
             // The snapshot's transaction ends before the writer is asked.
-            drop(snapshot);
+            let _ = snapshot.close().await;
             return Err(error.with_note(release(hold).await));
         }
         let boundary = snapshot.hold.clone();
         let boundary = &boundary;
         let output_root = &output;
-        let external = futures::future::join_all(paused.into_iter().map(|producer| async move {
-            let relative = format!("main/producers/{}", producer.producer);
-            let result = producer
-                .acquire(boundary, &output_root.join(&relative))
+        let acquired = {
+            let external =
+                futures::future::join_all(paused.iter().map(|(_, producer)| async move {
+                    let relative = format!("main/producers/{}", producer.producer);
+                    let result = producer
+                        .acquire(boundary, &output_root.join(&relative))
+                        .await;
+                    match result {
+                        Ok(mut files) => {
+                            for file in &mut files {
+                                file.path = format!("{relative}/{}", file.path);
+                            }
+                            sinex_model::backup::ProducerSnapshot {
+                                producer: producer.producer.clone(),
+                                run_id: Some(producer.run_id.clone()),
+                                files,
+                                unavailable: None,
+                            }
+                        }
+                        Err(reason) => sinex_model::backup::ProducerSnapshot {
+                            producer: producer.producer.clone(),
+                            run_id: Some(producer.run_id.clone()),
+                            files: Vec::new(),
+                            unavailable: Some(reason),
+                        },
+                    }
+                }));
+            let local = async {
+                let local_bindings = crate::binding_runner::backup_bindings(
+                    snapshot.connection(),
+                    configured,
+                    &self.host,
+                    &spool,
+                )
                 .await;
-            let _ = producer.release().await;
-            match result {
-                Ok(mut files) => {
-                    for file in &mut files {
-                        file.path = format!("{relative}/{}", file.path);
-                    }
-                    sinex_model::backup::ProducerSnapshot {
-                        producer: producer.producer,
-                        run_id: Some(producer.run_id),
-                        files,
-                        unavailable: None,
-                    }
-                }
-                Err(reason) => sinex_model::backup::ProducerSnapshot {
-                    producer: producer.producer,
-                    run_id: Some(producer.run_id),
-                    files: Vec::new(),
-                    unavailable: Some(reason),
-                },
+                crate::backup::local_sources(local_bindings, output_root).await
+            };
+            tokio::select! {
+                result = async { futures::join!(external, local) } => Some(result),
+                _ = cancelled(&mut cancel) => None,
             }
-        }));
-        let local = async {
-            let local_bindings = crate::binding_runner::backup_bindings(
-                snapshot.connection(),
-                configured,
-                &self.host,
-                &spool,
-            )
-            .await;
-            crate::backup::local_sources(local_bindings, output_root).await
         };
-        let (acquired, local) = futures::join!(external, local);
+        release_producers(&paused).await;
         drop(local_guard);
+        let Some((acquired, local)) = acquired else {
+            let _ = snapshot.close().await;
+            return Err(stopped().with_note(release(hold).await));
+        };
         producer_snapshots.extend(acquired);
         producer_snapshots.push(local);
         let job = sinex_model::backup::CopyJob {
@@ -269,12 +330,17 @@ impl Api {
         );
         if let Err(error) = refused {
             // The snapshot's transaction ends before the writer is asked.
-            drop(snapshot);
+            let _ = snapshot.close().await;
             return Err(error.with_note(format!(
                 "{}; incomplete output {}",
                 release(hold).await,
                 output.display()
             )));
+        }
+        let stop_requested = *cancel.borrow();
+        if stop_requested {
+            let _ = snapshot.close().await;
+            return Err(stopped().with_note(release(hold).await));
         }
         Ok(StartedBackup { snapshot, job })
     }

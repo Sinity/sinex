@@ -124,6 +124,8 @@ enum WriterJob {
         reply: Reply<()>,
     },
     Stage(StageWrite, Reply<()>),
+    BackupPause(Reply<()>),
+    BackupFinish(Option<String>, Reply<()>),
     BackupHold {
         operation: OperationId,
         actor: String,
@@ -349,6 +351,20 @@ impl WriterHandle {
             .await
     }
 
+    pub(crate) async fn backup_pause(&self) -> Result<(), WriteError> {
+        self.ask(Priority::Live, WriterJob::BackupPause).await
+    }
+
+    pub(crate) async fn backup_finish(
+        &self,
+        application: Option<String>,
+    ) -> Result<(), WriteError> {
+        self.ask(Priority::Live, |reply| {
+            WriterJob::BackupFinish(application, reply)
+        })
+        .await
+    }
+
     pub(crate) async fn backup_hold(
         &self,
         actor: &str,
@@ -363,10 +379,11 @@ impl WriterHandle {
 
     pub(crate) async fn backup_snapshot(
         &self,
+        operation: OperationId,
         actor: &str,
     ) -> Result<sinex_store::backup::Snapshot, WriteError> {
         self.ask(Priority::Derived, |reply| WriterJob::BackupSnapshot {
-            operation: OperationId::new(),
+            operation,
             actor: actor.into(),
             reply,
         })
@@ -682,6 +699,22 @@ pub(crate) async fn run_notifying(
                     lifecycle_end(&mut connection, operation, &refusals)
                         .await
                         .map(drop)
+                );
+            }
+            WriterJob::BackupPause(reply) => {
+                answer!(
+                    reply,
+                    crate::backup::policy::pause(&mut connection)
+                        .await
+                        .map_err(WriteError::from)
+                );
+            }
+            WriterJob::BackupFinish(application, reply) => {
+                answer!(
+                    reply,
+                    crate::backup::policy::finish(&mut connection, application.as_deref())
+                        .await
+                        .map_err(WriteError::from)
                 );
             }
             WriterJob::BackupHold {
@@ -1366,7 +1399,11 @@ async fn backup_snapshot(
         ));
     }
     // No queued write advances the boundary before the exporting transaction opens.
-    let exporter = PgConnection::connect(url)
+    let options = url
+        .parse::<sqlx::postgres::PgConnectOptions>()
+        .map_err(|error| WriteError::Unavailable(error.to_string()))?
+        .application_name(&crate::backup::policy::application(operation));
+    let exporter = PgConnection::connect_with(&options)
         .await
         .map_err(|error| WriteError::Unavailable(error.to_string()))?;
     Ok(sinex_store::backup::Snapshot::export(exporter, hold, url.to_owned()).await?)

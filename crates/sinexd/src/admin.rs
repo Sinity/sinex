@@ -337,6 +337,7 @@ async fn admin_table(
         )
         .await?;
     let local = api::Api {
+        backup_copy: Default::default(),
         backup_producers: None,
         source_config: Default::default(),
         read_failures: Default::default(),

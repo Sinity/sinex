@@ -159,7 +159,10 @@ async fn segment_copy_keeps_holes_and_the_hold_state_while_the_writer_advances(
         .execute(&mut conn)
         .await
         .unwrap();
-    let mut snapshot = writer.backup_snapshot("operator").await.unwrap();
+    let mut snapshot = writer
+        .backup_snapshot(sinex_model::OperationId::new(), "operator")
+        .await
+        .unwrap();
     let at_hold: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events")
         .fetch_one(snapshot.connection())
         .await
@@ -597,7 +600,7 @@ async fn backup_mid_acquisition_restores_pending_spool(db: devkit::pg::TestDatab
             let _paused = publication.pause().await;
             let snapshot = context
                 .writer
-                .backup_snapshot("synthetic-backup")
+                .backup_snapshot(sinex_model::OperationId::new(), "synthetic-backup")
                 .await
                 .unwrap();
             create(&artifact).unwrap();
@@ -979,7 +982,10 @@ async fn restore_without_search_tables_rebuilds_search(db: devkit::pg::TestDatab
             .unwrap()
             > 0
     );
-    let mut snapshot = writer.backup_snapshot("operator").await.unwrap();
+    let mut snapshot = writer
+        .backup_snapshot(sinex_model::OperationId::new(), "operator")
+        .await
+        .unwrap();
     // What the dump holds, read through the exported snapshot itself.
     let at_cut: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT id FROM core.events ORDER BY id")
         .fetch_all(snapshot.connection())
@@ -1160,4 +1166,118 @@ fn backup_sync_leaves_the_async_worker_available() {
         blocking.await.unwrap();
         syncing.await.unwrap();
     });
+}
+
+#[test]
+fn copy_identity_is_bounded_and_preserves_other_connection_options() {
+    let id = OperationId::new();
+    assert_eq!(policy::application(id).len(), 45);
+    let parsed = url::Url::parse(
+        &copy_url(
+            "postgresql://user:p%2Bass@localhost/db?options=a%2Bb+c&application_name=old",
+            id,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let pairs: Vec<_> = parsed.query_pairs().collect();
+    assert_eq!(
+        pairs
+            .iter()
+            .filter(|(key, _)| key == "application_name")
+            .count(),
+        1
+    );
+    assert!(
+        pairs
+            .iter()
+            .any(|(key, value)| key == "options" && value == "a+b c")
+    );
+    assert_eq!(parsed.password(), Some("p%2Bass"));
+}
+
+#[devkit::test]
+async fn leader_crash_reaps_real_dump_waiting_on_a_relation_lock(db: devkit::pg::TestDatabase) {
+    use sqlx::Connection;
+    let url = db.url(None);
+    let mut exporter = sqlx::PgConnection::connect(&url).await.unwrap();
+    sqlx::query("CREATE TABLE public.synthetic_backup_lock(value integer)")
+        .execute(&mut exporter)
+        .await
+        .unwrap();
+    sqlx::query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        .execute(&mut exporter)
+        .await
+        .unwrap();
+    let snapshot: String = sqlx::query_scalar("SELECT pg_export_snapshot()")
+        .fetch_one(&mut exporter)
+        .await
+        .unwrap();
+    let mut blocker = sqlx::PgConnection::connect(&url).await.unwrap();
+    sqlx::query("BEGIN").execute(&mut blocker).await.unwrap();
+    sqlx::query("LOCK TABLE public.synthetic_backup_lock IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut blocker)
+        .await
+        .unwrap();
+    let mut observer = sqlx::PgConnection::connect(&url).await.unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let mut command = std::process::Command::new("sh");
+    command.args(["-c",
+        "pg_dump --dbname=\"$DATABASE\" --schema-only --snapshot=\"$SNAPSHOT\" > /dev/null & child=$!; printf '%s %s\\n' $$ $child > \"$1\"; wait", "synthetic-backup"]).arg(root.path().join("pids"));
+    command
+        .env("DATABASE", &url)
+        .env("PGAPPNAME", "synthetic-owned-backup")
+        .env("SNAPSHOT", snapshot);
+    let process = tokio::task::spawn_blocking(move || {
+        let mut child = sinex_process::Child::spawn(&mut command).unwrap();
+        child.wait().unwrap()
+    });
+    let crashed = async {
+        loop {
+            let waiting:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND application_name='synthetic-owned-backup' AND wait_event_type='Lock')").fetch_one(&mut observer).await.unwrap();
+            if waiting {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        let pids: Vec<u32> = std::fs::read_to_string(root.path().join("pids"))
+            .unwrap()
+            .split_whitespace()
+            .map(|pid| pid.parse().unwrap())
+            .collect();
+        let leader = pids[0];
+        assert!(
+            std::process::Command::new("kill")
+                .args(["-KILL", &leader.to_string()])
+                .status()
+                .unwrap()
+                .success()
+        );
+        process.await.unwrap()
+    };
+    let status = tokio::time::timeout(std::time::Duration::from_secs(30), crashed)
+        .await
+        .expect("leader death must reap locked dump");
+    assert!(!status.success());
+    for pid in std::fs::read_to_string(root.path().join("pids"))
+        .unwrap()
+        .split_whitespace()
+    {
+        assert!(
+            !std::path::Path::new(&format!("/proc/{pid}")).exists(),
+            "owned child must be reaped"
+        );
+    }
+    loop {
+        let remaining:i64=sqlx::query_scalar("SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND application_name='synthetic-owned-backup'").fetch_one(&mut observer).await.unwrap();
+        if remaining == 0 {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    sqlx::query("ROLLBACK").execute(&mut blocker).await.unwrap();
+    sqlx::query("ROLLBACK")
+        .execute(&mut exporter)
+        .await
+        .unwrap();
 }

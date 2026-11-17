@@ -54,6 +54,7 @@ tokio-stream.workspace = true
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
+sinex-process.workspace = true
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 age.workspace = true
 tar = "0.4"

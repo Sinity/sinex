@@ -71,7 +71,13 @@ fn allowed(name: &str) -> Result<&'static [&'static str], String> {
             "sinex-transport",
             "sinex-source-core",
         ]),
-        "sinex-source-core" => Ok(&["sinex-model", "sinex-protocol", "sinex-transport"]),
+        "sinex-process" => Ok(&[]),
+        "sinex-source-core" => Ok(&[
+            "sinex-model",
+            "sinex-protocol",
+            "sinex-transport",
+            "sinex-process",
+        ]),
         "sinex-sealing" => Ok(&["sinex-model"]),
         "sinex-store" => Ok(&[
             "sinex-query",
@@ -81,6 +87,7 @@ fn allowed(name: &str) -> Result<&'static [&'static str], String> {
         ]),
         "sinex-library" => Ok(&["sinex-model", "sinex-store"]),
         "sinexd" => Ok(&[
+            "sinex-process",
             "sinex-query",
             "sinex-model",
             "sinex-protocol",
@@ -107,7 +114,12 @@ fn allowed(name: &str) -> Result<&'static [&'static str], String> {
             "sinex-sources",
             "sinex-source-core",
         ]),
-        "sinexctl" => Ok(&["sinex-model", "sinex-protocol", "sinex-transport"]),
+        "sinexctl" => Ok(&[
+            "sinex-model",
+            "sinex-protocol",
+            "sinex-transport",
+            "sinex-process",
+        ]),
         // Fuzz properties drive the real serialization boundaries.
         "sinex-fuzz" => Ok(&[
             "sinex-query",
@@ -130,6 +142,7 @@ const RUNTIME_RULES: &[(&str, RuntimeRule)] = &[
     ("sinex-protocol", RuntimeRule::NoIo),
     ("sinex-derivations", RuntimeRule::NoIo),
     ("sinex-analysis", RuntimeRule::NoIo),
+    ("sinex-process", RuntimeRule::NoDatabase),
     ("sinexctl", RuntimeRule::NoDatabase),
 ];
 impl RuntimeRule {

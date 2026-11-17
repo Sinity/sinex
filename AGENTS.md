@@ -62,6 +62,7 @@ concepts an agent needs before opening it.
 
 | Path | Holds |
 |---|---|
+| `crates/sinex-process` | owned child process groups, cancellation and descendant reaping; no database |
 | `crates/sinex-macros` | the `EventPayload` and `DbCheck` derives |
 | `crates/sinex-model` | identifiers, the three clocks, record locations and keys, kinds as declarations with field hints, typed payloads, events and batches. No I/O |
 | `crates/sinex-query` | query parsing, binding, completion and stored definition behaviour. No I/O |

@@ -207,6 +207,7 @@ async fn world_with_api(
         .unwrap();
     let (stop, stopped) = watch::channel(false);
     let mut api = Api {
+        backup_copy: Default::default(),
         backup_producers: None,
         source_config: Arc::new(source_config),
         read_failures: Default::default(),

@@ -321,7 +321,8 @@ impl Client {
                 data,
                 BackupStream {
                     _connection: connection,
-                    _body: body,
+                    body,
+                    events,
                 },
             )),
             Some((event, data)) if event == "error" => Err(ClientError::Failed(
@@ -342,7 +343,25 @@ impl Client {
 /// the backup's snapshot open.
 pub(crate) struct BackupStream {
     _connection: Connection,
-    _body: hyper::body::Incoming,
+    body: hyper::body::Incoming,
+    events: Events,
+}
+
+impl BackupStream {
+    pub(crate) async fn stopped(&mut self) -> Failure {
+        match self.events.next(&mut self.body).await {
+            Ok(Some((event, data))) if event == "error" => serde_json::from_str(&data)
+                .unwrap_or_else(|error| protocol_mismatch("backup", error)),
+            Ok(Some((event, _))) => {
+                protocol_mismatch("backup", format!("unexpected event {event}"))
+            }
+            Ok(None) => Failure::new(
+                FailureKind::Cancelled,
+                "the daemon closed the backup snapshot before its copy finished",
+            ),
+            Err(error) => error.failure("backup"),
+        }
+    }
 }
 
 /// The typed failure in a refused streaming request's body.

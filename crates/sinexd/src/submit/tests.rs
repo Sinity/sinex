@@ -569,7 +569,10 @@ async fn queued_submission(db: devkit::pg::TestDatabase, cancel: bool, source_pu
             .unwrap();
         // The queued exclusive guard wins before another source batch. The
         // writer must still serve the snapshot while that guard is held.
-        let mut snapshot = writer.backup_snapshot("synthetic-backup").await.unwrap();
+        let mut snapshot = writer
+            .backup_snapshot(sinex_model::OperationId::new(), "synthetic-backup")
+            .await
+            .unwrap();
         let count: i64 = sqlx::query_scalar("SELECT count(*) FROM core.events")
             .fetch_one(snapshot.connection())
             .await
