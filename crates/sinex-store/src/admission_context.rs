@@ -28,20 +28,39 @@ impl AdmissionContext {
                 "another sinexd writer is running against this database".into(),
             ));
         }
-        sinex_schema::require_current(&mut connection).await?;
-        // The key must commit before any admission can cache or use it.
-        let mut tx = connection.begin().await?;
-        let key = privacy::hash_key(&mut tx).await?;
-        // Keep the declared table for checked SQL and logical restore. Batch
-        // rows belong to this writer alone, beyond pg_dump's relation locks.
-        for statement in [
-            "CREATE TEMP TABLE admission_stage (LIKE core.admission_stage INCLUDING ALL) ON COMMIT DELETE ROWS",
-            "SET search_path = pg_temp, core, public",
-            "DELETE FROM core.admission_stage",
-        ] {
-            sqlx::query(statement).execute(&mut *tx).await?;
+        let initialized: Result<_> = async {
+            sinex_schema::require_current(&mut connection).await?;
+            // The key must commit before any admission can cache or use it.
+            let mut tx = connection.begin().await?;
+            let key = privacy::hash_key(&mut tx).await?;
+            // Keep the declared table for checked SQL and logical restore. Batch
+            // rows belong to this writer alone, beyond pg_dump's relation locks.
+            for statement in [
+                "CREATE TEMP TABLE admission_stage (LIKE core.admission_stage INCLUDING ALL) ON COMMIT DELETE ROWS",
+                "SET search_path = pg_temp, core, public",
+                "DELETE FROM core.admission_stage",
+            ] {
+                sqlx::query(statement).execute(&mut *tx).await?;
+            }
+            tx.commit().await?;
+            Ok(key)
         }
-        tx.commit().await?;
+        .await;
+        let key = match initialized {
+            Ok(key) => key,
+            Err(error) => {
+                // Drop only closes the socket asynchronously. Release the
+                // acquired claim before reporting that initialization refused it.
+                let released = sqlx::query("SELECT pg_advisory_unlock($1)")
+                    .bind(sinex_schema::WRITER_LOCK)
+                    .execute(&mut connection)
+                    .await;
+                let closed = connection.close().await;
+                released?;
+                closed?;
+                return Err(error);
+            }
+        };
         Ok(Self {
             connection,
             privacy: privacy::Cache::new(key),
