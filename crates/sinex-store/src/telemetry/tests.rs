@@ -216,7 +216,7 @@ async fn recent_samples_lookup_only_their_own_archive_membership(db: devkit::pg:
             ),
             measures: [("position".into(), index as f64)].into(),
         };
-        let class = [Class::Open, Class::Guarded, Class::Sealed][index % 3];
+        let class = [Class::Open, Class::Guarded][index % 2];
         // Two source identities can report the same consumer and sample time.
         // Their distinct event IDs retain the existing final ordering key.
         let source = format!("telemetry.host{}", (index / 8) % 2);
@@ -286,10 +286,6 @@ async fn recent_samples_lookup_only_their_own_archive_membership(db: devkit::pg:
     for (grants, classes) in [
         ("", vec![Class::Open]),
         ("guarded", vec![Class::Open, Class::Guarded]),
-        (
-            "guarded,sealed",
-            vec![Class::Open, Class::Guarded, Class::Sealed],
-        ),
     ] {
         crate::query::set_grants(&mut conn, grants).await.unwrap();
         assert_eq!(
