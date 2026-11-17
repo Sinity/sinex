@@ -202,12 +202,13 @@ pub(crate) async fn admit(
     cache: &mut privacy::Cache,
     batch: &Batch,
     keys: &dyn DirtyKeys,
-) -> Result<Outcome> {
+) -> Result<(Outcome, std::collections::BTreeSet<String>)> {
+    let mut required_blobs = std::collections::BTreeSet::new();
     if let BatchKind::Ingress(frame) = &batch.kind
         && !frame.frame.is_empty()
         && let Some(outcome) = register::recorded(conn, frame).await?
     {
-        return Ok(outcome);
+        return Ok((outcome, required_blobs));
     }
     sqlx::query("SELECT value FROM core.counters WHERE name='commit_seq' FOR UPDATE")
         .execute(&mut *conn)
@@ -265,10 +266,18 @@ pub(crate) async fn admit(
     }
     let started = std::time::Instant::now();
     match &batch.kind {
-        BatchKind::Source(progress) => register::source(conn, progress).await?,
+        BatchKind::Source(progress) => {
+            register::source(conn, progress).await?;
+            if let Some(material) = &progress.material {
+                required_blobs.insert(material.blob.clone());
+            }
+        }
         BatchKind::Ingress(frame) => {
             if let Some(progress) = &frame.material {
                 register::source(conn, progress).await?;
+                if let Some(material) = &progress.material {
+                    required_blobs.insert(material.blob.clone());
+                }
             }
         }
         BatchKind::Derived { .. } | BatchKind::Api { .. } | BatchKind::Replay { .. } => {}
@@ -343,6 +352,11 @@ pub(crate) async fn admit(
                 &provenance,
             )
             .await?;
+            // Kind evaluation owns blob references; producer metadata can differ.
+            for ordinal in &classified.admit {
+                let event = &events[usize::try_from(*ordinal).expect("non-negative ordinal")];
+                required_blobs.extend(event.owned_blobs.iter().map(|blob| blob.blob.clone()));
+            }
         }
         resolved = classified.resolved;
     }
@@ -370,7 +384,7 @@ pub(crate) async fn admit(
         .await?;
     }
     outcome.timings.insert("progress", started.elapsed());
-    Ok(outcome)
+    Ok((outcome, required_blobs))
 }
 
 // A transfer page bounds PostgreSQL's compressed-array planning, not the number

@@ -106,9 +106,33 @@ impl Blobs {
         }
         Ok(())
     }
-    /// Persist every synced group in the same transaction as the rows citing its bytes.
-    pub async fn commit_extents(&self, conn: &mut sqlx::PgConnection) -> Result<Commit> {
-        self.sync_pending()?;
+    /// Sync this admission's named bytes, then persist the durable log prefix.
+    pub async fn commit_extents(
+        &self,
+        conn: &mut sqlx::PgConnection,
+        names: &[String],
+    ) -> Result<Commit> {
+        if !names.is_empty() {
+            let store = self.clone();
+            let required = names.to_vec();
+            tokio::task::spawn_blocking(move || store.sync_pending(&required))
+                .await
+                .map_err(|error| crate::Error::Invalid(error.to_string()))??;
+        }
+        let required: BTreeSet<Hash> = names
+            .iter()
+            .map(|name| parse(name))
+            .collect::<Result<_>>()?;
+        {
+            let state = self.state()?;
+            for hash in &required {
+                if state.held_extents(hash).is_none() {
+                    return Err(crate::Error::Invalid(format!(
+                        "admitted blob {hash} has no synced extent"
+                    )));
+                }
+            }
+        }
         let groups = self.state()?.groups.clone();
         for group in &groups {
             for extent in &group.extents {
@@ -127,6 +151,7 @@ impl Blobs {
             state
                 .unrecorded_chunk_lists
                 .iter()
+                .filter(|blob| required.contains(blob))
                 .filter_map(|blob| Some((*blob, state.chunk_lists.get(blob)?.clone())))
                 .collect()
         };
@@ -188,10 +213,10 @@ pub async fn delete_unreferenced_extents(
     conn: &mut sqlx::PgConnection,
     blobs: &Blobs,
 ) -> Result<Vec<String>> {
-    // A fresh in-process store may already hold preparations made by a test or import.
+    // Finish already synced bytes; unadmitted preparations retain their owner.
     let extent_commit = {
         let mut tx = conn.begin().await?;
-        let extent_commit = blobs.commit_extents(&mut tx).await?;
+        let extent_commit = blobs.commit_extents(&mut tx, &[]).await?;
         tx.commit().await?;
         extent_commit
     };
@@ -218,7 +243,7 @@ pub async fn finish_deleting_extents(
     let mut found = Vec::new();
     let names:Vec<String>=sqlx::query_scalar!("SELECT x.hash FROM core.blob_extents x WHERE x.deleting AND NOT EXISTS(SELECT 1 FROM core.blobs b WHERE b.hash=x.hash) AND NOT EXISTS(SELECT 1 FROM core.blob_chunks c WHERE c.chunk=x.hash) ORDER BY x.hash").fetch_all(&mut *conn).await?;
     for name in names {
-        if !blobs.delete(conn, &name).await? {
+        if blobs.held_by_pending_chunk(&name)? || !blobs.delete(conn, &name).await? {
             continue;
         }
         sqlx::query!(
@@ -232,9 +257,13 @@ pub async fn finish_deleting_extents(
     Ok(found)
 }
 /// Bytes already committed by admission need no separate filesystem marker ledger.
-pub async fn commit_pending_extents(conn: &mut sqlx::PgConnection, blobs: &Blobs) -> Result<()> {
+pub async fn commit_pending_extents(
+    conn: &mut sqlx::PgConnection,
+    blobs: &Blobs,
+    names: &[String],
+) -> Result<()> {
     let mut tx = conn.begin().await?;
-    let extent_commit = blobs.commit_extents(&mut tx).await?;
+    let extent_commit = blobs.commit_extents(&mut tx, names).await?;
     tx.commit().await?;
     blobs.acknowledge(extent_commit)
 }

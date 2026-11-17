@@ -666,7 +666,7 @@ async fn backup_release_dirties_held_punches_for_the_next_group_without_reopen(
         .execute(&mut conn)
         .await
         .unwrap();
-    sinex_store::blobs::commit_pending_extents(&mut conn, &blobs)
+    sinex_store::blobs::commit_pending_extents(&mut conn, &blobs, std::slice::from_ref(&name))
         .await
         .unwrap();
     let before = std::fs::read(root.path().join("segments/current.hb")).unwrap();
@@ -688,7 +688,9 @@ async fn backup_release_dirties_held_punches_for_the_next_group_without_reopen(
         .await
         .unwrap();
     // Mirror the marker a real tombstone commits.
-    sinex_store::blobs::commit_pending_extents(&mut conn, &blobs)
+    sqlx::query("UPDATE core.blob_extents SET deleting=true WHERE hash=$1")
+        .bind(&name)
+        .execute(&mut conn)
         .await
         .unwrap();
     handle.backup_release(one.id, "operator").await.unwrap();

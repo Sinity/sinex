@@ -119,9 +119,13 @@ async fn paired_dumps_and_segment_copy_keep_the_hold_state_while_the_writer_adva
     let blobs = sinex_store::Blobs::open(source.path()).unwrap();
     blobs.load(&mut conn).await.unwrap();
     let original_name = blobs.put(b"original independent byte oracle").unwrap();
-    sinex_store::blobs::commit_pending_extents(&mut conn, &blobs)
-        .await
-        .unwrap();
+    sinex_store::blobs::commit_pending_extents(
+        &mut conn,
+        &blobs,
+        std::slice::from_ref(&original_name),
+    )
+    .await
+    .unwrap();
     key(&mut conn, "original-key", b"original-wrapped-key").await;
     let original = std::fs::read(source.path().join("segments/current.hb")).unwrap();
     let (writer, queues) = crate::writer::channels();

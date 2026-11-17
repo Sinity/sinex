@@ -48,11 +48,11 @@ fn deduplicating_an_existing_extent_does_not_rewrite_its_segment() {
     let dir = tempfile::tempdir().unwrap();
     let blobs = Blobs::open(dir.path()).unwrap();
     let name = blobs.put(BODY).unwrap();
-    blobs.sync_pending().unwrap();
+    blobs.sync_pending(std::slice::from_ref(&name)).unwrap();
     let before = std::fs::metadata(dir.path().join(SEGMENT)).unwrap();
     let descriptor = blobs.descriptors(&name).unwrap();
     assert_eq!(blobs.put(BODY).unwrap(), name);
-    blobs.sync_pending().unwrap();
+    blobs.sync_pending(std::slice::from_ref(&name)).unwrap();
     let after = std::fs::metadata(dir.path().join(SEGMENT)).unwrap();
     assert_eq!(
         (before.ino(), before.len(), before.mode()),

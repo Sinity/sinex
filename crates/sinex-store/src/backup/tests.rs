@@ -5,7 +5,10 @@ use sqlx::Connection;
 async fn stored(conn: &mut PgConnection, blobs: &Blobs, bytes: &[u8]) -> String {
     let name = blobs.put(bytes).unwrap();
     let mut tx = conn.begin().await.unwrap();
-    let extent_commit = blobs.commit_extents(&mut tx).await.unwrap();
+    let extent_commit = blobs
+        .commit_extents(&mut tx, std::slice::from_ref(&name))
+        .await
+        .unwrap();
     tx.commit().await.unwrap();
     blobs.acknowledge(extent_commit).unwrap();
     name

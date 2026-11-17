@@ -173,7 +173,10 @@ async fn grouped_extents_commit_with_rows_and_recovery_truncates_only_the_tail(
         "preparation has no installed segment"
     );
     let mut tx = conn.begin().await.unwrap();
-    let extent_commit = blobs.commit_extents(&mut tx).await.unwrap();
+    let extent_commit = blobs
+        .commit_extents(&mut tx, &[first.clone(), second.clone()])
+        .await
+        .unwrap();
     sqlx::query(
         "INSERT INTO core.blobs(hash,size,status) VALUES($1,20,'present'),($2,21,'present')",
     )
@@ -192,7 +195,7 @@ async fn grouped_extents_commit_with_rows_and_recovery_truncates_only_the_tail(
     blobs.acknowledge(extent_commit).unwrap();
     let committed = std::fs::metadata(dir.path().join(SEGMENT)).unwrap().len();
     let orphan = blobs.put(b"synced but no database commit").unwrap();
-    blobs.sync_pending().unwrap();
+    blobs.sync_pending(std::slice::from_ref(&orphan)).unwrap();
     assert!(std::fs::metadata(dir.path().join(SEGMENT)).unwrap().len() > committed);
     drop(blobs);
     let reopened = Blobs::open(dir.path()).unwrap();
@@ -221,6 +224,7 @@ async fn orphan_extents_are_marked_before_punch_and_committed_siblings_survive(
         .execute(&mut conn)
         .await
         .unwrap();
+    blobs.sync_pending(&[keep.clone(), orphan.clone()]).unwrap();
     let result = delete_unreferenced_extents(&mut conn, &blobs)
         .await
         .unwrap();
@@ -264,7 +268,9 @@ async fn recovery_refuses_an_extent_beyond_the_index_boundary_before_truncating(
         .execute(&mut conn)
         .await
         .unwrap();
-    commit_pending_extents(&mut conn, &blobs).await.unwrap();
+    commit_pending_extents(&mut conn, &blobs, std::slice::from_ref(&name))
+        .await
+        .unwrap();
     let path = root.path().join(SEGMENT);
     let original = std::fs::read(&path).unwrap();
     drop(blobs);
@@ -310,14 +316,16 @@ async fn recovery_finishes_catalog_deletion_after_an_earlier_punch_removed_its_e
 fn an_unloaded_existing_index_never_truncates_stored_segments() {
     let root = tempfile::tempdir().unwrap();
     let blobs = Blobs::open(root.path()).unwrap();
-    blobs.put(b"original").unwrap();
-    blobs.sync_pending().unwrap();
+    let original_name = blobs.put(b"original").unwrap();
+    blobs
+        .sync_pending(std::slice::from_ref(&original_name))
+        .unwrap();
     drop(blobs);
     let path = root.path().join(SEGMENT);
     let original = std::fs::read(&path).unwrap();
     let reopened = Blobs::open(root.path()).unwrap();
-    reopened.put(b"later").unwrap();
-    assert!(reopened.sync_pending().is_err());
+    let later = reopened.put(b"later").unwrap();
+    assert!(reopened.sync_pending(std::slice::from_ref(&later)).is_err());
     assert_eq!(std::fs::read(path).unwrap(), original);
 }
 
@@ -335,7 +343,9 @@ async fn readmitting_bytes_clears_a_failed_deletion_marker_in_the_same_commit(
         .execute(&mut conn)
         .await
         .unwrap();
-    commit_pending_extents(&mut conn, &blobs).await.unwrap();
+    commit_pending_extents(&mut conn, &blobs, std::slice::from_ref(&name))
+        .await
+        .unwrap();
     sqlx::query("UPDATE core.blobs SET status='deleting' WHERE hash=$1")
         .bind(&name)
         .execute(&mut conn)
@@ -375,7 +385,10 @@ async fn readmitting_bytes_clears_a_failed_deletion_marker_in_the_same_commit(
         !deleting,
         "registration clears the marker before extent commit"
     );
-    let extent_commit = blobs.commit_extents(&mut tx).await.unwrap();
+    let extent_commit = blobs
+        .commit_extents(&mut tx, std::slice::from_ref(&name))
+        .await
+        .unwrap();
     tx.commit().await.unwrap();
     blobs.acknowledge(extent_commit).unwrap();
     drop(blobs);
@@ -409,7 +422,9 @@ async fn extent_commit_records_a_new_extent_among_unrelated_catalog_history(
     let root = tempfile::tempdir().unwrap();
     let blobs = Blobs::open(root.path()).unwrap();
     let name = blobs.put(b"existing bytes").unwrap();
-    commit_pending_extents(&mut conn, &blobs).await.unwrap();
+    commit_pending_extents(&mut conn, &blobs, std::slice::from_ref(&name))
+        .await
+        .unwrap();
     // Unrelated rows need no segment bytes: this test never loads or reads them.
     sqlx::query("INSERT INTO core.blobs(hash,size,status) SELECT 'blake3:'||lpad(to_hex(n),64,'0'),1,'present' FROM generate_series(1,8192) n")
         .execute(&mut conn).await.unwrap();
@@ -417,7 +432,10 @@ async fn extent_commit_records_a_new_extent_among_unrelated_catalog_history(
         .bind(&name).execute(&mut conn).await.unwrap();
     let new = blobs.put(b"one new extent").unwrap();
     let mut tx = conn.begin().await.unwrap();
-    let extent_commit = blobs.commit_extents(&mut tx).await.unwrap();
+    let extent_commit = blobs
+        .commit_extents(&mut tx, std::slice::from_ref(&new))
+        .await
+        .unwrap();
     let recorded: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM core.blob_extents WHERE hash=$1 AND NOT deleting)",
     )
@@ -446,7 +464,9 @@ async fn new_extents_inherit_only_their_own_catalog_deletion_marker(db: devkit::
         .execute(&mut conn)
         .await
         .unwrap();
-    commit_pending_extents(&mut conn, &blobs).await.unwrap();
+    commit_pending_extents(&mut conn, &blobs, &[deleting.clone(), uncatalogued.clone()])
+        .await
+        .unwrap();
     for (name, expected) in [(&deleting, true), (&uncatalogued, false)] {
         let actual: bool =
             sqlx::query_scalar("SELECT deleting FROM core.blob_extents WHERE hash=$1")
@@ -462,12 +482,146 @@ async fn new_extents_inherit_only_their_own_catalog_deletion_marker(db: devkit::
         .execute(&mut conn)
         .await
         .unwrap();
-    blobs.put(b"unrelated new group").unwrap();
-    commit_pending_extents(&mut conn, &blobs).await.unwrap();
+    let new = blobs.put(b"unrelated new group").unwrap();
+    commit_pending_extents(&mut conn, &blobs, std::slice::from_ref(&new))
+        .await
+        .unwrap();
     let marked: bool = sqlx::query_scalar("SELECT deleting FROM core.blob_extents WHERE hash=$1")
         .bind(&uncatalogued)
         .fetch_one(&mut conn)
         .await
         .unwrap();
     assert!(marked);
+}
+
+#[devkit::test]
+async fn admission_commits_only_its_material_and_empty_drain_keeps_unadmitted_bytes(
+    db: devkit::pg::TestDatabase,
+) {
+    let root = tempfile::tempdir().unwrap();
+    let blobs = Blobs::open(root.path()).unwrap();
+    // The source keeps its original until the material's admission answers.
+    let original_a = b"source A awaiting admission";
+    let a = blobs.put(original_a).unwrap();
+    let original_b = b"source B admitted first";
+    let b = blobs.put(original_b).unwrap();
+    let material = |blob: &str, length| crate::stages::Unparsed {
+        id: sinex_model::MaterialId::new(),
+        binding: blob.to_owned(),
+        input: sinex_model::InputRef {
+            kind: "file".into(),
+            locator: format!("/synthetic/{blob}"),
+            host: "test".into(),
+        },
+        observation: Default::default(),
+        blob: blob.to_owned(),
+        length,
+        manifest: Default::default(),
+    };
+    let b_material = material(&b, original_b.len() as u64);
+    let mut writer = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap()
+        .with_blobs(Some(blobs.clone()));
+    let mut refused = writer.begin().await.unwrap();
+    refused.register_unparsed(&b_material).await.unwrap();
+    refused.rollback().await.unwrap();
+    assert!(blobs.state().unwrap().extents.is_empty());
+    let mut accepted = writer.begin().await.unwrap();
+    accepted.register_unparsed(&b_material).await.unwrap();
+    accepted.commit().await.unwrap();
+    {
+        let state = blobs.state().unwrap();
+        assert!(state.prepared.contains_key(&parse(&a).unwrap()));
+        assert!(!state.extents.contains_key(&parse(&a).unwrap()));
+        assert!(state.extents.contains_key(&parse(&b).unwrap()));
+    }
+    let end = std::fs::metadata(root.path().join(SEGMENT)).unwrap().len();
+    writer.begin().await.unwrap().commit().await.unwrap();
+    commit_pending_extents(&mut writer, &blobs, &[])
+        .await
+        .unwrap();
+    delete_unreferenced_extents(&mut writer, &blobs)
+        .await
+        .unwrap();
+    assert!(
+        blobs
+            .state()
+            .unwrap()
+            .prepared
+            .contains_key(&parse(&a).unwrap())
+    );
+    assert_eq!(
+        std::fs::metadata(root.path().join(SEGMENT)).unwrap().len(),
+        end
+    );
+    writer.close().await.unwrap();
+    drop(blobs);
+
+    let reopened = Blobs::open(root.path()).unwrap();
+    let mut writer = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap()
+        .with_blobs(Some(reopened.clone()));
+    reopened.recover(&mut writer).await.unwrap();
+    assert_eq!(reopened.read(&b).unwrap(), original_b);
+    assert!(!reopened.contains(&a).unwrap());
+    // Unadmitted A has no acknowledged cursor; its retained source retries it.
+    assert_eq!(reopened.put(original_a).unwrap(), a);
+    let mut retry = writer.begin().await.unwrap();
+    retry
+        .register_unparsed(&material(&a, original_a.len() as u64))
+        .await
+        .unwrap();
+    retry.commit().await.unwrap();
+    assert_eq!(reopened.read(&a).unwrap(), original_a);
+    let end = std::fs::metadata(root.path().join(SEGMENT)).unwrap().len();
+    let mut repeat = writer.begin().await.unwrap();
+    repeat
+        .register_unparsed(&material(&a, original_a.len() as u64))
+        .await
+        .unwrap();
+    repeat.commit().await.unwrap();
+    assert_eq!(
+        std::fs::metadata(root.path().join(SEGMENT)).unwrap().len(),
+        end
+    );
+}
+
+#[devkit::test]
+async fn material_without_held_bytes_cannot_commit_an_acknowledged_reference(
+    db: devkit::pg::TestDatabase,
+) {
+    let root = tempfile::tempdir().unwrap();
+    let blobs = Blobs::open(root.path()).unwrap();
+    let missing = format!("blake3:{}", blake3::hash(b"missing source bytes").to_hex());
+    let mut writer = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap()
+        .with_blobs(Some(blobs));
+    let mut tx = writer.begin().await.unwrap();
+    tx.register_unparsed(&crate::stages::Unparsed {
+        id: sinex_model::MaterialId::new(),
+        binding: "synthetic".into(),
+        input: sinex_model::InputRef {
+            kind: "file".into(),
+            locator: "/synthetic".into(),
+            host: "test".into(),
+        },
+        observation: Default::default(),
+        blob: missing,
+        length: 20,
+        manifest: Default::default(),
+    })
+    .await
+    .unwrap();
+    let error = tx.commit().await.unwrap_err();
+    assert!(
+        matches!(error, crate::Error::Invalid(reason) if reason.contains("has no synced extent"))
+    );
+    let materials: i64 = sqlx::query_scalar("SELECT count(*) FROM raw.materials")
+        .fetch_one(&mut *writer)
+        .await
+        .unwrap();
+    assert_eq!(materials, 0);
 }

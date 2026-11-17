@@ -1576,7 +1576,7 @@ async fn deletion_marker_is_atomic_with_catalog_transition_and_material_readmiss
     let blobs = crate::Blobs::open(dir.path()).unwrap();
     let name = blobs.put(b"abc").unwrap();
     material(&mut conn, &name).await;
-    crate::blobs::commit_pending_extents(&mut conn, &blobs)
+    crate::blobs::commit_pending_extents(&mut conn, &blobs, std::slice::from_ref(&name))
         .await
         .unwrap();
     let mut tx = conn.begin().await.unwrap();
@@ -1644,7 +1644,7 @@ async fn deleting_a_direct_blob_preserves_its_bytes_as_a_held_chunk_then_reclaim
         .execute(&mut *conn)
         .await
         .unwrap();
-    crate::blobs::commit_pending_extents(&mut conn, &blobs)
+    crate::blobs::commit_pending_extents(&mut conn, &blobs, std::slice::from_ref(&direct))
         .await
         .unwrap();
     // First mark the directly stored blob. Later admission of the chunked blob
@@ -1680,7 +1680,7 @@ async fn deleting_a_direct_blob_preserves_its_bytes_as_a_held_chunk_then_reclaim
         .execute(&mut *conn)
         .await
         .unwrap();
-    crate::blobs::commit_pending_extents(&mut conn, &blobs)
+    crate::blobs::commit_pending_extents(&mut conn, &blobs, std::slice::from_ref(&parent))
         .await
         .unwrap();
     let marked: bool = sqlx::query_scalar("SELECT deleting FROM core.blob_extents WHERE hash=$1")

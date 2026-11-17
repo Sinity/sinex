@@ -2,6 +2,7 @@
 use crate::{DirtyKeys, Outcome, Result, privacy};
 use sinex_model::Batch;
 use sqlx::{Connection, PgConnection, Postgres, Transaction};
+use std::collections::BTreeSet;
 use std::ops::{Deref, DerefMut};
 
 /// Holds the writer claim, schema validation and privacy cache for one session.
@@ -84,6 +85,7 @@ impl AdmissionContext {
             committed: false,
             privacy: &mut self.privacy,
             blobs: self.blobs.clone(),
+            required_blobs: BTreeSet::new(),
         })
     }
 
@@ -111,17 +113,20 @@ pub struct AdmissionTransaction<'a> {
     committed: bool,
     privacy: &'a mut privacy::Cache,
     blobs: Option<crate::Blobs>,
+    required_blobs: BTreeSet<String>,
 }
 
 impl AdmissionTransaction<'_> {
     pub async fn admit(&mut self, batch: &Batch, keys: &dyn DirtyKeys) -> Result<Outcome> {
-        crate::admission::admit(
+        let (outcome, required_blobs) = crate::admission::admit(
             self.transaction.as_mut().expect("open transaction"),
             self.privacy,
             batch,
             keys,
         )
-        .await
+        .await?;
+        self.required_blobs.extend(required_blobs);
+        Ok(outcome)
     }
     /// The transaction's connection, for statements outside admission that
     /// commit with it.
@@ -136,18 +141,20 @@ impl AdmissionTransaction<'_> {
             self.transaction.as_mut().expect("open transaction"),
             unparsed,
         )
-        .await
+        .await?;
+        self.required_blobs.insert(unparsed.blob.clone());
+        Ok(())
     }
 
     pub async fn commit(mut self) -> Result<()> {
         let extent_commit = if let Some(blobs) = &self.blobs {
-            let store = blobs.clone();
-            tokio::task::spawn_blocking(move || store.sync_pending())
-                .await
-                .map_err(|error| crate::Error::Invalid(error.to_string()))??;
+            let required: Vec<_> = self.required_blobs.iter().cloned().collect();
             Some(
                 blobs
-                    .commit_extents(self.transaction.as_mut().expect("open transaction"))
+                    .commit_extents(
+                        self.transaction.as_mut().expect("open transaction"),
+                        &required,
+                    )
                     .await?,
             )
         } else {
