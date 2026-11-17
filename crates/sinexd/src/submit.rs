@@ -421,12 +421,18 @@ struct Preparation {
 
 impl Preparation {
     fn run(
-        self,
+        mut self,
         acquired: drivers::Acquired,
         carry: Value,
         send: blocking::BatchSender,
     ) -> Result<()> {
         let started = Instant::now();
+        let cancelled = send.cancellation_check();
+        let check = self.check;
+        self.check = Arc::new(move || {
+            cancelled()?;
+            check()
+        });
         (self.check)()?;
         let mut framed = acquired
             .material
@@ -438,7 +444,7 @@ impl Preparation {
             self.run,
             acquired,
             carry,
-            self.material.sink(),
+            &self.material.sink(self.check.clone()),
             if self.atomic {
                 Limits {
                     max_events: usize::MAX,

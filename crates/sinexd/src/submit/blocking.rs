@@ -80,9 +80,14 @@ pub(super) struct BatchSender {
     send: mpsc::Sender<Result<Parsed>>,
     permits: Arc<Semaphore>,
     runtime: tokio::runtime::Handle,
+    cancelled: Arc<AtomicBool>,
 }
 
 impl BatchSender {
+    pub(super) fn cancellation_check(&self) -> crate::writer::AdmissionCheck {
+        cancellation_check(self.cancelled.clone())
+    }
+
     pub(super) fn permit(&self) -> Option<BatchPermit> {
         let permit = self
             .runtime
@@ -115,10 +120,12 @@ impl Batches {
         let budget = capacity(priority).await?;
         let (send, receive) = mpsc::channel(1);
         let permits = Arc::new(Semaphore::new(2));
+        let cancelled = Arc::new(AtomicBool::new(false));
         let sender = BatchSender {
             send: send.clone(),
             permits: permits.clone(),
             runtime: tokio::runtime::Handle::current(),
+            cancelled: cancelled.clone(),
         };
         let worker = tokio::task::spawn_blocking(move || {
             let _budget = budget;
@@ -130,22 +137,12 @@ impl Batches {
             receive,
             permits,
             worker: Some(worker),
-            cancelled: Arc::new(AtomicBool::new(false)),
+            cancelled,
         })
     }
 
     pub(super) fn cancellation_check(&self) -> crate::writer::AdmissionCheck {
-        let cancelled = self.cancelled.clone();
-        Arc::new(move || {
-            if cancelled.load(Ordering::Acquire) {
-                Err(Error::new(
-                    command_surface::FailureKind::Cancelled,
-                    "submission cancelled",
-                ))
-            } else {
-                Ok(())
-            }
-        })
+        cancellation_check(self.cancelled.clone())
     }
 
     pub(super) async fn next(&mut self) -> Option<Result<Parsed>> {
@@ -171,6 +168,19 @@ impl Drop for Batches {
         self.permits.close();
         self.receive.close();
     }
+}
+
+fn cancellation_check(cancelled: Arc<AtomicBool>) -> crate::writer::AdmissionCheck {
+    Arc::new(move || {
+        if cancelled.load(Ordering::Acquire) {
+            Err(Error::new(
+                command_surface::FailureKind::Cancelled,
+                "submission cancelled",
+            ))
+        } else {
+            Ok(())
+        }
+    })
 }
 
 #[cfg(test)]

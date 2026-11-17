@@ -1,6 +1,8 @@
 //! Store and open material bytes for capture, requests and replay.
 use crate::{Error, Result};
+mod checked;
 mod material;
+pub(crate) use checked::CheckedReader;
 pub(crate) mod sealing;
 pub(crate) use material::{MaterialOnDemand, open, open_checked};
 use sealing::{SealingSink, Unlock, class_key, read_limits};
@@ -151,10 +153,13 @@ impl MaterialAccess {
             )?))),
         }
     }
-    pub(crate) fn sink(&self) -> &dyn drivers::MaterialSink {
-        match &self.sealing {
-            Some(sink) => sink.as_ref(),
-            None => &self.plain,
+    pub(crate) fn sink(
+        &self,
+        check: crate::writer::AdmissionCheck,
+    ) -> impl drivers::MaterialSink + '_ {
+        checked::CheckedSink {
+            material: self,
+            check,
         }
     }
     pub(crate) fn check(&self) -> Result<()> {
