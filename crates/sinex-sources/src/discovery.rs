@@ -96,9 +96,43 @@ pub fn discover(context: &DiscoveryContext) -> Result<Vec<DiscoveredInput>, Stri
 
 /// Session capabilities are known by the producer, not the daemon's account.
 pub fn status(context: &DiscoveryContext) -> Result<Vec<DiscoveredInput>, String> {
-    let mut inputs = discover(context)?;
+    validate(context)?;
+    Ok(sources::formats()
+        .iter()
+        .flat_map(|format| status_format(format, context))
+        .collect())
+}
+
+fn status_format(format: &InputFormat, context: &DiscoveryContext) -> Vec<DiscoveredInput> {
+    let specs = (format.specs)();
+    // Explicit archives and local locations still need their real discovery.
+    // A producer-only stream has no local availability for this account to read.
+    let producer_only = format.capture.is_some()
+        && format.discovery.captured_by == CapturedBy::Session
+        && !format.discovery.streams.is_empty()
+        && specs.len() == 1
+        && !format.on_demand(specs[0])
+        && format.discovery.locations.is_empty()
+        && context.inputs.get(format.name).is_none_or(Vec::is_empty);
+    let mut inputs = if producer_only {
+        if context
+            .exclude
+            .get(specs[0].name)
+            .is_some_and(Option::is_some)
+        {
+            discover_format(format, context)
+        } else {
+            capture_format_inputs(context, format, false)
+        }
+    } else {
+        (format.discover)(format, context)
+    };
     for input in &mut inputs {
-        if input.capture
+        if let Some(Some(exclusion)) = context.exclude.get(&input.source) {
+            input.availability = Availability::Excluded;
+            input.reason = Some(exclusion.reason.clone());
+            input.bindings.clear();
+        } else if input.capture
             && sources::format(&input.format)
                 .is_some_and(|format| format.discovery.captured_by == CapturedBy::Session)
             && input.availability != Availability::Excluded
@@ -111,7 +145,7 @@ pub fn status(context: &DiscoveryContext) -> Result<Vec<DiscoveredInput>, String
             input.bindings.clear();
         }
     }
-    Ok(inputs)
+    inputs
 }
 
 /// Every location a declared source reads on this host, resolved: the
@@ -457,72 +491,79 @@ fn capture_inputs(
     captured_by: CapturedBy,
     check_capabilities: bool,
 ) -> Vec<DiscoveredInput> {
-    let mut out = Vec::new();
-    for format in sources::formats()
+    sources::formats()
         .iter()
         .copied()
         .filter(|format| format.capture.is_some() && format.discovery.captured_by == captured_by)
-    {
-        let spec = (format.specs)()[0];
-        if context.exclude.get(spec.name).is_some_and(Option::is_some) {
-            continue;
+        .flat_map(|format| capture_format_inputs(context, format, check_capabilities))
+        .collect()
+}
+
+fn capture_format_inputs(
+    context: &DiscoveryContext,
+    format: &InputFormat,
+    check_capabilities: bool,
+) -> Vec<DiscoveredInput> {
+    let mut out = Vec::new();
+    let spec = (format.specs)()[0];
+    if context.exclude.get(spec.name).is_some_and(Option::is_some) {
+        return out;
+    }
+    let configured = context.sources.get(spec.name).cloned().unwrap_or_default();
+    for stream in format.discovery.streams {
+        let mut options: serde_json::Value = stream.settings();
+        if stream.capabilities.contains(&"watch") {
+            options["roots"] = json!(context.watch);
         }
-        let configured = context.sources.get(spec.name).cloned().unwrap_or_default();
-        for stream in format.discovery.streams {
-            let mut options: serde_json::Value = stream.settings();
-            if stream.capabilities.contains(&"watch") {
-                options["roots"] = json!(context.watch);
+        if let Some(configured) = configured.options.as_object() {
+            if !options.is_object() {
+                options = json!({});
             }
-            if let Some(configured) = configured.options.as_object() {
-                if !options.is_object() {
-                    options = json!({});
-                }
-                options.as_object_mut().unwrap().extend(configured.clone());
-            }
-            let input = context.spool.join(stream.spool);
-            let settings = Settings {
-                host: context.host.clone(),
-                class: configured.class,
-                zone: configured.zone.clone(),
-                options: options.clone(),
-            };
-            let missing: Vec<_> = format
-                .discovery
-                .capabilities
-                .iter()
-                .chain(stream.capabilities)
-                .filter(|name| check_capabilities && !capability(context, name))
-                .copied()
-                .collect();
-            let mut found = DiscoveredInput {
-                format: format.name.into(),
-                source: spec.name.into(),
-                input: Some(input.clone()),
-                settings,
-                availability: Availability::Unavailable(Cause::NotApplicable),
-                capture: true,
-                reason: None,
-                bindings: vec![],
-            };
-            if !missing.is_empty() {
-                found.reason = Some(format!("capture requires {}", missing.join(", ")));
-            } else {
-                match crate::live::binding(format.name, &input, &context.host, options) {
-                    Ok((_, mut binding)) => {
-                        binding.settings.class = configured.class;
-                        binding.settings.zone = configured.zone.clone();
-                        found.settings = binding.settings.clone();
-                        found.bindings.push(binding);
-                        found.availability = Availability::Capturing;
-                    }
-                    Err(error) => {
-                        found.availability = Availability::Unavailable(Cause::Failed);
-                        found.reason = Some(error);
-                    }
-                }
-            }
-            out.push(found);
+            options.as_object_mut().unwrap().extend(configured.clone());
         }
+        let input = context.spool.join(stream.spool);
+        let settings = Settings {
+            host: context.host.clone(),
+            class: configured.class,
+            zone: configured.zone.clone(),
+            options: options.clone(),
+        };
+        let missing: Vec<_> = format
+            .discovery
+            .capabilities
+            .iter()
+            .chain(stream.capabilities)
+            .filter(|name| check_capabilities && !capability(context, name))
+            .copied()
+            .collect();
+        let mut found = DiscoveredInput {
+            format: format.name.into(),
+            source: spec.name.into(),
+            input: Some(input.clone()),
+            settings,
+            availability: Availability::Unavailable(Cause::NotApplicable),
+            capture: true,
+            reason: None,
+            bindings: vec![],
+        };
+        if !missing.is_empty() {
+            found.reason = Some(format!("capture requires {}", missing.join(", ")));
+        } else {
+            match crate::live::binding(format.name, &input, &context.host, options) {
+                Ok((_, mut binding)) => {
+                    binding.settings.class = configured.class;
+                    binding.settings.zone = configured.zone.clone();
+                    found.settings = binding.settings.clone();
+                    found.bindings.push(binding);
+                    found.availability = Availability::Capturing;
+                }
+                Err(error) => {
+                    found.availability = Availability::Unavailable(Cause::Failed);
+                    found.reason = Some(error);
+                }
+            }
+        }
+        out.push(found);
     }
     out
 }

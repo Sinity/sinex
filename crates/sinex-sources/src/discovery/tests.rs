@@ -456,6 +456,127 @@ fn takeout_keeps_calendar_bindings_and_applies_calendar_settings_and_exclusions(
 }
 
 #[devkit::test]
+fn producer_only_status_does_not_run_local_discovery() {
+    let root = tempfile::tempdir().unwrap();
+    let mut context = context(root.path());
+    context.watch.push(root.path().into());
+    let producer = InputFormat {
+        discover: |_, _| panic!("producer-owned status must not invoke local discovery"),
+        ..sources::file_watch::FORMAT
+    };
+    let inputs = status_format(&producer, &context);
+    assert_eq!(inputs.len(), 1);
+    assert_eq!(inputs[0].availability, Availability::ProducerReported);
+    assert_eq!(inputs[0].input, Some(context.spool.join("files")));
+    assert!(inputs[0].bindings.is_empty());
+}
+
+#[devkit::test]
+fn status_still_discovers_local_and_archived_inputs() {
+    fn local(format: &InputFormat, context: &DiscoveryContext) -> Vec<DiscoveredInput> {
+        let mut inputs = discover_format(format, context);
+        for input in &mut inputs {
+            if !input.capture {
+                input.reason = Some("local discovery ran".into());
+            }
+        }
+        inputs
+    }
+    let root = tempfile::tempdir().unwrap();
+    let mut context = context(root.path());
+    let history = root.path().join("history");
+    std::fs::write(&history, ": 1700000000:0;fixture\n").unwrap();
+    context
+        .inputs
+        .insert("text-history".into(), vec![history.clone()]);
+    let format = InputFormat {
+        discover: local,
+        ..sources::text_history::FORMAT
+    };
+    let inputs = status_format(&format, &context);
+    assert!(
+        inputs
+            .iter()
+            .any(|input| input.input.as_ref() == Some(&history)
+                && input.availability == Availability::Capturing
+                && input.reason.as_deref() == Some("local discovery ran"))
+    );
+
+    let archive = root.path().join("archived-spool");
+    std::fs::create_dir(&archive).unwrap();
+    context
+        .inputs
+        .insert("file-watch".into(), vec![archive.clone()]);
+    let mixed = InputFormat {
+        discover: local,
+        ..sources::file_watch::FORMAT
+    };
+    let inputs = status_format(&mixed, &context);
+    assert!(inputs.iter().any(|input| !input.capture
+        && input.input.as_ref() == Some(&archive)
+        && input.availability == Availability::Capturing
+        && input.reason.as_deref() == Some("local discovery ran")));
+    assert!(inputs.iter().any(|input| input.capture
+        && input.availability == Availability::ProducerReported
+        && input.bindings.is_empty()));
+}
+
+#[devkit::test]
+fn producer_status_preserves_every_discovery_field() {
+    fn prior_status(context: &DiscoveryContext) -> Vec<DiscoveredInput> {
+        let mut inputs = discover(context).unwrap();
+        for input in &mut inputs {
+            if input.capture
+                && sources::format(&input.format)
+                    .unwrap()
+                    .discovery
+                    .captured_by
+                    == CapturedBy::Session
+                && input.availability != Availability::Excluded
+            {
+                input.availability = Availability::ProducerReported;
+                input.reason = Some(
+                    "session capture status is reported by the producer; no status frame received"
+                        .into(),
+                );
+                input.bindings.clear();
+            }
+        }
+        inputs
+    }
+    let root = tempfile::tempdir().unwrap();
+    let mut contexts = vec![context(root.path()), synthetic_home(root.path())];
+    let configured = contexts.last_mut().unwrap();
+    configured.sources.insert(
+        (sources::media_capture::FORMAT.specs)()[0].name.into(),
+        SourceConfig {
+            class: Some(Class::Guarded),
+            zone: Some("Europe/Warsaw".into()),
+            options: serde_json::json!({"every": "5"}),
+        },
+    );
+    let mut excluded = configured.clone();
+    excluded.exclude.insert(
+        (sources::file_watch::FORMAT.specs)()[0].name.into(),
+        Some(Exclusion {
+            reason: "synthetic exclusion".into(),
+        }),
+    );
+    contexts.push(excluded);
+    let mut mixed = contexts[1].clone();
+    let archive = root.path().join("mixed-spool");
+    std::fs::create_dir(&archive).unwrap();
+    mixed.inputs.insert("file-watch".into(), vec![archive]);
+    contexts.push(mixed);
+    for context in contexts {
+        assert_eq!(
+            serde_json::to_value(status(&context).unwrap()).unwrap(),
+            serde_json::to_value(prior_status(&context)).unwrap()
+        );
+    }
+}
+
+#[devkit::test]
 fn daemon_status_leaves_session_captures_to_producer() {
     let root = tempfile::tempdir().unwrap();
     let context = context(root.path());
