@@ -638,6 +638,10 @@ fn shared_until_dates_and_explicit_comparisons_keep_distinct_boundaries() {
     assert_eq!(get(before), ts("2026-09-14T02:00:00Z"));
     assert_eq!(
         get(q("events where until:2026-09-14T10:00:00Z")),
+        ts("2026-09-14T10:00:01Z")
+    );
+    assert_eq!(
+        get(q("events where until:2026-09-14T10:00:00.000Z")),
         ts("2026-09-14T10:00:00Z")
     );
 }
