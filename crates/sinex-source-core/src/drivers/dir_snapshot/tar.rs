@@ -72,6 +72,10 @@ pub(super) fn capture(
         sparse,
     };
     let located = if let Some(classify) = locate {
+        // Sparse extent discovery uses seek and may leave this descriptor at EOF.
+        if let Err(error) = input.rewind() {
+            return Ok(Err(error.to_string()));
+        }
         let mut head = [0; 4096];
         let count = usize::try_from(size.min(head.len() as u64)).expect("bounded head");
         if let Err(error) = input.read_exact(&mut head[..count]) {
