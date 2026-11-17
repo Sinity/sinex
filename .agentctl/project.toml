@@ -125,7 +125,7 @@ exec = ["env"]
 arguments = "required"
 pool = "measure"
 result = "exit"
-timeout_seconds = 7200
+timeout_seconds = 14400
 scratch = "nvme"
 cache = "none"
 
