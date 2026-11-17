@@ -32,11 +32,13 @@ fn sparse_ranges_keep_leading_middle_and_final_holes_and_the_logical_digest() {
     }
     expected.resize(10 << 20, 0);
     input.set_len(expected.len() as u64).unwrap();
+    input.sync_all().unwrap();
     assert!(input.metadata().unwrap().blocks() * 512 < expected.len() as u64 / 2);
     let (_sender, stop) = watch::channel(false);
     let digest = copy(&mut input, &mut output, expected.len() as u64, &stop).unwrap();
     assert_eq!(std::fs::read(root.path().join("copy")).unwrap(), expected);
     assert_eq!(digest, blake3::hash(&expected));
+    output.sync_all().unwrap();
     assert!(
         output.metadata().unwrap().blocks() * 512 < expected.len() as u64 / 2,
         "the destination must retain physical holes, not merely zero bytes"
