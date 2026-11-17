@@ -174,7 +174,7 @@ fn ollama_metadata_does_not_read_weights_and_other_model_files_stay_full() {
     drop(file);
     // Stat is permitted; reading contents is not. This fails if capture hashes
     // the weight, including a move preflight or a fallback content read.
-    std::fs::set_permissions(&weight, std::fs::Permissions::from_mode(0)).unwrap();
+    std::fs::set_permissions(&weight, std::fs::Permissions::from_mode(0o0)).unwrap();
     let full = [
         "model/control-vector/authored.gguf".to_owned(),
         "model/unclassified/retained.bin".to_owned(),
@@ -302,8 +302,8 @@ fn selecting_metadata_keeps_existing_full_copy_facts_and_never_prepares_a_move()
         .path()
         .join(format!("model/ollama/blobs/sha256-{}", "d".repeat(64)));
     std::fs::write(&new_weight, b"previously captured weight").unwrap();
-    std::fs::set_permissions(&weight, std::fs::Permissions::from_mode(0)).unwrap();
-    std::fs::set_permissions(&new_weight, std::fs::Permissions::from_mode(0)).unwrap();
+    std::fs::set_permissions(&weight, std::fs::Permissions::from_mode(0o0)).unwrap();
+    std::fs::set_permissions(&new_weight, std::fs::Permissions::from_mode(0o0)).unwrap();
     let next = scanner.poll(&cursor, &mut state).unwrap();
     assert!(
         !next
