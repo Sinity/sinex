@@ -441,30 +441,14 @@ async fn shutdown_releases_source_and_backup_waiting_on_publication(db: devkit::
     let client = async_nats::connect(broker.url()).await.unwrap();
     let subjects = sinex_protocol::Subjects::sinex();
     let producer = broker.prefix().to_owned();
-    use futures::StreamExt;
+    use futures::{FutureExt, StreamExt};
     let mut requests = client.subscribe(subjects.backup(&producer)).await.unwrap();
     // An ordered broker response proves the subscription is installed.
     async_nats::jetstream::new(client.clone())
         .query_account()
         .await
         .unwrap();
-    let responder = tokio::spawn({
-        let client = client.clone();
-        async move {
-            let request = requests.next().await.unwrap();
-            client
-                .publish(
-                    request.reply.unwrap(),
-                    serde_json::to_vec(&sinex_protocol::backup::Reply::Unavailable {
-                        reason: "synthetic producer unavailable".into(),
-                    })
-                    .unwrap()
-                    .into(),
-                )
-                .await
-                .unwrap();
-        }
-    });
+    let producer_client = client.clone();
     let reads = sqlx::postgres::PgPoolOptions::new()
         .max_connections(2)
         .connect(&url)
@@ -560,7 +544,14 @@ async fn shutdown_releases_source_and_backup_waiting_on_publication(db: devkit::
         .await
         .expect("owned HTTP request released")
         .unwrap();
-    responder.await.unwrap();
+    async_nats::jetstream::new(producer_client)
+        .query_account()
+        .await
+        .unwrap();
+    assert!(
+        requests.next().now_or_never().is_none(),
+        "cancellation before preparation must not pause a producer"
+    );
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM public.backup_shutdown_probe")
             .fetch_one(&mut observer)
