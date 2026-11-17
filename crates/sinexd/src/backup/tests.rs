@@ -1228,10 +1228,19 @@ async fn leader_crash_reaps_real_dump_waiting_on_a_relation_lock(db: devkit::pg:
         .env("DATABASE", &url)
         .env("PGAPPNAME", "synthetic-owned-backup")
         .env("SNAPSHOT", snapshot);
+    let (registered, ready) = tokio::sync::oneshot::channel();
     let process = tokio::task::spawn_blocking(move || {
         let mut child = sinex_process::Child::spawn(&mut command).unwrap();
+        assert!(registered.send(child.control()).is_ok());
         child.wait().unwrap()
     });
+    struct Stop(std::sync::Arc<sinex_process::Control>);
+    impl Drop for Stop {
+        fn drop(&mut self) {
+            self.0.kill();
+        }
+    }
+    let _stop = Stop(ready.await.unwrap());
     let crashed = async {
         loop {
             let waiting:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND application_name='synthetic-owned-backup' AND wait_event_type='Lock')").fetch_one(&mut observer).await.unwrap();
