@@ -126,3 +126,8 @@ hash, and package derivation before building; a runtime signature alone does
 not identify the module source used to evaluate it.
 For a package or nixpkgs change, add `-f verify-vms=true` to verify the
 deployment module and the stack, topology and restore VMs in that workflow.
+
+The package workflow builds VM verification derivations one at a time, keeping
+each scenario's CPU and memory budget independent of other scenarios. For manual
+dispatch, the workflow ref selects the workflow code; the existing `rev` input
+selects the immutable product revision to build and verify.

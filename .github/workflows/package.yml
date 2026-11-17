@@ -61,7 +61,7 @@ jobs:
       - name: Verify the deployment module and VMs
         if: ${{ inputs.verify-vms }}
         run: |
-          nix build --no-link --print-build-logs \
+          nix build --no-link --print-build-logs --max-jobs 1 \
             "${FLAKE}#checks.x86_64-linux.postgresql-uuid-bounds" \
             "${FLAKE}#checks.x86_64-linux.postgresql-array-receive" \
             "${FLAKE}#checks.x86_64-linux.module" \
