@@ -131,7 +131,7 @@ impl Api {
         eprintln!("sinexd backup: waiting for running core compression policies before snapshot");
         let idle = async {
             let mut connection = self.reads.acquire().await?;
-            crate::backup::policy::wait_for_idle(&mut connection).await?;
+            crate::backup::policy::wait_for_visible_workers(&mut connection).await?;
             Ok::<_, Error>(())
         };
         tokio::select! {

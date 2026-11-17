@@ -1200,6 +1200,9 @@ fn copy_identity_is_bounded_and_preserves_other_connection_options() {
 async fn leader_crash_reaps_real_dump_waiting_on_a_relation_lock(db: devkit::pg::TestDatabase) {
     use sqlx::Connection;
     let url = db.url(None);
+    let tag = policy::application(OperationId::new());
+    let mut policy_owner = sinex_store::AdmissionContext::connect(&url).await.unwrap();
+    policy::pause(&mut policy_owner).await.unwrap();
     let mut exporter = sqlx::PgConnection::connect(&url).await.unwrap();
     sqlx::query("CREATE TABLE public.synthetic_backup_lock(value integer)")
         .execute(&mut exporter)
@@ -1226,7 +1229,7 @@ async fn leader_crash_reaps_real_dump_waiting_on_a_relation_lock(db: devkit::pg:
         "pg_dump --dbname=\"$DATABASE\" --schema-only --snapshot=\"$SNAPSHOT\" > /dev/null & child=$!; printf '%s %s\\n' $$ $child > \"$1\"; wait", "synthetic-backup"]).arg(root.path().join("pids"));
     command
         .env("DATABASE", &url)
-        .env("PGAPPNAME", "synthetic-owned-backup")
+        .env("PGAPPNAME", &tag)
         .env("SNAPSHOT", snapshot);
     let (registered, ready) = tokio::sync::oneshot::channel();
     let process = tokio::task::spawn_blocking(move || {
@@ -1243,7 +1246,7 @@ async fn leader_crash_reaps_real_dump_waiting_on_a_relation_lock(db: devkit::pg:
     let _stop = Stop(ready.await.unwrap());
     let crashed = async {
         loop {
-            let waiting:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND application_name='synthetic-owned-backup' AND wait_event_type='Lock')").fetch_one(&mut observer).await.unwrap();
+            let waiting:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND application_name=$1 AND wait_event_type='Lock')").bind(&tag).fetch_one(&mut observer).await.unwrap();
             if waiting {
                 break;
             }
@@ -1277,8 +1280,11 @@ async fn leader_crash_reaps_real_dump_waiting_on_a_relation_lock(db: devkit::pg:
             "owned child must be reaped"
         );
     }
+    // The client owns OS reaping; the daemon owns departure of its tagged
+    // database sessions, including a backend still waiting on this lock.
+    policy::finish(&mut policy_owner, Some(&tag)).await.unwrap();
     loop {
-        let remaining:i64=sqlx::query_scalar("SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND application_name='synthetic-owned-backup'").fetch_one(&mut observer).await.unwrap();
+        let remaining:i64=sqlx::query_scalar("SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND application_name=$1").bind(&tag).fetch_one(&mut observer).await.unwrap();
         if remaining == 0 {
             break;
         }
@@ -1289,4 +1295,5 @@ async fn leader_crash_reaps_real_dump_waiting_on_a_relation_lock(db: devkit::pg:
         .execute(&mut exporter)
         .await
         .unwrap();
+    policy_owner.close().await.unwrap();
 }

@@ -198,9 +198,11 @@ names the hold and whether the release succeeded.
 Admission continues while `pg_dump` holds its relation locks: batch payloads use the writer's temporary staging table, which logical dumps omit. The dump includes the declared empty staging template; the restored writer clones that layout through its normal claim path.
 
 Only one copy job runs at a time. Its stream owns the pause of Timescale's
-core compression policy; a durable backup hold does not. Any already running
-policy finishes before producers pause or a snapshot is exported, while
-admission remains available. The client watches
+core compression policy; a durable backup hold does not. A separate reader waits for visible running
+policies before producers pause or a snapshot is exported, while admission
+remains available. Timescale's scheduler cancels an already launched worker
+when it consumes the disabled-job update; the public job view does not expose
+the brief interval before a new worker registers its database session. The client watches
 that stream while copying. On daemon error, connection loss or a normal stop
 signal, it stops and reaps its admin process group before closing the stream.
 The daemon then closes the exporter, waits for its tagged import/dump database

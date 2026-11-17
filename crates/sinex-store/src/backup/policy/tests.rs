@@ -148,8 +148,15 @@ async fn copy_waits_for_an_already_running_policy_before_exporting(db: devkit::p
         .execute(&mut blocker)
         .await
         .unwrap();
+    let worker_name: String = sqlx::query_scalar(
+        "SELECT application_name::text FROM timescaledb_information.jobs WHERE job_id=$1",
+    )
+    .bind(job)
+    .fetch_one(&mut *owner)
+    .await
+    .unwrap();
     let options: PgConnectOptions = url.parse().unwrap();
-    let mut worker = PgConnection::connect_with(&options.application_name("synthetic-compression"))
+    let mut worker = PgConnection::connect_with(&options.application_name(&worker_name))
         .await
         .unwrap();
     let run = tokio::spawn(async move {
@@ -160,14 +167,25 @@ async fn copy_waits_for_an_already_running_policy_before_exporting(db: devkit::p
     });
     tokio::time::timeout(std::time::Duration::from_secs(10),async {
         loop {
-            let blocked:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND application_name='synthetic-compression' AND wait_event_type='Lock')").fetch_one(&mut *owner).await.unwrap();
+            let blocked:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND application_name=$1 AND wait_event_type='Lock')").bind(&worker_name).fetch_one(&mut *owner).await.unwrap();
             if blocked {break;}
             tokio::task::yield_now().await;
         }
     }).await.unwrap();
+    let running: bool = sqlx::query_scalar(
+        "SELECT job_status='Running' FROM timescaledb_information.job_stats WHERE job_id=$1",
+    )
+    .bind(job)
+    .fetch_one(&mut *owner)
+    .await
+    .unwrap();
+    assert!(
+        running,
+        "the real running job must be visible to the production wait"
+    );
     pause(&mut owner).await.unwrap();
     let mut reader = PgConnection::connect(&url).await.unwrap();
-    let idle = wait_for_idle(&mut reader);
+    let idle = wait_for_visible_workers(&mut reader);
     tokio::pin!(idle);
     assert!(idle.as_mut().now_or_never().is_none());
     // The separate wait does not retain the admission writer connection.

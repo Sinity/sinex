@@ -23,7 +23,7 @@ pub async fn pause(owner: &mut AdmissionContext) -> Result<()> {
 
 /// Disabling scheduling does not interrupt a worker that has already started.
 /// Wait outside the admission writer so capture continues while it finishes.
-pub async fn wait_for_idle(connection: &mut sqlx::PgConnection) -> Result<()> {
+pub async fn wait_for_visible_workers(connection: &mut sqlx::PgConnection) -> Result<()> {
     loop {
         let running:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM timescaledb_information.jobs jobs JOIN timescaledb_information.job_stats stats USING(job_id) WHERE jobs.proc_name='policy_compression' AND jobs.hypertable_schema='core' AND stats.job_status='Running')").fetch_one(&mut *connection).await?;
         if !running {
