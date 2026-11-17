@@ -97,23 +97,34 @@ async fn structured_inputs_skip_blob_reads_and_replay_replaces_text(db: devkit::
     let structured_blob = blobs.put(original).unwrap();
     let plain = b"complete plain document";
     let plain_blob = blobs.put(plain).unwrap();
-    // The reader's store holds the supported document only. A structured
-    // content fetch would fail, while the main store keeps its bytes.
-    let reader_directory = tempfile::tempdir().unwrap();
-    let reader_blobs = Blobs::open(reader_directory.path()).unwrap();
-    assert_eq!(reader_blobs.put(plain).unwrap(), plain_blob);
-    assert!(
-        reader_blobs
-            .locate(&mut read_conn, &structured_blob)
-            .await
-            .is_err()
-    );
     let events = vec![
         copy("dataset.jsonl", &structured_blob, 348_589_691, 0),
         copy("records.NDJSON", &structured_blob, original.len() as u64, 1),
         copy("notes.txt", &plain_blob, plain.len() as u64, 2),
     ];
     w.admit(events.clone()).await;
+    // Both readers use the same catalog. Corrupt only the structured frame in
+    // a synthetic segment copy: fetching it must fail while plain text remains
+    // readable and the original store's bytes remain intact.
+    let structured = blobs
+        .locate(&mut read_conn, &structured_blob)
+        .await
+        .unwrap();
+    let descriptor =
+        hashed_blobs::Extent::decode(&blobs.descriptors(&structured).unwrap()[0]).unwrap();
+    let mut segment = std::fs::read(directory.path().join(&descriptor.segment)).unwrap();
+    segment[descriptor.offset as usize..descriptor.end() as usize].fill(0);
+    let reader_directory = tempfile::tempdir().unwrap();
+    let target = reader_directory.path().join(&descriptor.segment);
+    std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+    std::fs::write(target, segment).unwrap();
+    let reader_blobs = Blobs::open(reader_directory.path()).unwrap();
+    assert!(reader_blobs.read(&structured).is_err());
+    let readable = reader_blobs
+        .locate(&mut read_conn, &plain_blob)
+        .await
+        .unwrap();
+    assert_eq!(reader_blobs.read(&readable).unwrap(), plain);
     let mut old = w
         .driver_with(vec![], vec![Box::new(PreviousDocumentText)])
         .await;
