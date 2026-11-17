@@ -155,11 +155,18 @@ The stores are the backup unit, and the deployment chooses the backup tool; Sine
 
 ### What a backup contains
 
-- a consistent logical dump of PostgreSQL, uncompressed so the backup tool's own compression and deduplication store only what changed, and without the rows of the search tables (`core.search_text`, `core.search_refusals`, `core.search_position`), which are rebuilt from the events;
+- a consistent PostgreSQL custom-format dump with native zstd compression at level 3, without the rows of the search tables (`core.search_text`, `core.search_refusals`, `core.search_position`), which are rebuilt from the events;
 - the segment log;
 - the wrapped data keys, through their protected route ([privacy.md](privacy.md));
 - configuration and credentials, through their owners (the deployment's secret store);
 - producer spools not yet acknowledged.
+
+PostgreSQL compresses each table-data segment inside its normal custom archive;
+`pg_restore` decompresses it during normal restoration. Compression reduces
+staging writes for compressible table data, but changes the bytes a backup tool
+deduplicates.
+Measure the resulting archive size and incremental deduplication; a previous
+compression ratio is a capacity estimate, not a guaranteed bound.
 
 Worktrees, caches and scratch are outside backups. NATS state is not backed up: committed changes are republished from PostgreSQL with the same commit positions, and unacknowledged frames are resent from the producer spools, which are in the backup ([producers.md](producers.md)).
 
@@ -203,9 +210,9 @@ These operations require the operator token. The daemon computes the operation's
 
 `prepare` is split between the daemon and the client that runs it. The daemon starts the copy job: it pauses the producers, creates a fresh hold and exports its snapshot inside the same writer job (after the hold commits and before another admission advances either counter), copies the producers' state into the output, and streams the job to the client. It keeps the exporting transaction open for as long as the client's connection stays open, and closes it when the client goes away or the daemon stops. Producer transfer writes and dump-file syncs run off the async workers, so file-system waits leave the daemon able to serve other tasks. The client copies the backup: `sinexctl backup prepare` runs `sinexd admin backup-copy` beside it, which imports the snapshot and runs both real `pg_dump` calls, the segment copy and the extent check. The bulk reads therefore belong to the client's process, run at its unit's priority (the deployment's backup class), and end with it. A database password, if the deployment uses one, comes from the client's environment. The new output directory must be absolute, private and writable by both the daemon and the client; an existing attempt is refused. A copy that fails releases its hold; a client that disappears leaves its hold open for the operator to release. The artifact contains:
 
-- `main/sinex.dump`, uncompressed, with wrapped-key table data and the rebuilt search tables' rows excluded;
+- `main/sinex.dump`, a zstd-compressed PostgreSQL custom archive, with wrapped-key table data and the rebuilt search tables' rows excluded;
 - `main/segments/`, containing only the committed prefixes, copied with bounded memory while later appends continue. On Linux filesystems that report data and hole ranges, the copy skips holes and preserves their logical zero bytes in the digest. Filesystems without range reporting use the same bounded dense copy. A short or truncated prefix is an error, never an inferred hole;
-- `keys/data-keys.dump`, containing the wrapped-key table data from that same snapshot;
+- `keys/data-keys.dump`, a zstd-compressed custom archive containing wrapped-key table data from that same snapshot;
 - the same versioned `manifest.json` in both parts, with the hold, database identity, source revision, file lengths and byte digests.
 
 Live extent descriptors are checked against the copied encoded bytes, including sealed encodings, before a root `manifest.json` is published and synced. The main dump still contains private database state, so both parts need protected staging and encrypted archives. No plaintext material keys are exported.

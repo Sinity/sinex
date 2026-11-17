@@ -182,13 +182,12 @@ async fn dump(
     });
     let stderr = file(&stderr_path)?;
     let mut command = pg_command("pg_dump", snapshot.database_url())?;
-    // Uncompressed, so the backup tool's own compression and deduplication
-    // see unchanged rows as unchanged; a compressed dump differs throughout
-    // from night to night.
+    // Compress table data inside the native custom archive rather than stage
+    // an uncompressed SQL copy. pg_restore owns its normal decompression.
     command
         .arg("--no-password")
         .arg("--format=custom")
-        .arg("--compress=0")
+        .arg("--compress=zstd:level=3")
         .arg(format!("--snapshot={}", snapshot.exported))
         .stderr(stderr)
         .stdout(file(&output.join(name))?)

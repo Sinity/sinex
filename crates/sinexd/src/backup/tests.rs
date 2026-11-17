@@ -928,10 +928,8 @@ async fn search_rows(conn: &mut PgConnection) -> Vec<(uuid::Uuid, String)> {
         .unwrap()
 }
 
-/// The main dump is uncompressed, so a deduplicating backup tool stores only
-/// what changed, and it leaves out the search tables and their position. A
-/// copy restored from it has no search rows and no position, and the search
-/// reader rebuilds the same rows from the restored events.
+/// Native zstd compression preserves restored bytes. Search tables and their
+/// position are excluded; the reader rebuilds them from the restored events.
 #[devkit::test]
 async fn restore_without_search_tables_rebuilds_search(db: devkit::pg::TestDatabase) {
     let url = db.url(None);
@@ -942,6 +940,18 @@ async fn restore_without_search_tables_rebuilds_search(db: devkit::pg::TestDatab
     let mut conn = PgConnection::connect(&url).await.unwrap();
     let blobs = sinex_store::Blobs::open(source.path()).unwrap();
     blobs.load(&mut conn).await.unwrap();
+    let original_bytes = [0, 1, b'\t', b'\n', b'\\', b'\r', 0x80, 0xff].repeat(1 << 20);
+    sqlx::query(
+        "CREATE TABLE public.backup_payload (id bigint PRIMARY KEY, payload bytea NOT NULL)",
+    )
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO public.backup_payload VALUES(1,$1)")
+        .bind(&original_bytes)
+        .execute(&mut conn)
+        .await
+        .unwrap();
     let (writer, queues) = crate::writer::channels();
     let task = tokio::spawn(crate::writer::run(
         url.clone(),
@@ -1020,8 +1030,20 @@ async fn restore_without_search_tables_rebuilds_search(db: devkit::pg::TestDatab
     assert!(listing.status.success());
     let listing = String::from_utf8(listing.stdout).unwrap();
     assert!(
-        listing.contains("Compression: none"),
-        "the main dump must be uncompressed:\n{listing}"
+        listing.contains("Compression: zstd"),
+        "the custom archive must use native zstd compression:\n{listing}"
+    );
+
+    let dump_bytes = std::fs::metadata(artifact.join("main/sinex.dump"))
+        .unwrap()
+        .len();
+    eprintln!(
+        "custom dump: {dump_bytes} bytes for {} synthetic payload bytes",
+        original_bytes.len()
+    );
+    assert!(
+        dump_bytes < original_bytes.len() as u64 / 2,
+        "the real dump must compress the synthetic byte payload, not stage its dense COPY text"
     );
 
     // Restore into an empty database, as the restore procedure does.
@@ -1060,6 +1082,15 @@ async fn restore_without_search_tables_rebuilds_search(db: devkit::pg::TestDatab
         .execute(&mut restored)
         .await
         .unwrap();
+    let restored_bytes: Vec<u8> =
+        sqlx::query_scalar("SELECT payload FROM public.backup_payload WHERE id=1")
+            .fetch_one(&mut restored)
+            .await
+            .unwrap();
+    assert_eq!(
+        restored_bytes, original_bytes,
+        "native pg_restore must preserve every byte"
+    );
     let events: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT id FROM core.events ORDER BY id")
         .fetch_all(&mut restored)
         .await
