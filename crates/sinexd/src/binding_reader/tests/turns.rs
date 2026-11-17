@@ -94,12 +94,7 @@ impl Reader for AfterAck {
             self.first_acked.load(Ordering::SeqCst),
             "the next binding cannot precede the first poll's committed acknowledgment"
         );
-        let poll = self.polls.fetch_add(1, Ordering::SeqCst) + 1;
-        if poll == 2
-            && let Some(stop) = &self.cancel
-        {
-            stop.send(true).unwrap();
-        }
+        self.polls.fetch_add(1, Ordering::SeqCst);
         self.inner.poll(cursor)
     }
     fn committed(&mut self, cursor: &Value) -> Result<usize, DriverError> {
