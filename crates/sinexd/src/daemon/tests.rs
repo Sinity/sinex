@@ -333,7 +333,6 @@ async fn shutdown_fails_when_writer_backend_cleanup_fails(db: devkit::pg::TestDa
 
 #[devkit::test]
 async fn shutdown_releases_source_and_backup_waiting_on_publication(db: devkit::pg::TestDatabase) {
-    use futures::FutureExt;
     use sinex_store::NoDerivations;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let url = db.url(None);
@@ -366,7 +365,6 @@ async fn shutdown_releases_source_and_backup_waiting_on_publication(db: devkit::
         .await
         .unwrap();
     let (handle, queues) = writer::channels();
-    let publication = handle.source_publication();
     let mut tasks = JoinSet::new();
     let database = url.clone();
     let store = blobs.clone();
@@ -493,6 +491,7 @@ async fn shutdown_releases_source_and_backup_waiting_on_publication(db: devkit::
         library_roots: vec![],
         library_cache: root.path().join("library-cache"),
     };
+    let active_copy = api.backup_copy.clone();
     let socket = root.path().join("api.sock");
     let config = api::Config {
         socket: socket.clone(),
@@ -525,15 +524,16 @@ async fn shutdown_releases_source_and_backup_waiting_on_publication(db: devkit::
     request.write_all(format!("GET /v1/backup/prepare?to={} HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer operator\r\nConnection: close\r\n\r\n", output.display()).as_bytes()).await.unwrap();
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            // This new reader can wait only once the backup's write guard is queued.
-            if publication.enter().now_or_never().is_none() {
+            // The admitted request owns the copy while its policy pause waits
+            // behind the source writer blocked above.
+            if active_copy.try_lock().is_err() {
                 break;
             }
             tokio::task::yield_now().await;
         }
     })
     .await
-    .expect("real admitted backup queued on source publication");
+    .expect("real admitted backup waiting for its policy pause");
     assert!(!root.path().join("backup/boundary.json").exists());
     drop(handle);
     stop.send_replace(true);

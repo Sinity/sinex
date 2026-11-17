@@ -160,16 +160,20 @@ async fn copy_waits_for_an_already_running_policy_before_exporting(db: devkit::p
     .fetch_one(&mut *owner)
     .await
     .unwrap();
-    let options: PgConnectOptions = url.parse().unwrap();
-    let mut worker = PgConnection::connect_with(&options.application_name(&worker_name))
-        .await
+    // psql retains the policy's warning detail when Timescale wraps a chunk
+    // failure in its aggregate error.
+    let run = tokio::process::Command::new("psql")
+        .arg("--no-psqlrc")
+        .arg("--set=ON_ERROR_STOP=1")
+        .arg("--command")
+        .arg(format!("CALL run_job({job})"))
+        .arg(&url)
+        .env("PGAPPNAME", &worker_name)
+        .kill_on_drop(true)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
         .unwrap();
-    let run = tokio::spawn(async move {
-        sqlx::query(&format!("CALL run_job({job})"))
-            .execute(&mut worker)
-            .await
-            .unwrap();
-    });
     tokio::time::timeout(std::time::Duration::from_secs(10),async {
         loop {
             let blocked:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND application_name=$1 AND wait_event_type='Lock')").bind(&worker_name).fetch_one(&mut *owner).await.unwrap();
@@ -196,7 +200,12 @@ async fn copy_waits_for_an_already_running_policy_before_exporting(db: devkit::p
     // The separate wait does not retain the admission writer connection.
     sqlx::query("SELECT 1").execute(&mut *owner).await.unwrap();
     sqlx::query("ROLLBACK").execute(&mut blocker).await.unwrap();
-    run.await.unwrap();
+    let run = run.wait_with_output().await.unwrap();
+    assert!(
+        run.status.success(),
+        "policy execution failed: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
     tokio::time::timeout(std::time::Duration::from_secs(10), idle)
         .await
         .unwrap()
