@@ -12,9 +12,7 @@ use std::path::Path;
 /// This checks paths, not the contents of external media; nothing is rehashed.
 async fn missing_located_files(conn: &mut sqlx::PgConnection) -> Result<usize> {
     use std::collections::BTreeMap;
-    let rows = sqlx::query_file!("src/diagnostics/located_files.sql")
-        .fetch_all(conn)
-        .await?;
+    let rows = diagnostics::located_file_paths(conn).await?;
     let mut available = BTreeMap::new();
     for row in rows {
         let found = available.entry(row.content).or_insert(false);

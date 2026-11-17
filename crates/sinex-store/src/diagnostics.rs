@@ -174,3 +174,23 @@ pub async fn fusion_ambiguity(
     .fetch_all(&mut *conn)
     .await?)
 }
+
+/// A retained located content and one current recorded path, if it has any.
+/// Paths are observations, not evidence that the external bytes still exist.
+pub struct LocatedFilePath {
+    pub content: String,
+    pub root: Option<String>,
+    pub native_root: Option<String>,
+    pub path: Option<String>,
+    pub native_path: Option<String>,
+}
+
+/// Original listing facts for the on-demand located-file diagnostic.
+/// Acquisition order keeps replayed old listings from superseding newer paths.
+pub async fn located_file_paths(conn: &mut PgConnection) -> Result<Vec<LocatedFilePath>> {
+    Ok(
+        sqlx::query_file_as!(LocatedFilePath, "src/diagnostics/located_files.sql")
+            .fetch_all(conn)
+            .await?,
+    )
+}
