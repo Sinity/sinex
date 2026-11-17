@@ -236,10 +236,8 @@ impl Api {
         )
         .await?;
         let signals = json!({"configured":self.source_config.signals.is_some(),"rules":rule_rows.into_iter().map(|(id,payload)|json!({"citation":format!("sinex:ev/{id}"),"rule":payload})).collect::<Vec<_>>()});
+        let sources = sinex_store::query::source_rows(&mut conn, &context).await?;
         drop(conn);
-        let mut source_conn = self.acquire(caller).await?;
-        let sources = crate::diagnostics::source_rows(&mut source_conn, &context).await?;
-        drop(source_conn);
         let mut result = status_fields(&telemetry, &sources, &context)?;
         let context = self.source_config.context(&self.host);
         let discovery =

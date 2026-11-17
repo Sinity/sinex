@@ -650,3 +650,102 @@ async fn field_hints_are_saved_without_setting_a_kind_wide_class(db: devkit::pg:
         assert_eq!(class, crate::privacy::class_name(supplied_class));
     }
 }
+
+#[devkit::test]
+async fn admission_syncs_normalized_owned_bytes_without_draining_other_preparations(
+    db: devkit::pg::TestDatabase,
+) {
+    let root = tempfile::tempdir().unwrap();
+    let blobs = crate::Blobs::open(root.path()).unwrap();
+    let unrelated = blobs.put(b"unadmitted preparation").unwrap();
+    let bytes = b"canonical payload bytes";
+    let owned = blobs.put(bytes).unwrap();
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap()
+        .with_blobs(Some(blobs.clone()));
+    let mut declaration = declared("example.with-bytes", 1);
+    let schema = declaration.payload_schema.as_mut().unwrap();
+    schema["properties"]["blob"] = json!({"type":"string"});
+    schema["properties"]["size"] = json!({"type":"integer", "minimum":0});
+    declaration.replace_rule = Some(sinex_model::ReplaceRule::ReplaceWhenNewer);
+    declaration
+        .owned_blobs
+        .push(sinex_model::kinds::OwnedBlobRule {
+            field: "blob".into(),
+            size: "size".into(),
+            when: None,
+        });
+    let mut tx = conn.begin().await.unwrap();
+    sinex_schema::kinds::register(&mut tx, "example", std::slice::from_ref(&declaration))
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let event = Event::submitted(
+        declaration.kind,
+        json!({"id":"one", "at":"2026-10-27T12:00:00Z", "value":1, "blob":owned, "size":bytes.len()}),
+        "example".into(),
+        Origin::Record {
+            location: RecordLocation {
+                material: MaterialId::new(),
+                record_offset: 0,
+            },
+            output_index: 0,
+        },
+        ReadingOrder(2),
+        [0; 32],
+        Class::Open,
+    );
+    assert!(
+        event.owned_blobs.is_empty(),
+        "the declaration supplies the reference"
+    );
+    let offered = batch(vec![event]);
+    assert_eq!(admit_one(&mut conn, &offered).await.admitted, 1);
+    let catalog: Vec<String> =
+        sqlx::query_scalar("SELECT hash FROM core.blob_extents ORDER BY hash")
+            .fetch_all(&mut *conn)
+            .await
+            .unwrap();
+    assert_eq!(catalog, [owned.clone()]);
+    assert!(blobs.contains(&unrelated).unwrap());
+    let end: i64 = sqlx::query_scalar("SELECT committed_end FROM core.blob_segments")
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+    assert_eq!(admit_one(&mut conn, &offered).await.repeats, 1);
+    let after: i64 = sqlx::query_scalar("SELECT committed_end FROM core.blob_segments")
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+    assert_eq!(after, end);
+    let older_bytes = b"older offered original bytes";
+    let older_blob = blobs.put(older_bytes).unwrap();
+    let mut older = offered.clone();
+    if let RecordOutcome::Events { events, .. } = &mut older.records[0] {
+        events[0].id = EventId::new();
+        events[0].reading_order = ReadingOrder(1);
+        events[0].record_hash = [1; 32];
+        events[0].payload["blob"] = json!(older_blob);
+        events[0].payload["size"] = json!(older_bytes.len());
+    }
+    assert_eq!(admit_one(&mut conn, &older).await.older, 1);
+    let stored: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM core.blob_extents WHERE hash=$1)")
+            .bind(&older_blob)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+    assert!(
+        stored,
+        "suppression does not omit this batch's offered bytes"
+    );
+    conn.close().await.unwrap();
+    drop(blobs);
+    let reopened = crate::Blobs::open(root.path()).unwrap();
+    let mut conn = sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
+    reopened.recover(&mut conn).await.unwrap();
+    assert_eq!(reopened.read(&owned).unwrap(), bytes);
+    assert_eq!(reopened.read(&older_blob).unwrap(), older_bytes);
+    assert!(!reopened.contains(&unrelated).unwrap());
+}

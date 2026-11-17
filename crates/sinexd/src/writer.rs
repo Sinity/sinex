@@ -36,6 +36,8 @@ pub(crate) enum WriteError {
     ReadDeadline,
     #[error("admission refused the batch: {0}")]
     Refused(String),
+    #[error("storage refused admission: {0}")]
+    StorageRefused(String),
     #[error("database unavailable: {0}")]
     Unavailable(String),
     #[error("the writer has stopped")]
@@ -53,6 +55,9 @@ impl From<WriteError> for command_surface::Failure {
         match error {
             WriteError::ReadDeadline => crate::request_deadline::timeout().into(),
             WriteError::Refused(_) => Failure::new(FailureKind::BadValue, message),
+            WriteError::StorageRefused(_) => {
+                Failure::new(FailureKind::Refused, message).with_code("storage_refused")
+            }
             WriteError::Unavailable(_) => {
                 Failure::new(FailureKind::NotRunning, message).with_code("database_unavailable")
             }
@@ -1049,6 +1054,19 @@ impl From<sinex_store::Error> for WriteError {
     fn from(error: sinex_store::Error) -> Self {
         if let sinex_store::Error::StaleCheckpoint = error {
             return WriteError::Stale("signal checkpoint changed");
+        }
+        let storage_refused = match &error {
+            sinex_store::Error::Blob(
+                hashed_blobs::Error::Refused(_) | hashed_blobs::Error::Corrupt { .. },
+            ) => true,
+            sinex_store::Error::Blob(hashed_blobs::Error::Io(error)) => matches!(
+                error.kind(),
+                std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::ReadOnlyFilesystem
+            ),
+            _ => false,
+        };
+        if storage_refused {
+            return WriteError::StorageRefused(error.to_string());
         }
         let temporary = match &error {
             sinex_store::Error::Database(sqlx::Error::Database(error)) => {

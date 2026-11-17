@@ -6,6 +6,18 @@ Sinex keeps the exact bytes it captured as **materials** and reads events out of
 
 A material is stored, immutable, self-contained bytes. Every event read from a source can be re-derived from one of its materials, and replay reads the stored copy, never the original path.
 
+Admission syncs its material and the owned bytes of its normalized offered
+events before committing their rows and source position. Preparation for a
+different source does not join that sync. A source keeps its original or staged
+input until admission confirms the commit; shutdown can discard unadmitted
+preparation and retry from that input. Cleanup retains chunks used by a pending
+material until its own references commit. Already synced segment groups retain
+their normal prefix order across commit, retry and recovery. A storage-integrity
+or permission refusal leaves source progress and producer acknowledgement
+uncommitted; it is distinct from a recorded content refusal. Transient storage
+I/O keeps the input available for retry.
+
+
 **A path is never a material.** A file referred to by path can change or disappear, and then nothing could be read again. (ruling 2026-03-29, cc-queued:ea2bf14e-10bb-42e9-9ff5-616882baaf1c@2026-03-29T19:12Z).
 
 **Materials are source-shaped.** A material is a unit the source itself has: a file revision, a part of a growing file, a capture segment, an export member, a set of database rows. (ruling 2026-03-29, cc:ea2bf14e-10bb-42e9-9ff5-616882baaf1c:bbe835e2-4b30-498e-bc5b-d257f4d82323).

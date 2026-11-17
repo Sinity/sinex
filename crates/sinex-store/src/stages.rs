@@ -163,7 +163,7 @@ pub struct Unparsed {
     pub binding: String,
     pub input: InputRef,
     pub observation: ObservationFacts,
-    /// `blake3:<hex>` of the bytes, already appended to the content store.
+    /// `blake3:<hex>` of prepared or held bytes; admission syncs them before commit.
     pub blob: String,
     pub length: u64,
     /// Where the bytes came from, and the candidate parsers under

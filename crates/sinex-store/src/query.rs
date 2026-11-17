@@ -182,6 +182,30 @@ pub async fn read_one_snapshot(conn: &mut PgConnection) -> Result<()> {
     Ok(())
 }
 
+/// Every current source row through the query compiler's source relation.
+/// Status needs these rows, without calendar scratch or authenticated pages.
+pub async fn source_rows(conn: &mut PgConnection, ctx: &Context) -> Result<Vec<Json>> {
+    let query = sinex_query::bind("sources | sort by binding", ctx)?;
+    let mut tx = conn.begin().await?;
+    read_one_snapshot(&mut tx).await?;
+    sqlx::query!("SET LOCAL TimeZone = 'UTC'")
+        .execute(&mut *tx)
+        .await?;
+    let seq = current_seq(&mut tx).await?;
+    let compiled = compile::Compiler::new(ctx, seq).compile(&query)?;
+    let mut rows = SqlFragment::text(format!("SELECT {} FROM (", compiled.json_object()));
+    let order = compiled.order_by();
+    rows.append(compiled.answer)
+        .push(format!(") q ORDER BY {order}"));
+    let (sql, values) = rows.render();
+    let rows = sql::bind_scalar(sqlx::query_scalar(&sql), values)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(expression_error)?;
+    tx.commit().await?;
+    Ok(rows)
+}
+
 /// Parse and bind one question against this transaction's declarations. A
 /// supplied query is a programmatic query (including follow's commit filter).
 pub async fn run(
@@ -651,17 +675,7 @@ fn render_page(compiled: Compiled, read: &ReadPage) -> Result<Rendered> {
         .iter()
         .map(|(name, _)| format!("q.\"{name}\""))
         .collect::<Vec<_>>();
-    let order = compiled
-        .keys
-        .iter()
-        .map(|(name, desc)| {
-            format!(
-                "q.\"{name}\" {} NULLS LAST",
-                if *desc { "DESC" } else { "ASC" }
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
+    let order = compiled.order_by();
     let total = read.prior.is_none().then(|| compiled.count.render());
     let mut rows = SqlFragment::text(format!(
         "SELECT jsonb_build_object('row',({object}),'keys',jsonb_build_array({}),'types',q.\"_key_types\",'id',q.\"_row_identity\") FROM (",

@@ -202,12 +202,13 @@ pub(crate) async fn admit(
     cache: &mut privacy::Cache,
     batch: &Batch,
     keys: &dyn DirtyKeys,
-) -> Result<Outcome> {
+) -> Result<(Outcome, std::collections::BTreeSet<String>)> {
+    let mut required_blobs = std::collections::BTreeSet::new();
     if let BatchKind::Ingress(frame) = &batch.kind
         && !frame.frame.is_empty()
         && let Some(outcome) = register::recorded(conn, frame).await?
     {
-        return Ok(outcome);
+        return Ok((outcome, required_blobs));
     }
     sqlx::query("SELECT value FROM core.counters WHERE name='commit_seq' FOR UPDATE")
         .execute(&mut *conn)
@@ -265,10 +266,18 @@ pub(crate) async fn admit(
     }
     let started = std::time::Instant::now();
     match &batch.kind {
-        BatchKind::Source(progress) => register::source(conn, progress).await?,
+        BatchKind::Source(progress) => {
+            register::source(conn, progress).await?;
+            if let Some(material) = &progress.material {
+                required_blobs.insert(material.blob.clone());
+            }
+        }
         BatchKind::Ingress(frame) => {
             if let Some(progress) = &frame.material {
                 register::source(conn, progress).await?;
+                if let Some(material) = &progress.material {
+                    required_blobs.insert(material.blob.clone());
+                }
             }
         }
         BatchKind::Derived { .. } | BatchKind::Api { .. } | BatchKind::Replay { .. } => {}
@@ -317,6 +326,13 @@ pub(crate) async fn admit(
         .timings
         .insert("removed_at_source", started.elapsed());
 
+    // This batch owns the offered bytes even when classification suppresses
+    // a reading. Kind evaluation, not producer metadata, supplies the names.
+    required_blobs.extend(
+        events
+            .iter()
+            .flat_map(|event| event.owned_blobs.iter().map(|blob| blob.blob.clone())),
+    );
     if !events.is_empty() {
         let classified = classify::stage_and_classify(conn, &events, &mut outcome).await?;
         let started = std::time::Instant::now();
@@ -370,7 +386,7 @@ pub(crate) async fn admit(
         .await?;
     }
     outcome.timings.insert("progress", started.elapsed());
-    Ok(outcome)
+    Ok((outcome, required_blobs))
 }
 
 // A transfer page bounds PostgreSQL's compressed-array planning, not the number

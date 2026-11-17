@@ -451,7 +451,7 @@ reader sooner.
 
 `sources` contains all rows of `sources | sort by binding`, following every
 50-row page. `source_states` counts rows in each [input state](sources.md#input-states).
-The same source relation supplies offline status and the `doctor` sources check.
+The same source relation supplies offline status and the `doctor` sources check. Status and diagnostics read its rows directly, without preparing calendar rows, loading event declarations or creating continuation tokens.
 `doctor` reports the search backlog and failures in the last 24 hours as information;
 the failure detail points to `sinexctl query 'failures where since:24h'`.
 The informational `located_files` doctor check counts retained live located

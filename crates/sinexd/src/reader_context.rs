@@ -56,7 +56,7 @@ impl ReaderContext {
         drop(self.writer);
         self.task.await?;
         let mut conn = writer::claim(self.read_conn).await?;
-        sinex_store::blobs::commit_pending_extents(&mut conn, &self.blobs)
+        sinex_store::blobs::commit_pending_extents(&mut conn, &self.blobs, &[])
             .await
             .map_err(Error::from)
     }

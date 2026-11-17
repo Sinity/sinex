@@ -36,7 +36,7 @@ self: {
         writeFamily = "sinex";
         attestedHost = "machine";
         writeSourcePrefixes = [ "machine.file-watch" ];
-        writeKindPrefixes = [ "file.changed" ];
+        writeKindPrefixes = [ "file.changed" "capture.gap" ];
         writeClasses = [ "guarded" ];
       };
       # This headless fixture exercises only file-watch session capture.
@@ -54,7 +54,7 @@ self: {
       };
     };
   };
-  testScript = ''
+  testScript = builtins.readFile ./status-diagnostics.py + ''
     def count(where):
         return int(machine.succeed(
             f"sudo -u postgres psql -d sinex -tAc \"select count(*) from core.events where {where}\""
@@ -127,7 +127,11 @@ self: {
         )
 
     with subtest("the operator's login shell reaches the daemon"):
-        machine.succeed("su - alice -c 'sinexctl status'")
+        try:
+            machine.succeed("su - alice -c 'sinexctl status'")
+        except Exception:
+            show_status_failure(machine, "su - alice -c 'sinexctl status'", "su - alice -c 'sinexctl --deadline 60000 status'")
+            raise
 
     with subtest("the staging grant does not include neighboring fixture files"):
         refusal = machine.fail("su - alice -c 'sinexctl stage --parser goodreads --follow /etc/sinex-test/nats-session' 2>&1")

@@ -555,7 +555,7 @@ async fn finish_tasks(
 
 async fn forget_admitted(database: &str, blobs: &Blobs) -> Result<()> {
     let mut conn = writer::claim(connect(database, "sinex.writer_shutdown").await?).await?;
-    let result = sinex_store::blobs::commit_pending_extents(&mut conn, blobs)
+    let result = sinex_store::blobs::commit_pending_extents(&mut conn, blobs, &[])
         .await
         .map_err(Error::from);
     // Closing the session releases its writer claim even when cleanup fails.

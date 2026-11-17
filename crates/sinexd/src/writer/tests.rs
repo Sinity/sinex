@@ -264,7 +264,7 @@ async fn a_batch_whose_bytes_are_not_stored_is_refused(db: devkit::pg::TestDatab
     let blobs = Blobs::open(dir.path()).unwrap();
     let (handle, queues) = channels();
     let writer = tokio::spawn(run(
-        url,
+        url.clone(),
         claim(connection).await.unwrap(),
         queues,
         Arc::new(sinex_store::NoDerivations),
@@ -307,7 +307,78 @@ async fn a_batch_whose_bytes_are_not_stored_is_refused(db: devkit::pg::TestDatab
     let refused = handle.submit(Priority::Bulk, source()).await.unwrap_err();
     assert!(refused.to_string().contains("does not hold"), "{refused}");
     blobs.put(bytes).unwrap();
-    handle.submit(Priority::Bulk, source()).await.unwrap();
+    let obstruction = dir.path().join("segments");
+    std::fs::write(&obstruction, b"synthetic filesystem obstruction").unwrap();
+    let error = handle
+        .submit_source(Priority::Bulk, source(), Arc::new(|| Ok(())), None)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, WriteError::Unavailable(_)));
+    let mut reader = PgConnection::connect(&url).await.unwrap();
+    let positions: i64 = sqlx::query_scalar("SELECT count(*) FROM raw.positions")
+        .fetch_one(&mut reader)
+        .await
+        .unwrap();
+    assert_eq!(
+        positions, 0,
+        "an I/O failure cannot acknowledge source progress"
+    );
+    std::fs::remove_file(obstruction).unwrap();
+    handle
+        .submit_source(Priority::Bulk, source(), Arc::new(|| Ok(())), None)
+        .await
+        .unwrap();
+    let cursor: Value =
+        sqlx::query_scalar("SELECT cursor FROM raw.positions WHERE binding='synthetic'")
+            .fetch_one(&mut reader)
+            .await
+            .unwrap();
+    assert_eq!(cursor, serde_json::json!({"offset":1}));
+
+    // The writer checks an encoding again at append, after preparation.
+    // Its original stays available even when the prepared inode changed.
+    use std::os::unix::fs::FileExt;
+    let original = b"separate original whose preparation will change";
+    let scratch = tempfile::tempdir().unwrap();
+    let prepared = hashed_blobs::Preparation::new(scratch.path())
+        .unwrap()
+        .plain(original.as_slice(), 3)
+        .unwrap();
+    let descriptor = prepared.descriptor();
+    let file = prepared.into_file();
+    let corruptor = file.try_clone().unwrap();
+    let name = blobs
+        .put_prepared(hashed_blobs::Prepared::from_own_encoding(file, descriptor).unwrap())
+        .unwrap();
+    let mut first = [0];
+    corruptor.read_exact_at(&mut first, 0).unwrap();
+    corruptor.write_all_at(&[first[0] ^ 1], 0).unwrap();
+    let mut damaged = source();
+    if let BatchKind::Source(progress) = &mut damaged.kind {
+        progress.binding = "damaged-preparation".into();
+        progress.input.locator = "synthetic-damaged".into();
+        let material = progress.material.as_mut().unwrap();
+        material.id = MaterialId::new();
+        material.blob = name;
+        material.length = original.len() as u64;
+    }
+    let error = handle
+        .submit_source(Priority::Bulk, damaged, Arc::new(|| Ok(())), None)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, WriteError::StorageRefused(reason) if reason.contains("prepared encoding changed before append"))
+    );
+    let damaged_positions: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM raw.positions WHERE binding='damaged-preparation'",
+    )
+    .fetch_one(&mut reader)
+    .await
+    .unwrap();
+    assert_eq!(
+        damaged_positions, 0,
+        "integrity refusal cannot be recorded as source success"
+    );
     drop(handle);
     writer.await.unwrap();
 }
@@ -666,7 +737,7 @@ async fn backup_release_dirties_held_punches_for_the_next_group_without_reopen(
         .execute(&mut conn)
         .await
         .unwrap();
-    sinex_store::blobs::commit_pending_extents(&mut conn, &blobs)
+    sinex_store::blobs::commit_pending_extents(&mut conn, &blobs, std::slice::from_ref(&name))
         .await
         .unwrap();
     let before = std::fs::read(root.path().join("segments/current.hb")).unwrap();
@@ -688,7 +759,9 @@ async fn backup_release_dirties_held_punches_for_the_next_group_without_reopen(
         .await
         .unwrap();
     // Mirror the marker a real tombstone commits.
-    sinex_store::blobs::commit_pending_extents(&mut conn, &blobs)
+    sqlx::query("UPDATE core.blob_extents SET deleting=true WHERE hash=$1")
+        .bind(&name)
+        .execute(&mut conn)
         .await
         .unwrap();
     handle.backup_release(one.id, "operator").await.unwrap();
@@ -734,3 +807,42 @@ fn a_moved_signal_checkpoint_is_a_stale_write() {
 }
 
 mod source_turns;
+
+#[devkit::test]
+fn required_blob_refusals_stop_while_storage_io_remains_retryable() {
+    for error in [
+        hashed_blobs::Error::Refused("required encoding identity differs".into()),
+        hashed_blobs::Error::Corrupt {
+            segment: "synthetic".into(),
+            offset: 0,
+            len: 1,
+            what: "required bytes changed".into(),
+        },
+    ] {
+        let error = sinex_store::Error::Blob(error);
+        let expected = error.to_string();
+        assert!(
+            !content_error(&error),
+            "integrity failures cannot become recorded content refusals"
+        );
+        assert!(
+            matches!(WriteError::from(error), WriteError::StorageRefused(reason) if reason == expected)
+        );
+    }
+    for kind in [
+        std::io::ErrorKind::PermissionDenied,
+        std::io::ErrorKind::ReadOnlyFilesystem,
+    ] {
+        let error = sinex_store::Error::Blob(hashed_blobs::Error::Io(std::io::Error::from(kind)));
+        assert!(!content_error(&error));
+        assert!(matches!(
+            WriteError::from(error),
+            WriteError::StorageRefused(_)
+        ));
+    }
+    let error = std::io::Error::from_raw_os_error(5);
+    assert!(matches!(
+        WriteError::from(sinex_store::Error::Blob(hashed_blobs::Error::Io(error))),
+        WriteError::Unavailable(_)
+    ));
+}
