@@ -5,7 +5,7 @@ use super::{BindingReader, Reading};
 use crate::{Error, Result};
 use command_surface::Failure;
 mod acquisition;
-use crate::material_access::Access;
+use crate::material_access::{Access, CheckedReader};
 use crate::stage::Totals;
 use crate::writer::WriterHandle;
 use serde_json::Value;
@@ -14,7 +14,6 @@ use sinex_source_core::drivers;
 use sinex_source_core::shared_pass::{self, StoredFile};
 use sinex_store::{Blobs, positions};
 use sqlx::PgConnection;
-use std::io::Read;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -50,19 +49,6 @@ impl Drop for Cancel {
         self.0.store(true, Ordering::Relaxed);
     }
 }
-struct InterruptibleReader<R> {
-    input: R,
-    stop: Arc<AtomicBool>,
-}
-impl<R: Read> Read for InterruptibleReader<R> {
-    fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
-        if self.stop.load(Ordering::Relaxed) {
-            return Err(std::io::Error::other("capture cancelled"));
-        }
-        self.input.read(bytes)
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn read_shared(
     conn: &mut PgConnection,
@@ -142,6 +128,17 @@ pub(super) async fn read_shared(
     let worker_material = material.clone();
     let operation = material.clone();
     let cancelled = Arc::clone(&cancel.0);
+    let stopped = cancelled.clone();
+    let check: crate::writer::AdmissionCheck = Arc::new(move || {
+        if stopped.load(Ordering::Relaxed) {
+            Err(Error::new(
+                command_surface::FailureKind::Cancelled,
+                "capture cancelled",
+            ))
+        } else {
+            Ok(())
+        }
+    });
     let (send, mut receive) = mpsc::channel::<PollDelivery>(1);
     let worker = tokio::task::spawn_blocking(move || {
         let captured = stored_copy.is_none();
@@ -149,9 +146,9 @@ pub(super) async fn read_shared(
             Some(captured) => captured,
             None => {
                 let input = std::fs::File::open(&path)?;
-                let input = InterruptibleReader {
+                let input = CheckedReader {
                     input,
-                    stop: Arc::clone(&cancelled),
+                    check: check.clone(),
                 };
                 let blob = worker_material.store_reader(input)?;
                 let after = drivers::file_facts(&path)?;
@@ -169,24 +166,24 @@ pub(super) async fn read_shared(
             }
         };
         let verify_stop = Arc::clone(&cancelled);
-        let check = move || {
+        let verify = move || {
             if verify_stop.load(Ordering::Relaxed) {
                 return Err(std::io::Error::other("verification cancelled"));
             }
             operation.check().map_err(std::io::Error::other)?;
             Ok(())
         };
-        let input = match worker_material.archive_input(&blob, length, check)? {
+        let input = match worker_material.archive_input(&blob, length, verify)? {
             shared_pass::Input::Seekable(input) => {
-                shared_pass::Input::Seekable(Box::new(InterruptibleReader {
+                shared_pass::Input::Seekable(Box::new(CheckedReader {
                     input,
-                    stop: Arc::clone(&cancelled),
+                    check: check.clone(),
                 }))
             }
             shared_pass::Input::Sequential(input) => {
-                shared_pass::Input::Sequential(Box::new(InterruptibleReader {
+                shared_pass::Input::Sequential(Box::new(CheckedReader {
                     input,
-                    stop: Arc::clone(&cancelled),
+                    check: check.clone(),
                 }))
             }
         };
@@ -197,7 +194,7 @@ pub(super) async fn read_shared(
             facts,
             cancelled,
             routes,
-            worker_material.sink(),
+            &worker_material.sink(check.clone()),
             &mut |index, acquired| {
                 let (ack, answer) = std::sync::mpsc::sync_channel(0);
                 send.blocking_send(PollDelivery {
@@ -307,15 +304,3 @@ pub(super) async fn read_shared(
     }
     Ok(totals)
 }
-
-impl<R: Read + std::io::Seek> std::io::Seek for InterruptibleReader<R> {
-    fn seek(&mut self, position: std::io::SeekFrom) -> std::io::Result<u64> {
-        if self.stop.load(Ordering::Relaxed) {
-            return Err(std::io::Error::other("capture cancelled"));
-        }
-        self.input.seek(position)
-    }
-}
-
-#[cfg(test)]
-mod tests;

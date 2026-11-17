@@ -706,3 +706,50 @@ fn other_write_failures_are_not_stale() {
         assert_eq!(error.failure().kind, kind);
     }
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn abandoned_submission_cancels_owned_file_preparation() {
+    let dir = tempfile::tempdir().unwrap();
+    let blobs = Blobs::open(dir.path()).unwrap();
+    let (entered, waiting) = tokio::sync::oneshot::channel();
+    let (release, resume) = std::sync::mpsc::channel();
+    let (finished, result) = tokio::sync::oneshot::channel();
+    let mut acquired = acquisition("cancelled-owned-file");
+    // The original is unavailable: cancellation must be checked before trying to open it.
+    acquired
+        .material
+        .as_mut()
+        .unwrap()
+        .owned_files
+        .push(drivers::OwnedFile {
+            path: dir.path().join("unavailable-original"),
+            blob: "blake3:synthetic".into(),
+        });
+    let work = Preparation {
+        source: Arc::new(forecast::request_source()),
+        binding: "synthetic-owned-file".into(),
+        host: None,
+        run: RunId::new(),
+        material: materials(blobs),
+        atomic: false,
+        batch_events: None,
+        registered: None,
+        check: Arc::new(|| Ok(())),
+    };
+    let batches = blocking::Batches::start(Priority::Live, move |send| {
+        entered.send(()).unwrap();
+        resume.recv().unwrap();
+        let outcome = work.run(acquired, Value::Null, send);
+        finished
+            .send(outcome.map_err(|error| error.to_string()))
+            .unwrap();
+        Ok(())
+    })
+    .await
+    .unwrap();
+    waiting.await.unwrap();
+    drop(batches);
+    release.send(()).unwrap();
+    let error = result.await.unwrap().unwrap_err();
+    assert_eq!(error, "submission cancelled");
+}
