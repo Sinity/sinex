@@ -16,25 +16,6 @@ fn utc_context() -> sinex_query::Context {
     )
 }
 
-/// Every source row through the query's source-status relation.
-pub(crate) async fn source_rows(
-    conn: &mut sqlx::PgConnection,
-    context: &sinex_query::Context,
-) -> Result<Vec<Value>> {
-    let mut rows = Vec::new();
-    let mut page = sinex_store::query::Page::default();
-    loop {
-        let answer =
-            sinex_store::query::run(conn, "sources | sort by binding", None, context, &page)
-                .await?;
-        rows.extend(answer.rows);
-        match answer.page.cursor {
-            Some(cursor) => page.cursor = Some(cursor),
-            None => return Ok(rows),
-        }
-    }
-}
-
 /// What the database holds, without the daemon.
 async fn status(database: &str) -> Result<Value> {
     let mut conn = diagnostics::connect(database).await?;
@@ -42,7 +23,7 @@ async fn status(database: &str) -> Result<Value> {
     let context = utc_context();
     let (sources, samples) = if s.schema_version.is_some() {
         (
-            source_rows(&mut conn, &context).await?,
+            sinex_store::query::source_rows(&mut conn, &context).await?,
             sinex_store::telemetry::recent(
                 &mut conn,
                 sinex_model::event_types::telemetry::SinexTelemetry::EVENT_TYPE,
@@ -113,7 +94,7 @@ async fn doctor(database: &str, store: &Path) -> Value {
                             s.failures_24h
                         ),
                     );
-                    match source_rows(&mut conn, &utc_context()).await {
+                    match sinex_store::query::source_rows(&mut conn, &utc_context()).await {
                         Ok(rows) => {
                             let stalled: Vec<_> = rows
                                 .iter()

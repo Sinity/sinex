@@ -43,6 +43,19 @@ fn required_words(filter: &Expr) -> Option<&Words> {
 }
 
 impl Compiled {
+    pub(crate) fn order_by(&self) -> String {
+        self.keys
+            .iter()
+            .map(|(name, desc)| {
+                format!(
+                    "q.\"{name}\" {} NULLS LAST",
+                    if *desc { "DESC" } else { "ASC" }
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
     /// SQL identifier of an output value in the private answer relation.
     pub(crate) fn output_column(&self, output: &str) -> Result<String> {
         self.columns

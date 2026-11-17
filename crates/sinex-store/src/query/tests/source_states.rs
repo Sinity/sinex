@@ -104,6 +104,107 @@ async fn admit(conn: &mut crate::AdmissionContext, events: Vec<Event>) {
 }
 
 #[devkit::test]
+async fn status_source_rows_match_paged_rows_without_calendar_scratch(
+    db: devkit::pg::TestDatabase,
+) {
+    let url = db.url(None);
+    let mut writer = crate::AdmissionContext::connect(&url).await.unwrap();
+    let mut sources = vec![
+        source("test.guarded", Expectation::OnDemand),
+        source("test.excluded", Expectation::Export),
+    ];
+    sources.extend((0..1001).map(|n| source(&format!("test.bulk-{n:04}"), Expectation::OnDemand)));
+    write_sources(&mut writer, &sources).await.unwrap();
+    write_exclusions(
+        &mut writer,
+        &[("test.excluded".into(), "synthetic exclusion".into())].into(),
+    )
+    .await
+    .unwrap();
+    let at = Timestamp::from_unix_secs(1_700_000_000).unwrap();
+    let mut guarded = coverage(
+        "test.guarded",
+        CoverageState::Missing,
+        Some("synthetic missing input"),
+        at,
+    );
+    guarded.class = Class::Guarded;
+    admit(&mut writer, vec![guarded, reading("test.unregistered", at)]).await;
+
+    for grants in ["", "guarded"] {
+        let mut direct = sqlx::PgConnection::connect(&url).await.unwrap();
+        set_grants(&mut direct, grants).await.unwrap();
+        let rows = source_rows(&mut direct, &ctx()).await.unwrap();
+        assert!(
+            rows.len() > 1000,
+            "status includes sources beyond one public page"
+        );
+        let has_calendar: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM pg_class WHERE relnamespace = pg_my_temp_schema() AND relname = 'sinex_query_days')",
+        )
+        .fetch_one(&mut direct)
+        .await
+        .unwrap();
+        assert!(
+            !has_calendar,
+            "source status does not prepare calendar scratch"
+        );
+        let protected = rows
+            .iter()
+            .find(|row| row["binding"] == "test.guarded")
+            .unwrap();
+        assert_eq!(
+            protected["state"],
+            if grants.is_empty() {
+                "unavailable"
+            } else {
+                "stalled"
+            }
+        );
+        let excluded = rows
+            .iter()
+            .find(|row| row["binding"] == "test.excluded")
+            .unwrap();
+        assert_eq!(excluded["reason"], "synthetic exclusion");
+
+        let mut public = sqlx::PgConnection::connect(&url).await.unwrap();
+        set_grants(&mut public, grants).await.unwrap();
+        let mut page = Page {
+            size: Some(211),
+            cursor: None,
+        };
+        let mut paged = Vec::new();
+        loop {
+            let answer = run(
+                &mut public,
+                "sources | sort by binding",
+                None,
+                &ctx(),
+                &page,
+            )
+            .await
+            .unwrap();
+            paged.extend(answer.rows);
+            match answer.page.cursor {
+                Some(cursor) => page.cursor = Some(cursor),
+                None => break,
+            }
+        }
+        assert_eq!(rows, paged, "same ordered fields under grants {grants:?}");
+        let has_calendar: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM pg_class WHERE relnamespace = pg_my_temp_schema() AND relname = 'sinex_query_days')",
+        )
+        .fetch_one(&mut public)
+        .await
+        .unwrap();
+        assert!(
+            has_calendar,
+            "the public query arms the calendar regression control"
+        );
+    }
+}
+
+#[devkit::test]
 async fn sources_report_three_states(db: devkit::pg::TestDatabase) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
