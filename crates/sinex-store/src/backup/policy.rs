@@ -29,7 +29,7 @@ pub async fn wait_for_visible_workers(connection: &mut sqlx::PgConnection) -> Re
         if !running {
             return Ok(());
         }
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 }
 

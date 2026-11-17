@@ -105,7 +105,8 @@ async fn startup_stops_only_owned_sessions_and_invalidates_late_snapshot_import(
         .unwrap();
     assert!(!dump.status.success());
     assert!(
-        String::from_utf8_lossy(&dump.stderr).contains("invalid snapshot identifier"),
+        String::from_utf8_lossy(&dump.stderr)
+            .contains(&format!("SET TRANSACTION SNAPSHOT '{}'", exporter.exported)),
         "late pg_dump refused: {}",
         String::from_utf8_lossy(&dump.stderr)
     );
