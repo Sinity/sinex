@@ -417,6 +417,10 @@ hold by construction: `store verify` is on demand, reports mismatches and repair
 nothing. `status --offline` reads positions, the last commit and the writer lock's
 holder through the reader role while the daemon is down.
 
+Recent telemetry checks archive membership by each sample's event ID, so reading
+the status window does not scan unrelated archive history. Its latest-per-consumer
+selection, class redaction and one-hour window stay unchanged.
+
 ### The sources relation
 
 - `sources` is the one source status relation and `sources NAME` the one detail view.

@@ -102,16 +102,11 @@ pub async fn read(conn: &mut PgConnection) -> Result<Vec<Reading>> {
 
 /// The newest stored sample of each part from the last hour, as payloads.
 pub async fn latest(conn: &mut PgConnection, event_type: &str) -> Result<Vec<serde_json::Value>> {
-    Ok(sqlx::query_scalar!(
-        r#"SELECT DISTINCT ON (payload->>'component', payload->>'name') payload AS "payload!"
-           FROM core.visible_events e
-           WHERE event_type = $1 AND ts_orig > now() - interval '1 hour'
-             AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)
-           ORDER BY payload->>'component', payload->>'name', ts_orig DESC"#,
-        event_type,
+    Ok(
+        sqlx::query_file_scalar!("src/telemetry/latest.sql", event_type)
+            .fetch_all(&mut *conn)
+            .await?,
     )
-    .fetch_all(&mut *conn)
-    .await?)
 }
 
 #[cfg(test)]
