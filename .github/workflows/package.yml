@@ -59,10 +59,9 @@ jobs:
       - name: Verify the deployment module and VMs
         if: ${{ inputs.verify-vms }}
         run: |
-          tests="git+https://github.com/${{ github.repository }}?rev=${{ github.sha }}&shallow=1&exportIgnore=1"
-          phase=$(nix build --no-link --print-build-logs --print-out-paths --max-jobs 1 \
-            --expr 'runtime: tests: let self = builtins.getFlake runtime; source = builtins.getFlake tests; pkgs = import self.inputs.nixpkgs { system = "x86_64-linux"; overlays = [ self.inputs.rust-overlay.overlays.default ]; config.allowUnfreePredicate = pkg: builtins.elem (pkgs.lib.getName pkg) [ "timescaledb" ]; }; in pkgs.testers.runNixOSTest (import "${source}/nix/tests/stack.nix" self)' \
-            --argstr runtime "$FLAKE" --argstr tests "$tests")
+          export SINEX_STATUS_TEST_SOURCE="git+https://github.com/${{ github.repository }}?rev=${{ github.sha }}&shallow=1&exportIgnore=1"
+          phase=$(nix build --no-link --print-build-logs --print-out-paths --max-jobs 1 --impure \
+            --expr 'let self = builtins.getFlake (builtins.getEnv "FLAKE"); source = builtins.getFlake (builtins.getEnv "SINEX_STATUS_TEST_SOURCE"); pkgs = import self.inputs.nixpkgs { system = "x86_64-linux"; overlays = [ self.inputs.rust-overlay.overlays.default ]; config.allowUnfreePredicate = pkg: builtins.elem (pkgs.lib.getName pkg) [ "timescaledb" ]; }; in pkgs.testers.runNixOSTest (import "${source}/nix/tests/stack.nix" self)')
           echo "COLD_STATUS_VM_OUTPUT=$phase" >> "$GITHUB_ENV"
           nix build --no-link --print-build-logs --max-jobs 1 \
             "${FLAKE}#checks.x86_64-linux.postgresql-uuid-bounds" \
