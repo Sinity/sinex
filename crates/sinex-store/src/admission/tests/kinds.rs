@@ -708,7 +708,7 @@ async fn admission_syncs_normalized_owned_bytes_without_draining_other_preparati
             .await
             .unwrap();
     assert_eq!(catalog, [owned.clone()]);
-    assert!(blobs.contains(&unrelated).unwrap());
+    assert!(blobs.contains(&mut conn, &unrelated).await.unwrap());
     let end: i64 = sqlx::query_scalar("SELECT committed_end FROM core.blob_segments")
         .fetch_one(&mut *conn)
         .await
@@ -745,7 +745,17 @@ async fn admission_syncs_normalized_owned_bytes_without_draining_other_preparati
     let reopened = crate::Blobs::open(root.path()).unwrap();
     let mut conn = sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
     reopened.recover(&mut conn).await.unwrap();
-    assert_eq!(reopened.read(&owned).unwrap(), bytes);
-    assert_eq!(reopened.read(&older_blob).unwrap(), older_bytes);
-    assert!(!reopened.contains(&unrelated).unwrap());
+    assert_eq!(
+        reopened
+            .read(&reopened.locate(&mut conn, &owned).await.unwrap())
+            .unwrap(),
+        bytes
+    );
+    assert_eq!(
+        reopened
+            .read(&reopened.locate(&mut conn, &older_blob).await.unwrap())
+            .unwrap(),
+        older_bytes
+    );
+    assert!(!reopened.contains(&mut conn, &unrelated).await.unwrap());
 }

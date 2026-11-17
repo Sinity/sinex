@@ -1124,7 +1124,7 @@ async fn bytes_sent_in_chunks_register_a_material_and_failures_are_recorded(
     }
     assert!(
         !h.blobs
-            .contains(&mut *h.reads.acquire().await.unwrap(), &blob)
+            .contains(&mut h.reads.acquire().await.unwrap(), &blob)
             .await
             .unwrap(),
         "chunks wait in the spool until their material frame"
@@ -1134,7 +1134,7 @@ async fn bytes_sent_in_chunks_register_a_material_and_failures_are_recorded(
     assert_eq!(ack.refusal(), None, "{ack:?}");
     assert!(
         h.blobs
-            .contains(&mut *h.reads.acquire().await.unwrap(), &blob)
+            .contains(&mut h.reads.acquire().await.unwrap(), &blob)
             .await
             .unwrap()
     );
@@ -1790,7 +1790,7 @@ async fn privacy_changes_refuse_the_next_frame_before_its_bytes_are_stored(
     };
     assert!(
         !h.blobs
-            .contains(&mut *h.reads.acquire().await.unwrap(), &material.blob)
+            .contains(&mut h.reads.acquire().await.unwrap(), &material.blob)
             .await
             .unwrap()
     );
@@ -1825,7 +1825,7 @@ async fn privacy_changes_refuse_the_next_frame_before_its_bytes_are_stored(
     };
     assert!(
         !h.blobs
-            .contains(&mut *h.reads.acquire().await.unwrap(), &material.blob)
+            .contains(&mut h.reads.acquire().await.unwrap(), &material.blob)
             .await
             .unwrap()
     );
@@ -2238,7 +2238,7 @@ async fn a_rewrite_sent_as_chunks_stores_only_the_changed_chunks(db: devkit::pg:
             .read(
                 &h.blobs
                     .locate(
-                        &mut *h.reads.acquire().await.unwrap(),
+                        &mut h.reads.acquire().await.unwrap(),
                         &format!("blake3:{}", blake3::hash(&first).to_hex())
                     )
                     .await

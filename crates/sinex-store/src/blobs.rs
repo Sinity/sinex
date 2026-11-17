@@ -198,12 +198,12 @@ impl Blobs {
     fn sync_pending(&self, parts: &BTreeSet<Hash>, known: &BTreeMap<Hash, Extent>) -> Result<()> {
         let mut state = self.state()?;
         for hash in parts {
-            if let (Some(prepared), Some(extent)) = (state.prepared.get(hash), known.get(hash)) {
-                if prepared.decoded_len() != extent.decoded_len || prepared.kind() != &extent.kind {
-                    return Err(crate::Error::Invalid(
-                        "repeated blob name has a different length or sealing key reference".into(),
-                    ));
-                }
+            if let (Some(prepared), Some(extent)) = (state.prepared.get(hash), known.get(hash))
+                && (prepared.decoded_len() != extent.decoded_len || prepared.kind() != &extent.kind)
+            {
+                return Err(crate::Error::Invalid(
+                    "repeated blob name has a different length or sealing key reference".into(),
+                ));
             }
         }
         // SQL already owns these immutable bytes. Keep no duplicate preparation.
@@ -373,10 +373,10 @@ impl Blobs {
         .fetch_optional(&mut *conn)
         .await?;
         let extent = descriptor.as_deref().map(Extent::decode).transpose()?;
-        if let Some(extent) = &extent {
-            if crate::backup::covers(conn, &extent.segment, extent.offset).await? {
-                return Ok(false);
-            }
+        if let Some(extent) = &extent
+            && crate::backup::covers(conn, &extent.segment, extent.offset).await?
+        {
+            return Ok(false);
         }
         self.punch(name, extent.as_ref())?;
         Ok(true)
