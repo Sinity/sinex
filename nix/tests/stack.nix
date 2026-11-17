@@ -36,7 +36,7 @@ self: {
         writeFamily = "sinex";
         attestedHost = "machine";
         writeSourcePrefixes = [ "machine.file-watch" ];
-        writeKindPrefixes = [ "file.changed" ];
+        writeKindPrefixes = [ "file.changed" "capture.gap" ];
         writeClasses = [ "guarded" ];
       };
       # This headless fixture exercises only file-watch session capture.
