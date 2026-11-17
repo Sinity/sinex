@@ -104,7 +104,11 @@ async fn startup_stops_only_owned_sessions_and_invalidates_late_snapshot_import(
         .output()
         .unwrap();
     assert!(!dump.status.success());
-    assert!(String::from_utf8_lossy(&dump.stderr).contains("invalid snapshot identifier"));
+    assert!(
+        String::from_utf8_lossy(&dump.stderr).contains("invalid snapshot identifier"),
+        "late pg_dump refused: {}",
+        String::from_utf8_lossy(&dump.stderr)
+    );
     sqlx::query("SELECT 1")
         .execute(&mut other_user)
         .await
