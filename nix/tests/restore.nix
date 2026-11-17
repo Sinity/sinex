@@ -143,8 +143,7 @@ self: {
     after = events()
     after_files = files("/var/lib/sinex/store")
     assert after == before, f"restored events differ: {before} vs {after}"
-    assert after_files == before_files, f"restored segment bytes differ:
- {before_files!r} vs {after_files!r}"
+    assert after_files == before_files, f"restored segment bytes differ: {before_files!r} vs {after_files!r}"
 
     with subtest("stopping the backup also stops its archive jobs"):
         machine.succeed("rm -f /run/release-backup-copy /run/sinex-backup/artifact-ready; touch /run/hold-backup-copy")
