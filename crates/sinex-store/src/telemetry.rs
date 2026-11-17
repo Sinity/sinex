@@ -116,17 +116,9 @@ pub async fn recent(
     window: Duration,
 ) -> Result<Vec<Sample>> {
     let seconds = window.as_secs_f64();
-    let samples = sqlx::query_scalar!(
-        r#"SELECT payload AS "payload!: sqlx::types::Json<Sample>" FROM core.visible_events e
-           WHERE event_type = $1 AND ts_orig > now() - $2 * interval '1 second'
-             AND core.class_visible(e.class)
-             AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)
-           ORDER BY payload->>'component', payload->>'name', ts_orig, id"#,
-        event_type,
-        seconds,
-    )
-    .fetch_all(conn)
-    .await?;
+    let samples = sqlx::query_file_scalar!("src/telemetry/recent.sql", event_type, seconds,)
+        .fetch_all(conn)
+        .await?;
     Ok(samples.into_iter().map(|sample| sample.0).collect())
 }
 

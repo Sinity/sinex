@@ -489,6 +489,9 @@ request path. There are no scheduled verify, scrub or check runs, because invari
 hold by construction: `store verify` is on demand, reports mismatches and repairs
 nothing. `status --offline` reads positions, the last commit and the writer lock's
 holder through the reader role while the daemon is down.
+Recent telemetry checks archive membership by each sample's event ID, so reading
+the status window does not scan unrelated archive history. The read retains its
+time window, class visibility and order within each consumer's samples.
 
 ### The sources relation
 
