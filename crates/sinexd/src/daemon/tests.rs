@@ -467,7 +467,7 @@ async fn shutdown_releases_source_and_backup_waiting_on_publication(db: devkit::
         blobs: blobs.clone(),
         zone: jiff::tz::TimeZone::get("UTC").unwrap(),
         day_start: jiff::civil::Time::constant(4, 0, 0, 0),
-        derivations: Default::default(),
+        derivations: crate::derivation_runner::Catalog::new(&Default::default()).unwrap(),
         agent_grants: vec![],
         unlock: Default::default(),
         host: "synthetic".into(),

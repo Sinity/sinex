@@ -10,10 +10,16 @@ async fn public_compare_and_switch_record_actor_and_refuse_reuse_or_stale_inputs
         Default::default(),
         PgPoolOptions::new().max_connections(READ_CONNECTIONS),
         |api| {
-            api.derivations.tags = serde_json::from_value(json!([{
+            let tags = serde_json::from_value(json!([{
                 "tag": "example", "event_type": "command.executed"
             }]))
             .unwrap();
+            api.derivations =
+                crate::derivation_runner::Catalog::new(&sinex_derivations::Configuration {
+                    tags,
+                    ..Default::default()
+                })
+                .unwrap();
         },
     )
     .await;

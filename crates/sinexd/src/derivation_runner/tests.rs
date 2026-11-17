@@ -191,8 +191,8 @@ impl World {
         DerivationRunner::start(
             read,
             self.handle.clone(),
-            keyed,
-            per_event,
+            keyed.into_iter().map(Arc::from).collect(),
+            per_event.into_iter().map(Arc::from).collect(),
             "test",
             TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"),
         )
@@ -913,7 +913,10 @@ async fn an_interrupted_switch_preserves_selection_until_the_next_explicit_switc
     let mut stopped = DerivationRunner::start(
         read,
         stopped,
-        sinex_derivations::keyed(),
+        sinex_derivations::keyed()
+            .into_iter()
+            .map(Arc::from)
+            .collect(),
         vec![],
         "test",
         TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"),

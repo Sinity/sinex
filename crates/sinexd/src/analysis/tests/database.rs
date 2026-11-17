@@ -136,7 +136,10 @@ impl World {
         let mut runner = DerivationRunner::start(
             read,
             self.handle.clone(),
-            crate::analysis::keyed(),
+            crate::analysis::keyed()
+                .into_iter()
+                .map(Arc::from)
+                .collect(),
             Vec::new(),
             "test",
             sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)

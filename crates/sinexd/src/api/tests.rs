@@ -218,7 +218,7 @@ async fn world_with_api(
         blobs,
         zone: jiff::tz::TimeZone::get("UTC").unwrap(),
         day_start: jiff::civil::Time::constant(4, 0, 0, 0),
-        derivations: Default::default(),
+        derivations: crate::derivation_runner::Catalog::new(&Default::default()).unwrap(),
         agent_grants: vec![],
         unlock: Default::default(),
         host: "h".into(),

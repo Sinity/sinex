@@ -1,13 +1,23 @@
 # The online restore drill, including a write after the hold and a partial archive pair.
 self: {
   name = "sinex-restore";
-  nodes.machine = { pkgs, lib, ... }: {
+  nodes.machine = { pkgs, lib, ... }:
+    let
+      probe = name: package: pkgs.writeShellScriptBin name ''
+        echo ${name} >> /var/lib/sinex/backend-probes.log
+        exec ${package}/bin/${name} "$@"
+      '';
+    in {
     imports = [ self.nixosModules.default ];
     virtualisation = { memorySize = 3072; cores = 2; diskSize = 4096; };
     time.timeZone = "Etc/UTC";
     environment.etc."sinex-test/nats-daemon".text = "daemon-secret";
     environment.etc."sinex-test/borg-pass".text = "borg-pass";
-    environment.systemPackages = [ pkgs.borgbackup pkgs.jq ];
+    environment.systemPackages = [ pkgs.borgbackup pkgs.jq pkgs.poppler-utils pkgs.tesseract ];
+    systemd.services.sinexd.path = lib.mkBefore [
+      (probe "pdftotext" pkgs.poppler-utils)
+      (probe "tesseract" pkgs.tesseract)
+    ];
     systemd.tmpfiles.rules = [
       "d /backup 0700 root root -"
       "f /var/lib/sinex/zsh_history 0644 sinex sinex - : 1700000000:0;ls -la\\n: 1700000060:2;cargo test\\n: 1700000200:0;git status\\n"
@@ -47,6 +57,7 @@ self: {
   };
   testScript = ''
     import json
+    import time
     ctl = "sinexctl --endpoint unix:/run/sinex/sinexd.sock --token-file /var/lib/sinex/tokens/operator.token --json"
 
     def wait_for_daemon():
@@ -57,13 +68,20 @@ self: {
             # Keep the failed request and database wait visible after VM teardown.
             commands = [
                 f"{ctl} status",
+                # Longer budgets measure the failed request; they never satisfy
+                # the original default-budget acceptance above.
+                f"{ctl} --deadline 60000 status",
+                f"{ctl} --deadline 60000 sources-discover",
+                "pdftotext -v",
+                "tesseract --version",
                 "journalctl -u sinexd.service --no-pager -n 200",
                 "sudo -u postgres psql -d sinex -x -c \"SELECT pid, application_name, state, wait_event_type, wait_event, pg_blocking_pids(pid) AS blockers, query FROM pg_stat_activity WHERE datname = 'sinex'\"",
             ]
             for command in commands:
                 try:
-                    code, output = machine.execute(command, timeout=10)
-                    print(f"daemon startup evidence: {command}: exit {code}")
+                    started = time.monotonic()
+                    code, output = machine.execute(command, timeout=65)
+                    print(f"daemon startup evidence: {command}: exit {code}, seconds={time.monotonic() - started:.6f}")
                     print(output)
                 except Exception as error:
                     print(f"daemon startup evidence unavailable: {error}")
@@ -78,6 +96,19 @@ self: {
         return machine.succeed(f"cd {root} && find . -type f | sort | xargs -r sha256sum").strip()
 
     wait_for_daemon()
+    with subtest("status uses the initialized derivation readers"):
+        before_probes = machine.succeed("cat /var/lib/sinex/backend-probes.log")
+        assert "pdftotext" in before_probes and "tesseract" in before_probes
+        for _ in range(3):
+            started = time.monotonic()
+            machine.succeed(f"{ctl} status")
+            print(f"default status seconds={time.monotonic() - started:.6f}")
+        after_probes = machine.succeed("cat /var/lib/sinex/backend-probes.log")
+        assert after_probes == before_probes, "status initialized document or OCR readers again"
+        for command in ["pdftotext -v", "tesseract --version", f"{ctl} --deadline 60000 status", f"{ctl} --deadline 60000 sources-discover"]:
+            started = time.monotonic()
+            machine.succeed(command)
+            print(f"status component measurement: {command}: seconds={time.monotonic() - started:.6f}")
     machine.succeed(f"{ctl} stage /var/lib/sinex/zsh_history --parser zsh --follow")
     machine.succeed("BORG_PASSCOMMAND='cat /etc/sinex-test/borg-pass' borg init --encryption=repokey-blake2 /backup/sinex")
     machine.succeed("BORG_PASSCOMMAND='cat /etc/sinex-test/borg-pass' borg init --encryption=repokey-blake2 /backup/sinex-keys")

@@ -348,7 +348,7 @@ async fn admin_table(
         blobs: ctx.blobs.clone(),
         zone,
         day_start,
-        derivations: Default::default(),
+        derivations: crate::derivation_runner::Catalog::new(&Default::default())?,
         agent_grants: Vec::new(),
         unlock: Default::default(),
         host: host.clone(),

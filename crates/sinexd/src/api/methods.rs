@@ -37,7 +37,7 @@ pub(crate) struct Api {
     pub blobs: sinex_store::Blobs,
     pub zone: jiff::tz::TimeZone,
     pub day_start: jiff::civil::Time,
-    pub derivations: sinex_derivations::Configuration,
+    pub derivations: crate::derivation_runner::Catalog,
     /// Classes the agent token is granted besides `open` (`guarded` only by
     /// the operator's explicit grant; never `sealed`).
     pub agent_grants: Vec<sinex_model::Class>,
