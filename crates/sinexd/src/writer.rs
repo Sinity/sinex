@@ -1066,6 +1066,9 @@ impl From<sinex_store::Error> for WriteError {
                     | sqlx::Error::PoolClosed
                     | sqlx::Error::WorkerCrashed
             ),
+            sinex_store::Error::Blob(
+                hashed_blobs::Error::Refused(_) | hashed_blobs::Error::Corrupt { .. },
+            ) => false,
             sinex_store::Error::Blob(_) => true,
             _ => false,
         };

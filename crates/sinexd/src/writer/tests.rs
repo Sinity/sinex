@@ -736,3 +736,31 @@ fn a_moved_signal_checkpoint_is_a_stale_write() {
 }
 
 mod source_turns;
+
+#[devkit::test]
+fn required_blob_refusals_stop_while_storage_io_remains_retryable() {
+    for error in [
+        hashed_blobs::Error::Refused("required encoding identity differs".into()),
+        hashed_blobs::Error::Corrupt {
+            segment: "synthetic".into(),
+            offset: 0,
+            len: 1,
+            what: "required bytes changed".into(),
+        },
+    ] {
+        let error = sinex_store::Error::Blob(error);
+        let expected = error.to_string();
+        assert!(
+            !content_error(&error),
+            "integrity failures cannot become recorded content refusals"
+        );
+        assert!(
+            matches!(WriteError::from(error), WriteError::Refused(reason) if reason == expected)
+        );
+    }
+    let error = std::io::Error::from_raw_os_error(5);
+    assert!(matches!(
+        WriteError::from(sinex_store::Error::Blob(hashed_blobs::Error::Io(error))),
+        WriteError::Unavailable(_)
+    ));
+}

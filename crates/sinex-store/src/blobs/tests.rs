@@ -527,6 +527,23 @@ async fn admission_commits_only_its_material_and_empty_drain_keeps_unadmitted_by
     refused.register_unparsed(&b_material).await.unwrap();
     refused.rollback().await.unwrap();
     assert!(blobs.state().unwrap().extents.is_empty());
+    // A real segment-open I/O failure leaves the transaction unacknowledged
+    // and preparations owned by their source. Repair, then retry the same input.
+    let obstruction = root.path().join("segments");
+    std::fs::write(&obstruction, b"synthetic filesystem obstruction").unwrap();
+    let mut failed = writer.begin().await.unwrap();
+    failed.register_unparsed(&b_material).await.unwrap();
+    assert!(matches!(
+        failed.commit().await.unwrap_err(),
+        crate::Error::Blob(hashed_blobs::Error::Io(_))
+    ));
+    let registered: i64 = sqlx::query_scalar("SELECT count(*) FROM raw.materials")
+        .fetch_one(&mut *writer)
+        .await
+        .unwrap();
+    assert_eq!(registered, 0);
+    assert!(blobs.contains(&a).unwrap() && blobs.contains(&b).unwrap());
+    std::fs::remove_file(&obstruction).unwrap();
     let mut accepted = writer.begin().await.unwrap();
     accepted.register_unparsed(&b_material).await.unwrap();
     accepted.commit().await.unwrap();
