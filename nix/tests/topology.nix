@@ -23,7 +23,7 @@ self: {
             writeFamily = "sinex";
             attestedHost = "satellite";
             writeSourcePrefixes = [ "machine.file-watch" ];
-            writeKindPrefixes = [ "file.changed" ];
+            writeKindPrefixes = [ "file.changed" "capture.gap" ];
             writeClasses = [ "guarded" ];
           };
         };
