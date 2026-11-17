@@ -14,6 +14,7 @@ mod segment_copy;
 
 fn file(path: &Path) -> Result<File> {
     OpenOptions::new()
+        .read(true)
         .write(true)
         .create_new(true)
         .mode(0o600)

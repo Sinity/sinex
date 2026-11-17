@@ -52,7 +52,7 @@ fn unsupported_range_queries_copy_the_same_frozen_prefix_densely() {
     input.write_all(bytes).unwrap();
     let (_sender, stop) = watch::channel(false);
     let mut queries = 0;
-    let digest = copy_ranges(&mut input, &mut output, 12, &stop, |_, _, _| {
+    let digest = read_ranges(&mut input, Some(&mut output), 12, &stop, |_, _, _| {
         queries += 1;
         Err(io::ErrorKind::Unsupported.into())
     })
@@ -75,9 +75,9 @@ fn append_after_the_range_query_does_not_extend_the_copied_boundary() {
         .open(root.path().join("source"))
         .unwrap();
     let (_sender, stop) = watch::channel(false);
-    let digest = copy_ranges(
+    let digest = read_ranges(
         &mut input,
-        &mut output,
+        Some(&mut output),
         original.len() as u64,
         &stop,
         |input, position, length| {
@@ -99,16 +99,22 @@ fn a_missing_or_disappearing_suffix_is_never_filled_as_a_hole() {
     assert!(copy(&mut input, &mut output, 6, &stop).is_err());
     assert_eq!(output.metadata().unwrap().len(), 0);
     input.set_len(6).unwrap();
-    let result = copy_ranges(&mut input, &mut output, 6, &stop, |input, _, length| {
-        input.set_len(5)?;
-        Ok((length, length))
-    });
+    let result = read_ranges(
+        &mut input,
+        Some(&mut output),
+        6,
+        &stop,
+        |input, _, length| {
+            input.set_len(5)?;
+            Ok((length, length))
+        },
+    );
     assert!(result.is_err());
     assert_eq!(output.metadata().unwrap().len(), 0);
     input.set_len(6).unwrap();
-    let result = copy_ranges(
+    let result = read_ranges(
         &mut input,
-        &mut output,
+        Some(&mut output),
         6,
         &stop,
         |input, position, length| {
@@ -128,9 +134,9 @@ fn cancellation_keeps_an_incomplete_copy_without_final_length_or_digest() {
     input.write_all(&[0x41; 4096]).unwrap();
     input.set_len(8 << 20).unwrap();
     let (sender, stop) = watch::channel(false);
-    let result = copy_ranges(
+    let result = read_ranges(
         &mut input,
-        &mut output,
+        Some(&mut output),
         8 << 20,
         &stop,
         |_, position, length| {
@@ -157,10 +163,49 @@ fn unexpected_range_errors_are_not_treated_as_unsupported_or_holes() {
     input.write_all(b"retained").unwrap();
     let (_sender, stop) = watch::channel(false);
     assert!(
-        copy_ranges(&mut input, &mut output, 8, &stop, |_, _, _| Err(
+        read_ranges(&mut input, Some(&mut output), 8, &stop, |_, _, _| Err(
             io::ErrorKind::PermissionDenied.into()
         ))
         .is_err()
     );
+    assert_eq!(output.metadata().unwrap().len(), 0);
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn prepared_prefix_keeps_its_exact_unaligned_end_after_source_changes() {
+    use rustix::fs::{FallocateFlags, fallocate};
+    let (root, mut input, mut output) = files();
+    let mut expected = vec![0; (4 << 20) + 137];
+    expected[4096..8192].fill(0x39);
+    expected[(3 << 20)..].fill(0x71);
+    input.write_all(&expected).unwrap();
+    input.write_all(b"uncommitted suffix").unwrap();
+    input.sync_all().unwrap();
+    let (_sender, stop) = watch::channel(false);
+    let digest = copy(&mut input, &mut output, expected.len() as u64, &stop).unwrap();
+    input.seek(SeekFrom::Start(4096)).unwrap();
+    input.write_all(b"replacement source bytes").unwrap();
+    input.seek(SeekFrom::End(0)).unwrap();
+    input.write_all(b"later append").unwrap();
+    fallocate(
+        &input,
+        FallocateFlags::PUNCH_HOLE | FallocateFlags::KEEP_SIZE,
+        3 << 20,
+        4096,
+    )
+    .unwrap();
+    input.sync_all().unwrap();
+    assert_eq!(std::fs::read(root.path().join("copy")).unwrap(), expected);
+    assert_eq!(output.metadata().unwrap().len(), expected.len() as u64);
+    assert_eq!(digest, blake3::hash(&expected));
+}
+
+#[test]
+fn stopped_copy_leaves_no_completed_prefix() {
+    let (_root, mut input, mut output) = files();
+    input.write_all(b"held bytes").unwrap();
+    let (_sender, stop) = watch::channel(true);
+    assert!(copy(&mut input, &mut output, 10, &stop).is_err());
     assert_eq!(output.metadata().unwrap().len(), 0);
 }

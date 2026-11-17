@@ -237,6 +237,8 @@ Live extent descriptors are checked against the copied encoded bytes, including 
 
 Before publication, a lost exporter, short segment, corrupt extent, failed dump or cancellation leaves an incomplete directory and an open hold. The early `boundary.json` names the hold without claiming completion. A fresh SQL snapshot cannot be attached to an older hold, and an incomplete directory cannot silently become a different run. The operator can inspect the kept attempt, start a fresh one, and explicitly release abandoned holds. A prepared local artifact is not an acknowledgment from Borg or from a producer.
 
+On Linux, a segment artifact shares filesystem extents with the source when native cloning is supported. The clone is immediately truncated to the held committed end, then its logical bytes are hashed and its held extents validated as usual. Later source append or punching cannot change the artifact. An unsupported filesystem, a different filesystem or incompatible file attributes uses the ordinary sparse copy instead. This removes segment staging writes where sharing is available; manifest hashing, snapshot validation and the backup tool still read their normal bytes. The artifact remains an ordinary file with the same manifest and restore contract. An interruption before publication leaves the existing incomplete artifact and open hold.
+
 Tombstoning and orphan cleanup do not punch any extent covered by an open hold. Multiple holds compose: release of the last covering hold dirties the deferred work, which the writer attempts at its next commit group without reopening the segment. Recovery checks the same saved holds before replaying a punch.
 
 ### The deployed archive pair
