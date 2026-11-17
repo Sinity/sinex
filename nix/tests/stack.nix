@@ -128,7 +128,7 @@ self: {
 
     with subtest("the operator's login shell reaches the daemon"):
         try:
-            machine.succeed("su - alice -c 'sinexctl status'")
+            capture_original_status(machine, "su - alice -c 'sinexctl status'")
         except Exception:
             show_status_failure(machine, "su - alice -c 'sinexctl status'", "su - alice -c 'sinexctl --deadline 60000 status'")
             raise
