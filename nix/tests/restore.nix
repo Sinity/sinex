@@ -55,9 +55,8 @@ self: {
       test ! -e /run/fail-key-create
     '';
   };
-  testScript = ''
+  testScript = builtins.readFile ./status-diagnostics.py + ''
     import json
-    import time
     ctl = "sinexctl --endpoint unix:/run/sinex/sinexd.sock --token-file /var/lib/sinex/tokens/operator.token --json"
 
     def wait_for_daemon():
@@ -65,30 +64,7 @@ self: {
         try:
             machine.wait_until_succeeds(f"{ctl} status", timeout=120)
         except Exception:
-            # Keep the failed request and database wait visible after VM teardown.
-            commands = [
-                "sudo -u postgres psql -d sinex -c \"ALTER SYSTEM SET log_min_duration_statement = 0\" -c \"SELECT pg_reload_conf()\"",
-                f"{ctl} status",
-                # Longer budgets measure the failed request; they never satisfy
-                # the original default-budget acceptance above.
-                f"{ctl} --deadline 60000 status",
-                f"{ctl} --deadline 60000 sources-discover",
-                "pdftotext -v",
-                "tesseract --version",
-                "sudo -u postgres psql -d sinex -c \"ALTER SYSTEM RESET log_min_duration_statement\" -c \"SELECT pg_reload_conf()\"",
-                "journalctl -u postgresql.service --no-pager -n 250",
-                "cat /var/lib/sinex/backend-probes.log",
-                "journalctl -u sinexd.service --no-pager -n 200",
-                "sudo -u postgres psql -d sinex -x -c \"SELECT pid, application_name, state, wait_event_type, wait_event, pg_blocking_pids(pid) AS blockers, query FROM pg_stat_activity WHERE datname = 'sinex'\"",
-            ]
-            for command in commands:
-                try:
-                    started = time.monotonic()
-                    code, output = machine.execute(command, timeout=65)
-                    print(f"daemon startup evidence: {command}: exit {code}, seconds={time.monotonic() - started:.6f}")
-                    print(output)
-                except Exception as error:
-                    print(f"daemon startup evidence unavailable: {error}")
+            show_status_failure(machine, f"{ctl} status", f"{ctl} --deadline 60000 status")
             raise
 
     def events():
@@ -105,7 +81,11 @@ self: {
         assert "pdftotext" in before_probes and "tesseract" in before_probes
         for _ in range(3):
             started = time.monotonic()
-            machine.succeed(f"{ctl} status")
+            try:
+                machine.succeed(f"{ctl} status")
+            except Exception:
+                show_status_failure(machine, f"{ctl} status", f"{ctl} --deadline 60000 status")
+                raise
             print(f"default status seconds={time.monotonic() - started:.6f}")
         after_probes = machine.succeed("cat /var/lib/sinex/backend-probes.log")
         assert after_probes == before_probes, "status initialized document or OCR readers again"
