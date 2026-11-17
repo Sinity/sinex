@@ -59,9 +59,22 @@ jobs:
       - name: Verify the deployment module and VMs
         if: ${{ inputs.verify-vms }}
         run: |
+          tests="git+https://github.com/${{ github.repository }}?rev=${{ github.sha }}&shallow=1&exportIgnore=1"
+          phase=$(nix build --no-link --print-build-logs --print-out-paths --max-jobs 1 \
+            --expr 'runtime: tests: let self = builtins.getFlake runtime; source = builtins.getFlake tests; pkgs = import self.inputs.nixpkgs { system = "x86_64-linux"; overlays = [ self.inputs.rust-overlay.overlays.default ]; config.allowUnfreePredicate = pkg: builtins.elem (pkgs.lib.getName pkg) [ "timescaledb" ]; }; in pkgs.testers.runNixOSTest (import "${source}/nix/tests/stack.nix" self)' \
+            --argstr runtime "$FLAKE" --argstr tests "$tests")
+          echo "COLD_STATUS_VM_OUTPUT=$phase" >> "$GITHUB_ENV"
           nix build --no-link --print-build-logs --max-jobs 1 \
             "${FLAKE}#checks.x86_64-linux.postgresql-uuid-bounds" \
             "${FLAKE}#checks.x86_64-linux.module" \
-            "${FLAKE}#checks.x86_64-linux.vm-stack" \
             "${FLAKE}#checks.x86_64-linux.vm-topology" \
             "${FLAKE}#checks.x86_64-linux.vm-restore"
+      - name: Retain original status phase samples
+        if: ${{ always() && env.COLD_STATUS_VM_OUTPUT != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: original-status-phase
+          path: |
+            ${{ env.COLD_STATUS_VM_OUTPUT }}/original-status-phase.jsonl
+            ${{ env.COLD_STATUS_VM_OUTPUT }}/original-status-phase.stderr
+          if-no-files-found: error
