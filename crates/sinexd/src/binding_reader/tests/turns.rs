@@ -195,6 +195,13 @@ async fn normal_turn_visits_second_binding_while_first_always_has_more(
 async fn normal_turn_retry_and_restart_keep_originals_and_committed_cursor(
     db: devkit::pg::TestDatabase,
 ) {
+    let mode = crate::stage::ReadMode::Turn {
+        limits: sinex_source_core::Limits {
+            max_events: usize::MAX,
+            max_bytes: 1,
+        },
+        duration: std::time::Duration::MAX,
+    };
     let dir = tempfile::tempdir().unwrap();
     let spool = dir.path().join("spool");
     let _capture = capture(&spool, 2);
@@ -212,13 +219,7 @@ async fn normal_turn_retry_and_restart_keep_originals_and_committed_cursor(
         .await.unwrap();
     let mut readers = vec![BindingReader::new(&journald::FORMAT, b.clone()).unwrap()];
     let mut rounds = Rounds::default();
-    let failed = round(
-        &mut ctx,
-        &mut readers,
-        &mut rounds,
-        crate::stage::ReadMode::normal(),
-    )
-    .await;
+    let failed = round(&mut ctx, &mut readers, &mut rounds, mode).await;
     assert!(failed.iter().any(|(_, r)| r.is_err()));
     assert!(
         sinex_store::positions::load(&mut ctx.read_conn, &b.name)
@@ -236,14 +237,7 @@ async fn normal_turn_retry_and_restart_keep_originals_and_committed_cursor(
         )
         .await
         .unwrap();
-    for (_, r) in round(
-        &mut ctx,
-        &mut readers,
-        &mut rounds,
-        crate::stage::ReadMode::normal(),
-    )
-    .await
-    {
+    for (_, r) in round(&mut ctx, &mut readers, &mut rounds, mode).await {
         r.unwrap();
     }
     let first = originals(&mut ctx, &b.name).await;
@@ -274,14 +268,7 @@ async fn normal_turn_retry_and_restart_keep_originals_and_committed_cursor(
     );
     let mut readers = vec![BindingReader::new(&journald::FORMAT, b.clone()).unwrap()];
     let mut rounds = Rounds::default();
-    for (_, r) in round(
-        &mut ctx,
-        &mut readers,
-        &mut rounds,
-        crate::stage::ReadMode::normal(),
-    )
-    .await
-    {
+    for (_, r) in round(&mut ctx, &mut readers, &mut rounds, mode).await {
         r.unwrap();
     }
     let after = originals(&mut ctx, &b.name).await;
