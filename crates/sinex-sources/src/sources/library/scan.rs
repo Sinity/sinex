@@ -3,6 +3,7 @@ use super::SCAN;
 use super::files::{Digests, digest, dimensions, ffprobe};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
+use sinex_model::event_types::documents::DocumentCaptured;
 use sinex_model::event_types::library::FileCopy;
 use sinex_model::json::JsonExt;
 use sinex_model::{
@@ -45,6 +46,7 @@ struct ScannedFile {
 #[serde(tag = "record", rename_all = "snake_case")]
 enum ScanLine {
     File(Box<ScannedFile>),
+    Metadata(Box<MetadataFile>),
     Unreadable {
         path: String,
         reason: String,
@@ -57,6 +59,68 @@ enum ScanLine {
     },
 }
 
+/// A filesystem observation whose content has deliberately not been read.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct MetadataFile {
+    item_key: String,
+    host: String,
+    root: String,
+    path: String,
+    facts: ObservationFacts,
+    removed_at: Option<Timestamp>,
+}
+
+impl MetadataFile {
+    fn known(&self) -> Known {
+        Known {
+            item_key: self.item_key.clone(),
+            sha256: None,
+            md5: None,
+            media_type: String::new(),
+            width: None,
+            height: None,
+            duration_ms: None,
+            stored: false,
+            size: self.facts.size.unwrap_or(0),
+            mtime_ns: self.facts.mtime_ns.unwrap_or(0),
+            device: self.facts.device,
+            inode: self.facts.inode,
+            content: None,
+            metadata: Some(self.facts.clone()),
+        }
+    }
+
+    fn reading(&self) -> DocumentCaptured {
+        DocumentCaptured {
+            host: self.host.clone(),
+            root: self.root.clone(),
+            path: Path::new(&self.path)
+                .strip_prefix(&self.root)
+                .unwrap_or(Path::new(&self.path))
+                .to_string_lossy()
+                .into_owned(),
+            native_path_bytes: None,
+            size: self.facts.size,
+            modified_at: self
+                .facts
+                .mtime_ns
+                .and_then(|ns| Timestamp::from_unix_ns(ns).ok()),
+            media_type: None,
+            content: None,
+            removed_at: self.removed_at,
+            located: true,
+        }
+    }
+}
+
+sinex_model::payload_enum! {
+    #[derive(Clone, Debug, PartialEq)]
+    pub enum ScanReading {
+        Copy(FileCopy),
+        Metadata(DocumentCaptured),
+    }
+}
+
 fn nanos(text: &Option<String>) -> Option<Timestamp> {
     text.as_deref()
         .and_then(|s| s.parse::<i128>().ok())
@@ -67,7 +131,7 @@ pub struct ScanParser;
 
 impl StatelessParser for ScanParser {
     type Record<'a> = Map<String, Value>;
-    type Payload = FileCopy;
+    type Payload = ScanReading;
 
     /// Location and file facts do not change the hash of the captured bytes.
     const VOLATILE: &'static [&'static str] = &[
@@ -86,11 +150,12 @@ impl StatelessParser for ScanParser {
         &self,
         record: &Map<String, Value>,
         context: &sinex_source_core::RecordContext<'_>,
-    ) -> Result<Vec<FileCopy>, RecordError> {
+    ) -> Result<Vec<ScanReading>, RecordError> {
         let line: ScanLine = serde_json::from_value(Value::Object(record.clone()))
             .record("not a library scan line")?;
         let d = match line {
             ScanLine::File(d) => d,
+            ScanLine::Metadata(d) => return Ok(vec![ScanReading::Metadata(d.reading())]),
             ScanLine::Unreadable { path, reason } => {
                 return Err(RecordError::new(format!(
                     "partial library scan: {path}: {reason}"
@@ -143,7 +208,7 @@ impl StatelessParser for ScanParser {
             move_candidates: d.move_candidates,
             previous_content: d.previous_content,
         };
-        Ok(vec![payload])
+        Ok(vec![ScanReading::Copy(payload)])
     }
 }
 
@@ -168,14 +233,17 @@ pub struct LibraryScan {
     /// Scan only this file or directory within `root`; paths outside the
     /// selection are neither read nor reported missing.
     pub only: Option<String>,
+    /// Root-relative Ollama blob directories whose recognized direct leaves
+    /// keep filesystem observations without reading or storing their contents.
+    pub ollama_blobs_metadata: Vec<PathBuf>,
 }
 
-/// What a scan knows about a file it already read.
+/// What a scan knows about a file it already observed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Known {
     pub item_key: String,
-    pub sha256: String,
-    pub md5: String,
+    pub sha256: Option<String>,
+    pub md5: Option<String>,
     pub media_type: String,
     pub width: Option<u32>,
     pub height: Option<u32>,
@@ -185,7 +253,9 @@ pub struct Known {
     pub mtime_ns: i128,
     pub device: Option<u64>,
     pub inode: Option<u64>,
-    pub content: String,
+    pub content: Option<String>,
+    #[serde(default)]
+    pub metadata: Option<ObservationFacts>,
 }
 
 /// A file the walk found: relative path, size, mtime, device, inode.
@@ -249,8 +319,18 @@ impl ScanState {
                 .map_err(DriverError::from)?;
             let line: ScanLine = serde_json::from_slice(&line)
                 .map_err(|e| DriverError::Cursor(format!("stored scan line: {e}")))?;
-            let ScanLine::File(d) = line else {
-                continue;
+            let d = match line {
+                ScanLine::File(d) => d,
+                ScanLine::Metadata(d) => {
+                    if let Ok(relative) = Path::new(&d.path).strip_prefix(root) {
+                        let relative = relative.to_string_lossy().into_owned();
+                        if self.remembered.insert(relative.clone()) && d.removed_at.is_none() {
+                            self.files.insert(relative, d.known());
+                        }
+                    }
+                    continue;
+                }
+                _ => continue,
             };
             let d = *d;
             let Ok(relative) = Path::new(&d.path).strip_prefix(root) else {
@@ -275,8 +355,8 @@ impl ScanState {
                 relative,
                 Known {
                     item_key: d.item_key,
-                    sha256: d.sha256,
-                    md5: d.md5,
+                    sha256: Some(d.sha256),
+                    md5: Some(d.md5),
                     media_type: d.media_type,
                     width: d.width,
                     height: d.height,
@@ -286,7 +366,8 @@ impl ScanState {
                     mtime_ns,
                     device: d.device,
                     inode: d.inode,
-                    content: d.content,
+                    content: Some(d.content),
+                    metadata: None,
                 },
             );
         }
@@ -440,6 +521,27 @@ impl LibraryScan {
         }
     }
 
+    // The filename selects the policy only; it never supplies a content digest.
+    fn metadata_only(&self, relative: &str) -> bool {
+        let path = Path::new(relative);
+        self.ollama_blobs_metadata.iter().any(|root| {
+            let Ok(leaf) = path.strip_prefix(root) else {
+                return false;
+            };
+            if leaf.components().count() != 1 {
+                return false;
+            }
+            leaf.to_str()
+                .and_then(|name| name.strip_prefix("sha256-"))
+                .is_some_and(|name| {
+                    name.len() == 64
+                        && name
+                            .bytes()
+                            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                })
+        })
+    }
+
     fn prepare(&self, path: &Path) -> std::io::Result<Prepared> {
         let mut digests = digest(path)?;
         let (mut width, mut height, mut duration_ms) =
@@ -518,8 +620,30 @@ impl LibraryScan {
             }
         }
         for (path, (size, mtime, dev, ino)) in found {
+            if self.metadata_only(&path) {
+                match file_facts(&self.root.join(&path)) {
+                    Ok(mut facts) => {
+                        let changed = state
+                            .files
+                            .get(&path)
+                            .and_then(|k| k.metadata.as_ref())
+                            .is_none_or(|old| {
+                                facts.observed_at = old.observed_at;
+                                &facts != old
+                            });
+                        if changed {
+                            state.queue.push_back((path, size, mtime, dev, ino));
+                        }
+                    }
+                    Err(error) => {
+                        unreadable.insert(path, error.to_string());
+                    }
+                }
+                continue;
+            }
             if state.files.get(&path).is_none_or(|known| {
-                known.size != size
+                known.content.is_none()
+                    || known.size != size
                     || known.mtime_ns != mtime
                     || known.device != dev
                     || known.inode != ino
@@ -541,7 +665,10 @@ impl LibraryScan {
         let missing_sizes: std::collections::HashSet<_> =
             missing.values().map(|known| known.size).collect();
         for (path, size, _, _, _) in &state.queue {
-            if state.files.contains_key(path) || !missing_sizes.contains(size) {
+            if self.metadata_only(path)
+                || state.files.contains_key(path)
+                || !missing_sizes.contains(size)
+            {
                 continue;
             }
             match self.prepare(&self.root.join(path)) {
@@ -573,10 +700,13 @@ impl LibraryScan {
         let mut old_content: BTreeMap<&str, Vec<&String>> = BTreeMap::new();
         let mut old_identity: BTreeMap<(&str, Option<u64>, u64), Vec<&String>> = BTreeMap::new();
         for (path, known) in &missing {
-            old_content.entry(&known.content).or_default().push(path);
+            let Some(content) = &known.content else {
+                continue;
+            };
+            old_content.entry(content).or_default().push(path);
             if let Some(inode) = known.inode {
                 old_identity
-                    .entry((&known.content, known.device, inode))
+                    .entry((content, known.device, inode))
                     .or_default()
                     .push(path);
             }
@@ -677,17 +807,66 @@ impl LibraryScan {
         let mut owned_files = Vec::new();
         let mut budget = 0u64;
         while let Some((relative, size, mtime, dev, ino)) = state.queue.front().cloned() {
-            if budget > 0 && budget + size > self.bytes_per_poll {
+            let charged = if self.metadata_only(&relative) {
+                1
+            } else {
+                size.max(1)
+            };
+            if budget > 0 && budget + charged > self.bytes_per_poll {
                 break;
             }
             state.queue.pop_front();
-            budget += size.max(1);
+            budget += charged;
             let full = self.root.join(&relative);
             if state.unreadable.contains_key(&relative) {
                 continue;
             }
             let before = state.files.get(&relative).cloned();
+            if self.metadata_only(&relative) {
+                match file_facts(&full) {
+                    Ok(facts) => {
+                        let item_key =
+                            before
+                                .as_ref()
+                                .map(|k| k.item_key.clone())
+                                .unwrap_or_else(|| {
+                                    sinex_model::event_types::library::item_key(
+                                        &self.host, &root, &relative,
+                                    )
+                                });
+                        let line = MetadataFile {
+                            item_key,
+                            host: self.host.clone(),
+                            root: root.clone(),
+                            path: full.display().to_string(),
+                            facts,
+                            removed_at: None,
+                        };
+                        state.files.insert(relative, line.known());
+                        push_line(
+                            &mut lines,
+                            &mut records,
+                            &ScanLine::Metadata(Box::new(line)),
+                        );
+                        files_described += 1;
+                    }
+                    Err(error) => {
+                        push_line(
+                            &mut lines,
+                            &mut records,
+                            &ScanLine::Unreadable {
+                                path: full.display().to_string(),
+                                reason: error.to_string(),
+                            },
+                        );
+                    }
+                }
+                continue;
+            }
             if let Some(known) = &before
+                && known.content.is_some()
+                && known.sha256.is_some()
+                && known.md5.is_some()
                 && known.size == size
                 && known.mtime_ns == mtime
                 && known.device == dev
@@ -698,10 +877,10 @@ impl LibraryScan {
                     host: self.host.clone(),
                     root: root.clone(),
                     path: full.display().to_string(),
-                    content: known.content.clone(),
+                    content: known.content.clone().expect("full copy has a digest"),
                     size,
-                    sha256: known.sha256.clone(),
-                    md5: known.md5.clone(),
+                    sha256: known.sha256.clone().expect("full copy has SHA-256"),
+                    md5: known.md5.clone().expect("full copy has MD5"),
                     media_type: known.media_type.clone(),
                     width: known.width,
                     height: known.height,
@@ -718,7 +897,7 @@ impl LibraryScan {
                 if self.keep_bytes && !known.stored {
                     owned_files.push(sinex_source_core::drivers::OwnedFile {
                         path: full,
-                        blob: known.content.clone(),
+                        blob: known.content.clone().expect("full copy has a digest"),
                     });
                 }
                 push_line(
@@ -790,8 +969,8 @@ impl LibraryScan {
             }
             let previous_content = before
                 .as_ref()
-                .filter(|known| known.content != content)
-                .map(|k| k.content.clone());
+                .filter(|known| known.content.as_ref().is_some_and(|old| old != &content))
+                .and_then(|k| k.content.clone());
             let line = ScannedFile {
                 item_key: item_key.clone(),
                 host: self.host.clone(),
@@ -830,8 +1009,8 @@ impl LibraryScan {
                 relative,
                 Known {
                     item_key,
-                    sha256: line.sha256,
-                    md5: line.md5,
+                    sha256: Some(line.sha256),
+                    md5: Some(line.md5),
                     media_type: line.media_type,
                     width: line.width,
                     height: line.height,
@@ -841,7 +1020,8 @@ impl LibraryScan {
                     mtime_ns: mtime,
                     device: dev,
                     inode: ino,
-                    content,
+                    content: Some(content),
+                    metadata: None,
                 },
             );
         }
@@ -856,12 +1036,29 @@ impl LibraryScan {
         {
             for (relative, known) in gone {
                 state.files.remove(&relative);
+                if let Some(facts) = known.metadata {
+                    let line = MetadataFile {
+                        item_key: known.item_key,
+                        host: self.host.clone(),
+                        root: root.clone(),
+                        path: self.root.join(&relative).display().to_string(),
+                        facts,
+                        removed_at: Some(now),
+                    };
+                    push_line(
+                        &mut lines,
+                        &mut records,
+                        &ScanLine::Metadata(Box::new(line)),
+                    );
+                    files_described += 1;
+                    continue;
+                }
                 let line = ScannedFile {
                     item_key: known.item_key,
                     host: self.host.clone(),
                     root: root.clone(),
                     path: self.root.join(&relative).display().to_string(),
-                    content: known.content,
+                    content: known.content.expect("full copy has a digest"),
                     size: known.size,
                     device: known.device,
                     inode: known.inode,
@@ -925,6 +1122,7 @@ impl LibraryScan {
         let manifest = sinex_model::Manifest::from_json(json!({
             "path": root, "host": self.host,
             "media_type": "application/x-sinex-library-scan", "keep_bytes": self.keep_bytes,
+            "ollama_blobs_metadata": self.ollama_blobs_metadata,
             "walk_complete": walk_done, "only": self.only, "read_at_ns": read_at,
             "scan": id.to_string(), "part_index": part_index,
         }));

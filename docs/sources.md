@@ -152,6 +152,16 @@ as a stream. Their listing members retain file metadata and media type but
 have zero data bytes; other files retain their usual member bytes. Unchanged
 files reuse admitted facts after restart. See [located files](materials.md#located-files).
 
+The library source's `ollama_blobs_metadata` option lists root-relative Ollama
+blob directories. Only direct regular-file children named `sha256-` followed by
+64 lowercase hexadecimal characters use metadata capture. They record available
+file facts and locations as `document.captured`, without opening, hashing,
+probing or preparing their contents. Their content identity and media type stay
+unknown; the filename is not a verified digest. Unchanged facts survive restart,
+and disappearance is recorded without deleting earlier observations or bytes.
+Other files, including authored control vectors, nested paths and unrecognized
+model children, keep the root's normal full capture. The option defaults empty.
+
 Restart restoration also reads stored older-format framed-directory materials by their immutable manifest format, preserving their IDs, bytes and record offsets. Their modification time remains a historical modification time; absent change time is unknown. Before treating an unchanged older-format file as current, the reader hashes a stable current file observation and establishes its current change-time baseline only when the bytes match. Equal bytes create no new material. Saved memory has one tagged encoding that records the admitted snapshot position it was saved through. Facts taken from framed-directory parts are saved again with their change times through admission even when no content changed, keeping the existing material and admitted byte boundary. A failed or lost acknowledgment leaves that save pending until the checkpoint's committed cursor is acknowledged. Newer admitted records after a saved snapshot override its older facts. Metadata traversal may continue behind an older-format snapshot to recover original removal locations for its saved files, without resurrecting removed files. Each part is bounded by the current cursor or the newer part's stored `previous_through`; missing or contradictory evidence is diagnosed. New directory capture continues to write PAX tar.
 
 History pages include the part holding the saved memory and stop there before

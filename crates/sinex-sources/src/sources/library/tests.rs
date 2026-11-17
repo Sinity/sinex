@@ -26,7 +26,7 @@ pub(super) fn png(w: u32, h: u32) -> Vec<u8> {
     b
 }
 
-fn read_events(
+pub(super) fn read_events(
     a: &Acquired,
     parser: &sinex_source_core::Stateless<ScanParser>,
 ) -> Vec<sinex_model::Event> {
@@ -73,6 +73,7 @@ pub(super) fn scan(root: &Path) -> LibraryScan {
         probe: false,
         bytes_per_poll: 1 << 30,
         only: None,
+        ollama_blobs_metadata: Vec::new(),
     }
 }
 
@@ -767,4 +768,19 @@ fn one_missing_path_and_several_new_equal_copies_report_ambiguity_across_parts()
         assert!(copy.move_candidates.contains(&old.path));
     }
     assert_eq!(state.files_hashed(), 3, "each new file was hashed once");
+}
+
+#[test]
+fn ollama_metadata_options_reject_paths_outside_the_library_root() {
+    for path in ["", "/absolute/blobs", "../blobs", "model/../blobs"] {
+        let mut settings = sinex_source_core::Settings::new("example-host");
+        settings.options = json!({"ollama_blobs_metadata": [path]});
+        let binding =
+            sinex_source_core::Binding::of(&SCAN, Path::new("/synthetic/library"), settings);
+        assert!((FORMAT.reader.unwrap())(&binding).is_err(), "{path}");
+    }
+    let mut settings = sinex_source_core::Settings::new("example-host");
+    settings.options = json!({"ollama_blobs_metadata": ["model/ollama/blobs"]});
+    let binding = sinex_source_core::Binding::of(&SCAN, Path::new("/synthetic/library"), settings);
+    assert!((FORMAT.reader.unwrap())(&binding).is_ok());
 }

@@ -1,9 +1,10 @@
 //! The media library's two sources.
 //!
-//! **Scan** (`library.scan`): a walk of a library root. Every changed file is hashed once (BLAKE3, SHA-256, MD5), its type sniffed from its
-//! bytes, its bytes streamed into the content store unless the root is
-//! indexed by reference only, and described by one JSON line. The material is
-//! those lines; a file line is one `library.copy`. A completion line closes
+//! **Scan** (`library.scan`): a walk of a library root. By default changed files
+//! are hashed, sniffed, streamed into the content store unless the root is
+//! indexed by reference, and described by one JSON line (`library.copy`).
+//! Explicitly selected Ollama blobs instead retain file facts and locations
+//! without reading contents (`document.captured`). The material is those lines. A completion line closes
 //! each changed scan once, without another copy event. A file that left its
 //! path and whose bytes turned up at a new path is a move (`moved_from`);
 //! matching device and inode are considered first. An edited file names the
@@ -37,8 +38,8 @@ pub const SCAN: SourceSpec = SourceSpec {
     expect: Expectation::cadence_days(1),
     purpose: "the media library",
     parser: "library-scan",
-    parser_version: 2,
-    event_types: &["library.copy"],
+    parser_version: 3,
+    event_types: &["library.copy", "document.captured"],
     framer: Framer::export(frame_lines, Framing::Lines),
     ..SourceSpec::DEFAULT
 };
@@ -94,6 +95,14 @@ super::input_format! {
         if b.source != SCAN.name {
             return Err("library requests are supplied by the API".into());
         }
+        let metadata: Vec<std::path::PathBuf> = b.settings.options.get("ollama_blobs_metadata")
+            .map(|value| serde_json::from_value(value.clone()))
+            .transpose().map_err(|error| format!("ollama_blobs_metadata: {error}"))?
+            .unwrap_or_default();
+        if metadata.iter().any(|path| path.as_os_str().is_empty()
+            || path.components().any(|part| !matches!(part, std::path::Component::Normal(_)))) {
+            return Err("ollama_blobs_metadata must contain nonempty root-relative paths".into());
+        }
         Ok(binding::polled(LibraryReader::new(LibraryScan {
             root: b.input.clone(),
             host: b.settings.host.clone(),
@@ -101,6 +110,7 @@ super::input_format! {
             probe: true,
             bytes_per_poll: 1 << 30,
             only: b.settings.option("only").map(str::to_owned),
+            ollama_blobs_metadata: metadata,
         })))
     },
 } }

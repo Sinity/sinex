@@ -36,6 +36,14 @@ member. The member holds no file bytes. Its `document.captured` reading has
 can be replayed independently of the external file. The external file is not
 a material, and replay cannot reconstruct its bytes.
 
+A library root can select metadata-only capture for recognized downloaded
+Ollama blobs ([directory captures](sources.md#directory-captures)). These
+observations keep path, size, times and filesystem identity without reading the
+contents. Their `content` is unknown, rather than a hash inferred from a name;
+the retained listing remains replayable. Hash-based located-content diagnostics
+apply only when that content identity is known. Authored control vectors and
+unclassified model paths keep full capture.
+
 A changed file records its new hash. A move records the same hash at the new
 path and a removal at the old path; earlier readings retain the earlier facts.
 Other files in that root and files in ordinary document roots keep their
