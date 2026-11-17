@@ -4708,6 +4708,7 @@ dependencies = [
  "query-language",
  "ranking",
  "rusqlite",
+ "rustix",
  "serde",
  "serde_json",
  "signal-delivery",

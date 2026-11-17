@@ -10,6 +10,7 @@ license.workspace = true
 sinex-query.workspace = true
 command-surface = { workspace = true, features = ["runtime"] }
 hashed-blobs.workspace = true
+rustix = { version = "1", features = ["fs"] }
 query-language.workspace = true
 signals.workspace = true
 signal-delivery.workspace = true

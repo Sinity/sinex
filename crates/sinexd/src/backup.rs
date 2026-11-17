@@ -8,6 +8,8 @@ use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Component, Path};
 use tokio::sync::watch;
 
+mod segment_copy;
+
 fn file(path: &Path) -> Result<File> {
     OpenOptions::new()
         .write(true)
@@ -432,19 +434,7 @@ pub(crate) async fn prepare(
             }
             let mut input = File::open(input)?;
             let mut out = file(&target)?;
-            let mut remaining = segment.committed_end;
-            let mut buffer = [0; 64 * 1024];
-            let mut hasher = blake3::Hasher::new();
-            while remaining != 0 {
-                stopped(&check)?;
-                let take = usize::try_from(remaining.min(buffer.len() as u64))?;
-                input.read_exact(&mut buffer[..take]).map_err(|e| {
-                    Error::bad_request(format!("short or unreadable committed segment: {e}"))
-                })?;
-                out.write_all(&buffer[..take])?;
-                hasher.update(&buffer[..take]);
-                remaining -= take as u64;
-            }
+            let digest = segment_copy::copy(&mut input, &mut out, segment.committed_end, &check)?;
             out.sync_all()?;
             if let Some(parent) = target.parent() {
                 File::open(parent).and_then(|f| f.sync_all())?;
@@ -452,7 +442,7 @@ pub(crate) async fn prepare(
             Ok(ManifestFile {
                 path: manifest_path,
                 bytes: segment.committed_end,
-                blake3: hasher.finalize().to_hex().to_string(),
+                blake3: digest.to_hex().to_string(),
             })
         })
         .await??;

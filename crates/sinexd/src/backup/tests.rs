@@ -107,7 +107,7 @@ async fn unavailable_producers_stop_before_dumps_or_segment_copy(db: devkit::pg:
 /// and wrapped keys changed after the hold are absent from both SQL dumps
 /// and the immutable byte prefix, without stopping the original writer.
 #[devkit::test]
-async fn paired_dumps_and_segment_copy_keep_the_hold_state_while_the_writer_advances(
+async fn segment_copy_keeps_holes_and_the_hold_state_while_the_writer_advances(
     db: devkit::pg::TestDatabase,
 ) {
     let url = db.url(None);
@@ -119,13 +119,28 @@ async fn paired_dumps_and_segment_copy_keep_the_hold_state_while_the_writer_adva
     let blobs = sinex_store::Blobs::open(source.path()).unwrap();
     blobs.load(&mut conn).await.unwrap();
     let original_name = blobs.put(b"original independent byte oracle").unwrap();
+    // A real released encoded extent leaves a large hole beside the survivor.
+    let mut discarded = vec![0; 8 << 20];
+    blake3::Hasher::new().finalize_xof().fill(&mut discarded);
+    let discarded_name = blobs.put(&discarded).unwrap();
     sinex_store::blobs::commit_pending_extents(
         &mut conn,
         &blobs,
-        std::slice::from_ref(&original_name),
+        &[original_name.clone(), discarded_name.clone()],
     )
     .await
     .unwrap();
+    sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES($1,32,'present')")
+        .bind(&original_name)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(
+        sinex_store::blobs::delete_unreferenced_extents(&mut conn, &blobs)
+            .await
+            .unwrap(),
+        [discarded_name],
+    );
     key(&mut conn, "original-key", b"original-wrapped-key").await;
     let original = std::fs::read(source.path().join("segments/current.hb")).unwrap();
     let (writer, queues) = crate::writer::channels();
@@ -239,6 +254,22 @@ async fn paired_dumps_and_segment_copy_keep_the_hold_state_while_the_writer_adva
         std::fs::read(source.path().join("segments/current.hb")).unwrap(),
         original
     );
+    use std::os::unix::fs::MetadataExt;
+    let copied = std::fs::metadata(artifact.join("main/segments/current.hb")).unwrap();
+    assert!(
+        copied.blocks() * 512 < copied.len() / 2,
+        "released bytes stay sparse in the artifact"
+    );
+    let recorded = manifest
+        .files
+        .iter()
+        .find(|file| file.path == "main/segments/current.hb")
+        .unwrap();
+    assert_eq!(recorded.bytes, original.len() as u64);
+    assert_eq!(
+        recorded.blake3,
+        blake3::hash(&original).to_hex().to_string()
+    );
     assert_eq!(
         std::fs::read(artifact.join("main/manifest.json")).unwrap(),
         std::fs::read(artifact.join("keys/manifest.json")).unwrap()
@@ -293,6 +324,15 @@ async fn paired_dumps_and_segment_copy_keep_the_hold_state_while_the_writer_adva
         hashed_blobs::Reader::new(&artifact.join("main"))
             .scan(&[hashed_blobs::Extent::decode(&descriptor[0]).unwrap()])
             .is_empty()
+    );
+    assert_eq!(
+        hashed_blobs::Reader::new(&artifact.join("main"))
+            .read(
+                &[hashed_blobs::Extent::decode(&descriptor[0]).unwrap()],
+                None
+            )
+            .unwrap(),
+        b"original independent byte oracle",
     );
     drop(writer);
     task.await.unwrap();
