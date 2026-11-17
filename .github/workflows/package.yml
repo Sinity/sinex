@@ -51,16 +51,19 @@ jobs:
         run: |
           dependencies=$(nix build --no-link --print-build-logs --print-out-paths "${FLAKE}#sinex-dependencies")
           out=$(nix build --no-link --print-build-logs --print-out-paths "${FLAKE}#default")
+          postgres=$(nix build --no-link --print-build-logs --print-out-paths "${FLAKE}#postgresql")
           echo "built $out"
           echo "dependencies=$dependencies" >> "$GITHUB_ENV"
           echo "out=$out" >> "$GITHUB_ENV"
+          echo "postgres=$postgres" >> "$GITHUB_ENV"
       - name: Publish its closure to sinity.cachix.org
-        run: cachix push sinity "$out" "$dependencies"
+        run: cachix push sinity "$out" "$dependencies" "$postgres"
       - name: Verify the deployment module and VMs
         if: ${{ inputs.verify-vms }}
         run: |
           nix build --no-link --print-build-logs \
             "${FLAKE}#checks.x86_64-linux.postgresql-uuid-bounds" \
+            "${FLAKE}#checks.x86_64-linux.postgresql-array-receive" \
             "${FLAKE}#checks.x86_64-linux.module" \
             "${FLAKE}#checks.x86_64-linux.vm-stack" \
             "${FLAKE}#checks.x86_64-linux.vm-topology" \

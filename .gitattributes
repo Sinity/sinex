@@ -26,6 +26,8 @@ flake.lock linguist-generated
 *.toml text eol=lf
 *.json text eol=lf
 *.sql text eol=lf
+# Unified patch context preserves upstream tabs and blank lines.
+*.patch -whitespace
 
 # ── Binary files ─────────────────────────────────────────────────────
 *.age binary

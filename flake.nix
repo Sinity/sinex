@@ -1,6 +1,5 @@
 {
-  description = "Sinex: a record of one person's digital life"
-;
+  description = "Sinex: a record of one person's digital life";
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
   inputs.crane.url = "github:ipetkov/crane/eb35abda9f232cc6610b1d1e3200d15c49b7ac54";
   inputs.rust-overlay = {
@@ -57,6 +56,9 @@
       # drill. Built on demand, not by `package`.
       checks.${system} = {
         postgresql-uuid-bounds = import ./nix/tests/postgresql-uuid-bounds.nix { inherit pkgs postgres; };
+        postgresql-array-receive = import ./nix/tests/postgresql-array-receive.nix {
+          inherit pkgs postgres;
+        };
         module = import ./nix/tests/module.nix self pkgs;
         vm-stack = pkgs.testers.runNixOSTest (import ./nix/tests/stack.nix self);
         vm-topology = pkgs.testers.runNixOSTest (import ./nix/tests/topology.nix self);

@@ -97,6 +97,13 @@ empty ranges, equality and commuted operands. It never connects to a deployed
 database. A custom `services.sinex.database.package` must preserve these
 semantics.
 
+The provider also bounds ARRAY receiver parser memory to one element. Each
+received datum is copied into the compressor before its temporary context is
+reset, including the receiver's function cache. Run
+`nix build .#checks.x86_64-linux.postgresql-array-receive` for synthetic JSONB,
+text and integer roundtrips with NULLs and an allocated-memory comparison
+against the unpatched receiver. This check uses separate disposable clusters.
+
 ## Published package
 
 The `package` workflow builds `.#default` for every master commit and pushes

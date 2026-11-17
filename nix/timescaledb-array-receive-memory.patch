@@ -1,0 +1,54 @@
+--- a/tsl/src/compression/algorithms/array.c
++++ b/tsl/src/compression/algorithms/array.c
+@@ -12,6 +12,7 @@
+ #include <common/base64.h>
+ #include <funcapi.h>
+ #include <utils/lsyscache.h>
++#include <utils/memutils.h>
+ #include <utils/syscache.h>
+ 
+ #include "array.h"
+@@ -933,8 +934,10 @@
+ 	ArrayCompressor *compressor = array_compressor_alloc(element_type);
+ 	Simple8bRleDecompressionIterator nulls;
+ 	uint8 has_nulls;
+-	DatumDeserializer *deser = create_datum_deserializer(element_type);
+ 	bool use_binary_recv;
++	MemoryContext element_context = AllocSetContextCreate(CurrentMemoryContext,
++														 "compressed array receive element",
++														 ALLOCSET_DEFAULT_SIZES);
+ 	uint32 num_elements;
+ 	uint32 i;
+ 
+@@ -959,6 +962,8 @@
+ 	for (i = 0; i < num_elements; i++)
+ 	{
+ 		Datum val;
++		DatumDeserializer *deser;
++		MemoryContext previous_context;
+ 		if (has_nulls)
+ 		{
+ 			Simple8bRleDecompressResult null =
+@@ -971,12 +976,21 @@
+ 			}
+ 		}
+ 
++		/* Receive functions may retain parse trees much larger than their datum.
++		 * The compressor copies the datum, so each element owns its temporaries.
++		 * Recreate the deserializer here: its lazy FmgrInfo cache belongs to this
++		 * context too and must not survive the reset. */
++		previous_context = MemoryContextSwitchTo(element_context);
++		deser = create_datum_deserializer(element_type);
+ 		val = binary_string_to_datum(deser,
+ 									 use_binary_recv ? BINARY_ENCODING : TEXT_ENCODING,
+ 									 buffer);
+ 
++		MemoryContextSwitchTo(previous_context);
+ 		array_compressor_append(compressor, val);
+-	}
++		MemoryContextReset(element_context);
++	}
++	MemoryContextDelete(element_context);
+ 
+ 	return array_compressor_get_serialization_info(compressor);
+ }
