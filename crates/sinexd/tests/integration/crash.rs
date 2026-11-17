@@ -1336,7 +1336,7 @@ async fn partial_segment_append_recovers_without_advancing_its_cursor() {
         "each preparation fits; only the cumulative segment exceeds the limit"
     );
     sqlx::query("BEGIN").execute(&mut harness).await.unwrap();
-    sqlx::query(&lock("core.admission_stage"))
+    sqlx::query(&lock("core.live_locations"))
         .execute(&mut harness)
         .await
         .unwrap();

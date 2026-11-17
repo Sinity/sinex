@@ -91,7 +91,7 @@ async fn keyed_and_location_readings_stay_separate_when_the_text_matches(
         (0, 2, None)
     );
     assert_eq!(crate::query::current_seq(&mut conn).await.unwrap(), before);
-    let stage: i64 = sqlx::query_scalar("SELECT count(*) FROM core.admission_stage")
+    let stage: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_temp.admission_stage")
         .fetch_one(&mut conn)
         .await
         .unwrap();

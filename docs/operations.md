@@ -170,6 +170,8 @@ names the hold and whether the release succeeded.
 
 ### Holds and the boundary
 
+Admission continues while `pg_dump` holds its relation locks: batch payloads use the writer's temporary staging table, which logical dumps omit. The dump includes the declared empty staging template; the restored writer clones that layout through its normal claim path.
+
 A backup records the dump's commit position and schema version, the blob-only change counter, and the committed segment prefixes it protects. Both the main and wrapped-key dumps belong to one exported PostgreSQL snapshot of the same database; the keys are the `privacy.data_keys` table, not a second database.
 
 ```

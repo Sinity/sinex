@@ -334,7 +334,10 @@ fn sinexd_binary_measured(out: &Path) -> Result<(PathBuf, Value), String> {
     let built = devkit::cargo_command()
         .args(["build", "--locked", "--release", "-p", "sinexd"])
         .env("CARGO_TARGET_DIR", &target)
-        .env("DATABASE_URL", compiler.url())
+        .env(
+            "DATABASE_URL",
+            crate::database::checked_url(&compiler.url()),
+        )
         .status()
         .map_err(|e| e.to_string())?;
     if !built.success() {

@@ -32,6 +32,15 @@ impl AdmissionContext {
         // The key must commit before any admission can cache or use it.
         let mut tx = connection.begin().await?;
         let key = privacy::hash_key(&mut tx).await?;
+        // Keep the declared table for checked SQL and logical restore. Batch
+        // rows belong to this writer alone, beyond pg_dump's relation locks.
+        for statement in [
+            "CREATE TEMP TABLE admission_stage (LIKE core.admission_stage INCLUDING ALL) ON COMMIT DELETE ROWS",
+            "SET search_path = pg_temp, core, public",
+            "DELETE FROM core.admission_stage",
+        ] {
+            sqlx::query(statement).execute(&mut *tx).await?;
+        }
         tx.commit().await?;
         Ok(Self {
             connection,

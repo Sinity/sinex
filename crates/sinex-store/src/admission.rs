@@ -315,7 +315,7 @@ pub(crate) async fn admit(
         let classified = classify::stage_and_classify(conn, &events, &mut outcome).await?;
         let started = std::time::Instant::now();
         sqlx::query!(
-            "DELETE FROM core.admission_stage AS staged
+            "DELETE FROM admission_stage AS staged
              WHERE NOT EXISTS (SELECT 1 FROM unnest($1::bigint[]) AS admitted(ord)
                WHERE admitted.ord = staged.ord)",
             &classified.admit

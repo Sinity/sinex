@@ -46,6 +46,8 @@ workspace lock, as described in the shared
 
 A host may queue these commands through its own job runner.
 
+Compile-time staging queries use `core,public` as their database search path, resolving the declared staging template. The admission writer uses `pg_temp,core,public`, resolving its private clone of that same declaration. The xtask environment, benchmark compiler and package build set the compile-time path together.
+
 `cargo xtask test -p PACKAGE` passes package selection unchanged to Cargo.
 `-E` and test-name filters narrow execution after compilation; they do not
 remove unrelated build targets from a selected package. Target flags can

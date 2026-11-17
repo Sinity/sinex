@@ -101,11 +101,21 @@ pub fn prepare(root: &Path) -> Result<(Server, SchemaDatabases)> {
     Ok((server, databases))
 }
 
+/// Checked staging queries resolve the declared template at compile time;
+/// the writer shadows it with its private relation at runtime.
+pub fn checked_url(url: &str) -> String {
+    let separator = if url.contains('?') { '&' } else { '?' };
+    format!("{url}{separator}options=-csearch_path%3Dcore%2Cpublic")
+}
+
 /// `DATABASE_URL` for compile-time checks against the schema database, and
 /// what tests need to clone the template (`devkit::pg::test_database`).
 pub fn env(server: &Server, databases: &SchemaDatabases) -> Vec<(String, String)> {
     let mut env = vec![
-        ("DATABASE_URL".into(), server.url(&databases.schema, None)),
+        (
+            "DATABASE_URL".into(),
+            checked_url(&server.url(&databases.schema, None)),
+        ),
         ("SINEX_SCHEMA_IDENTITY".into(), databases.schema.clone()),
     ];
     env.extend(server.test_env(&databases.template));

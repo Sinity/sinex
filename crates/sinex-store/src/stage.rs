@@ -108,7 +108,9 @@ impl CopyText<'_> {
 /// Copy rows in batch order, within the caller's existing transaction.
 pub(crate) async fn copy(connection: &mut PgConnection, events: &[(i64, &Event)]) -> Result<()> {
     let copy = connection
-        .copy_in_raw(&format!("COPY core.admission_stage ({COLUMNS}) FROM STDIN"))
+        .copy_in_raw(&format!(
+            "COPY pg_temp.admission_stage ({COLUMNS}) FROM STDIN"
+        ))
         .await?;
     let mut encoder = CopyText::new(copy);
     let result = async {
