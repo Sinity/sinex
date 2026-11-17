@@ -737,14 +737,24 @@ pub(crate) async fn record(read_conn: &mut PgConnection, b: &Binding) -> Result<
 }
 
 /// Normal reading shares turns; an explicit staging operation drains its input.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum ReadMode {
-    Once,
+    Turn {
+        limits: sinex_source_core::Limits,
+        duration: Duration,
+    },
     ToEnd,
 }
 impl ReadMode {
+    pub(crate) fn normal() -> Self {
+        Self::Turn {
+            limits: sinex_source_core::Limits::default(),
+            duration: Duration::from_secs(1),
+        }
+    }
+
     fn priority(self, source: &dyn Source) -> writer::Priority {
-        if self == Self::Once
+        if matches!(self, Self::Turn { .. })
             && source.spec().origin
                 == sinex_source_core::Origin::Input(sinex_source_core::Shape::LiveStream)
         {
@@ -810,7 +820,7 @@ pub(crate) async fn drive(
             .await?
             .unwrap_or((serde_json::Value::Null, serde_json::Value::Null));
         let poll_started = Instant::now();
-        let mut acquired = reader.acquire(cursor.clone(), priority).await?;
+        let (mut acquired, more) = reader.acquire(cursor.clone(), priority).await?;
         totals.poll_time += poll_started.elapsed();
         drivers::note_previous_through(&cursor, &mut acquired);
         let carry = material.carry(read_conn, binding, carry, &acquired).await?;
@@ -837,8 +847,16 @@ pub(crate) async fn drive(
         }
         .submit(acquired, carry, &mut totals)
         .await?;
-        if mode == ReadMode::Once || !had_material {
-            break !had_material;
+        if !had_material {
+            break true;
+        }
+        if let ReadMode::Turn { limits, duration } = mode
+            && (!more
+                || totals.material_bytes >= limits.max_bytes
+                || totals.accounting.framed >= limits.max_events as u64
+                || started.elapsed() >= duration)
+        {
+            break false;
         }
     };
     totals.wall = started.elapsed();

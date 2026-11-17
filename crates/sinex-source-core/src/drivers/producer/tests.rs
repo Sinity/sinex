@@ -910,14 +910,14 @@ fn failed_segments_survive_cleanup_and_raw_paths_survive_restart() {
     let accepted = dir.path().join("000000000001.ndjson");
     std::fs::write(&failed, b"failed captured bytes\n").unwrap();
     std::fs::write(&accepted, b"stored captured bytes\n").unwrap();
-    let mut driver = super::super::live_stream::LiveStream {
-        spool: dir.path().to_owned(),
-        input: sinex_model::InputRef {
+    let mut driver = super::super::live_stream::LiveStream::new(
+        dir.path().to_owned(),
+        sinex_model::InputRef {
             kind: "socket".into(),
             locator: "synthetic".into(),
             host: "test".into(),
         },
-    };
+    );
     let cursor = serde_json::to_value(super::super::live_stream::Cursor {
         segment: 2,
         ..Default::default()

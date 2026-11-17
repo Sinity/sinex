@@ -126,14 +126,14 @@ pub fn source() -> DeclaredSource<UdevParser> {
 }
 
 pub fn driver(spool: PathBuf, host: String) -> LiveStream {
-    LiveStream {
+    LiveStream::new(
         spool,
-        input: InputRef {
+        InputRef {
             kind: "netlink".into(),
             locator: "udev".into(),
             host,
         },
-    }
+    )
 }
 
 /// Copy `reader`'s blocks into the spool, one record each, syncing at least

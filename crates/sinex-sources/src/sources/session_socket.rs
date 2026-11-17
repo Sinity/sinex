@@ -256,14 +256,14 @@ fn capture_connection(stream: UnixStream, writer: &Mutex<SpoolWriter>) -> std::i
 }
 
 pub fn driver(spool: PathBuf, host: String) -> LiveStream {
-    LiveStream {
+    LiveStream::new(
         spool,
-        input: InputRef {
+        InputRef {
             kind: "socket".into(),
             locator: "sinex-session:integrations".into(),
             host,
         },
-    }
+    )
 }
 
 pub struct SessionSocketParser;

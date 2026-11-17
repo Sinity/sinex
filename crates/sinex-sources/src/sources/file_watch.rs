@@ -352,14 +352,14 @@ pub fn source() -> DeclaredSource<FileWatchParser> {
 }
 
 pub fn driver(spool: PathBuf, host: String) -> LiveStream {
-    LiveStream {
+    LiveStream::new(
         spool,
-        input: InputRef {
+        InputRef {
             kind: "inotify".into(),
             locator: "file-watch".into(),
             host,
         },
-    }
+    )
 }
 
 /// `stage --parser file-watch SPOOL`: changes under the directories in the

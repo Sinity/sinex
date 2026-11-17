@@ -164,7 +164,7 @@ async fn normal_turn_visits_second_binding_while_first_always_has_more(
             &mut ctx,
             &mut readers,
             &mut rounds,
-            crate::stage::ReadMode::Once,
+            crate::stage::ReadMode::normal(),
         )
         .await
         {
@@ -195,6 +195,13 @@ async fn normal_turn_visits_second_binding_while_first_always_has_more(
 async fn normal_turn_retry_and_restart_keep_originals_and_committed_cursor(
     db: devkit::pg::TestDatabase,
 ) {
+    let mode = crate::stage::ReadMode::Turn {
+        limits: sinex_source_core::Limits {
+            max_events: usize::MAX,
+            max_bytes: 1,
+        },
+        duration: std::time::Duration::MAX,
+    };
     let dir = tempfile::tempdir().unwrap();
     let spool = dir.path().join("spool");
     let _capture = capture(&spool, 2);
@@ -212,13 +219,7 @@ async fn normal_turn_retry_and_restart_keep_originals_and_committed_cursor(
         .await.unwrap();
     let mut readers = vec![BindingReader::new(&journald::FORMAT, b.clone()).unwrap()];
     let mut rounds = Rounds::default();
-    let failed = round(
-        &mut ctx,
-        &mut readers,
-        &mut rounds,
-        crate::stage::ReadMode::Once,
-    )
-    .await;
+    let failed = round(&mut ctx, &mut readers, &mut rounds, mode).await;
     assert!(failed.iter().any(|(_, r)| r.is_err()));
     assert!(
         sinex_store::positions::load(&mut ctx.read_conn, &b.name)
@@ -236,14 +237,7 @@ async fn normal_turn_retry_and_restart_keep_originals_and_committed_cursor(
         )
         .await
         .unwrap();
-    for (_, r) in round(
-        &mut ctx,
-        &mut readers,
-        &mut rounds,
-        crate::stage::ReadMode::Once,
-    )
-    .await
-    {
+    for (_, r) in round(&mut ctx, &mut readers, &mut rounds, mode).await {
         r.unwrap();
     }
     let first = originals(&mut ctx, &b.name).await;
@@ -274,14 +268,7 @@ async fn normal_turn_retry_and_restart_keep_originals_and_committed_cursor(
     );
     let mut readers = vec![BindingReader::new(&journald::FORMAT, b.clone()).unwrap()];
     let mut rounds = Rounds::default();
-    for (_, r) in round(
-        &mut ctx,
-        &mut readers,
-        &mut rounds,
-        crate::stage::ReadMode::Once,
-    )
-    .await
-    {
+    for (_, r) in round(&mut ctx, &mut readers, &mut rounds, mode).await {
         r.unwrap();
     }
     let after = originals(&mut ctx, &b.name).await;
@@ -350,7 +337,7 @@ async fn append_turn_finishes_only_after_seeing_eof(db: devkit::pg::TestDatabase
             &mut ctx,
             &mut readers,
             &mut rounds,
-            crate::stage::ReadMode::Once,
+            crate::stage::ReadMode::normal(),
         )
         .await
         {
@@ -372,7 +359,7 @@ async fn append_turn_finishes_only_after_seeing_eof(db: devkit::pg::TestDatabase
             &mut ctx,
             &mut readers,
             &mut rounds,
-            crate::stage::ReadMode::Once,
+            crate::stage::ReadMode::normal(),
         )
         .await
         {
@@ -384,6 +371,182 @@ async fn append_turn_finishes_only_after_seeing_eof(db: devkit::pg::TestDatabase
         3,
         "the fourth unchanged round can skip only after the third poll observed EOF"
     );
+    rounds.end(&mut ctx.read_conn).await.unwrap();
+    ctx.close().await.unwrap();
+}
+
+struct CountedStream {
+    inner: LiveStream,
+    polls: Arc<AtomicUsize>,
+    cancel: Option<watch::Sender<bool>>,
+}
+impl Reader for CountedStream {
+    fn poll(&mut self, cursor: &Value) -> Result<drivers::Acquired, DriverError> {
+        let poll = self.polls.fetch_add(1, Ordering::SeqCst) + 1;
+        if poll == 2
+            && let Some(stop) = &self.cancel
+        {
+            stop.send(true).unwrap();
+        }
+        self.inner.poll(cursor)
+    }
+    fn has_more(&self) -> bool {
+        self.inner.has_more()
+    }
+    fn committed(&mut self, cursor: &Value) -> Result<usize, DriverError> {
+        self.inner.committed(cursor)
+    }
+}
+
+#[devkit::test]
+async fn closed_segment_turn_uses_record_budget_then_visits_other_binding(
+    db: devkit::pg::TestDatabase,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let first = dir.path().join("first");
+    let second = dir.path().join("second");
+    let _first_capture = capture(&first, 3);
+    let _second_capture = capture(&second, 1);
+    let first_binding = binding(&first);
+    let second_binding = binding(&second);
+    let polls = Arc::new(AtomicUsize::new(0));
+    let mut readers = vec![
+        BindingReader::with_reading(
+            &journald::FORMAT,
+            first_binding.clone(),
+            sinex_source_core::Reading::Polled(Box::new(CountedStream {
+                inner: journald::driver(first, "synthetic".into(), None),
+                polls: polls.clone(),
+                cancel: None,
+            })),
+        )
+        .unwrap(),
+        BindingReader::new(&journald::FORMAT, second_binding.clone()).unwrap(),
+    ];
+    let mut ctx = ReaderContext::open(
+        &db.url(None),
+        &dir.path().join("store"),
+        sinex_model::time_settings::TimeSettings::new("UTC", 4, 0).unwrap(),
+    )
+    .await
+    .unwrap();
+    let mut rounds = Rounds::default();
+    let budget = crate::stage::ReadMode::Turn {
+        limits: sinex_source_core::Limits {
+            max_events: 2,
+            max_bytes: usize::MAX,
+        },
+        duration: std::time::Duration::MAX,
+    };
+    for (_, result) in round(&mut ctx, &mut readers, &mut rounds, budget).await {
+        result.unwrap();
+    }
+    assert_eq!(
+        polls.load(Ordering::SeqCst),
+        2,
+        "two useful segment acquisitions share one turn"
+    );
+    assert_eq!(originals(&mut ctx, &first_binding.name).await.len(), 2);
+    assert_eq!(
+        originals(&mut ctx, &second_binding.name).await.len(),
+        1,
+        "closed backlog yields to the other binding"
+    );
+    for (_, result) in round(&mut ctx, &mut readers, &mut rounds, budget).await {
+        result.unwrap();
+    }
+    assert_eq!(
+        polls.load(Ordering::SeqCst),
+        3,
+        "active segment yields without probing EOF in the same turn"
+    );
+    assert_eq!(originals(&mut ctx, &first_binding.name).await.len(), 3);
+    for (_, result) in round(&mut ctx, &mut readers, &mut rounds, budget).await {
+        result.unwrap();
+    }
+    assert_eq!(
+        polls.load(Ordering::SeqCst),
+        4,
+        "active EOF is one unchanged acquisition"
+    );
+    rounds.end(&mut ctx.read_conn).await.unwrap();
+    ctx.close().await.unwrap();
+}
+
+#[devkit::test]
+async fn closed_segment_turn_cancellation_keeps_next_original_unacknowledged(
+    db: devkit::pg::TestDatabase,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let spool = dir.path().join("spool");
+    let _capture = capture(&spool, 2);
+    let retained = std::fs::read(spool.join("000000000001.ndjson")).unwrap();
+    let binding = binding(&spool);
+    let (stop, cancelled) = watch::channel(false);
+    let polls = Arc::new(AtomicUsize::new(0));
+    let mut readers = vec![
+        BindingReader::with_reading(
+            &journald::FORMAT,
+            binding.clone(),
+            sinex_source_core::Reading::Polled(Box::new(CountedStream {
+                inner: journald::driver(spool.clone(), "synthetic".into(), None),
+                polls: polls.clone(),
+                cancel: Some(stop),
+            })),
+        )
+        .unwrap(),
+    ];
+    let mut ctx = ReaderContext::open(
+        &db.url(None),
+        &dir.path().join("store"),
+        sinex_model::time_settings::TimeSettings::new("UTC", 4, 0).unwrap(),
+    )
+    .await
+    .unwrap();
+    let mut rounds = Rounds::default();
+    let mode = crate::stage::ReadMode::Turn {
+        limits: sinex_source_core::Limits {
+            max_events: usize::MAX,
+            max_bytes: usize::MAX,
+        },
+        duration: std::time::Duration::MAX,
+    };
+    let result = read(
+        &mut ctx.read_conn,
+        &ctx.blobs,
+        &ctx.writer,
+        &Sink(ctx.blobs.clone()),
+        &mut readers,
+        &mut rounds,
+        cancelled,
+        Access::default(),
+        mode,
+        &mut |_, _| {},
+    )
+    .await;
+    assert!(result.iter().any(|(_, r)| {
+        r.as_ref()
+            .err()
+            .is_some_and(|e| e.to_string().contains("cancelled"))
+    }));
+    assert_eq!(polls.load(Ordering::SeqCst), 2);
+    assert_eq!(originals(&mut ctx, &binding.name).await.len(), 1);
+    let cursor = sinex_store::positions::load(&mut ctx.read_conn, &binding.name)
+        .await
+        .unwrap()
+        .unwrap()
+        .0;
+    assert_eq!(cursor["segment"], json!(0));
+    assert_eq!(
+        std::fs::read(spool.join("000000000001.ndjson")).unwrap(),
+        retained
+    );
+    for (_, result) in round(&mut ctx, &mut readers, &mut rounds, mode).await {
+        result.unwrap();
+    }
+    let saved = originals(&mut ctx, &binding.name).await;
+    assert_eq!(saved.len(), 2);
+    assert_eq!(saved[1].1, retained);
     rounds.end(&mut ctx.read_conn).await.unwrap();
     ctx.close().await.unwrap();
 }

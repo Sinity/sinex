@@ -70,14 +70,14 @@ pub fn source() -> DeclaredSource<TelemetryParser> {
 }
 
 pub fn driver(spool: PathBuf, host: String) -> LiveStream {
-    LiveStream {
+    LiveStream::new(
         spool,
-        input: InputRef {
+        InputRef {
             kind: "spool".into(),
             locator: "sinexd:telemetry".into(),
             host,
         },
-    }
+    )
 }
 
 /// `stage --parser sinex-telemetry SPOOL`: the samples a daemon spooled into SPOOL.

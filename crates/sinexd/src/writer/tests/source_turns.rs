@@ -11,7 +11,16 @@ use sqlx::Connection;
 
 #[devkit::test]
 async fn live_binding_precedes_derived_manual_stage_is_bulk(db: devkit::pg::TestDatabase) {
-    for mode in [ReadMode::Once, ReadMode::ToEnd] {
+    for mode in [
+        ReadMode::Turn {
+            limits: sinex_source_core::Limits {
+                max_events: 1,
+                max_bytes: usize::MAX,
+            },
+            duration: std::time::Duration::MAX,
+        },
+        ReadMode::ToEnd,
+    ] {
         let dir = tempfile::tempdir().unwrap();
         let spool = dir.path().join("spool");
         let mut capture = SpoolWriter::open(
@@ -76,7 +85,7 @@ async fn live_binding_precedes_derived_manual_stage_is_bulk(db: devkit::pg::Test
         });
         let queued = tokio::time::timeout(std::time::Duration::from_secs(5), async {
             match mode {
-                ReadMode::Once => queues.live.recv().await,
+                ReadMode::Turn { .. } => queues.live.recv().await,
                 ReadMode::ToEnd => queues.bulk.recv().await,
             }
         })
@@ -92,7 +101,7 @@ async fn live_binding_precedes_derived_manual_stage_is_bulk(db: devkit::pg::Test
             "queued source has no ACK or committed cursor"
         );
         match mode {
-            ReadMode::Once => handle.live.send(queued).await.unwrap(),
+            ReadMode::Turn { .. } => handle.live.send(queued).await.unwrap(),
             ReadMode::ToEnd => handle.bulk.send(queued).await.unwrap(),
         };
         let writer = tokio::spawn(run(
@@ -107,7 +116,7 @@ async fn live_binding_precedes_derived_manual_stage_is_bulk(db: devkit::pg::Test
         let (first,materials):(i64,i64)=sqlx::query_as("SELECT (SELECT min(e.commit_seq) FROM core.events e JOIN raw.materials m ON m.id=e.material_id JOIN raw.inputs i ON i.id=m.input_id WHERE i.binding=$1),(SELECT count(*) FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id WHERE i.binding=$1)")
             .bind(&binding).fetch_one(&mut observer).await.unwrap();
         match mode {
-            ReadMode::Once => {
+            ReadMode::Turn { .. } => {
                 assert!(
                     first < derived,
                     "a binding's Live job must precede queued Derived"
