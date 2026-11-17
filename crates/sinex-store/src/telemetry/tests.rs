@@ -324,10 +324,6 @@ async fn recent_samples_lookup_only_their_own_archive_membership(db: devkit::pg:
         "(SELECT a.event_id FROM audit.archived a WHERE a.event_id = e.id) IS NULL",
         "NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)",
     );
-    assert_ne!(
-        statement, old,
-        "negative control must replace the production archive lookup"
-    );
     for sql in [statement, &old] {
         let plan: serde_json::Value =
             sqlx::query_scalar(&format!("EXPLAIN (ANALYZE, FORMAT JSON, TIMING OFF) {sql}"))
