@@ -1069,6 +1069,10 @@ impl From<sinex_store::Error> for WriteError {
             sinex_store::Error::Blob(
                 hashed_blobs::Error::Refused(_) | hashed_blobs::Error::Corrupt { .. },
             ) => false,
+            sinex_store::Error::Blob(hashed_blobs::Error::Io(error)) => !matches!(
+                error.kind(),
+                std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::ReadOnlyFilesystem
+            ),
             sinex_store::Error::Blob(_) => true,
             _ => false,
         };
