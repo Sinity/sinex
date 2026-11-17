@@ -482,7 +482,7 @@ async fn source_content_refusals_keep_material_failures_and_advance_the_cursor(
             .await
             .unwrap();
     assert_eq!(positions, 0);
-    assert!(blobs.contains(&owned_blob).unwrap());
+    assert!(blobs.contains(&mut reader, &owned_blob).await.unwrap());
     let outcome = handle
         .submit_source(Priority::Live, bad, Arc::new(|| Ok(())), None)
         .await
@@ -516,7 +516,7 @@ async fn source_content_refusals_keep_material_failures_and_advance_the_cursor(
     .unwrap();
     assert!(reason.contains("database refused invalid data"), "{reason}");
     assert!(!reason.contains("private"));
-    assert!(blobs.contains(&blob).unwrap());
+    assert!(blobs.contains(&mut reader, &blob).await.unwrap());
     assert_eq!(
         handle
             .submit_source(

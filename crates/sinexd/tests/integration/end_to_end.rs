@@ -477,7 +477,12 @@ async fn reread_and_copied_inputs_share_live_readings() {
     );
     let blobs = sinex_store::Blobs::open(&t.store).unwrap();
     blobs.load(&mut c).await.unwrap();
-    assert_eq!(blobs.read(&copies[0].1).unwrap(), text.as_bytes());
+    assert_eq!(
+        blobs
+            .read(&blobs.locate(&mut c, &copies[0].1).await.unwrap())
+            .unwrap(),
+        text.as_bytes()
+    );
     consistent(&mut c).await;
 }
 
@@ -996,7 +1001,9 @@ async fn comparisons_change_nothing_and_shared_bytes_survive_a_material_tombston
     let bytes = sinex_store::Blobs::open(&t.store).unwrap();
     bytes.load(&mut c).await.unwrap();
     assert_eq!(
-        bytes.verify(&shared[0]).unwrap(),
+        bytes
+            .verify(&bytes.locate(&mut c, &shared[0]).await.unwrap())
+            .unwrap(),
         sinex_store::Verified::Intact
     );
     assert_eq!(
@@ -1402,7 +1409,9 @@ async fn every_revision_reads_back_after_later_ones() {
     let bytes = sinex_store::Blobs::open(&t.store).unwrap();
     bytes.load(&mut c).await.unwrap();
     for (blob, length) in materials {
-        let decoded = bytes.read(&blob).unwrap();
+        let decoded = bytes
+            .read(&bytes.locate(&mut c, &blob).await.unwrap())
+            .unwrap();
         assert_eq!(format!("blake3:{}", blake3::hash(&decoded).to_hex()), blob);
         assert_eq!(i64::try_from(decoded.len()).unwrap(), length);
     }
@@ -2036,7 +2045,12 @@ sed '1d' "$3" > "$2/Inbox/mbox"
             names.contains(&name),
             "each imported folder's exact bytes have stored custody"
         );
-        assert_eq!(blobs.read(&name).unwrap(), expected);
+        assert_eq!(
+            blobs
+                .read(&blobs.locate(&mut conn, &name).await.unwrap())
+                .unwrap(),
+            expected
+        );
     }
     let bindings: Vec<String> = sqlx::query_scalar(
         "SELECT binding FROM raw.bindings WHERE source='communication.outlook' ORDER BY binding",
@@ -2116,7 +2130,9 @@ async fn sequence_gaps_are_public_events_and_restart_preserves_the_stream_head()
     let blobs = sinex_store::Blobs::open(&target.store).unwrap();
     blobs.load(&mut conn).await.unwrap();
     for ((blob, record_offset), expected) in rows.iter().zip([3, 6]) {
-        let bytes = blobs.read(blob).unwrap();
+        let bytes = blobs
+            .read(&blobs.locate(&mut conn, blob).await.unwrap())
+            .unwrap();
         let line = bytes[*record_offset as usize..]
             .split(|byte| *byte == b'\n')
             .next()

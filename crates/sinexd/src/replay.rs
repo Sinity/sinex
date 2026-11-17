@@ -314,7 +314,7 @@ pub(crate) async fn run(
                 continue;
             }
         };
-        let keys = crate::material_access::sealing::replay_keys(
+        let bytes = crate::material_access::sealing::replay_bytes(
             read_conn,
             blobs,
             sequence
@@ -334,7 +334,7 @@ pub(crate) async fn run(
             in_scope: in_scope.clone(),
             scope: scope.clone(),
             operation,
-            keys,
+            bytes,
             unlock: o.unlock.clone(),
         }
         .replace(writer, o.actor.clone(), saved_scope.clone(), o.compare)
@@ -466,7 +466,7 @@ struct SequenceReader {
     in_scope: BTreeSet<Uuid>,
     scope: Scope,
     operation: OperationId,
-    keys: HashMap<Uuid, sinex_sealing::DataKey>,
+    bytes: HashMap<Uuid, crate::material_access::sealing::ReplayBytes>,
     unlock: Option<crate::material_access::sealing::Unlock>,
 }
 
@@ -504,7 +504,7 @@ impl SequenceReader {
                 operation,
                 &mut |batch| prepared.push(batch),
                 &mut read,
-                &self.keys,
+                &self.bytes,
                 self.unlock.as_ref(),
                 &check,
             )?;
@@ -545,7 +545,7 @@ fn read_sequence_into(
     operation: OperationId,
     out: &mut impl FnMut(Batch) -> Result<()>,
     report: &mut Read,
-    keys: &HashMap<Uuid, sinex_sealing::DataKey>,
+    bytes: &HashMap<Uuid, crate::material_access::sealing::ReplayBytes>,
     unlock: Option<&crate::material_access::sealing::Unlock>,
     check: &crate::writer::AdmissionCheck,
 ) -> Result<Batch> {
@@ -576,7 +576,9 @@ fn read_sequence_into(
         if m.manifest.role == sinex_model::MaterialRole::OriginalArchive {
             continue;
         }
-        let key = keys.get(&m.id);
+        let bytes = bytes
+            .get(&m.id)
+            .ok_or_else(|| Error::internal("replay material bytes were not resolved"))?;
         let reference = sinex_model::MaterialRef {
             id: MaterialId(m.id),
             input: m.input.map(sinex_model::InputId),
@@ -594,8 +596,9 @@ fn read_sequence_into(
         };
         let stored = crate::material_access::open_checked(
             blobs,
+            &bytes.located,
             reference,
-            key.cloned(),
+            bytes.key.clone(),
             unlock,
             check.clone(),
         )?

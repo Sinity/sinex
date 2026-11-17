@@ -8,58 +8,23 @@ pub struct Commit {
     chunk_lists: Vec<Hash>,
 }
 impl Blobs {
-    /// Load the extent index without opening a writer or changing segment files.
+    /// Load only the committed segment boundary. Reads resolve selected catalog rows.
     pub async fn load(&self, conn: &mut sqlx::PgConnection) -> Result<()> {
-        // The in-memory map owns hash ordering; SQL can read the heap once.
-        let rows = sqlx::query!("SELECT hash,descriptor,deleting FROM core.blob_extents")
-            .fetch_all(&mut *conn)
-            .await?;
         let end: Option<i64> = sqlx::query_scalar!(
             "SELECT committed_end FROM core.blob_segments WHERE segment=$1",
-            SEGMENT
+            SEGMENT,
         )
-        .fetch_optional(&mut *conn)
+        .fetch_optional(conn)
         .await?;
-        let chunk_rows =
-            sqlx::query!("SELECT blob, chunk FROM core.blob_chunks ORDER BY blob, ordinal")
-                .fetch_all(&mut *conn)
-                .await?;
-        let mut chunk_lists: BTreeMap<Hash, Vec<Hash>> = BTreeMap::new();
-        for row in chunk_rows {
-            chunk_lists
-                .entry(parse(&row.blob)?)
-                .or_default()
-                .push(parse(&row.chunk)?);
-        }
         let mut state = self.state()?;
-        if state.writer.is_some() || !state.groups.is_empty() || !state.prepared.is_empty() {
+        if state.writer.is_some() || !state.groups.is_empty() {
             return Err(crate::Error::Invalid(
                 "cannot reload an active blob writer".into(),
             ));
         }
-        let committed_end = u64::try_from(end.unwrap_or(0))
+        state.committed_end = u64::try_from(end.unwrap_or(0))
             .map_err(|_| crate::Error::Invalid("negative committed segment end".into()))?;
-        let mut extents = BTreeMap::new();
-        for row in rows {
-            let extent = Extent::decode(&row.descriptor)?;
-            let name = row.hash;
-            if extent.hash != parse(&name)?
-                || extent.segment != SEGMENT
-                || extent.end() > committed_end
-            {
-                return Err(crate::Error::Invalid(format!(
-                    "extent for {name} differs from its catalog name or committed segment boundary"
-                )));
-            }
-            if !row.deleting {
-                extents.insert(extent.hash, extent);
-            }
-        }
-        state.extents = extents;
-        state.chunk_lists = chunk_lists;
-        state.unrecorded_chunk_lists.clear();
         state.initialized = true;
-        state.committed_end = committed_end;
         Ok(())
     }
     /// The caller holds the database writer claim. Startup truncates tails and replays punches.
@@ -106,35 +71,118 @@ impl Blobs {
         }
         Ok(())
     }
-    /// Sync this admission's named bytes, then persist the durable log prefix.
+    /// The caller owns the database writer claim. Its serialized admissions
+    /// deduplicate and append these names, then publish their durable prefix.
     pub async fn commit_extents(
         &self,
         conn: &mut sqlx::PgConnection,
         names: &[String],
     ) -> Result<Commit> {
-        if !names.is_empty() {
-            let store = self.clone();
-            let required = names.to_vec();
-            tokio::task::spawn_blocking(move || store.sync_pending(&required))
-                .await
-                .map_err(|error| crate::Error::Invalid(error.to_string()))??;
-        }
         let required: BTreeSet<Hash> = names
             .iter()
             .map(|name| parse(name))
             .collect::<Result<_>>()?;
-        {
+        // Admission already owns the single database writer. Resolve only this
+        // admission's representation before appending, never from a reader snapshot.
+        let mut known = super::located::catalog_extents(conn, names).await?;
+        let rows = sqlx::query!(
+            "SELECT blob,chunk FROM core.blob_chunks WHERE blob=ANY($1) ORDER BY blob,ordinal",
+            names,
+        )
+        .fetch_all(&mut *conn)
+        .await?;
+        let mut recorded_lists: BTreeMap<Hash, Vec<Hash>> = BTreeMap::new();
+        for row in rows {
+            recorded_lists
+                .entry(parse(&row.blob)?)
+                .or_default()
+                .push(parse(&row.chunk)?);
+        }
+        let pending_lists: Vec<(Hash, Vec<Hash>)> = {
             let state = self.state()?;
+            state
+                .unrecorded_chunk_lists
+                .iter()
+                .filter(|(hash, _)| required.contains(hash))
+                .map(|(hash, chunks)| (*hash, chunks.iter().map(|chunk| chunk.hash).collect()))
+                .collect()
+        };
+        let mut parts = BTreeSet::new();
+        for hash in &required {
+            if known.contains_key(hash) {
+                parts.insert(*hash);
+            } else if let Some(chunks) = recorded_lists.get(hash).or_else(|| {
+                pending_lists
+                    .iter()
+                    .find(|(blob, _)| blob == hash)
+                    .map(|(_, chunks)| chunks)
+            }) {
+                parts.extend(chunks.iter().copied());
+            } else {
+                parts.insert(*hash);
+            }
+        }
+        let missing: Vec<_> = parts
+            .iter()
+            .filter(|hash| !known.contains_key(hash))
+            .map(Hash::to_string)
+            .collect();
+        known.extend(super::located::catalog_extents(conn, &missing).await?);
+        // Pending claims may still own an extent marked for deletion; their
+        // lifecycle hold keeps its bytes and row until this admission publishes.
+        known.extend(self.state()?.pending_stored(&parts));
+        {
+            let mut state = self.state()?;
             for hash in &required {
-                if state.held_extents(hash).is_none() {
+                // A whole-file preparation can repeat bytes already held as
+                // chunks. Keep the recorded representation and append nothing.
+                if let (Some(prepared), Some(chunks)) =
+                    (state.prepared.get(hash), recorded_lists.get(hash))
+                {
+                    let length = chunks.iter().try_fold(0u64, |length, chunk| {
+                        let extent = known
+                            .get(chunk)
+                            .cloned()
+                            .or_else(|| state.pending_extent(chunk))
+                            .ok_or_else(|| {
+                                crate::Error::Invalid(format!("chunk {chunk} has no stored extent"))
+                            })?;
+                        length.checked_add(extent.decoded_len).ok_or_else(|| {
+                            crate::Error::Invalid("chunk length exceeds address space".into())
+                        })
+                    })?;
+                    if prepared.kind() != &Kind::Plain || prepared.decoded_len() != length {
+                        return Err(crate::Error::Invalid(
+                            "repeated blob name has a different length or sealing key reference"
+                                .into(),
+                        ));
+                    }
+                }
+            }
+            for hash in recorded_lists.keys() {
+                state.prepared.remove(hash);
+            }
+        }
+        if !names.is_empty() {
+            let store = self.clone();
+            let parts = parts.clone();
+            let known = known.clone();
+            tokio::task::spawn_blocking(move || store.sync_pending(&parts, &known))
+                .await
+                .map_err(|error| crate::Error::Invalid(error.to_string()))??;
+        }
+        let groups = {
+            let state = self.state()?;
+            for hash in &parts {
+                if !known.contains_key(hash) && state.pending_extent(hash).is_none() {
                     return Err(hashed_blobs::Error::Refused(format!(
                         "admitted blob {hash} has no synced extent"
                     ))
                     .into());
                 }
             }
-        }
-        let groups = self.state()?.groups.clone();
+            state.groups.clone()
+        };
         for group in &groups {
             for extent in &group.extents {
                 let name = extent.hash.to_string();
@@ -145,17 +193,12 @@ impl Blobs {
                 .map_err(|_| crate::Error::Invalid("segment end exceeds i64".into()))?;
             sqlx::query!("INSERT INTO core.blob_segments(segment,committed_end) VALUES($1,$2) ON CONFLICT(segment) DO UPDATE SET committed_end=greatest(core.blob_segments.committed_end,EXCLUDED.committed_end)",SEGMENT,end).execute(&mut *conn).await?;
         }
-        // A chunk list is recorded once its chunks' extents are committed:
-        // they were appended by now, or already held.
-        let chunk_lists: Vec<(Hash, Vec<Hash>)> = {
-            let state = self.state()?;
-            state
-                .unrecorded_chunk_lists
-                .iter()
-                .filter(|blob| required.contains(blob))
-                .filter_map(|blob| Some((*blob, state.chunk_lists.get(blob)?.clone())))
-                .collect()
-        };
+        // Only newly selected lists are recorded. Previously committed direct
+        // bytes or chunks retain their canonical representation.
+        let chunk_lists: Vec<_> = pending_lists
+            .iter()
+            .filter(|(blob, _)| !known.contains_key(blob) && !recorded_lists.contains_key(blob))
+            .collect();
         for (blob, chunks) in &chunk_lists {
             let chunks: Vec<String> = chunks.iter().map(Hash::to_string).collect();
             sqlx::query!(
@@ -178,7 +221,7 @@ impl Blobs {
         }
         Ok(Commit {
             groups,
-            chunk_lists: chunk_lists.into_iter().map(|(blob, _)| blob).collect(),
+            chunk_lists: pending_lists.into_iter().map(|(blob, _)| blob).collect(),
         })
     }
     pub fn acknowledge(&self, commit: Commit) -> Result<()> {

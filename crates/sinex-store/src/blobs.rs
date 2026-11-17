@@ -1,14 +1,16 @@
-//! The product's committed hash index over append-only framed segments.
+//! Pending ownership and selected catalog locations for append-only framed bytes.
 use crate::Result;
 use hashed_blobs::{Extent, Hash, Kind, Preparation, Prepared, SegmentWriter, SyncedGroup};
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::{Read, Seek};
+use std::io::{Read, Seek, SeekFrom};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 mod database;
+mod located;
 pub use database::{commit_pending_extents, delete_unreferenced_extents, finish_deleting_extents};
 pub use hashed_blobs::DEFAULT_FRAME as BLOB_FRAME_BYTES;
+pub use located::{ChunkBytes, Located};
 
 /// Explicit budgets supplied by an unlocked operation.
 #[derive(Clone, Copy, Debug)]
@@ -26,15 +28,16 @@ pub enum Verified {
 }
 
 const SEGMENT: &str = "segments/current.hb";
+struct PendingChunk {
+    hash: Hash,
+    held: Option<Located>,
+}
 #[derive(Default)]
 struct State {
     writer: Option<SegmentWriter>,
     prepared: BTreeMap<Hash, Prepared>,
-    extents: BTreeMap<Hash, Extent>,
-    /// Blobs stored as content-defined chunks: their chunk names in order.
-    chunk_lists: BTreeMap<Hash, Vec<Hash>>,
-    /// Chunk lists the next extent commit records.
-    unrecorded_chunk_lists: BTreeSet<Hash>,
+    /// Only chunk lists not yet recorded by an admission.
+    unrecorded_chunk_lists: BTreeMap<Hash, Vec<PendingChunk>>,
     groups: Vec<Arc<SyncedGroup>>,
     committed_end: u64,
     initialized: bool,
@@ -78,21 +81,20 @@ impl Blobs {
     fn prepare(&self, prepared: Prepared) -> Result<String> {
         let hash = prepared.hash();
         let mut state = self.state()?;
-        if state.chunk_lists.contains_key(&hash) {
+        if state.unrecorded_chunk_lists.contains_key(&hash) {
             return Ok(hash.to_string());
         }
         let known = state
-            .extents
-            .get(&hash)
-            .map(|extent| (extent.decoded_len, &extent.kind))
+            .pending_extent(&hash)
+            .map(|extent| (extent.decoded_len, extent.kind))
             .or_else(|| {
                 state
                     .prepared
                     .get(&hash)
-                    .map(|value| (value.decoded_len(), value.kind()))
+                    .map(|value| (value.decoded_len(), value.kind().clone()))
             });
         if let Some((length, kind)) = known {
-            if length != prepared.decoded_len() || kind != prepared.kind() {
+            if length != prepared.decoded_len() || &kind != prepared.kind() {
                 return Err(crate::Error::Invalid(
                     "repeated blob name has a different length or sealing key reference".into(),
                 ));
@@ -134,7 +136,7 @@ impl Blobs {
         &self,
         name: &str,
         length: u64,
-        chunks: Vec<(String, Option<Prepared>)>,
+        chunks: Vec<(String, ChunkBytes)>,
     ) -> Result<String> {
         let hash = parse(name)?;
         if chunks.is_empty() {
@@ -148,7 +150,7 @@ impl Blobs {
         for (chunk, prepared) in &chunks {
             let chunk_hash = parse(chunk)?;
             let mut reader = match prepared {
-                Some(prepared) => {
+                ChunkBytes::Prepared(prepared) => {
                     if prepared.hash() != chunk_hash || prepared.kind() != &Kind::Plain {
                         return Err(crate::Error::Invalid(format!(
                             "prepared chunk is not the plain bytes {chunk}"
@@ -156,7 +158,14 @@ impl Blobs {
                     }
                     prepared.reader(None, hashed_blobs::ReadLimits::default())?
                 }
-                None => self.read_plain(chunk, None, || Ok(()))?,
+                ChunkBytes::Located(located) => {
+                    if located.hash != chunk_hash || located.is_sealed() {
+                        return Err(crate::Error::Invalid(format!(
+                            "located chunk is not the plain bytes {chunk}"
+                        )));
+                    }
+                    self.read_plain(located, None, || Ok(()))?
+                }
             };
             total += std::io::copy(&mut reader, &mut whole)?;
             order.push(chunk_hash);
@@ -166,37 +175,47 @@ impl Blobs {
                 "the chunks of {name} are {total} bytes that are not {name}"
             )));
         }
-        for (_, prepared) in chunks {
-            if let Some(prepared) = prepared {
-                self.prepare(prepared)?;
-            }
+        let mut pending = Vec::with_capacity(chunks.len());
+        for ((_, bytes), hash) in chunks.into_iter().zip(order) {
+            let held = match bytes {
+                ChunkBytes::Prepared(prepared) => {
+                    self.prepare(prepared)?;
+                    None
+                }
+                ChunkBytes::Located(located) => Some(located),
+            };
+            pending.push(PendingChunk { hash, held });
         }
         let mut state = self.state()?;
-        if !state.chunk_lists.contains_key(&hash) && !state.extents.contains_key(&hash) {
-            state.chunk_lists.insert(hash, order);
-            state.unrecorded_chunk_lists.insert(hash);
+        if state.pending_extent(&hash).is_none() && !state.prepared.contains_key(&hash) {
+            state.unrecorded_chunk_lists.entry(hash).or_insert(pending);
         }
         Ok(hash.to_string())
     }
 
-    /// Append only the named blobs' prepared parts and wait for their sync.
-    pub fn sync_pending(&self, names: &[String]) -> Result<()> {
+    /// Only writer admission appends preparations. Readers retain selected encoded
+    /// handles instead, so a point read never changes the segment or its catalog.
+    fn sync_pending(&self, parts: &BTreeSet<Hash>, known: &BTreeMap<Hash, Extent>) -> Result<()> {
         let mut state = self.state()?;
-        let mut parts = BTreeSet::new();
-        for name in names {
-            let hash = parse(name)?;
-            if let Some(chunks) = state.chunk_lists.get(&hash) {
-                parts.extend(chunks.iter().copied());
-            } else {
-                parts.insert(hash);
+        for hash in parts {
+            if let (Some(prepared), Some(extent)) = (state.prepared.get(hash), known.get(hash)) {
+                if prepared.decoded_len() != extent.decoded_len || prepared.kind() != &extent.kind {
+                    return Err(crate::Error::Invalid(
+                        "repeated blob name has a different length or sealing key reference".into(),
+                    ));
+                }
             }
+        }
+        // SQL already owns these immutable bytes. Keep no duplicate preparation.
+        for hash in known.keys() {
+            state.prepared.remove(hash);
         }
         if !parts.iter().any(|hash| state.prepared.contains_key(hash)) {
             return Ok(());
         }
         if !state.initialized {
             return Err(crate::Error::Invalid(
-                "load the database extent index before appending to an existing store".into(),
+                "load the committed segment boundary before appending to an existing store".into(),
             ));
         }
         if state.writer.is_none() {
@@ -209,85 +228,38 @@ impl Blobs {
             )?);
         }
         let prepared: Vec<_> = parts
-            .into_iter()
-            .filter_map(|hash| state.prepared.remove(&hash))
+            .iter()
+            .filter_map(|hash| state.prepared.remove(hash))
             .map(Ok)
             .collect();
-        let State {
-            writer,
-            extents,
-            groups,
-            ..
-        } = &mut *state;
-        let group = writer
+        let group = state
+            .writer
             .as_mut()
             .expect("writer opened")
-            .append_group(prepared, |hash| Ok(extents.get(hash).cloned()))?
+            .append_group(prepared, |hash| Ok(known.get(hash).cloned()))?
             .wait()?;
-        for extent in &group.extents {
-            extents.insert(extent.hash, extent.clone());
-        }
-        groups.push(Arc::new(group));
+        state.groups.push(Arc::new(group));
         Ok(())
     }
-    /// The extents that read back as `name`: its own, or its chunks' in order.
-    fn extents(&self, name: &str) -> Result<Vec<Extent>> {
-        let hash = parse(name)?;
-        if let Some(extents) = self.state()?.held_extents(&hash) {
-            return Ok(extents);
-        }
-        self.sync_pending(&[name.to_owned()])?;
-        self.state()?.held_extents(&hash).ok_or_else(|| {
-            crate::Error::Invalid(format!("blob {name} has no committed or pending extent"))
-        })
-    }
-    /// Encoded descriptors say where to read the bytes and travel in producer
-    /// acknowledgments: one per extent, in reading order.
-    pub fn descriptors(&self, name: &str) -> Result<Vec<Vec<u8>>> {
-        Ok(self.extents(name)?.iter().map(Extent::encode).collect())
-    }
-    pub fn contains(&self, name: &str) -> Result<bool> {
-        let hash = parse(name)?;
-        let state = self.state()?;
-        let parts = match state.chunk_lists.get(&hash) {
-            Some(chunks) => chunks.as_slice(),
-            None => std::slice::from_ref(&hash),
-        };
-        for part in parts {
-            if state.prepared.contains_key(part) {
-                continue;
-            }
-            let Some(extent) = state.extents.get(part) else {
-                return Ok(false);
-            };
-            match std::fs::metadata(self.root().join(&extent.segment)) {
-                Ok(metadata) if metadata.len() >= extent.end() => {}
-                Ok(_) => return Ok(false),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-                Err(error) => return Err(error.into()),
-            }
-        }
-        Ok(true)
-    }
-    pub fn is_sealed(&self, name: &str) -> Result<bool> {
-        Ok(self
-            .extents(name)?
-            .iter()
-            .any(|extent| matches!(extent.kind, Kind::Sealed { .. })))
+    /// Encoded descriptors are published only after bytes have entered the segment.
+    pub fn descriptors(&self, located: &Located) -> Result<Vec<Vec<u8>>> {
+        located
+            .extents()
+            .map(|extents| extents.iter().map(Extent::encode).collect())
     }
     fn reader(
         &self,
-        name: &str,
+        located: &Located,
         expected_len: Option<u64>,
         key: Option<&sinex_sealing::DataKey>,
         limits: Option<SealedReadLimits>,
         check: impl FnMut() -> hashed_blobs::Result<()> + Send + 'static,
     ) -> Result<hashed_blobs::BlobReader> {
-        let extents = self.extents(name)?;
-        let decoded_len: u64 = extents.iter().map(|extent| extent.decoded_len).sum();
+        let decoded_len = located.decoded_len();
         if expected_len.is_some_and(|length| length != decoded_len) {
             return Err(crate::Error::Invalid(format!(
-                "blob {name} has a different decoded length"
+                "blob {} has a different decoded length",
+                located.hash,
             )));
         }
         let limits = limits.unwrap_or(SealedReadLimits {
@@ -301,8 +273,8 @@ impl Blobs {
                 })?,
         });
         Ok(
-            hashed_blobs::Reader::new(self.root()).open_checked_with_limits(
-                &extents,
+            hashed_blobs::Reader::new(self.root()).open_parts_checked_with_limits(
+                located.parts(),
                 key,
                 hashed_blobs::ReadLimits {
                     frame_bytes: limits.frame_bytes,
@@ -314,59 +286,67 @@ impl Blobs {
     }
     pub fn read_plain(
         &self,
-        name: &str,
+        located: &Located,
         expected_len: Option<u64>,
         check: impl FnMut() -> hashed_blobs::Result<()> + Send + 'static,
     ) -> Result<hashed_blobs::BlobReader> {
-        self.reader(name, expected_len, None, None, check)
+        self.reader(located, expected_len, None, None, check)
     }
     pub fn read_plain_seek(
         &self,
-        name: &str,
+        located: &Located,
         length: u64,
         check: impl FnMut() -> hashed_blobs::Result<()> + Send + 'static,
     ) -> Result<hashed_blobs::BlobReader> {
-        self.read_plain(name, Some(length), check)
+        self.read_plain(located, Some(length), check)
     }
     pub fn read_sealed(
         &self,
-        name: &str,
+        located: &Located,
         expected_len: Option<u64>,
         key: &sinex_sealing::DataKey,
         limits: SealedReadLimits,
         check: impl FnMut() -> hashed_blobs::Result<()> + Send + 'static,
     ) -> Result<hashed_blobs::BlobReader> {
-        self.reader(name, expected_len, Some(key), Some(limits), check)
+        self.reader(located, expected_len, Some(key), Some(limits), check)
     }
-    pub fn read_range(&self, name: &str, offset: u64, len: u64) -> Result<Vec<u8>> {
-        Ok(hashed_blobs::Reader::new(self.root()).read_range(
-            &self.extents(name)?,
-            offset,
-            len,
-            None,
-        )?)
+    pub fn read_range(&self, located: &Located, offset: u64, len: u64) -> Result<Vec<u8>> {
+        let end = offset
+            .checked_add(len)
+            .filter(|end| *end <= located.decoded_len())
+            .ok_or_else(|| crate::Error::Invalid("range lies outside decoded stream".into()))?;
+        let mut reader = self.read_plain(located, None, || Ok(()))?;
+        reader.seek(SeekFrom::Start(offset))?;
+        let mut out = Vec::new();
+        let copied = std::io::copy(&mut reader.take(end - offset), &mut out)?;
+        if copied != len {
+            return Err(crate::Error::Invalid(
+                "decoded stream ended inside range".into(),
+            ));
+        }
+        Ok(out)
     }
-    pub fn read(&self, name: &str) -> Result<Vec<u8>> {
-        Ok(hashed_blobs::Reader::new(self.root()).read(&self.extents(name)?, None)?)
+    pub fn read(&self, located: &Located) -> Result<Vec<u8>> {
+        Ok(hashed_blobs::Reader::new(self.root()).read_parts(located.parts(), None)?)
     }
-    pub fn copy_to(&self, name: &str, out: &mut impl std::io::Write) -> Result<u64> {
-        self.copy_to_checked(name, out, || Ok(()))
+    pub fn copy_to(&self, located: &Located, out: &mut impl std::io::Write) -> Result<u64> {
+        self.copy_to_checked(located, out, || Ok(()))
     }
     pub fn copy_to_checked(
         &self,
-        name: &str,
+        located: &Located,
         out: &mut impl std::io::Write,
         check: impl FnMut() -> hashed_blobs::Result<()> + Send + 'static,
     ) -> Result<u64> {
         Ok(std::io::copy(
-            &mut self.read_plain(name, None, check)?,
+            &mut self.read_plain(located, None, check)?,
             out,
         )?)
     }
     /// The caller has already committed the deleting marker. Recovery repeats this punch.
     pub async fn delete(&self, conn: &mut sqlx::PgConnection, name: &str) -> Result<bool> {
         let hash = parse(name)?;
-        let chunked = self.state()?.chunk_lists.contains_key(&hash)
+        let chunked = self.state()?.unrecorded_chunk_lists.contains_key(&hash)
             || sqlx::query_scalar!(
                 r#"SELECT EXISTS(SELECT 1 FROM core.blob_chunks WHERE blob=$1) AS "chunked!""#,
                 name
@@ -405,13 +385,10 @@ impl Blobs {
     pub(crate) fn held_by_pending_chunk(&self, name: &str) -> Result<bool> {
         let hash = parse(name)?;
         let state = self.state()?;
-        Ok(state.unrecorded_chunk_lists.iter().any(|blob| {
-            *blob != hash
-                && state
-                    .chunk_lists
-                    .get(blob)
-                    .is_some_and(|chunks| chunks.contains(&hash))
-        }))
+        Ok(state
+            .unrecorded_chunk_lists
+            .iter()
+            .any(|(blob, chunks)| *blob != hash && chunks.iter().any(|chunk| chunk.hash == hash)))
     }
     /// Remove a chunked blob: punch the chunks no held blob shares (neither
     /// held as a blob of their own nor listed by another blob that is not
@@ -434,10 +411,8 @@ impl Blobs {
             state
                 .unrecorded_chunk_lists
                 .iter()
-                .filter(|blob| **blob != hash)
-                .filter_map(|blob| state.chunk_lists.get(blob))
-                .flatten()
-                .copied()
+                .filter(|(blob, _)| **blob != hash)
+                .flat_map(|(_, chunks)| chunks.iter().map(|chunk| chunk.hash))
                 .collect()
         };
         let mut removed = Vec::new();
@@ -460,7 +435,6 @@ impl Blobs {
             }
             removed.push((chunk, extent));
         }
-        self.sync_pending(&[name.to_owned()])?;
         {
             let mut state = self.state()?;
             if !removed.is_empty() {
@@ -480,11 +454,7 @@ impl Blobs {
                     .as_mut()
                     .expect("writer opened")
                     .punch(&extents)?;
-                for (_, extent) in &removed {
-                    state.extents.remove(&extent.hash);
-                }
             }
-            state.chunk_lists.remove(&hash);
             state.unrecorded_chunk_lists.remove(&hash);
         }
         let names: Vec<String> = removed.into_iter().map(|(chunk, _)| chunk).collect();
@@ -498,12 +468,8 @@ impl Blobs {
     }
     fn punch(&self, name: &str, recorded: Option<&Extent>) -> Result<()> {
         let hash = parse(name)?;
-        self.sync_pending(&[name.to_owned()])?;
         let mut state = self.state()?;
-        if let Some(extent) = recorded
-            .cloned()
-            .or_else(|| state.extents.get(&hash).cloned())
-        {
+        if let Some(extent) = recorded.cloned().or_else(|| state.pending_extent(&hash)) {
             if state.writer.is_none() {
                 state.writer = Some(SegmentWriter::open(
                     self.root(),
@@ -518,55 +484,51 @@ impl Blobs {
                 .as_mut()
                 .expect("writer opened")
                 .punch(&[extent])?;
-            state.extents.remove(&hash);
         }
         state.prepared.remove(&hash);
         Ok(())
     }
-    pub fn stored_size(&self, name: &str) -> Result<u64> {
-        Ok(self.extents(name)?.iter().map(|extent| extent.len).sum())
-    }
-    pub fn verify(&self, name: &str) -> Result<Verified> {
-        if !self.contains(name)? {
+    pub fn verify(&self, located: &Located) -> Result<Verified> {
+        if !located.present(self.root())? {
             return Ok(Verified::Missing);
         }
-        let extents = self.extents(name)?;
-        let mismatches = hashed_blobs::Reader::new(self.root()).scan(&extents);
+        let mismatches = hashed_blobs::Reader::new(self.root())
+            .scan_parts_checked(located.parts(), || Ok(()))?;
         Ok(if let Some(mismatch) = mismatches.first() {
             Verified::Corrupt(mismatch.error.clone())
-        } else if extents
-            .iter()
-            .any(|extent| matches!(extent.kind, Kind::Sealed { .. }))
-        {
+        } else if located.is_sealed() {
             Verified::CiphertextIntact
         } else {
             Verified::Intact
         })
     }
-    pub fn names(&self) -> Result<impl Iterator<Item = hashed_blobs::Result<String>>> {
-        let state = self.state()?;
-        let names: Vec<_> = state
-            .extents
-            .keys()
-            .chain(state.prepared.keys())
-            .chain(state.chunk_lists.keys())
-            .map(|hash| Ok(hash.to_string()))
-            .collect();
-        Ok(names.into_iter())
-    }
 }
-
 impl State {
-    /// The extents of `hash` if every one is appended: its own, or its chunks'.
-    fn held_extents(&self, hash: &Hash) -> Option<Vec<Extent>> {
-        if let Some(extent) = self.extents.get(hash) {
-            return Some(vec![extent.clone()]);
-        }
-        self.chunk_lists
-            .get(hash)?
+    fn pending_extent(&self, hash: &Hash) -> Option<Extent> {
+        self.writer
+            .as_ref()
+            .and_then(|writer| writer.uncommitted(hash))
+    }
+    fn pending_stored(&self, hashes: &BTreeSet<Hash>) -> BTreeMap<Hash, Extent> {
+        let mut found: BTreeMap<_, _> = hashes
             .iter()
-            .map(|chunk| self.extents.get(chunk).cloned())
-            .collect()
+            .filter_map(|hash| self.pending_extent(hash).map(|extent| (*hash, extent)))
+            .collect();
+        for located in self
+            .unrecorded_chunk_lists
+            .values()
+            .flatten()
+            .filter_map(|chunk| chunk.held.as_ref())
+        {
+            for part in &located.values {
+                if let located::Part::Stored(extent) = part
+                    && hashes.contains(&extent.hash)
+                {
+                    found.entry(extent.hash).or_insert_with(|| extent.clone());
+                }
+            }
+        }
+        found
     }
 }
 

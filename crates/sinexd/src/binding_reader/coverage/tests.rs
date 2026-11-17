@@ -344,7 +344,16 @@ async fn binding_reads_store_coverage_with_bytes_in_one_run(db: devkit::pg::Test
             .fetch_one(&mut context.read_conn)
             .await
             .unwrap();
-        let bytes = context.blobs.read(&blob).unwrap();
+        let bytes = context
+            .blobs
+            .read(
+                &context
+                    .blobs
+                    .locate(&mut context.read_conn, &blob)
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
         let stored: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(stored, payload);
         assert_eq!(payload["observed_source"], "terminal.zsh-history");

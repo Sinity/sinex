@@ -159,7 +159,9 @@ pub(super) async fn positions(target: &Target, inputs: &Inputs) -> Vec<(String, 
                 }
             );
             let blob = row.get::<String, _>("blob");
-            let bytes = blobs.read(&blob).unwrap();
+            let bytes = blobs
+                .read(&blobs.locate(&mut conn, &blob).await.unwrap())
+                .unwrap();
             assert_eq!(bytes.len() as i64, row.get::<i64, _>("length"));
             assert_eq!(format!("blake3:{}", blake3::hash(&bytes).to_hex()), blob);
             let part = Part {

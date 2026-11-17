@@ -225,7 +225,7 @@ impl Ingest {
                 }
                 Ok(Ingress::Material { material, .. }) => {
                     match self.store_material(producer, &name, material).await {
-                        Ok(()) => self.material(producer, material),
+                        Ok(()) => self.material(producer, material).await,
                         Err(check) => Err(check),
                     }
                 }
@@ -536,8 +536,8 @@ impl Ingest {
 
     /// An indirect frame stands for the frame stored as its bytes; every other
     /// frame stands for itself.
-    fn material(
-        &self,
+    async fn material(
+        &mut self,
         producer: &str,
         m: &MaterialFrame,
     ) -> Result<(Option<SourceProgress>, Vec<RecordOutcome>), Check> {
@@ -548,7 +548,8 @@ impl Ingest {
         }
         let present = self
             .blobs
-            .contains(&m.blob)
+            .contains(&mut self.conn, &m.blob)
+            .await
             .map_err(|e| Check::Unavailable(e.to_string()))?;
         if !present {
             return Err(Check::Unavailable(format!(

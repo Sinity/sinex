@@ -1627,7 +1627,12 @@ async fn deletion_marker_is_atomic_with_catalog_transition_and_material_readmiss
     drop(blobs);
     let reopened = crate::Blobs::open(dir.path()).unwrap();
     reopened.recover(&mut conn).await.unwrap();
-    assert_eq!(reopened.read(&name).unwrap(), b"abc");
+    assert_eq!(
+        reopened
+            .read(&reopened.locate(&mut conn, &name).await.unwrap())
+            .unwrap(),
+        b"abc"
+    );
 }
 
 #[devkit::test]
@@ -1647,6 +1652,7 @@ async fn deleting_a_direct_blob_preserves_its_bytes_as_a_held_chunk_then_reclaim
     crate::blobs::commit_pending_extents(&mut conn, &blobs, std::slice::from_ref(&direct))
         .await
         .unwrap();
+    let direct_bytes = blobs.locate(&mut conn, &direct).await.unwrap();
     // First mark the directly stored blob. Later admission of the chunked blob
     // must clear the marker without appending those bytes again.
     let mut tx = conn.begin().await.unwrap();
@@ -1662,8 +1668,14 @@ async fn deleting_a_direct_blob_preserves_its_bytes_as_a_held_chunk_then_reclaim
             &parent,
             6,
             vec![
-                (direct.clone(), None),
-                (other.hash().to_string(), Some(other)),
+                (
+                    direct.clone(),
+                    crate::blobs::ChunkBytes::Located(direct_bytes),
+                ),
+                (
+                    other.hash().to_string(),
+                    crate::blobs::ChunkBytes::Prepared(other),
+                ),
             ],
         )
         .unwrap();
@@ -1671,7 +1683,9 @@ async fn deleting_a_direct_blob_preserves_its_bytes_as_a_held_chunk_then_reclaim
     assert_eq!(removed, [direct.clone()]);
     assert!(left.is_empty());
     assert_eq!(
-        blobs.read(&parent).unwrap(),
+        blobs
+            .read(&blobs.locate(&mut conn, &parent).await.unwrap())
+            .unwrap(),
         b"abcxyz",
         "pending chunk references survive direct removal"
     );
@@ -1702,7 +1716,12 @@ async fn deleting_a_direct_blob_preserves_its_bytes_as_a_held_chunk_then_reclaim
     drop(blobs);
     let blobs = crate::Blobs::open(dir.path()).unwrap();
     blobs.recover(&mut conn).await.unwrap();
-    assert_eq!(blobs.read(&parent).unwrap(), b"abcxyz");
+    assert_eq!(
+        blobs
+            .read(&blobs.locate(&mut conn, &parent).await.unwrap())
+            .unwrap(),
+        b"abcxyz"
+    );
     let (removed, left) = remove_unreferenced(&mut conn, &blobs).await.unwrap();
     assert_eq!(removed, [direct.clone()]);
     assert!(left.is_empty());
@@ -1715,7 +1734,12 @@ async fn deleting_a_direct_blob_preserves_its_bytes_as_a_held_chunk_then_reclaim
     drop(blobs);
     let blobs = crate::Blobs::open(dir.path()).unwrap();
     blobs.recover(&mut conn).await.unwrap();
-    assert_eq!(blobs.read(&parent).unwrap(), b"abcxyz");
+    assert_eq!(
+        blobs
+            .read(&blobs.locate(&mut conn, &parent).await.unwrap())
+            .unwrap(),
+        b"abcxyz"
+    );
     let mut tx = conn.begin().await.unwrap();
     bytes::mark_removing(&mut tx, &parent).await.unwrap();
     tx.commit().await.unwrap();

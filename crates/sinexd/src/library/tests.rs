@@ -407,7 +407,7 @@ async fn the_library_end_to_end(db: devkit::pg::TestDatabase) {
     if ffmpeg() {
         let p = w.ok(Request::LibraryPreview { item: ia.clone() }).await;
         let preview = p["content"].as_str().unwrap();
-        assert!(w.blobs.contains(preview).unwrap());
+        assert!(w.blobs.contains(&mut w.conn, preview).await.unwrap());
         let citations: i64 =
             sqlx::query_scalar("SELECT count(*) FROM core.event_blobs WHERE blob=$1")
                 .bind(preview)
@@ -529,7 +529,7 @@ async fn the_library_end_to_end(db: devkit::pg::TestDatabase) {
         .await
         .unwrap()
         .unwrap();
-    assert!(!w.blobs.contains(&it.content).unwrap());
+    assert!(!w.blobs.contains(&mut w.conn, &it.content).await.unwrap());
     let _ = Library {
         writer: &w.writer,
         blobs: &w.blobs,
@@ -574,7 +574,12 @@ async fn library_add_through_an_alias_keeps_one_copy(db: devkit::pg::TestDatabas
     assert_eq!(added["root"], w.root.display().to_string());
     let first_item = w.item_at(&file).await;
     let (_, blob) = copy(&mut w.conn, &file).await;
-    assert_eq!(w.blobs.read(&blob).unwrap(), b"synthetic library content");
+    assert_eq!(
+        w.blobs
+            .read(&w.blobs.locate(&mut w.conn, &blob).await.unwrap())
+            .unwrap(),
+        b"synthetic library content"
+    );
     for _ in 0..3 {
         let again = w
             .ok(Request::LibraryAdd {

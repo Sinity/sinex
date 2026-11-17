@@ -114,7 +114,8 @@ impl Ingest {
             .await?;
         if self
             .blobs
-            .contains(&material.blob)
+            .contains(&mut self.conn, &material.blob)
+            .await
             .map_err(|e| Check::Unavailable(e.to_string()))?
         {
             return Ok(());
@@ -129,18 +130,24 @@ impl Ingest {
         );
         if !material.chunks.is_empty() {
             let chunks = material.chunks.clone();
+            let names: Vec<_> = chunks.iter().map(|chunk| chunk.blob.clone()).collect();
+            let located = self
+                .blobs
+                .locate_many(&mut self.conn, &names)
+                .await
+                .map_err(|error| Check::Unavailable(error.to_string()))?;
             return tokio::task::spawn_blocking(move || {
-                // Chunks already held are not stored again; the frame
-                // directory supplies the others.
                 let mut parts = Vec::with_capacity(chunks.len());
-                for chunk in chunks {
-                    let held = blobs
-                        .contains(&chunk.blob)
-                        .map_err(|e| Check::Unavailable(e.to_string()))?;
-                    let prepared = if held {
-                        None
-                    } else {
-                        Some(
+                for (chunk, located) in chunks.into_iter().zip(located) {
+                    let bytes = match located {
+                        Some(located)
+                            if blobs
+                                .available(&located)
+                                .map_err(|error| Check::Unavailable(error.to_string()))? =>
+                        {
+                            sinex_store::blobs::ChunkBytes::Located(located)
+                        }
+                        _ => sinex_store::blobs::ChunkBytes::Prepared(
                             frame_bytes::prepared(
                                 &root,
                                 &producer,
@@ -149,20 +156,20 @@ impl Ingest {
                                 chunk.length,
                             )
                             .map_err(check_bytes)?,
-                        )
+                        ),
                     };
-                    parts.push((chunk.blob, prepared));
+                    parts.push((chunk.blob, bytes));
                 }
                 blobs
                     .put_chunks(&blob, length, parts)
                     .map(drop)
-                    .map_err(|e| match e {
+                    .map_err(|error| match error {
                         sinex_store::Error::Invalid(reason) => Check::Bytes(reason),
                         other => Check::Unavailable(other.to_string()),
                     })
             })
             .await
-            .map_err(|e| Check::Unavailable(e.to_string()))?;
+            .map_err(|error| Check::Unavailable(error.to_string()))?;
         }
         tokio::task::spawn_blocking(move || {
             let prepared = frame_bytes::prepared(&root, &producer, &frame, &blob, length)

@@ -52,7 +52,15 @@ async fn shutdown_cleanup_releases_the_writer_claim_even_on_failure(db: devkit::
     conn.close().await.unwrap();
     // Shutdown catalogs already synced groups without draining preparations.
     let synced = blobs.put(b"synthetic pending shutdown bytes").unwrap();
-    blobs.descriptors(&synced).unwrap();
+    let mut staged = connect(&url, "sinex.test").await.unwrap();
+    let mut transaction = staged.begin().await.unwrap();
+    let uncommitted = blobs
+        .commit_extents(&mut transaction, std::slice::from_ref(&synced))
+        .await
+        .unwrap();
+    transaction.rollback().await.unwrap();
+    drop(uncommitted);
+    staged.close().await.unwrap();
     let mut fault = connect(&url, "sinex.test").await.unwrap();
     sqlx::query("DROP TABLE core.blob_extents")
         .execute(&mut fault)
@@ -296,7 +304,15 @@ async fn shutdown_fails_when_writer_backend_cleanup_fails(db: devkit::pg::TestDa
     let dir = tempfile::tempdir().unwrap();
     let blobs = Blobs::open(dir.path()).unwrap();
     let synced = blobs.put(b"synthetic pending shutdown bytes").unwrap();
-    blobs.descriptors(&synced).unwrap();
+    let mut staged = connect(&url, "sinex.test").await.unwrap();
+    let mut transaction = staged.begin().await.unwrap();
+    let uncommitted = blobs
+        .commit_extents(&mut transaction, std::slice::from_ref(&synced))
+        .await
+        .unwrap();
+    transaction.rollback().await.unwrap();
+    drop(uncommitted);
+    staged.close().await.unwrap();
     let mut conn = connect(&url, "sinex.test").await.unwrap();
     sqlx::query("DROP TABLE core.blob_extents")
         .execute(&mut conn)
@@ -576,7 +592,9 @@ async fn shutdown_releases_source_and_backup_waiting_on_publication(db: devkit::
         .await
         .unwrap();
     assert_eq!(
-        blobs.read(&blob).unwrap(),
+        blobs
+            .read(&blobs.locate(&mut observer, &blob).await.unwrap())
+            .unwrap(),
         original,
         "pending original bytes remain available"
     );
@@ -732,7 +750,12 @@ async fn source_copy_cancellation_keeps_pending_frame_and_progress_for_retry(
         0
     );
     assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM core.ingress_frames WHERE producer='synthetic-shutdown' AND frame='copy-pending'").fetch_one(&mut observer).await.unwrap(),0);
-    assert_eq!(blobs.read(&blob).unwrap(), original);
+    assert_eq!(
+        blobs
+            .read(&blobs.locate(&mut observer, &blob).await.unwrap())
+            .unwrap(),
+        original
+    );
     sqlx::query("SELECT pg_advisory_unlock(927164)")
         .execute(&mut blocker)
         .await

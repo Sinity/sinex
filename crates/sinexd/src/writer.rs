@@ -828,7 +828,10 @@ async fn admit_with_checkpoint(
     check().map_err(|error| WriteError::Refused(error.to_string()))?;
     for name in batch.stored_bytes() {
         let present = match store {
-            Some(store) => store.contains(name).map_err(|e| unavailable(&e))?,
+            Some(store) => store
+                .contains(connection, name)
+                .await
+                .map_err(|e| unavailable(&e))?,
             None => false,
         };
         if !present {
@@ -926,7 +929,8 @@ async fn admit_signals(
     for name in batch.into_iter().flat_map(Batch::stored_bytes) {
         let present = match store {
             Some(store) => store
-                .contains(name)
+                .contains(connection, name)
+                .await
                 .map_err(|e| WriteError::Unavailable(e.to_string()))?,
             None => false,
         };

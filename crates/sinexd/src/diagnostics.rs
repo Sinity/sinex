@@ -219,30 +219,39 @@ async fn verify_store(database: &str, store: &Path) -> Result<Value> {
     let mut conn = diagnostics::connect(database).await?;
     let names = diagnostics::blob_names(&mut conn).await?;
     let blobs = sinex_store::Blobs::open(store)?;
-    blobs.load(&mut conn).await?;
-    let store_path = store.to_path_buf();
-    // Verification reads every byte; keep it off the async threads.
-    tokio::task::spawn_blocking(move || {
-        let (mut intact, mut corrupt, mut missing) = (0u64, Vec::new(), Vec::new());
-        for name in &names {
-            match blobs.verify(name) {
+    let (mut intact, mut corrupt, mut missing) = (0u64, Vec::new(), Vec::new());
+    // A scan selects catalog rows in transfer-sized batches; it never loads
+    // the whole descriptor index into a resident store cache.
+    for names in names.chunks(256) {
+        let located = blobs.locate_many(&mut conn, names).await?;
+        let work: Vec<_> = names.iter().cloned().zip(located).collect();
+        let blobs = blobs.clone();
+        let results = tokio::task::spawn_blocking(move || {
+            work.into_iter()
+                .map(|(name, located)| {
+                    let result = match located {
+                        Some(located) => blobs.verify(&located),
+                        None => Ok(Verified::Missing),
+                    };
+                    (name, result)
+                })
+                .collect::<Vec<_>>()
+        })
+        .await?;
+        for (name, result) in results {
+            match result {
                 Ok(Verified::Intact | Verified::CiphertextIntact) => intact += 1,
                 Ok(Verified::Corrupt(why)) => corrupt.push(json!({ "blob": name, "why": why })),
                 Ok(Verified::Missing) => missing.push(json!(name)),
-                Err(e) => corrupt.push(json!({ "blob": name, "why": e.to_string() })),
+                Err(error) => corrupt.push(json!({ "blob": name, "why": error.to_string() })),
             }
         }
-        json!({
-            "store": store_path.display().to_string(),
-            "checked": names.len(),
-            "intact": intact,
-            "corrupt": corrupt,
-            "missing": missing,
-            "ok": corrupt.is_empty() && missing.is_empty(),
-        })
-    })
-    .await
-    .map_err(Error::from)
+    }
+    Ok(json!({
+        "store": store.display().to_string(), "checked": names.len(),
+        "intact": intact, "corrupt": corrupt, "missing": missing,
+        "ok": corrupt.is_empty() && missing.is_empty(),
+    }))
 }
 
 #[derive(clap::Subcommand)]

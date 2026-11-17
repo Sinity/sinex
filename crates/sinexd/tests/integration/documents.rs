@@ -169,11 +169,20 @@ async fn assert_provenance(
     let blobs = sinex_store::Blobs::open(store).unwrap();
     blobs.load(committed).await.unwrap();
     assert_eq!(
-        blobs.read(&content).unwrap(),
+        blobs
+            .read(&blobs.locate(committed, &content).await.unwrap())
+            .unwrap(),
         fixture.bytes,
         "whole content range remains byte-identical"
     );
-    let material_bytes = blobs.read(copy["bytes"].as_str().unwrap()).unwrap();
+    let material_bytes = blobs
+        .read(
+            &blobs
+                .locate(committed, copy["bytes"].as_str().unwrap())
+                .await
+                .unwrap(),
+        )
+        .unwrap();
     let offset = copy["offset"].as_u64().unwrap() as usize;
     let end = material_bytes[offset..]
         .iter()
@@ -337,7 +346,15 @@ async fn documents_are_searchable_with_exact_ranges_across_replay_and_revision()
     blobs.load(&mut committed).await.unwrap();
     assert_eq!(
         blobs
-            .read(&format!("blake3:{}", blake3::hash(&original.bytes)))
+            .read(
+                &blobs
+                    .locate(
+                        &mut committed,
+                        &format!("blake3:{}", blake3::hash(&original.bytes))
+                    )
+                    .await
+                    .unwrap()
+            )
             .unwrap(),
         original.bytes
     );

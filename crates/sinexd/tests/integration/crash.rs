@@ -471,11 +471,15 @@ async fn consistent(target: &Target) {
     blobs.load(&mut c).await.unwrap();
     for name in names {
         assert_eq!(
-            blobs.verify(&name).unwrap(),
+            blobs
+                .verify(&blobs.locate(&mut c, &name).await.unwrap())
+                .unwrap(),
             sinex_store::blobs::Verified::Intact,
             "material {name} has readable stored bytes"
         );
-        let bytes = blobs.read(&name).unwrap();
+        let bytes = blobs
+            .read(&blobs.locate(&mut c, &name).await.unwrap())
+            .unwrap();
         assert_eq!(format!("blake3:{}", blake3::hash(&bytes).to_hex()), name);
     }
 }
@@ -954,7 +958,7 @@ async fn clipboard_bytes(target: &Target, c: &mut PgConnection, nth: i64) -> Vec
         .unwrap();
     let blobs = sinex_store::Blobs::open(&target.store).unwrap();
     blobs.load(c).await.unwrap();
-    blobs.read(&blob).unwrap()
+    blobs.read(&blobs.locate(c, &blob).await.unwrap()).unwrap()
 }
 
 /// Kill the tombstone of an archived material at a step. Each batch is one

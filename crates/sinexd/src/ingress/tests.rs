@@ -1123,13 +1123,21 @@ async fn bytes_sent_in_chunks_register_a_material_and_failures_are_recorded(
         assert_eq!(ack.refusal(), None, "{ack:?}");
     }
     assert!(
-        !h.blobs.contains(&blob).unwrap(),
+        !h.blobs
+            .contains(&mut *h.reads.acquire().await.unwrap(), &blob)
+            .await
+            .unwrap(),
         "chunks wait in the spool until their material frame"
     );
 
     let ack = h.send("node", &frame).await;
     assert_eq!(ack.refusal(), None, "{ack:?}");
-    assert!(h.blobs.contains(&blob).unwrap());
+    assert!(
+        h.blobs
+            .contains(&mut *h.reads.acquire().await.unwrap(), &blob)
+            .await
+            .unwrap()
+    );
     assert!(
         !frame_bytes::directory(&h.store_dir, "node", "m-up").exists(),
         "a recorded frame's spool is removed"
@@ -1242,7 +1250,9 @@ impl Harness {
             .fetch_one(&mut conn)
             .await
             .unwrap();
-        self.blobs.read(&blob).unwrap()
+        self.blobs
+            .read(&self.blobs.locate(&mut conn, &blob).await.unwrap())
+            .unwrap()
     }
 }
 
@@ -1778,7 +1788,12 @@ async fn privacy_changes_refuse_the_next_frame_before_its_bytes_are_stored(
     let Ingress::Material { material, .. } = &frame else {
         panic!("material")
     };
-    assert!(!h.blobs.contains(&material.blob).unwrap());
+    assert!(
+        !h.blobs
+            .contains(&mut *h.reads.acquire().await.unwrap(), &material.blob)
+            .await
+            .unwrap()
+    );
     drop(connected);
     let connected = sinex_source_core::drivers::producer::Producer::connect(
         h.nats.url(),
@@ -1808,7 +1823,12 @@ async fn privacy_changes_refuse_the_next_frame_before_its_bytes_are_stored(
     let Ingress::Material { material, .. } = &frame else {
         panic!("material")
     };
-    assert!(!h.blobs.contains(&material.blob).unwrap());
+    assert!(
+        !h.blobs
+            .contains(&mut *h.reads.acquire().await.unwrap(), &material.blob)
+            .await
+            .unwrap()
+    );
     assert_eq!(h.count("SELECT count(*) FROM raw.materials").await, 2);
     drop(connected);
     assert!(matches!(
@@ -2215,7 +2235,15 @@ async fn a_rewrite_sent_as_chunks_stores_only_the_changed_chunks(db: devkit::pg:
     assert_eq!(read, second);
     assert_eq!(
         h.blobs
-            .read(&format!("blake3:{}", blake3::hash(&first).to_hex()))
+            .read(
+                &h.blobs
+                    .locate(
+                        &mut *h.reads.acquire().await.unwrap(),
+                        &format!("blake3:{}", blake3::hash(&first).to_hex())
+                    )
+                    .await
+                    .unwrap()
+            )
             .unwrap(),
         first
     );

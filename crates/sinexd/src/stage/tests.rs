@@ -297,7 +297,12 @@ async fn a_file_no_parser_recognises_is_kept_byte_for_byte(db: devkit::pg::TestD
     for (parser, version, blob, length) in &rows {
         assert_eq!((parser, version), (&None, &None));
         assert_eq!(*length, bytes.len() as i64);
-        assert_eq!(blobs.read(blob).unwrap(), bytes);
+        assert_eq!(
+            blobs
+                .read(&blobs.locate(&mut conn, blob).await.unwrap())
+                .unwrap(),
+            bytes
+        );
     }
     // Replay has nothing to read it with until a parser is assigned.
     let error = sinex_store::material_bytes::reference(&mut conn, MaterialId(material))

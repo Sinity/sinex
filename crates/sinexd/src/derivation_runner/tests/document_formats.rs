@@ -90,6 +90,9 @@ async fn structured_inputs_skip_blob_reads_and_replay_replaces_text(db: devkit::
     let directory = tempfile::tempdir().unwrap();
     let blobs = Blobs::open(directory.path()).unwrap();
     let w = World::with_store(db, vec![], Some(blobs.clone())).await;
+    let mut read_conn = <sqlx::PgConnection as sqlx::Connection>::connect(&w.url)
+        .await
+        .unwrap();
     let original = b"{\"text\":\"original structured content\"}\n";
     let structured_blob = blobs.put(original).unwrap();
     let plain = b"complete plain document";
@@ -99,7 +102,12 @@ async fn structured_inputs_skip_blob_reads_and_replay_replaces_text(db: devkit::
     let reader_directory = tempfile::tempdir().unwrap();
     let reader_blobs = Blobs::open(reader_directory.path()).unwrap();
     assert_eq!(reader_blobs.put(plain).unwrap(), plain_blob);
-    assert!(reader_blobs.read(&structured_blob).is_err());
+    assert!(
+        reader_blobs
+            .locate(&mut read_conn, &structured_blob)
+            .await
+            .is_err()
+    );
     let events = vec![
         copy("dataset.jsonl", &structured_blob, 348_589_691, 0),
         copy("records.NDJSON", &structured_blob, original.len() as u64, 1),
@@ -133,7 +141,17 @@ async fn structured_inputs_skip_blob_reads_and_replay_replaces_text(db: devkit::
     assert_eq!(outputs[0].text.as_bytes(), plain);
     assert_eq!(current.counts["document.text"].failed, 0);
     assert_eq!(w.live::<FileCopy>().await.len(), 3);
-    assert_eq!(blobs.read(&structured_blob).unwrap(), original);
+    assert_eq!(
+        blobs
+            .read(
+                &blobs
+                    .locate(&mut read_conn, &structured_blob)
+                    .await
+                    .unwrap()
+            )
+            .unwrap(),
+        original
+    );
     assert_eq!(
         w.count("SELECT commit_seq FROM derivation.positions WHERE derivation='document.text'")
             .await,
@@ -142,5 +160,15 @@ async fn structured_inputs_skip_blob_reads_and_replay_replaces_text(db: devkit::
     );
     current.catch_up().await.unwrap();
     assert_eq!(w.live::<DocumentText>().await, outputs);
-    assert_eq!(blobs.read(&structured_blob).unwrap(), original);
+    assert_eq!(
+        blobs
+            .read(
+                &blobs
+                    .locate(&mut read_conn, &structured_blob)
+                    .await
+                    .unwrap()
+            )
+            .unwrap(),
+        original
+    );
 }

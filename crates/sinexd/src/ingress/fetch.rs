@@ -332,7 +332,12 @@ impl Requests {
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
-            if self.blobs.is_sealed(&material.blob).map_err(unavailable)? {
+            let located = self
+                .blobs
+                .locate(&mut conn, &material.blob)
+                .await
+                .map_err(unavailable)?;
+            if located.is_sealed() {
                 return Err(Refusal {
                     kind: FetchRefusalKind::Locked,
                     reason: "sealed material requires an operator unlock".into(),
@@ -348,10 +353,9 @@ impl Requests {
             }
             let length = (end - request.offset).min(request.byte_budget);
             let blobs = self.blobs.clone();
-            let blob = material.blob.clone();
             let offset = request.offset;
             let bytes =
-                tokio::task::spawn_blocking(move || blobs.read_range(&blob, offset, length))
+                tokio::task::spawn_blocking(move || blobs.read_range(&located, offset, length))
                     .await
                     .map_err(unavailable)?
                     .map_err(unavailable)?;

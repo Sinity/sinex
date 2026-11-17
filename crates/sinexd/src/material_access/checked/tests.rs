@@ -43,8 +43,13 @@ fn checked_readers_honor_cancellation_for_reads_and_seeks() {
     assert!(second.seek(SeekFrom::Start(0)).is_err());
 }
 
-#[test]
-fn cancelled_owned_file_storage_preserves_original_and_retries_plain_and_sealed() {
+#[devkit::test]
+async fn cancelled_owned_file_storage_preserves_original_and_retries_plain_and_sealed(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     for class in [Class::Open, Class::Sealed] {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("original");
@@ -84,7 +89,7 @@ fn cancelled_owned_file_storage_preserves_original_and_retries_plain_and_sealed(
         let mut reader = match &material.sealing {
             Some(sealed) => blobs
                 .read_sealed(
-                    &blob,
+                    &blobs.locate(&mut conn, &blob).await.unwrap(),
                     Some(bytes.len() as u64),
                     &sealed.key(&blob).unwrap(),
                     crate::material_access::sealing::read_limits(bytes.len() as u64).unwrap(),
@@ -92,7 +97,11 @@ fn cancelled_owned_file_storage_preserves_original_and_retries_plain_and_sealed(
                 )
                 .unwrap(),
             None => blobs
-                .read_plain(&blob, Some(bytes.len() as u64), || Ok(()))
+                .read_plain(
+                    &blobs.locate(&mut conn, &blob).await.unwrap(),
+                    Some(bytes.len() as u64),
+                    || Ok(()),
+                )
                 .unwrap(),
         };
         let mut restored = Vec::new();

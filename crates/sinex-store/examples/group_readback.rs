@@ -1,6 +1,5 @@
 //! Checks, by explicit numeric UID, who may read the protected shared store.
-use hashed_blobs::Extent;
-use sinex_store::Blobs;
+use hashed_blobs::{Extent, Preparation, SegmentWriter};
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Command;
@@ -20,13 +19,20 @@ fn actor(operation: &str) {
     let root = Path::new("/proc/self/fd/0");
     match operation {
         "install" => {
-            let blobs = Blobs::open(&root.join("shared")).unwrap();
-            let name = blobs.put(BODY).unwrap();
-            std::fs::write(
-                root.join("shared/descriptor"),
-                &blobs.descriptors(&name).unwrap()[0],
-            )
-            .unwrap();
+            let shared = root.join("shared");
+            let prepared = Preparation::new(shared.join("incoming"))
+                .unwrap()
+                .plain(BODY, 3)
+                .unwrap();
+            let mut writer =
+                SegmentWriter::open(&shared, "segments/current.hb", 0, &[], 0o640).unwrap();
+            let group = writer
+                .append_group([Ok(prepared)], |_| Ok(None))
+                .unwrap()
+                .wait()
+                .unwrap();
+            writer.acknowledge(&group).unwrap();
+            std::fs::write(root.join("shared/descriptor"), group.extents[0].encode()).unwrap();
             std::fs::set_permissions(
                 root.join("shared/descriptor"),
                 std::fs::Permissions::from_mode(0o640),

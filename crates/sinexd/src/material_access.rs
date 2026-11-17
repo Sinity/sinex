@@ -117,7 +117,7 @@ impl MaterialAccess {
     }
     pub(crate) fn archive_input<C>(
         &self,
-        blob: &str,
+        located: &sinex_store::blobs::Located,
         length: u64,
         mut check: C,
     ) -> Result<sinex_source_core::shared_pass::Input>
@@ -127,9 +127,9 @@ impl MaterialAccess {
         use sinex_source_core::shared_pass::Input;
         match &self.sealing {
             Some(sealing) => {
-                let key = sealing.key(blob)?;
+                let key = sealing.key(&located.name())?;
                 Ok(Input::Seekable(Box::new(self.plain.0.read_sealed(
-                    blob,
+                    located,
                     Some(length),
                     &key,
                     read_limits(length)?,
@@ -137,7 +137,7 @@ impl MaterialAccess {
                 )?)))
             }
             None => Ok(Input::Sequential(Box::new(self.plain.0.read_plain(
-                blob,
+                located,
                 Some(length),
                 move || check().map_err(Into::into),
             )?))),
@@ -219,7 +219,7 @@ impl MaterialAccess {
                 records: Some(_),
                 ..
             }) = &material.stored
-            && self.plain.0.is_sealed(name)?
+            && self.plain.0.locate(conn, name).await?.is_sealed()
         {
             let unlock = self
                 .unlock

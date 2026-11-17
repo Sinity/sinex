@@ -104,8 +104,15 @@ impl Reader for AfterAck {
 async fn originals(ctx: &mut ReaderContext, name: &str) -> Vec<(uuid::Uuid, Vec<u8>)> {
     let rows:Vec<(uuid::Uuid,String)>=sqlx::query_as("SELECT m.id,m.blob FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id WHERE i.binding=$1 ORDER BY m.part_index")
         .bind(name).fetch_all(&mut ctx.read_conn).await.unwrap();
+    let names: Vec<_> = rows.iter().map(|(_, blob)| blob.clone()).collect();
+    let selected = ctx
+        .blobs
+        .locate_many(&mut ctx.read_conn, &names)
+        .await
+        .unwrap();
     rows.into_iter()
-        .map(|(id, blob)| (id, ctx.blobs.read(&blob).unwrap()))
+        .zip(selected)
+        .map(|((id, _), located)| (id, ctx.blobs.read(&located.unwrap()).unwrap()))
         .collect()
 }
 #[devkit::test]

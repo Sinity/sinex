@@ -75,7 +75,12 @@ fn peak_rss_kib() -> u64 {
         .unwrap()
 }
 #[devkit::test]
-fn oversized_stored_json_replays_with_bounded_raw_record_memory() {
+async fn oversized_stored_json_replays_with_bounded_raw_record_memory(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     const ENV: &str = "SINEX_SYNTHETIC_RECORD_PADDING";
     if let Ok(padding) = std::env::var(ENV) {
         let padding = padding.parse().unwrap();
@@ -84,7 +89,13 @@ fn oversized_stored_json_replays_with_bounded_raw_record_memory() {
         let dir = tempfile::tempdir().unwrap();
         let blobs = sinex_store::Blobs::open(dir.path()).unwrap();
         let name = blobs.put_seekable(input).unwrap();
-        let reader = blobs.read_plain_seek(&name, length, || Ok(())).unwrap();
+        let reader = blobs
+            .read_plain_seek(
+                &blobs.locate(&mut conn, &name).await.unwrap(),
+                length,
+                || Ok(()),
+            )
+            .unwrap();
         let stored = StoredReader::new(reader, length);
         let manifest = sinex_model::Manifest::default();
         let records = [(0, length as usize)];

@@ -94,7 +94,11 @@ async fn sparse_binary_document_is_admitted_guarded_and_replayed_without_the_roo
     assert!(member.length < node.size);
     let stored = ctx
         .blobs
-        .read_range(&blob, member.stream_offset, member.length)
+        .read_range(
+            &ctx.blobs.locate(&mut ctx.read_conn, &blob).await.unwrap(),
+            member.stream_offset,
+            member.length,
+        )
         .unwrap();
     assert!(stored.starts_with(b"head"));
     assert!(stored.ends_with(b"tail"));
@@ -224,7 +228,13 @@ async fn imported_text_refusal_keeps_bytes_and_advances_before_the_next_revision
     .await
     .unwrap();
     assert_eq!(
-        ctx.blobs.read_range(&blob, 0, length as u64).unwrap(),
+        ctx.blobs
+            .read_range(
+                &ctx.blobs.locate(&mut ctx.read_conn, &blob).await.unwrap(),
+                0,
+                length as u64
+            )
+            .unwrap(),
         malformed
     );
     assert!(live(&mut ctx, "transcript.cue").await.is_empty());
@@ -292,7 +302,11 @@ async fn located_document_listing_is_admitted_and_replayed_without_external_medi
     assert_eq!(listed.length, 0);
     assert_eq!(
         ctx.blobs
-            .read_range(blob, listed.stream_offset, listed.length)
+            .read_range(
+                &ctx.blobs.locate(&mut ctx.read_conn, blob).await.unwrap(),
+                listed.stream_offset,
+                listed.length
+            )
             .unwrap(),
         Vec::<u8>::new()
     );
@@ -303,7 +317,11 @@ async fn located_document_listing_is_admitted_and_replayed_without_external_medi
         .unwrap();
     assert_eq!(
         ctx.blobs
-            .read_range(blob, note.stream_offset, note.length)
+            .read_range(
+                &ctx.blobs.locate(&mut ctx.read_conn, blob).await.unwrap(),
+                note.stream_offset,
+                note.length
+            )
             .unwrap(),
         b"ordinary stored bytes"
     );

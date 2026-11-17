@@ -21,21 +21,29 @@ fn name(bytes: &[u8]) -> String {
 
 /// The chunks of `bytes` as a producer offers them: each one Sinex does not
 /// hold is prepared, the others are named only.
-fn offer(blobs: &Blobs, scratch: &Path, bytes: &[u8]) -> Vec<(String, Option<Prepared>)> {
-    hashed_blobs::Chunker::plain(hashed_blobs::ChunkSizes::default())
-        .chunks(bytes)
-        .map(|chunk| {
-            let chunk = chunk.unwrap();
-            let chunk_name = name(&chunk);
-            let prepared = (!blobs.contains(&chunk_name).unwrap()).then(|| {
+async fn offer(
+    blobs: &Blobs,
+    conn: &mut sqlx::PgConnection,
+    scratch: &Path,
+    bytes: &[u8],
+) -> Vec<(String, ChunkBytes)> {
+    let mut offered = Vec::new();
+    for chunk in hashed_blobs::Chunker::plain(hashed_blobs::ChunkSizes::default()).chunks(bytes) {
+        let chunk = chunk.unwrap();
+        let name = name(&chunk);
+        let bytes = if blobs.contains(conn, &name).await.unwrap() {
+            ChunkBytes::Located(blobs.locate(conn, &name).await.unwrap())
+        } else {
+            ChunkBytes::Prepared(
                 Preparation::new(scratch)
                     .unwrap()
                     .plain(chunk.as_slice(), 3)
-                    .unwrap()
-            });
-            (chunk_name, prepared)
-        })
-        .collect()
+                    .unwrap(),
+            )
+        };
+        offered.push((name, bytes));
+    }
+    offered
 }
 
 fn segment_len(root: &Path) -> u64 {
@@ -43,10 +51,9 @@ fn segment_len(root: &Path) -> u64 {
 }
 
 #[devkit::test]
-async fn loading_the_catalog_reads_the_heap_once_and_preserves_extents_and_chunk_order(
+async fn start_reads_no_extent_rows_and_cold_lookup_preserves_chunk_order(
     db: devkit::pg::TestDatabase,
 ) {
-    use sqlx::Connection;
     let mut conn = sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
     let dir = tempfile::tempdir().unwrap();
     let scratch = tempfile::tempdir().unwrap();
@@ -57,93 +64,69 @@ async fn loading_the_catalog_reads_the_heap_once_and_preserves_extents_and_chunk
         .put_chunks(
             &blob,
             bytes.len() as u64,
-            offer(&blobs, scratch.path(), &bytes),
+            offer(&blobs, &mut conn, scratch.path(), &bytes).await,
         )
         .unwrap();
-    let deleted = blobs.put(b"retained deletion descriptor").unwrap();
-    commit_pending_extents(&mut conn, &blobs, &[blob.clone(), deleted.clone()])
+    commit_pending_extents(&mut conn, &blobs, std::slice::from_ref(&blob))
         .await
         .unwrap();
-    sqlx::query("UPDATE core.blob_extents SET deleting=true WHERE hash=$1")
-        .bind(&deleted)
-        .execute(&mut conn)
-        .await
+    let original = std::fs::read(dir.path().join(SEGMENT)).unwrap();
+    let expected = blobs
+        .descriptors(&blobs.locate(&mut conn, &blob).await.unwrap())
         .unwrap();
-    let (expected_extents, expected_chunks) = {
-        let state = blobs.state().unwrap();
-        let extents: BTreeMap<_, _> = state
-            .extents
-            .iter()
-            .filter(|(hash, _)| hash.to_string() != deleted)
-            .map(|(hash, extent)| (*hash, extent.encode()))
-            .collect();
-        (extents, state.chunk_lists.clone())
-    };
-    let chunks = expected_chunks.get(&parse(&blob).unwrap()).unwrap();
+    let chunks: Vec<String> =
+        sqlx::query_scalar("SELECT chunk FROM core.blob_chunks WHERE blob=$1 ORDER BY ordinal")
+            .bind(&blob)
+            .fetch_all(&mut conn)
+            .await
+            .unwrap();
     let mut sorted = chunks.clone();
     sorted.sort();
     assert_ne!(
-        chunks, &sorted,
+        chunks, sorted,
         "fixture must distinguish chunk order from hash order"
     );
     drop(blobs);
-
+    // Unrelated malformed rows discriminate point lookup from hydration of
+    // the entire catalog, even when that whole scan is warm and fast.
+    sqlx::query("INSERT INTO core.blob_extents(hash,descriptor,deleting) SELECT 'blake3:' || repeat(md5(g::text),2),convert_to('invalid','UTF8'),false FROM generate_series(1,10000) g")
+        .execute(&mut conn).await.unwrap();
     let reopened = Blobs::open(dir.path()).unwrap();
     let mut tx = conn.begin().await.unwrap();
-    // Make an unnecessary ordered catalog read use its hash index, rather
-    // than hiding that work behind a small-fixture in-memory sort.
-    sqlx::query("SET LOCAL enable_sort=off")
-        .execute(&mut *tx)
-        .await
-        .unwrap();
-    let before: (i64, i64) = sqlx::query_as(
-        "SELECT seq_scan,idx_scan FROM pg_stat_xact_user_tables WHERE relid='core.blob_extents'::regclass",
-    )
-    .fetch_one(&mut *tx)
-    .await
-    .unwrap();
+    let before: (i64,i64) = sqlx::query_as("SELECT seq_scan,idx_scan FROM pg_stat_xact_user_tables WHERE relid='core.blob_extents'::regclass")
+        .fetch_one(&mut *tx).await.unwrap();
     reopened.load(&mut tx).await.unwrap();
-    let (heap_scans, index_scans): (i64, i64) = sqlx::query_as(
-        "SELECT seq_scan,idx_scan FROM pg_stat_xact_user_tables WHERE relid='core.blob_extents'::regclass",
-    )
-    .fetch_one(&mut *tx)
-    .await
-    .unwrap();
-    assert_eq!((heap_scans - before.0, index_scans - before.1), (1, 0));
+    let after: (i64,i64) = sqlx::query_as("SELECT seq_scan,idx_scan FROM pg_stat_xact_user_tables WHERE relid='core.blob_extents'::regclass")
+        .fetch_one(&mut *tx).await.unwrap();
+    assert_eq!((after.0 - before.0, after.1 - before.1), (0, 0));
     tx.rollback().await.unwrap();
-    {
-        let state = reopened.state().unwrap();
-        let extents: BTreeMap<_, _> = state
-            .extents
-            .iter()
-            .map(|(hash, extent)| (*hash, extent.encode()))
-            .collect();
-        assert_eq!(extents, expected_extents);
-        assert_eq!(state.chunk_lists, expected_chunks);
-    }
-    assert_eq!(reopened.read(&blob).unwrap(), bytes);
-    assert!(!reopened.contains(&deleted).unwrap());
-    // Deleting rows still undergo descriptor/name validation.
-    sqlx::query(
-        "UPDATE core.blob_extents SET descriptor=convert_to('invalid','UTF8') WHERE hash=$1",
-    )
-    .bind(&deleted)
-    .execute(&mut conn)
-    .await
-    .unwrap();
-    let error = Blobs::open(dir.path())
-        .unwrap()
-        .load(&mut conn)
-        .await
-        .unwrap_err();
+    let located = reopened.locate(&mut conn, &blob).await.unwrap();
+    assert_eq!(reopened.descriptors(&located).unwrap(), expected);
+    assert_eq!(reopened.read(&located).unwrap(), bytes);
+    let error = reopened
+        .locate(
+            &mut conn,
+            &format!("blake3:{}", "c4ca4238a0b923820dcc509a6f75849b".repeat(2)),
+        )
+        .await;
     assert!(
-        matches!(error, crate::Error::Blob(hashed_blobs::Error::Refused(ref reason))
-        if reason == "invalid extent descriptor")
+        error.is_err(),
+        "a selected malformed descriptor is diagnosed"
+    );
+    assert_eq!(std::fs::read(dir.path().join(SEGMENT)).unwrap(), original);
+    let state = reopened.state().unwrap();
+    assert!(
+        state.prepared.is_empty()
+            && state.groups.is_empty()
+            && state.unrecorded_chunk_lists.is_empty()
     );
 }
 
 #[devkit::test]
-fn a_rewrite_changed_in_one_place_stores_only_the_changed_chunks() {
+async fn a_rewrite_changed_in_one_place_stores_only_the_changed_chunks(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
     let dir = tempfile::tempdir().unwrap();
     let scratch = tempfile::tempdir().unwrap();
     let blobs = Blobs::open(dir.path()).unwrap();
@@ -151,19 +134,24 @@ fn a_rewrite_changed_in_one_place_stores_only_the_changed_chunks() {
     let mut second = first.clone();
     second[1 << 20] ^= 0xff;
 
-    let offered = offer(&blobs, scratch.path(), &first);
+    let offered = offer(&blobs, &mut conn, scratch.path(), &first).await;
     let chunks = offered.len();
     assert!(chunks > 8, "{chunks} chunks");
     blobs
         .put_chunks(&name(&first), first.len() as u64, offered)
         .unwrap();
-    blobs.sync_pending(&[name(&first)]).unwrap();
+    commit_pending_extents(&mut conn, &blobs, &[name(&first)])
+        .await
+        .unwrap();
     let before = segment_len(dir.path());
 
-    let offered = offer(&blobs, scratch.path(), &second);
+    let offered = offer(&blobs, &mut conn, scratch.path(), &second).await;
     let new: Vec<u64> = offered
         .iter()
-        .filter_map(|(_, prepared)| prepared.as_ref().map(Prepared::decoded_len))
+        .filter_map(|(_, bytes)| match bytes {
+            ChunkBytes::Prepared(value) => Some(value.decoded_len()),
+            ChunkBytes::Located(_) => None,
+        })
         .collect();
     // One changed byte rewrites the chunk holding it, and at most the next
     // one if the change moved a cut point.
@@ -171,7 +159,9 @@ fn a_rewrite_changed_in_one_place_stores_only_the_changed_chunks() {
     blobs
         .put_chunks(&name(&second), second.len() as u64, offered)
         .unwrap();
-    blobs.sync_pending(&[name(&second)]).unwrap();
+    commit_pending_extents(&mut conn, &blobs, &[name(&second)])
+        .await
+        .unwrap();
     let grown = segment_len(dir.path()) - before;
     let new_bytes: u64 = new.iter().sum();
     assert!(
@@ -179,28 +169,51 @@ fn a_rewrite_changed_in_one_place_stores_only_the_changed_chunks() {
         "appended {grown} bytes for {new_bytes} new chunk bytes"
     );
 
-    assert_eq!(blobs.read(&name(&second)).unwrap(), second);
-    assert_eq!(blobs.read(&name(&first)).unwrap(), first);
     assert_eq!(
-        blobs.read_range(&name(&second), (1 << 20) - 3, 6).unwrap(),
+        blobs
+            .read(&blobs.locate(&mut conn, &name(&second)).await.unwrap())
+            .unwrap(),
+        second
+    );
+    assert_eq!(
+        blobs
+            .read(&blobs.locate(&mut conn, &name(&first)).await.unwrap())
+            .unwrap(),
+        first
+    );
+    assert_eq!(
+        blobs
+            .read_range(
+                &blobs.locate(&mut conn, &name(&second)).await.unwrap(),
+                (1 << 20) - 3,
+                6
+            )
+            .unwrap(),
         second[(1 << 20) - 3..(1 << 20) + 3]
     );
-    assert_eq!(blobs.descriptors(&name(&second)).unwrap().len(), chunks);
+    assert_eq!(
+        blobs
+            .descriptors(&blobs.locate(&mut conn, &name(&second)).await.unwrap())
+            .unwrap()
+            .len(),
+        chunks
+    );
 }
 
 #[devkit::test]
-fn chunks_that_are_not_the_named_bytes_are_refused() {
+async fn chunks_that_are_not_the_named_bytes_are_refused(db: devkit::pg::TestDatabase) {
+    let mut conn = sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
     let dir = tempfile::tempdir().unwrap();
     let scratch = tempfile::tempdir().unwrap();
     let blobs = Blobs::open(dir.path()).unwrap();
     let bytes = noise(300 << 10, 3);
-    let mut offered = offer(&blobs, scratch.path(), &bytes);
+    let mut offered = offer(&blobs, &mut conn, scratch.path(), &bytes).await;
     offered.pop();
     let error = blobs
         .put_chunks(&name(&bytes), bytes.len() as u64, offered)
         .unwrap_err();
     assert!(error.to_string().contains("are not"), "{error}");
-    assert!(!blobs.contains(&name(&bytes)).unwrap());
+    assert!(!blobs.contains(&mut conn, &name(&bytes)).await.unwrap());
 }
 
 #[devkit::test]
@@ -215,11 +228,13 @@ async fn removing_a_chunked_blob_keeps_the_chunks_another_blob_holds(db: devkit:
     let mut second = first.clone();
     second[600 << 10] ^= 0xff;
     for bytes in [&first, &second] {
-        let offered = offer(&blobs, scratch.path(), bytes);
+        let offered = offer(&blobs, &mut conn, scratch.path(), bytes).await;
         blobs
             .put_chunks(&name(bytes), bytes.len() as u64, offered)
             .unwrap();
-        blobs.sync_pending(&[name(bytes)]).unwrap();
+        commit_pending_extents(&mut conn, &blobs, &[name(bytes)])
+            .await
+            .unwrap();
         sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES($1,$2,'present')")
             .bind(name(bytes))
             .bind(bytes.len() as i64)
@@ -264,14 +279,24 @@ async fn removing_a_chunked_blob_keeps_the_chunks_another_blob_holds(db: devkit:
         .await
         .unwrap();
     assert_eq!(lists, [name(&second)]);
-    assert!(!blobs.contains(&name(&first)).unwrap());
-    assert_eq!(blobs.read(&name(&second)).unwrap(), second);
+    assert!(!blobs.contains(&mut conn, &name(&first)).await.unwrap());
+    assert_eq!(
+        blobs
+            .read(&blobs.locate(&mut conn, &name(&second)).await.unwrap())
+            .unwrap(),
+        second
+    );
 
     drop(blobs);
     let reopened = Blobs::open(dir.path()).unwrap();
     reopened.recover(&mut conn).await.unwrap();
-    assert_eq!(reopened.read(&name(&second)).unwrap(), second);
-    assert!(!reopened.contains(&name(&first)).unwrap());
+    assert_eq!(
+        reopened
+            .read(&reopened.locate(&mut conn, &name(&second)).await.unwrap())
+            .unwrap(),
+        second
+    );
+    assert!(!reopened.contains(&mut conn, &name(&first)).await.unwrap());
 }
 
 #[devkit::test]
@@ -295,10 +320,13 @@ async fn unrelated_commit_and_cleanup_keep_pending_chunk_ownership(db: devkit::p
             &pending,
             original.len() as u64,
             vec![
-                (shared_name.clone(), None),
+                (
+                    shared_name.clone(),
+                    ChunkBytes::Located(blobs.locate(&mut conn, &shared_name).await.unwrap()),
+                ),
                 (
                     name(&tail),
-                    Some(
+                    ChunkBytes::Prepared(
                         Preparation::new(scratch.path())
                             .unwrap()
                             .plain(tail.as_slice(), 3)
@@ -353,5 +381,10 @@ async fn unrelated_commit_and_cleanup_keep_pending_chunk_ownership(db: devkit::p
     drop(blobs);
     let reopened = Blobs::open(dir.path()).unwrap();
     reopened.recover(&mut conn).await.unwrap();
-    assert_eq!(reopened.read(&pending).unwrap(), original);
+    assert_eq!(
+        reopened
+            .read(&reopened.locate(&mut conn, &pending).await.unwrap())
+            .unwrap(),
+        original
+    );
 }

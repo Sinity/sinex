@@ -95,7 +95,17 @@ async fn media_capture_keeps_exact_screen_and_audio_materials_after_restart(
         assert_eq!(row.record_offset, Some(0));
         assert_eq!(row.output_index, 0);
         assert_eq!(row.length as usize, original.len());
-        assert_eq!(ctx.blobs.read(&row.blob).unwrap(), *original);
+        assert_eq!(
+            ctx.blobs
+                .read(
+                    &ctx.blobs
+                        .locate(&mut ctx.read_conn, &row.blob)
+                        .await
+                        .unwrap()
+                )
+                .unwrap(),
+            *original
+        );
         assert_eq!(row.payload["bytes"], original.len() as u64);
         stored.push((row.id, row.blob, original.clone()));
     }
@@ -103,7 +113,19 @@ async fn media_capture_keeps_exact_screen_and_audio_materials_after_restart(
     drop(sink);
     let mut fresh = ReaderContext::open(&url, &store, settings).await.unwrap();
     for (id, blob, bytes) in stored {
-        assert_eq!(fresh.blobs.read(&blob).unwrap(), bytes);
+        assert_eq!(
+            fresh
+                .blobs
+                .read(
+                    &fresh
+                        .blobs
+                        .locate(&mut fresh.read_conn, &blob)
+                        .await
+                        .unwrap()
+                )
+                .unwrap(),
+            bytes
+        );
         assert_eq!(
             sqlx::query_scalar!(
                 "SELECT material_id IS NOT NULL FROM core.events WHERE id=$1",

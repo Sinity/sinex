@@ -36,14 +36,15 @@ pub(crate) async fn open(
     let reference = sinex_store::material_bytes::reference(conn, material)
         .await?
         .ok_or_else(|| Error::not_found("stored material is missing"))?;
-    let key = if blobs.is_sealed(&reference.blob)? {
+    let located = blobs.locate(conn, &reference.blob).await?;
+    let key = if located.is_sealed() {
         let unlock = unlock
             .ok_or_else(|| Error::refused("stored sealed material requires explicit unlock"))?;
         Some(unlock.data_key(conn, material).await?)
     } else {
         None
     };
-    open_checked(blobs, reference, key, unlock, Arc::new(|| Ok(())))
+    open_checked(blobs, &located, reference, key, unlock, Arc::new(|| Ok(())))
 }
 
 /// A stored material's bytes, opened on the first read. A sealed material's
@@ -51,6 +52,7 @@ pub(crate) async fn open(
 pub(crate) struct MaterialOnDemand {
     blobs: Blobs,
     reference: MaterialRef,
+    located: sinex_store::blobs::Located,
     sealed: bool,
     key: Option<DataKey>,
     unlock: Option<Unlock>,
@@ -63,7 +65,8 @@ impl MaterialOnDemand {
         reference: MaterialRef,
         unlock: Option<&Unlock>,
     ) -> Result<Self> {
-        let sealed = blobs.is_sealed(&reference.blob)?;
+        let located = blobs.locate(conn, &reference.blob).await?;
+        let sealed = located.is_sealed();
         let key = match (sealed, unlock) {
             (true, Some(unlock)) => Some(unlock.data_key(conn, reference.id).await?),
             _ => None,
@@ -71,6 +74,7 @@ impl MaterialOnDemand {
         Ok(Self {
             blobs: blobs.clone(),
             reference,
+            located,
             sealed,
             key,
             unlock: unlock.cloned(),
@@ -94,6 +98,7 @@ impl MaterialOnDemand {
                 }
                 open_checked(
                     &self.blobs,
+                    &self.located,
                     self.reference.clone(),
                     self.key.clone(),
                     self.unlock.as_ref(),
@@ -119,6 +124,7 @@ impl RecordRead for MaterialOnDemand {
 /// under `key`.
 pub(crate) fn open_checked(
     blobs: &Blobs,
+    located: &sinex_store::blobs::Located,
     reference: MaterialRef,
     key: Option<DataKey>,
     unlock: Option<&Unlock>,
@@ -137,7 +143,7 @@ pub(crate) fn open_checked(
     let cancel = Arc::clone(&check);
     let body = if let Some(key) = &key {
         let mut input = blobs.read_sealed(
-            &reference.blob,
+            located,
             Some(reference.length),
             key,
             crate::material_access::sealing::read_limits(reference.length)?,
@@ -151,7 +157,7 @@ pub(crate) fn open_checked(
             cancel().map_err(std::io::Error::other)
         }))
     } else {
-        let input = blobs.read_plain_seek(&reference.blob, reference.length, move || {
+        let input = blobs.read_plain_seek(located, reference.length, move || {
             cancel().map_err(std::io::Error::other).map_err(Into::into)
         })?;
         let cancel = Arc::clone(&check);

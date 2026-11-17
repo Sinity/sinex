@@ -77,7 +77,11 @@ async fn sigterm_finishes_empty_source_daemon_and_releases_writer_for_restart() 
         .unwrap();
     let bytes = sinex_store::Blobs::open(&store).unwrap();
     bytes.load(&mut conn).await.unwrap();
-    let original_bytes: Vec<_> = blobs.iter().map(|name| bytes.read(name).unwrap()).collect();
+    let selected = bytes.locate_many(&mut conn, &blobs).await.unwrap();
+    let original_bytes: Vec<_> = selected
+        .into_iter()
+        .map(|located| bytes.read(&located.unwrap()).unwrap())
+        .collect();
     for round in 0..2 {
         let log = dir.path().join(format!("daemon-{round}.log"));
         let mut command = run(
@@ -172,7 +176,12 @@ async fn sigterm_finishes_empty_source_daemon_and_releases_writer_for_restart() 
             .unwrap();
         assert_eq!(source_rows(&mut conn).await, original);
         for (name, expected) in blobs.iter().zip(&original_bytes) {
-            assert_eq!(bytes.read(name).unwrap(), *expected);
+            assert_eq!(
+                bytes
+                    .read(&bytes.locate(&mut conn, name).await.unwrap())
+                    .unwrap(),
+                *expected
+            );
         }
         let log = std::fs::read_to_string(&log).unwrap();
         let summaries: Vec<serde_json::Value> = log

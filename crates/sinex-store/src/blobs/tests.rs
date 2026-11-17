@@ -1,8 +1,10 @@
 use super::*;
+use sqlx::Connection;
 use std::io::Write;
 
 #[devkit::test]
-fn put_then_read_range() {
+async fn put_then_read_range(db: devkit::pg::TestDatabase) {
+    let mut conn = sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
     let dir = std::env::temp_dir().join(format!("sinex-blobs-{}", uuid::Uuid::now_v7()));
     let blobs = Blobs::open(&dir).unwrap();
     let name = blobs.put(b"hello world").unwrap();
@@ -10,19 +12,29 @@ fn put_then_read_range() {
         name,
         format!("blake3:{}", blake3::hash(b"hello world").to_hex())
     );
-    assert_eq!(blobs.read_range(&name, 6, 5).unwrap(), b"world");
-    assert!(blobs.contains(&name).unwrap());
+    assert_eq!(
+        blobs
+            .read_range(&blobs.locate(&mut conn, &name).await.unwrap(), 6, 5)
+            .unwrap(),
+        b"world"
+    );
+    assert!(blobs.contains(&mut conn, &name).await.unwrap());
     assert!(
         !blobs
-            .contains(&format!("blake3:{}", blake3::hash(b"other").to_hex()))
+            .contains(
+                &mut conn,
+                &format!("blake3:{}", blake3::hash(b"other").to_hex())
+            )
+            .await
             .unwrap()
     );
-    assert!(blobs.contains("sha256:00").is_err());
+    assert!(blobs.contains(&mut conn, "sha256:00").await.is_err());
     std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[devkit::test]
-fn plain_copy_and_stored_reader_keep_exact_bytes() {
+async fn plain_copy_and_stored_reader_keep_exact_bytes(db: devkit::pg::TestDatabase) {
+    let mut conn = sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
     let dir = std::env::temp_dir().join(format!("sinex-plain-copy-{}", uuid::Uuid::now_v7()));
     let blobs = Blobs::open(&dir).unwrap();
     let bytes: Vec<u8> = (0..(8 << 20)).map(|n| (n % 251) as u8).collect();
@@ -48,15 +60,28 @@ fn plain_copy_and_stored_reader_keep_exact_bytes() {
         expected: &bytes,
         through: 0,
     };
-    assert_eq!(blobs.copy_to(&name, &mut out).unwrap(), bytes.len() as u64);
+    assert_eq!(
+        blobs
+            .copy_to(&blobs.locate(&mut conn, &name).await.unwrap(), &mut out)
+            .unwrap(),
+        bytes.len() as u64
+    );
     assert_eq!(out.through, bytes.len());
     assert!(
         blobs
-            .read_plain(&name, Some(bytes.len() as u64 + 1), || Ok(()))
+            .read_plain(
+                &blobs.locate(&mut conn, &name).await.unwrap(),
+                Some(bytes.len() as u64 + 1),
+                || Ok(())
+            )
             .is_err()
     );
     let mut reader = blobs
-        .read_plain(&name, Some(bytes.len() as u64), || Ok(()))
+        .read_plain(
+            &blobs.locate(&mut conn, &name).await.unwrap(),
+            Some(bytes.len() as u64),
+            || Ok(()),
+        )
         .unwrap();
     let mut prefix = [0; 19];
     reader.read_exact(&mut prefix).unwrap();
@@ -66,7 +91,8 @@ fn plain_copy_and_stored_reader_keep_exact_bytes() {
 }
 
 #[devkit::test]
-fn checked_plain_copy_stops_after_its_consumer_cancels() {
+async fn checked_plain_copy_stops_after_its_consumer_cancels(db: devkit::pg::TestDatabase) {
+    let mut conn = sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
     use std::sync::atomic::{AtomicBool, Ordering};
     struct CancelAfterWrite {
         cancel: Arc<AtomicBool>,
@@ -91,13 +117,17 @@ fn checked_plain_copy_stops_after_its_consumer_cancels() {
         cancel: cancel.clone(),
         written: 0,
     };
-    let result = blobs.copy_to_checked(&name, &mut output, move || {
-        if cancel.load(Ordering::Relaxed) {
-            Err(std::io::Error::other("synthetic cancellation").into())
-        } else {
-            Ok(())
-        }
-    });
+    let result = blobs.copy_to_checked(
+        &blobs.locate(&mut conn, &name).await.unwrap(),
+        &mut output,
+        move || {
+            if cancel.load(Ordering::Relaxed) {
+                Err(std::io::Error::other("synthetic cancellation").into())
+            } else {
+                Ok(())
+            }
+        },
+    );
     assert!(
         result
             .unwrap_err()
@@ -112,7 +142,10 @@ mod chunks;
 mod group_readback;
 
 #[devkit::test]
-fn scoped_plain_seek_owns_verified_bytes_and_rechecks_cancellation_on_cached_reads() {
+async fn scoped_plain_seek_owns_verified_bytes_and_rechecks_cancellation_on_cached_reads(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
     use std::io::{Read, Seek, SeekFrom};
     use std::sync::atomic::{AtomicBool, Ordering};
     let dir = std::env::temp_dir().join(format!("sinex-plain-seek-{}", uuid::Uuid::now_v7()));
@@ -121,25 +154,37 @@ fn scoped_plain_seek_owns_verified_bytes_and_rechecks_cancellation_on_cached_rea
     let name = blobs.put(bytes).unwrap();
     assert!(
         blobs
-            .read_plain_seek(&name, bytes.len() as u64 + 1, || Ok(()))
+            .read_plain_seek(
+                &blobs.locate(&mut conn, &name).await.unwrap(),
+                bytes.len() as u64 + 1,
+                || Ok(())
+            )
             .is_err()
     );
     let key = sinex_sealing::new_key().unwrap();
     let sealed = blobs.put_sealed(bytes, &key).unwrap();
     assert!(
         blobs
-            .read_plain_seek(&sealed, bytes.len() as u64, || Ok(()))
+            .read_plain_seek(
+                &blobs.locate(&mut conn, &sealed).await.unwrap(),
+                bytes.len() as u64,
+                || Ok(())
+            )
             .is_err()
     );
     let cancelled = Arc::new(AtomicBool::new(false));
     let check = cancelled.clone();
     let mut reader = blobs
-        .read_plain_seek(&name, bytes.len() as u64, move || {
-            if check.load(Ordering::Relaxed) {
-                return Err(hashed_blobs::Error::Io(std::io::Error::other("cancelled")));
-            }
-            Ok(())
-        })
+        .read_plain_seek(
+            &blobs.locate(&mut conn, &name).await.unwrap(),
+            bytes.len() as u64,
+            move || {
+                if check.load(Ordering::Relaxed) {
+                    return Err(hashed_blobs::Error::Io(std::io::Error::other("cancelled")));
+                }
+                Ok(())
+            },
+        )
         .unwrap();
     drop(blobs);
     reader.seek(SeekFrom::Start(13)).unwrap();
@@ -195,7 +240,30 @@ async fn grouped_extents_commit_with_rows_and_recovery_truncates_only_the_tail(
     blobs.acknowledge(extent_commit).unwrap();
     let committed = std::fs::metadata(dir.path().join(SEGMENT)).unwrap().len();
     let orphan = blobs.put(b"synced but no database commit").unwrap();
-    blobs.sync_pending(std::slice::from_ref(&orphan)).unwrap();
+    let mut tx = conn.begin().await.unwrap();
+    let uncommitted = blobs
+        .commit_extents(&mut tx, std::slice::from_ref(&orphan))
+        .await
+        .unwrap();
+    tx.rollback().await.unwrap();
+    drop(uncommitted);
+    let published: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM core.blob_extents WHERE hash=$1)")
+            .bind(&orphan)
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    let boundary: i64 =
+        sqlx::query_scalar("SELECT committed_end FROM core.blob_segments WHERE segment=$1")
+            .bind(SEGMENT)
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    assert!(!published, "rollback cannot publish its appended extent");
+    assert_eq!(
+        boundary as u64, committed,
+        "the extent and boundary roll back together"
+    );
     assert!(std::fs::metadata(dir.path().join(SEGMENT)).unwrap().len() > committed);
     drop(blobs);
     let reopened = Blobs::open(dir.path()).unwrap();
@@ -204,9 +272,19 @@ async fn grouped_extents_commit_with_rows_and_recovery_truncates_only_the_tail(
         std::fs::metadata(dir.path().join(SEGMENT)).unwrap().len(),
         committed
     );
-    assert_eq!(reopened.read(&first).unwrap(), b"first stored bytes");
-    assert_eq!(reopened.read(&second).unwrap(), b"second stored bytes");
-    assert!(!reopened.contains(&orphan).unwrap());
+    assert_eq!(
+        reopened
+            .read(&reopened.locate(&mut conn, &first).await.unwrap())
+            .unwrap(),
+        b"first stored bytes"
+    );
+    assert_eq!(
+        reopened
+            .read(&reopened.locate(&mut conn, &second).await.unwrap())
+            .unwrap(),
+        b"second stored bytes"
+    );
+    assert!(!reopened.contains(&mut conn, &orphan).await.unwrap());
 }
 
 #[devkit::test]
@@ -224,22 +302,37 @@ async fn orphan_extents_are_marked_before_punch_and_committed_siblings_survive(
         .execute(&mut conn)
         .await
         .unwrap();
-    blobs.sync_pending(&[keep.clone(), orphan.clone()]).unwrap();
+    commit_pending_extents(&mut conn, &blobs, &[keep.clone(), orphan.clone()])
+        .await
+        .unwrap();
     let result = delete_unreferenced_extents(&mut conn, &blobs)
         .await
         .unwrap();
     assert_eq!(result, [orphan.clone()]);
-    assert!(!blobs.contains(&orphan).unwrap());
-    assert_eq!(blobs.read(&keep).unwrap(), b"keep sibling");
+    assert!(!blobs.contains(&mut conn, &orphan).await.unwrap());
+    assert_eq!(
+        blobs
+            .read(&blobs.locate(&mut conn, &keep).await.unwrap())
+            .unwrap(),
+        b"keep sibling"
+    );
     drop(blobs);
     let reopened = Blobs::open(dir.path()).unwrap();
     reopened.recover(&mut conn).await.unwrap();
-    assert_eq!(reopened.read(&keep).unwrap(), b"keep sibling");
-    assert!(!reopened.contains(&orphan).unwrap());
+    assert_eq!(
+        reopened
+            .read(&reopened.locate(&mut conn, &keep).await.unwrap())
+            .unwrap(),
+        b"keep sibling"
+    );
+    assert!(!reopened.contains(&mut conn, &orphan).await.unwrap());
 }
 
 #[devkit::test]
-fn seekable_preparation_streams_from_its_current_position_and_deduplicates_pending_groups() {
+async fn seekable_preparation_streams_from_its_current_position_without_appending_on_read(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
     use std::io::{Seek, SeekFrom};
     let dir = tempfile::tempdir().unwrap();
     let blobs = Blobs::open(dir.path()).unwrap();
@@ -250,12 +343,21 @@ fn seekable_preparation_streams_from_its_current_position_and_deduplicates_pendi
     input.seek(SeekFrom::Start(4)).unwrap();
     assert_eq!(blobs.put_seekable(&mut input).unwrap(), name);
     assert_eq!(blobs.state().unwrap().prepared.len(), 1);
-    assert_eq!(blobs.read(&name).unwrap(), bytes);
-    assert_eq!(blobs.state().unwrap().groups.len(), 1);
+    assert_eq!(
+        blobs
+            .read(&blobs.locate(&mut conn, &name).await.unwrap())
+            .unwrap(),
+        bytes
+    );
+    assert!(blobs.state().unwrap().groups.is_empty());
+    assert!(
+        !dir.path().join(SEGMENT).exists(),
+        "a prepared read must not append"
+    );
 }
 
 #[devkit::test]
-async fn recovery_refuses_an_extent_beyond_the_index_boundary_before_truncating(
+async fn a_selected_extent_beyond_the_boundary_is_refused_without_changing_bytes(
     db: devkit::pg::TestDatabase,
 ) {
     use sqlx::Connection;
@@ -281,9 +383,10 @@ async fn recovery_refuses_an_extent_beyond_the_index_boundary_before_truncating(
     let reopened = Blobs::open(root.path()).unwrap();
     assert!(
         reopened
-            .recover(&mut conn)
+            .locate(&mut conn, &name)
             .await
-            .unwrap_err()
+            .err()
+            .expect("the selected descriptor must be refused")
             .to_string()
             .contains("committed segment boundary")
     );
@@ -313,19 +416,24 @@ async fn recovery_finishes_catalog_deletion_after_an_earlier_punch_removed_its_e
 }
 
 #[devkit::test]
-fn an_unloaded_existing_index_never_truncates_stored_segments() {
+async fn an_unloaded_existing_index_never_truncates_stored_segments(db: devkit::pg::TestDatabase) {
+    let mut conn = sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
     let root = tempfile::tempdir().unwrap();
     let blobs = Blobs::open(root.path()).unwrap();
     let original_name = blobs.put(b"original").unwrap();
-    blobs
-        .sync_pending(std::slice::from_ref(&original_name))
+    commit_pending_extents(&mut conn, &blobs, std::slice::from_ref(&original_name))
+        .await
         .unwrap();
     drop(blobs);
     let path = root.path().join(SEGMENT);
     let original = std::fs::read(&path).unwrap();
     let reopened = Blobs::open(root.path()).unwrap();
     let later = reopened.put(b"later").unwrap();
-    assert!(reopened.sync_pending(std::slice::from_ref(&later)).is_err());
+    assert!(
+        commit_pending_extents(&mut conn, &reopened, std::slice::from_ref(&later))
+            .await
+            .is_err()
+    );
     assert_eq!(std::fs::read(path).unwrap(), original);
 }
 
@@ -395,22 +503,35 @@ async fn readmitting_bytes_clears_a_failed_deletion_marker_in_the_same_commit(
     let reopened = Blobs::open(root.path()).unwrap();
     reopened.recover(&mut conn).await.unwrap();
     assert_eq!(
-        reopened.read(&name).unwrap(),
+        reopened
+            .read(&reopened.locate(&mut conn, &name).await.unwrap())
+            .unwrap(),
         b"bytes kept after a failed punch"
     );
 }
 
 #[devkit::test]
-fn empty_material_has_one_extent_and_no_decoded_bytes() {
+async fn empty_material_has_one_extent_and_no_decoded_bytes(db: devkit::pg::TestDatabase) {
+    let mut conn = sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
     let dir = tempfile::tempdir().unwrap();
     let blobs = Blobs::open(dir.path()).unwrap();
     let name = blobs.put(b"").unwrap();
-    let descriptors = blobs.descriptors(&name).unwrap();
+    commit_pending_extents(&mut conn, &blobs, std::slice::from_ref(&name))
+        .await
+        .unwrap();
+    let descriptors = blobs
+        .descriptors(&blobs.locate(&mut conn, &name).await.unwrap())
+        .unwrap();
     assert_eq!(descriptors.len(), 1);
     let extent = hashed_blobs::Extent::decode(&descriptors[0]).unwrap();
     assert_eq!(extent.decoded_len, 0);
     assert!(extent.len > 0);
-    assert_eq!(blobs.read(&name).unwrap(), b"");
+    assert_eq!(
+        blobs
+            .read(&blobs.locate(&mut conn, &name).await.unwrap())
+            .unwrap(),
+        b""
+    );
 }
 
 #[devkit::test]
@@ -498,6 +619,7 @@ async fn new_extents_inherit_only_their_own_catalog_deletion_marker(db: devkit::
 async fn admission_commits_only_its_material_and_empty_drain_keeps_unadmitted_bytes(
     db: devkit::pg::TestDatabase,
 ) {
+    let mut conn = sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
     let root = tempfile::tempdir().unwrap();
     let blobs = Blobs::open(root.path()).unwrap();
     // The source keeps its original until the material's admission answers.
@@ -526,7 +648,7 @@ async fn admission_commits_only_its_material_and_empty_drain_keeps_unadmitted_by
     let mut refused = writer.begin().await.unwrap();
     refused.register_unparsed(&b_material).await.unwrap();
     refused.rollback().await.unwrap();
-    assert!(blobs.state().unwrap().extents.is_empty());
+    assert!(blobs.state().unwrap().groups.is_empty());
     // A real segment-open I/O failure leaves the transaction unacknowledged
     // and preparations owned by their source. Repair, then retry the same input.
     let obstruction = root.path().join("segments");
@@ -542,7 +664,10 @@ async fn admission_commits_only_its_material_and_empty_drain_keeps_unadmitted_by
         .await
         .unwrap();
     assert_eq!(registered, 0);
-    assert!(blobs.contains(&a).unwrap() && blobs.contains(&b).unwrap());
+    assert!(
+        blobs.contains(&mut conn, &a).await.unwrap()
+            && blobs.contains(&mut conn, &b).await.unwrap()
+    );
     std::fs::remove_file(&obstruction).unwrap();
     let mut accepted = writer.begin().await.unwrap();
     accepted.register_unparsed(&b_material).await.unwrap();
@@ -550,8 +675,11 @@ async fn admission_commits_only_its_material_and_empty_drain_keeps_unadmitted_by
     {
         let state = blobs.state().unwrap();
         assert!(state.prepared.contains_key(&parse(&a).unwrap()));
-        assert!(!state.extents.contains_key(&parse(&a).unwrap()));
-        assert!(state.extents.contains_key(&parse(&b).unwrap()));
+        assert!(!state.prepared.contains_key(&parse(&b).unwrap()));
+        assert!(
+            state.groups.is_empty(),
+            "acknowledged descriptors leave pending memory"
+        );
     }
     let end = std::fs::metadata(root.path().join(SEGMENT)).unwrap().len();
     writer.begin().await.unwrap().commit().await.unwrap();
@@ -581,8 +709,13 @@ async fn admission_commits_only_its_material_and_empty_drain_keeps_unadmitted_by
         .unwrap()
         .with_blobs(Some(reopened.clone()));
     reopened.recover(&mut writer).await.unwrap();
-    assert_eq!(reopened.read(&b).unwrap(), original_b);
-    assert!(!reopened.contains(&a).unwrap());
+    assert_eq!(
+        reopened
+            .read(&reopened.locate(&mut conn, &b).await.unwrap())
+            .unwrap(),
+        original_b
+    );
+    assert!(!reopened.contains(&mut conn, &a).await.unwrap());
     // Unadmitted A has no acknowledged cursor; its retained source retries it.
     assert_eq!(reopened.put(original_a).unwrap(), a);
     let mut retry = writer.begin().await.unwrap();
@@ -591,7 +724,12 @@ async fn admission_commits_only_its_material_and_empty_drain_keeps_unadmitted_by
         .await
         .unwrap();
     retry.commit().await.unwrap();
-    assert_eq!(reopened.read(&a).unwrap(), original_a);
+    assert_eq!(
+        reopened
+            .read(&reopened.locate(&mut conn, &a).await.unwrap())
+            .unwrap(),
+        original_a
+    );
     let end = std::fs::metadata(root.path().join(SEGMENT)).unwrap().len();
     let mut repeat = writer.begin().await.unwrap();
     repeat
@@ -641,4 +779,110 @@ async fn material_without_held_bytes_cannot_commit_an_acknowledged_reference(
         .await
         .unwrap();
     assert_eq!(materials, 0);
+}
+
+#[devkit::test]
+async fn committed_pieces_leave_pending_memory_and_reopen_by_selected_hash(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let blobs = Blobs::open(root.path()).unwrap();
+    let mut names = Vec::new();
+    for index in 0..1000 {
+        names.push(
+            blobs
+                .put(format!("synthetic held piece {index}").as_bytes())
+                .unwrap(),
+        );
+    }
+    commit_pending_extents(&mut conn, &blobs, &names)
+        .await
+        .unwrap();
+    {
+        let state = blobs.state().unwrap();
+        assert!(state.prepared.is_empty());
+        assert!(state.groups.is_empty());
+        assert!(state.unrecorded_chunk_lists.is_empty());
+    }
+    let cold = Blobs::open(root.path()).unwrap();
+    let selected = cold
+        .locate_many(
+            &mut conn,
+            &[names[999].clone(), names[0].clone(), names[999].clone()],
+        )
+        .await
+        .unwrap();
+    for (located, expected) in selected.into_iter().zip([999, 0, 999]) {
+        assert_eq!(
+            cold.read(&located.unwrap()).unwrap(),
+            format!("synthetic held piece {expected}").as_bytes()
+        );
+    }
+    assert!(
+        cold.state().unwrap().writer.is_none(),
+        "cold point reads do not open a writer"
+    );
+}
+
+#[devkit::test]
+async fn selected_readers_survive_commit_ack_and_rollback_without_duplicate_append(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut writer = sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut reader = sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let blobs = Blobs::open(root.path()).unwrap();
+    let original = b"a reader owns exactly these source bytes".repeat(1000);
+    let name = blobs.put(&original).unwrap();
+    let prepared = blobs.locate(&mut reader, &name).await.unwrap();
+    assert!(!root.path().join(SEGMENT).exists());
+    let mut transaction = writer.begin().await.unwrap();
+    let cancelled = blobs
+        .commit_extents(&mut transaction, std::slice::from_ref(&name))
+        .await
+        .unwrap();
+    let appended = std::fs::metadata(root.path().join(SEGMENT)).unwrap().len();
+    transaction.rollback().await.unwrap();
+    drop(cancelled);
+    let mut transaction = writer.begin().await.unwrap();
+    let committed = blobs
+        .commit_extents(&mut transaction, std::slice::from_ref(&name))
+        .await
+        .unwrap();
+    transaction.commit().await.unwrap();
+    // The SQL commit is visible before acknowledgement drops pending groups.
+    // Hold two reader tasks behind a barrier, then acknowledge and let both read.
+    let pending = blobs.locate(&mut reader, &name).await.unwrap();
+    let barrier = Arc::new(tokio::sync::Barrier::new(3));
+    let read = |located, barrier: Arc<tokio::sync::Barrier>| {
+        let blobs = blobs.clone();
+        tokio::spawn(async move {
+            barrier.wait().await;
+            tokio::task::spawn_blocking(move || blobs.read(&located).unwrap())
+                .await
+                .unwrap()
+        })
+    };
+    let first = read(prepared, barrier.clone());
+    let second = read(pending, barrier.clone());
+    blobs.acknowledge(committed).unwrap();
+    barrier.wait().await;
+    assert_eq!(first.await.unwrap(), original);
+    assert_eq!(second.await.unwrap(), original);
+    assert!(blobs.state().unwrap().groups.is_empty());
+    assert_eq!(blobs.put(&original).unwrap(), name);
+    commit_pending_extents(&mut writer, &blobs, std::slice::from_ref(&name))
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::metadata(root.path().join(SEGMENT)).unwrap().len(),
+        appended
+    );
+    let cold = Blobs::open(root.path()).unwrap();
+    assert_eq!(
+        cold.read(&cold.locate(&mut reader, &name).await.unwrap())
+            .unwrap(),
+        original
+    );
 }

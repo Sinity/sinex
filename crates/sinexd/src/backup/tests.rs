@@ -286,7 +286,9 @@ async fn paired_dumps_and_segment_copy_keep_the_hold_state_while_the_writer_adva
     let dumped = String::from_utf8(result.stdout).unwrap();
     assert!(dumped.contains(&hold.to_string()));
     assert!(!dumped.contains("after-hold-admission"));
-    let descriptor = blobs.descriptors(&original_name).unwrap();
+    let descriptor = blobs
+        .descriptors(&blobs.locate(&mut conn, &original_name).await.unwrap())
+        .unwrap();
     assert!(
         hashed_blobs::Reader::new(&artifact.join("main"))
             .scan(&[hashed_blobs::Extent::decode(&descriptor[0]).unwrap()])

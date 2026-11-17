@@ -139,8 +139,10 @@ pub(super) async fn read_shared(
             Ok(())
         }
     });
-    let (send, mut receive) = mpsc::channel::<PollDelivery>(1);
-    let worker = tokio::task::spawn_blocking(move || {
+    let prepare_material = worker_material.clone();
+    let prepare_facts = facts.clone();
+    let prepare_check = check.clone();
+    let mut preparing = tokio::task::spawn_blocking(move || -> Result<_> {
         let captured = stored_copy.is_none();
         let (blob, length) = match stored_copy {
             Some(captured) => captured,
@@ -148,23 +150,38 @@ pub(super) async fn read_shared(
                 let input = std::fs::File::open(&path)?;
                 let input = CheckedReader {
                     input,
-                    check: check.clone(),
+                    check: prepare_check.clone(),
                 };
-                let blob = worker_material.store_reader(input)?;
+                let blob = prepare_material.store_reader(input)?;
                 let after = drivers::file_facts(&path)?;
-                if !same_file(&facts, &after) {
+                if !same_file(&prepare_facts, &after) {
                     return Err(Error::conflict(
                         "file changed during capture; retry from an unchanged revision",
                     ));
                 }
                 (
                     blob,
-                    facts
+                    prepare_facts
                         .size
                         .ok_or_else(|| Error::internal("file size unavailable"))?,
                 )
             }
         };
+        Ok((blob, length, captured))
+    });
+    let (blob, length, captured) = tokio::select! {
+        result = &mut preparing => result??,
+        _ = stop.wait_for(|value| *value) => {
+            cancel.0.store(true, Ordering::Relaxed);
+            let _ = preparing.await;
+            return Err(Error::new(command_surface::FailureKind::Cancelled, "capture cancelled"));
+        }
+    };
+    // Capture owns a prepared encoding; old stored copies resolve one selected
+    // catalog entry. Neither path appends bytes merely to read them.
+    let located = blobs.locate(conn, &blob).await?;
+    let (send, mut receive) = mpsc::channel::<PollDelivery>(1);
+    let worker = tokio::task::spawn_blocking(move || {
         let verify_stop = Arc::clone(&cancelled);
         let verify = move || {
             if verify_stop.load(Ordering::Relaxed) {
@@ -173,7 +190,7 @@ pub(super) async fn read_shared(
             operation.check().map_err(std::io::Error::other)?;
             Ok(())
         };
-        let input = match worker_material.archive_input(&blob, length, verify)? {
+        let input = match worker_material.archive_input(&located, length, verify)? {
             shared_pass::Input::Seekable(input) => {
                 shared_pass::Input::Seekable(Box::new(CheckedReader {
                     input,

@@ -12,7 +12,12 @@ fn stored_record_reads_are_exact_and_propagate_read_faults() {
 }
 
 #[devkit::test]
-fn sealed_stored_seek_rechecks_the_unlock_even_for_a_cached_record() {
+async fn sealed_stored_seek_rechecks_the_unlock_even_for_a_cached_record(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = <sqlx::PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
     use sinex_source_core::drain::RecordRead;
     let dir = tempfile::tempdir().unwrap();
     let blobs = sinex_store::Blobs::open(dir.path()).unwrap();
@@ -27,7 +32,7 @@ fn sealed_stored_seek_rechecks_the_unlock_even_for_a_cached_record() {
     let check = unlock.clone();
     let mut reader = blobs
         .read_sealed(
-            &name,
+            &blobs.locate(&mut conn, &name).await.unwrap(),
             Some(bytes.len() as u64),
             &key,
             crate::material_access::sealing::read_limits(bytes.len() as u64).unwrap(),

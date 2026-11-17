@@ -779,7 +779,8 @@ impl DerivationRunner {
                 if !material_bytes::blob_stored(&mut self.read, blob).await? {
                     return Ok(None);
                 }
-                blobs.read(blob).map(Some).map_err(Error::from)
+                let located = blobs.locate(&mut self.read, blob).await?;
+                blobs.read(&located).map(Some).map_err(Error::from)
             }
         }
     }
@@ -796,7 +797,8 @@ impl DerivationRunner {
         let blob = material_bytes::material_blob(&mut self.read, location.material)
             .await?
             .ok_or_else(|| Error::not_found("its material is not stored"))?;
-        blobs.read(&blob).map_err(Error::from)
+        let located = blobs.locate(&mut self.read, &blob).await?;
+        blobs.read(&located).map_err(Error::from)
     }
 
     /// Run passes until one does no work.

@@ -256,24 +256,35 @@ pub(crate) fn seal_records(
     Ok(())
 }
 
-pub(crate) async fn replay_keys(
+pub(crate) struct ReplayBytes {
+    pub(crate) located: sinex_store::blobs::Located,
+    pub(crate) key: Option<sinex_sealing::DataKey>,
+}
+pub(crate) async fn replay_bytes(
     conn: &mut PgConnection,
     blobs: &Blobs,
     materials: Vec<(uuid::Uuid, String)>,
     unlock: Option<&Unlock>,
-) -> Result<std::collections::HashMap<uuid::Uuid, sinex_sealing::DataKey>> {
-    let mut keys = std::collections::HashMap::new();
-    for (material, blob) in materials {
-        if blobs.is_sealed(&blob)? {
+) -> Result<std::collections::HashMap<uuid::Uuid, ReplayBytes>> {
+    let names: Vec<_> = materials.iter().map(|(_, blob)| blob.clone()).collect();
+    let located = blobs.locate_many(conn, &names).await?;
+    let mut bytes = std::collections::HashMap::new();
+    for ((material, name), located) in materials.into_iter().zip(located) {
+        let located =
+            located.ok_or_else(|| Error::not_found(format!("blob {name} is not stored")))?;
+        let key = if located.is_sealed() {
             let unlock = unlock.ok_or_else(|| {
                 Error::refused(format!(
                     "material {material}: sealed replay needs an operator unlock and --sealed"
                 ))
             })?;
-            keys.insert(material, unlock.data_key(conn, MaterialId(material)).await?);
-        }
+            Some(unlock.data_key(conn, MaterialId(material)).await?)
+        } else {
+            None
+        };
+        bytes.insert(material, ReplayBytes { located, key });
     }
-    Ok(keys)
+    Ok(bytes)
 }
 
 pub(crate) fn collect_sealed(value: &Value, out: &mut Vec<String>) {

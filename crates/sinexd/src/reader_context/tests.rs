@@ -68,7 +68,12 @@ async fn directory_resumes_from_admitted_cursor_with_original_bytes(db: devkit::
         .unwrap();
     assert_eq!(cursor, expected_cursor);
     assert_eq!(cursor["through"], first_end);
-    assert_eq!(ctx.blobs.read(&blob).unwrap(), original);
+    assert_eq!(
+        ctx.blobs
+            .read(&ctx.blobs.locate(&mut ctx.read_conn, &blob).await.unwrap())
+            .unwrap(),
+        original
+    );
     std::fs::write(root.join("b.md"), "later bytes").unwrap();
     let acquired = reader.poll(&cursor).unwrap();
     assert_eq!(acquired.material.as_ref().unwrap().id, id);

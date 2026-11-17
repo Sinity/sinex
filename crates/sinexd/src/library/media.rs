@@ -34,22 +34,41 @@ impl Library<'_> {
         let blobs = self.blobs.clone();
         let content = content.to_owned();
         let target = render::cache_path(self.cache, &content, media_type);
+        let cached_target = target.clone();
+        let cached_content = content.clone();
+        if tokio::task::spawn_blocking(move || {
+            render::verified(
+                &cached_target,
+                std::fs::metadata(&cached_target)
+                    .map(|value| value.len())
+                    .unwrap_or(0),
+                &cached_content,
+            )
+        })
+        .await?
+        {
+            return Ok((target, false));
+        }
+        let located = self
+            .blobs
+            .locate_many(conn, std::slice::from_ref(&content))
+            .await?
+            .pop()
+            .flatten();
         tokio::task::spawn_blocking(move || -> R<(PathBuf, bool)> {
             if render::verified(&target, std::fs::metadata(&target).map(|m| m.len()).unwrap_or(0), &content) {
                 return Ok((target, false));
             }
-            if !blobs.contains(&content)? {
-                return Err(Error::bad_request(format!(
-                    "no verified copy of {content} on disk, and its bytes are not stored (indexed by reference)"
-                )));
-            }
+            let located = located.ok_or_else(|| Error::bad_request(format!(
+                "no verified copy of {content} on disk, and its bytes are not stored (indexed by reference)"
+            )))?;
             if let Some(dir) = target.parent() {
                 std::fs::create_dir_all(dir)?;
             }
             // Plain media streams to the cache; delta-encoded content is
             // decoded whole first.
             sinex_transport::durable::write_replacing(&target, 0o600, |file| {
-                blobs.copy_to(&content, file).map(|_| ()).map_err(std::io::Error::other)
+                blobs.copy_to(&located, file).map(|_| ()).map_err(std::io::Error::other)
             }).map_err(|(_, error)| error)?;
             Ok((target, false))
         })
