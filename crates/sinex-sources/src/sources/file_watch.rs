@@ -334,14 +334,14 @@ impl StatelessParser for FileWatchParser {
 }
 
 pub fn driver(spool: PathBuf, host: String) -> LiveStream {
-    LiveStream {
+    LiveStream::new(
         spool,
-        input: InputRef {
+        InputRef {
             kind: "inotify".into(),
             locator: "file-watch".into(),
             host,
         },
-    }
+    )
 }
 
 super::input_format! {

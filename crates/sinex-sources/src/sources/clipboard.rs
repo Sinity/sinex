@@ -186,14 +186,14 @@ impl StatelessParser for ClipboardParser {
 }
 
 pub fn driver(spool: PathBuf, host: String, selection: &str) -> LiveStream {
-    LiveStream {
+    LiveStream::new(
         spool,
-        input: InputRef {
+        InputRef {
             kind: "wayland".into(),
             locator: format!("wayland:{selection}"),
             host,
         },
-    }
+    )
 }
 
 /// The selection a binding captures: the `selection` option, `clipboard` by

@@ -14,14 +14,14 @@ use std::time::Duration;
 
 /// The spool driver of a bus source.
 pub fn driver(spool: PathBuf, host: String, locator: &str) -> LiveStream {
-    LiveStream {
+    LiveStream::new(
         spool,
-        input: InputRef {
+        InputRef {
             kind: "dbus".into(),
             locator: locator.into(),
             host,
         },
-    }
+    )
 }
 
 /// Spool `busctl monitor` output for `matches` (D-Bus match rules), after the

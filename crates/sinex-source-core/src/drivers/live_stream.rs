@@ -222,6 +222,17 @@ pub struct LiveStream {
     /// What is being captured, such as `{kind: "socket", locator:
     /// "hyprland:socket2"}`.
     pub input: InputRef,
+    more: bool,
+}
+
+impl LiveStream {
+    pub fn new(spool: PathBuf, input: InputRef) -> Self {
+        Self {
+            spool,
+            input,
+            more: false,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -237,6 +248,7 @@ pub struct Cursor {
 
 impl Reader for LiveStream {
     fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError> {
+        self.more = false;
         let mut state: Cursor = if cursor.is_null() {
             Cursor::default()
         } else {
@@ -314,6 +326,7 @@ impl Reader for LiveStream {
                 // would be a bug in capture, not a source revision.
                 acquired.revision = RevisionChange::Appended;
                 acquired.cursor_without_material = Value::Null;
+                self.more = present.last().is_some_and(|last| *last > state.segment);
                 return Ok(acquired);
             }
             // Nothing new here. If capture has moved on to a later segment,
@@ -334,6 +347,10 @@ impl Reader for LiveStream {
                 last_material: state.last_material,
             };
         }
+    }
+
+    fn has_more(&self) -> bool {
+        self.more
     }
 
     /// Remove closed segments that every committed cursor has passed. Called

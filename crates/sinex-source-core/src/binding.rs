@@ -197,6 +197,12 @@ pub trait Reader: Send {
 
     fn poll(&mut self, cursor: &Value) -> Result<Acquired, DriverError>;
 
+    /// The last poll observed more already-captured input after its acquisition.
+    /// A normal turn may continue within its work budget; an active input waits.
+    fn has_more(&self) -> bool {
+        false
+    }
+
     /// Apply the admission acknowledgment to cached reader state and delete spool
     /// files the committed cursor has passed.
     fn committed(&mut self, _committed: &Value) -> Result<usize, DriverError> {

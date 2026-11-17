@@ -387,9 +387,9 @@ super::input_format! {
 
 /// The spool reader of the live journal, or of the archive in `directory`.
 pub fn driver(spool: PathBuf, host: String, directory: Option<&str>) -> LiveStream {
-    LiveStream {
+    LiveStream::new(
         spool,
-        input: InputRef {
+        InputRef {
             kind: "journal".into(),
             locator: match directory {
                 Some(directory) => format!("journald:{directory}"),
@@ -397,7 +397,7 @@ pub fn driver(spool: PathBuf, host: String, directory: Option<&str>) -> LiveStre
             },
             host,
         },
-    }
+    )
 }
 
 /// The spool's resume file: the cursor of the last entry synced to disk in the

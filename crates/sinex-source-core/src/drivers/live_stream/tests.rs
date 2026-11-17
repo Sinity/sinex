@@ -5,14 +5,14 @@ fn dir() -> PathBuf {
 }
 
 fn stream(spool: &Path) -> LiveStream {
-    LiveStream {
-        spool: spool.to_owned(),
-        input: InputRef {
+    LiveStream::new(
+        spool.to_owned(),
+        InputRef {
             kind: "socket".into(),
             locator: "test".into(),
             host: "h".into(),
         },
-    }
+    )
 }
 
 fn lines_of(a: &Acquired) -> Vec<String> {
@@ -139,4 +139,40 @@ fn first_capture_after_an_empty_segment_poll_survives_restart() {
     let next = live.poll(&saved).unwrap();
     assert_eq!(lines_of(&next), ["first synthetic line"]);
     assert!(live.poll(&end_cursor(&next)).unwrap().material.is_none());
+}
+
+#[devkit::test]
+fn closed_segments_continue_but_active_or_partial_eof_waits() {
+    let spool = dir();
+    let mut capture = SpoolWriter::open(
+        &spool,
+        Rotation {
+            max_bytes: 1,
+            max_age: Duration::from_secs(3600),
+        },
+    )
+    .unwrap();
+    for line in [b"first".as_slice(), b"second", b"third"] {
+        capture.append(Timestamp::now(), line).unwrap();
+    }
+    capture.sync().unwrap();
+    let mut live = stream(&spool);
+    let mut cursor = Value::Null;
+    for (index, wanted) in ["first", "second", "third"].into_iter().enumerate() {
+        let acquired = live.poll(&cursor).unwrap();
+        assert_eq!(lines_of(&acquired), [wanted]);
+        assert_eq!(live.has_more(), index < 2);
+        cursor = end_cursor(&acquired);
+    }
+    let empty = live.poll(&cursor).unwrap();
+    assert!(empty.material.is_none());
+    assert!(!live.has_more());
+    let mut tail = OpenOptions::new()
+        .append(true)
+        .open(segment_path(&spool, capture.segment()))
+        .unwrap();
+    tail.write_all(b"{\"partial").unwrap();
+    let partial = live.poll(&empty.cursor_without_material).unwrap();
+    assert!(partial.material.is_none());
+    assert!(!live.has_more());
 }

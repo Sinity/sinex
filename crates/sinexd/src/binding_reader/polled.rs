@@ -15,14 +15,15 @@ impl PolledReader {
         &self,
         cursor: Value,
         priority: crate::writer::Priority,
-    ) -> Result<drivers::Acquired> {
+    ) -> Result<(drivers::Acquired, bool)> {
         let reader = self.0.clone();
         crate::submit::blocking::run(priority, move || {
-            reader
+            let mut reader = reader
                 .lock()
-                .map_err(|_| Error::internal("the reader stopped in a panic"))?
-                .poll(&cursor)
-                .map_err(Error::from)
+                .map_err(|_| Error::internal("the reader stopped in a panic"))?;
+            let acquired = reader.poll(&cursor)?;
+            let more = reader.has_more();
+            Ok::<_, Error>((acquired, more))
         })
         .await?
     }
@@ -62,6 +63,9 @@ impl Reader for PolledReader {
     }
     fn poll(&mut self, cursor: &Value) -> Result<drivers::Acquired, drivers::DriverError> {
         self.0.lock().expect("reader state").poll(cursor)
+    }
+    fn has_more(&self) -> bool {
+        self.0.lock().expect("reader state").has_more()
     }
     fn committed(&mut self, cursor: &Value) -> Result<usize, drivers::DriverError> {
         self.0.lock().expect("reader state").committed(cursor)

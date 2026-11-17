@@ -311,14 +311,14 @@ fn socket_path(context: &sinex_source_core::discovery::DiscoveryContext) -> Opti
 }
 
 pub fn driver(spool: PathBuf, host: String) -> LiveStream {
-    LiveStream {
+    LiveStream::new(
         spool,
-        input: InputRef {
+        InputRef {
             kind: "socket".into(),
             locator: "hyprland:socket2".into(),
             host,
         },
-    }
+    )
 }
 
 /// Capture the socket into `spool` until the socket closes (Hyprland exited)

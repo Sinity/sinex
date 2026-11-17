@@ -550,7 +550,7 @@ pub(crate) async fn run(
                 recipient: writer.class_recipient.as_deref(),
                 unlock: None,
             },
-            crate::stage::ReadMode::Once,
+            crate::stage::ReadMode::normal(),
             &mut |binding, result| {
                 let key = format!("binding {binding}");
                 note(
