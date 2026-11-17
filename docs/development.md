@@ -67,6 +67,10 @@ targets and their separately built executables. Integration tests that use
 `CARGO_BIN_EXE_*` still need their integration target selected; the full
 workspace run includes them. Database and NATS preparation stay with xtask.
 
+For test runs, `--build-jobs 1` limits compilation and `--test-threads 1`
+limits concurrent tests. Nextest's `--jobs` and `-j` alias test concurrency.
+Cargo overrides accept both `--config KEY=VALUE` and `--config=KEY=VALUE`.
+
 Cargo's selected packages, default features and explicit feature flags own
 feature resolution. `sinex-sources` defaults to its full source set, and
 `sinexd` explicitly enables that set, archive/SQLite readers and CLI

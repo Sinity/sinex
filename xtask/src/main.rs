@@ -303,6 +303,8 @@ const VALUE_OPTIONS: &[&str] = &[
     "--profile",
     "-P",
     "--cargo-profile",
+    "--config",
+    "--build-jobs",
     "--target-dir",
     "--max-fail",
     "--color",

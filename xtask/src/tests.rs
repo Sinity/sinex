@@ -122,6 +122,31 @@ fn profile_options_keep_their_values() {
         ]
     );
     assert!(!got.allow_no_tests);
+    let got = options(&[
+        "-p",
+        "sinexd",
+        "--build-jobs",
+        "1",
+        "--config",
+        "profile.dev.debug=0",
+        "--test-threads",
+        "1",
+    ]);
+    assert_eq!(
+        got.args,
+        [
+            "--locked",
+            "-p",
+            "sinexd",
+            "--build-jobs",
+            "1",
+            "--config",
+            "profile.dev.debug=0",
+            "--test-threads",
+            "1",
+        ]
+    );
+    assert!(!got.allow_no_tests);
 }
 
 #[devkit::test]
