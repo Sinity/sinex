@@ -139,7 +139,10 @@ One configurable day boundary per deployment, used by every day- and hour-grain 
 source's computed state. The [status view](interfaces.md#the-status-view) owns its
 `verdict`, `reasons`, `consumers`, `sources` and `source_states` fields.
 `sinexctl status --offline` and `sinexctl doctor` read sources through the same
-query relation with a UTC read context. A search backlog or failures recorded in
+query relation with a UTC read context. These fixed source reads construct their
+typed query directly, without parsing a question or loading event payload
+declarations; projection, binding order and visibility use the same compiler as
+public queries. A search backlog or failures recorded in
 the last 24 hours are informational doctor results; a backlog alone does not
 mean the daemon has failed.
 

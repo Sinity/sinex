@@ -185,7 +185,7 @@ pub async fn read_one_snapshot(conn: &mut PgConnection) -> Result<()> {
 /// Every current source row through the query compiler's source relation.
 /// Status needs these rows, without calendar scratch or authenticated pages.
 pub async fn source_rows(conn: &mut PgConnection, ctx: &Context) -> Result<Vec<Json>> {
-    let query = sinex_query::bind("sources | sort by binding", ctx)?;
+    let query = Query::sources();
     let mut tx = conn.begin().await?;
     read_one_snapshot(&mut tx).await?;
     sqlx::query!("SET LOCAL TimeZone = 'UTC'")

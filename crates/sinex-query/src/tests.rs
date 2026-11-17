@@ -841,3 +841,11 @@ mod depth {
         drop(query);
     }
 }
+
+#[test]
+fn fixed_source_query_matches_bound_query() {
+    assert_eq!(
+        Query::sources(),
+        bind("sources | sort by binding", &ctx()).unwrap()
+    );
+}

@@ -946,6 +946,25 @@ pub enum SortBy {
 }
 
 impl Query {
+    /// Every source in binding order, without parsing a user question or
+    /// consulting event payload declarations.
+    pub fn sources() -> Self {
+        Self {
+            source: Source::Table {
+                table: Table::Sources,
+                alias: None,
+            },
+            filter: None,
+            stages: vec![Stage::Sort(vec![SortKey {
+                key: SortBy::Operand(Operand::Field(FieldRef::Field(
+                    Table::Sources.field("binding").expect("source identity"),
+                ))),
+                descending: false,
+            }])],
+            ranked: false,
+        }
+    }
+
     pub fn finite_time_bounds(&self, field: &FieldRef) -> Option<(Timestamp, Timestamp)> {
         super::fill::finite_time_bounds(self, field)
     }
