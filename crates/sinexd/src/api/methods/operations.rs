@@ -283,7 +283,7 @@ impl Api {
     }
 
     /// The writer, which only `sinexd run` holds.
-    pub(super) fn writer(&self) -> Result<&WriterHandle> {
+    pub(in crate::api) fn writer(&self) -> Result<&WriterHandle> {
         self.writer.as_ref().ok_or_else(Error::no_writer)
     }
 
