@@ -152,6 +152,41 @@ fn column(a: &Answer, name: &str) -> Vec<serde_json::Value> {
     a.rows.iter().map(|r| r[name].clone()).collect()
 }
 
+#[devkit::test]
+async fn written_period_until_and_fractional_instant_select_boundary_rows(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    admit_commands(&mut conn, &[("at-start", "/"), ("at-next-minute", "/")]).await;
+    for (query, expected) in [
+        (
+            "commands where until:2026-09-14T08:00Z | sort by when",
+            vec![json!("at-start")],
+        ),
+        (
+            "commands where until:2026-09-14T08:00:00Z | sort by when",
+            vec![json!("at-start")],
+        ),
+        (
+            "commands where until:2026-09-14T08:00:00.000Z | sort by when",
+            vec![],
+        ),
+        (
+            "commands where when < 2026-09-14T08:00Z | sort by when",
+            vec![],
+        ),
+        (
+            "commands where until:2026-09-14T08:01:00.000Z | sort by when",
+            vec![json!("at-start")],
+        ),
+    ] {
+        let answer = ask(&mut conn, query).await;
+        assert_eq!(column(&answer, "command"), expected, "{query}");
+    }
+}
+
 /// A first page reads its declaration snapshot once, even though both the
 /// question identity and the bound query need that snapshot.
 #[devkit::test]
