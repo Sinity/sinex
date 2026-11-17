@@ -2315,7 +2315,7 @@ async fn append_integrity_failure_keeps_ingress_unacknowledged_and_spooled(
     .unwrap();
     let frame = Ingress::Material {
         frame: frame_name.into(),
-        material: MaterialFrame {
+        material: Box::new(MaterialFrame {
             source: test_source("node"),
             id: MaterialId::new(),
             input: InputRef {
@@ -2331,7 +2331,7 @@ async fn append_integrity_failure_keeps_ingress_unacknowledged_and_spooled(
             part_index: 0,
             previous_part: None,
             manifest: Default::default(),
-        },
+        }),
     };
     let result = ingest
         .handle("node", &serde_json::to_vec(&frame).unwrap())
