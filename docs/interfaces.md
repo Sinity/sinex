@@ -454,6 +454,9 @@ reader sooner.
 The same source relation supplies offline status and the `doctor` sources check.
 `doctor` reports the search backlog and failures in the last 24 hours as information;
 the failure detail points to `sinexctl query 'failures where since:24h'`.
+The informational `located_files` doctor check counts retained live located
+contents with no current recorded file path available on this machine. It
+does not add a counter or filesystem walk to ordinary status.
 
 The wider status design covers:
 

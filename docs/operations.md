@@ -143,6 +143,12 @@ query relation with a UTC read context. A search backlog or failures recorded in
 the last 24 hours are informational doctor results; a backlog alone does not
 mean the daemon has failed.
 
+Doctor also reports `located_files` as information: the number of retained live
+located contents with no current recorded path available on this machine.
+It reads directory listing facts and checks file presence only when doctor is
+requested; ordinary status does not recount or inspect these files. The count
+does not verify external byte hashes. See [located files](materials.md#located-files).
+
 ## Backup and restore
 
 The stores are the backup unit, and the deployment chooses the backup tool; Sinex supplies the boundary the tool needs and the restore that proves the copy.

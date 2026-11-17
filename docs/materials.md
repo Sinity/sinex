@@ -29,6 +29,14 @@ path and a removal at the old path; earlier readings retain the earlier facts.
 Other files in that root and files in ordinary document roots keep their
 stored bytes. The external originals need their own custody and backup.
 
+`sinexctl doctor` reports located contents with no recorded file path available
+on this machine. Equal content at several paths counts once and any current
+available path satisfies it. A path's newest acquisition determines which
+content it can satisfy; replaying an older listing does not make that earlier
+observation current. Removed paths and paths now containing another recorded
+content do not satisfy their old hashes. This checks file presence from the
+recorded facts, without rehashing media or checking another machine remotely.
+
 ### Fields
 
 | Field | Meaning |
