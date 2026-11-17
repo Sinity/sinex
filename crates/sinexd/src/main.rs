@@ -180,12 +180,18 @@ async fn local_runner(
     let mut runner = derivation_runner::DerivationRunner::start(
         read,
         handle,
-        crate::analysis::keyed_with(configuration),
-        if configuration.tags.is_empty() {
+        crate::analysis::keyed_with(configuration)
+            .into_iter()
+            .map(std::sync::Arc::from)
+            .collect(),
+        (if configuration.tags.is_empty() {
             derivation_runner::per_event()
         } else {
             derivation_runner::per_event_with(configuration)?
-        },
+        })
+        .into_iter()
+        .map(std::sync::Arc::from)
+        .collect(),
         host,
         time_settings.clone(),
     )

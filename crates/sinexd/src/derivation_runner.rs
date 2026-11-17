@@ -62,9 +62,33 @@ const KEYS_PER_REQUEST: usize = 5_000;
 /// One pass in this many works every rank, not only the lowest with work.
 const EVERY_LEVEL_EVERY: u32 = 8;
 
+/// The configured derivations, including their initialized readers. Startup
+/// shares these objects with execution and status so reported versions name
+/// the readers the daemon actually runs.
+#[derive(Clone)]
+pub(crate) struct Catalog {
+    pub keyed: Vec<Arc<dyn AnyKeyed>>,
+    pub per_event: Vec<Arc<dyn AnyPerEvent>>,
+}
+
+impl Catalog {
+    pub(crate) fn new(configuration: &sinex_derivations::Configuration) -> Result<Self> {
+        Ok(Self {
+            keyed: crate::analysis::keyed_with(configuration)
+                .into_iter()
+                .map(Arc::from)
+                .collect(),
+            per_event: per_event_with(configuration)?
+                .into_iter()
+                .map(Arc::from)
+                .collect(),
+        })
+    }
+}
+
 pub(crate) struct DerivationRunner {
-    keyed: Vec<Box<dyn AnyKeyed>>,
-    per_event: Vec<Box<dyn AnyPerEvent>>,
+    keyed: Vec<Arc<dyn AnyKeyed>>,
+    per_event: Vec<Arc<dyn AnyPerEvent>>,
     /// The content store, for per-event derivations that read stored bytes.
     blobs: Option<Blobs>,
     /// Rank of each keyed and per-event derivation, by name: 0 for those
@@ -176,8 +200,8 @@ impl DerivationRunner {
     pub(crate) async fn start(
         mut read: PgConnection,
         writer: WriterHandle,
-        keyed: Vec<Box<dyn AnyKeyed>>,
-        per_event: Vec<Box<dyn AnyPerEvent>>,
+        keyed: Vec<Arc<dyn AnyKeyed>>,
+        per_event: Vec<Arc<dyn AnyPerEvent>>,
         host: &str,
         time_settings: TimeSettings,
     ) -> Result<Self> {
@@ -355,16 +379,20 @@ impl DerivationRunner {
         writer: WriterHandle,
         name: &str,
         host: &str,
-        configuration: &sinex_derivations::Configuration,
+        catalog: &Catalog,
         time_settings: TimeSettings,
     ) -> Result<Self> {
-        let keyed: Vec<_> = crate::analysis::keyed_with(configuration)
-            .into_iter()
+        let keyed: Vec<_> = catalog
+            .keyed
+            .iter()
             .filter(|d| d.name() == name)
+            .cloned()
             .collect();
-        let per_event: Vec<_> = per_event_with(configuration)?
-            .into_iter()
+        let per_event: Vec<_> = catalog
+            .per_event
+            .iter()
             .filter(|d| d.name() == name)
+            .cloned()
             .collect();
         let (version, emits) = if let Some(d) = keyed.first() {
             (d.version_for(&time_settings), d.output_types())

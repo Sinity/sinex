@@ -232,10 +232,8 @@ async fn serve(
     // Fusion runs only the families with a written definition; an invalid
     // declaration refuses to start, naming the family and the reason.
     sinex_derivations::fusion::declaration::check().map_err(Error::bad_value)?;
-    let (keyed, per_event) = (
-        crate::analysis::keyed_with(&configuration),
-        derivation_runner::per_event_with(&configuration)?,
-    );
+    let catalog = derivation_runner::Catalog::new(&configuration)?;
+    let (keyed, per_event) = (&catalog.keyed, &catalog.per_event);
     if let Some(name) = sources.derivations.keys().find(|name| {
         !keyed.iter().any(|d| d.name() == name.as_str())
             && !per_event.iter().any(|d| d.name() == name.as_str())
@@ -245,12 +243,14 @@ async fn serve(
         )));
     }
     let keyed: Vec<_> = keyed
-        .into_iter()
+        .iter()
         .filter(|d| sources.runs(d.name()))
+        .cloned()
         .collect();
     let per_event: Vec<_> = per_event
-        .into_iter()
+        .iter()
         .filter(|d| d.name() == sinex_derivations::tags::TagApplier::NAME || sources.runs(d.name()))
+        .cloned()
         .collect();
     for (name, _) in sources.derivations.iter().filter(|(_, runs)| !**runs) {
         eprintln!("sinexd: derivation {name} is turned off by the configuration");
@@ -354,7 +354,7 @@ async fn serve(
         blobs: blobs.clone(),
         zone: o.api.zone.clone(),
         day_start: o.api.day_start,
-        derivations: configuration,
+        derivations: catalog,
         agent_grants: api::agent_grants(&o.api.tokens)
             .map_err(|e| Error::file(&o.api.tokens, e))?,
         unlock: Default::default(),

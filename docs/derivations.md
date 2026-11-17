@@ -70,6 +70,8 @@ Admission checks affected output ranges in the same transaction as the input cha
 
 ## Versions
 
+Configured derivations and their document/OCR reader versions are initialized once at daemon start. Execution, comparisons and status share those same objects, so an available version identifies the reader actually running.
+
 Every event records the producer version of the parser or derivation that made it ([producer versions](events.md#producer-versions-runs-and-manifests)). For derivations that version governs history as follows.
 
 - **A new version is compared before it switches.** `recompute DERIVATION --compare` runs the new version against the live outputs on real data and reports what would change (counts per key, examples, keys added and removed), writing nothing. Switching is a separate, attributed operation recorded in the [operations log](lifecycle.md#operations-and-actors).

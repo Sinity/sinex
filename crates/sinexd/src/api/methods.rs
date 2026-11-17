@@ -37,7 +37,7 @@ pub(crate) struct Api {
     pub blobs: sinex_store::Blobs,
     pub zone: jiff::tz::TimeZone,
     pub day_start: jiff::civil::Time,
-    pub derivations: sinex_derivations::Configuration,
+    pub derivations: crate::derivation_runner::Catalog,
     /// Classes the agent token is granted besides `open` (`guarded` only by
     /// the operator's explicit grant; never `sealed`).
     pub agent_grants: Vec<sinex_model::Class>,
@@ -684,19 +684,21 @@ impl Api {
         let selected = sinex_store::registry::selected_derivations(&mut conn).await?;
         let time_settings =
             sinex_model::time_settings::TimeSettings::from_parts(self.zone.clone(), self.day_start);
-        let mut available: Vec<(String, u32, sinex_model::DerivationHistory)> =
-            crate::analysis::keyed_with(&self.derivations)
-                .iter()
-                .map(|d| {
-                    (
-                        d.name().to_owned(),
-                        d.version_for(&time_settings),
-                        d.history_policy(),
-                    )
-                })
-                .collect();
+        let mut available: Vec<(String, u32, sinex_model::DerivationHistory)> = self
+            .derivations
+            .keyed
+            .iter()
+            .map(|d| {
+                (
+                    d.name().to_owned(),
+                    d.version_for(&time_settings),
+                    d.history_policy(),
+                )
+            })
+            .collect();
         available.extend(
-            crate::derivation_runner::per_event_with(&self.derivations)?
+            self.derivations
+                .per_event
                 .iter()
                 .map(|d| (d.name().to_owned(), d.version(), d.history_policy())),
         );

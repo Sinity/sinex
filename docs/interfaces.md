@@ -411,7 +411,7 @@ domain fields keep their own values beside it, each with a stated mapping to the
 | coverage | `complete`, `gap(reason)`, `unknown`, `outside_span`, `not_yet`, `excluded`, `unavailable(cause)`, `held` ([completeness](sources.md#completeness)) |
 
 A run that found only repeats is healthy; a staged export is never stale; a missing cell
-carries its reason. Status reads self-observation events, so nothing is recounted on the
+carries its reason. The daemon initializes configured derivation readers once and shares those objects with execution, comparison and status. Status reports their existing version fingerprints; it never launches document or OCR tools to rediscover them. Status reads self-observation events, so nothing is recounted on the
 request path. There are no scheduled verify, scrub or check runs, because invariants
 hold by construction: `store verify` is on demand, reports mismatches and repairs
 nothing. `status --offline` reads positions, the last commit and the writer lock's

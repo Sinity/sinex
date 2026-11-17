@@ -625,7 +625,7 @@ async fn archiving_scans_recomputes_items_and_original_renditions(db: devkit::pg
     let mut runner = crate::derivation_runner::DerivationRunner::start(
         read,
         w.writer.clone(),
-        vec![Box::new(sinex_derivations::library::LibraryItems)],
+        vec![Arc::new(sinex_derivations::library::LibraryItems)],
         vec![],
         "h",
         sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
@@ -804,7 +804,7 @@ async fn archiving_the_latest_change_falls_back_to_the_previous_copy(db: devkit:
     let mut runner = crate::derivation_runner::DerivationRunner::start(
         read,
         w.writer.clone(),
-        vec![Box::new(sinex_derivations::library::LibraryItems)],
+        vec![Arc::new(sinex_derivations::library::LibraryItems)],
         vec![],
         "h",
         sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
