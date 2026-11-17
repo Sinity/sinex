@@ -94,6 +94,12 @@ async fn loading_the_catalog_reads_the_heap_once_and_preserves_extents_and_chunk
         .execute(&mut *tx)
         .await
         .unwrap();
+    let before: (i64, i64) = sqlx::query_as(
+        "SELECT seq_scan,idx_scan FROM pg_stat_xact_user_tables WHERE relid='core.blob_extents'::regclass",
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
     reopened.load(&mut tx).await.unwrap();
     let (heap_scans, index_scans): (i64, i64) = sqlx::query_as(
         "SELECT seq_scan,idx_scan FROM pg_stat_xact_user_tables WHERE relid='core.blob_extents'::regclass",
@@ -101,7 +107,7 @@ async fn loading_the_catalog_reads_the_heap_once_and_preserves_extents_and_chunk
     .fetch_one(&mut *tx)
     .await
     .unwrap();
-    assert_eq!((heap_scans, index_scans), (1, 0));
+    assert_eq!((heap_scans - before.0, index_scans - before.1), (1, 0));
     tx.rollback().await.unwrap();
     {
         let state = reopened.state().unwrap();
