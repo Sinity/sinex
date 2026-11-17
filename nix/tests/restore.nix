@@ -51,7 +51,23 @@ self: {
 
     def wait_for_daemon():
         machine.wait_for_unit("sinexd.service")
-        machine.wait_until_succeeds(f"{ctl} status", timeout=120)
+        try:
+            machine.wait_until_succeeds(f"{ctl} status", timeout=120)
+        except Exception:
+            # Keep the failed request and database wait visible after VM teardown.
+            commands = [
+                f"{ctl} status",
+                "journalctl -u sinexd.service --no-pager -n 200",
+                "sudo -u postgres psql -d sinex -x -c \"SELECT pid, application_name, state, wait_event_type, wait_event, pg_blocking_pids(pid) AS blockers, query FROM pg_stat_activity WHERE datname = 'sinex'\"",
+            ]
+            for command in commands:
+                try:
+                    code, output = machine.execute(command, timeout=10)
+                    print(f"daemon startup evidence: {command}: exit {code}")
+                    print(output)
+                except Exception as error:
+                    print(f"daemon startup evidence unavailable: {error}")
+            raise
 
     def events():
         return machine.succeed(
