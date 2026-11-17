@@ -169,13 +169,18 @@ pub(super) async fn read_shared(
         };
         Ok((blob, length, captured))
     });
-    let (blob, length, captured) = tokio::select! {
-        result = &mut preparing => result??,
-        _ = stop.wait_for(|value| *value) => {
-            cancel.0.store(true, Ordering::Relaxed);
-            let _ = preparing.await;
-            return Err(Error::new(command_surface::FailureKind::Cancelled, "capture cancelled"));
-        }
+    let prepared = tokio::select! {
+        result = &mut preparing => Some(result??),
+        _ = stop.wait_for(|value| *value) => None,
+    };
+    // Drop the watch Ref from select before awaiting the owned file worker.
+    let Some((blob, length, captured)) = prepared else {
+        cancel.0.store(true, Ordering::Relaxed);
+        let _ = preparing.await;
+        return Err(Error::new(
+            command_surface::FailureKind::Cancelled,
+            "capture cancelled",
+        ));
     };
     // Capture owns a prepared encoding; old stored copies resolve one selected
     // catalog entry. Neither path appends bytes merely to read them.

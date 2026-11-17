@@ -76,6 +76,18 @@ pub(super) async fn reader(context: &mut ReaderContext) -> (SequenceReader, Valu
         .await
         .unwrap();
     let parsers = sources_of(&mut context.read_conn, &sequence).await.unwrap();
+    let bytes = crate::material_access::sealing::replay_bytes(
+        &mut context.read_conn,
+        &context.blobs,
+        sequence
+            .iter()
+            .filter(|material| material.manifest.role != sinex_model::MaterialRole::OriginalArchive)
+            .map(|material| (material.id, material.blob.clone()))
+            .collect(),
+        None,
+    )
+    .await
+    .unwrap();
     let mut saved_scope = scope.to_json();
     saved_scope["identity"] = build_identity().unwrap();
     saved_scope["selected_materials"] = json!(materials);
@@ -88,7 +100,7 @@ pub(super) async fn reader(context: &mut ReaderContext) -> (SequenceReader, Valu
             in_scope: materials.into_iter().collect(),
             scope,
             operation: OperationId::new(),
-            keys: HashMap::new(),
+            bytes,
             unlock: None,
         },
         saved_scope,

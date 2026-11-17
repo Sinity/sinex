@@ -664,7 +664,7 @@ fn read_sequence_into(
             if records.is_empty() {
                 continue;
             }
-            crate::material_access::sealing::seal_records(&mut records, key)?;
+            crate::material_access::sealing::seal_records(&mut records, bytes.key.as_ref())?;
             send(Batch {
                 run: RunId(operation.0),
                 kind: BatchKind::Replay {
