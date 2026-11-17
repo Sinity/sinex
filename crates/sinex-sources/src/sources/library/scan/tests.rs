@@ -245,7 +245,7 @@ fn ollama_metadata_does_not_read_weights_and_other_model_files_stay_full() {
     assert!(restarted.files[&blob].md5.is_none());
     let mut replayed = ScanState::default();
     replayed
-        .remember(
+        .remember_part(
             root.path(),
             retained.bytes.as_ref(),
             retained.admitted.unwrap(),
