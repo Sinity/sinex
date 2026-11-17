@@ -10,10 +10,10 @@ pub struct Commit {
 impl Blobs {
     /// Load the extent index without opening a writer or changing segment files.
     pub async fn load(&self, conn: &mut sqlx::PgConnection) -> Result<()> {
-        let rows =
-            sqlx::query!("SELECT hash,descriptor,deleting FROM core.blob_extents ORDER BY hash")
-                .fetch_all(&mut *conn)
-                .await?;
+        // The in-memory map owns hash ordering; SQL can read the heap once.
+        let rows = sqlx::query!("SELECT hash,descriptor,deleting FROM core.blob_extents")
+            .fetch_all(&mut *conn)
+            .await?;
         let end: Option<i64> = sqlx::query_scalar!(
             "SELECT committed_end FROM core.blob_segments WHERE segment=$1",
             SEGMENT

@@ -43,6 +43,98 @@ fn segment_len(root: &Path) -> u64 {
 }
 
 #[devkit::test]
+async fn loading_the_catalog_reads_the_heap_once_and_preserves_extents_and_chunk_order(
+    db: devkit::pg::TestDatabase,
+) {
+    use sqlx::Connection;
+    let mut conn = sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let scratch = tempfile::tempdir().unwrap();
+    let blobs = Blobs::open(dir.path()).unwrap();
+    let bytes = noise(512 << 10, 19);
+    let blob = name(&bytes);
+    blobs
+        .put_chunks(
+            &blob,
+            bytes.len() as u64,
+            offer(&blobs, scratch.path(), &bytes),
+        )
+        .unwrap();
+    let deleted = blobs.put(b"retained deletion descriptor").unwrap();
+    commit_pending_extents(&mut conn, &blobs).await.unwrap();
+    sqlx::query("UPDATE core.blob_extents SET deleting=true WHERE hash=$1")
+        .bind(&deleted)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    let (expected_extents, expected_chunks) = {
+        let state = blobs.state().unwrap();
+        let extents: BTreeMap<_, _> = state
+            .extents
+            .iter()
+            .filter(|(hash, _)| hash.to_string() != deleted)
+            .map(|(hash, extent)| (*hash, extent.encode()))
+            .collect();
+        (extents, state.chunk_lists.clone())
+    };
+    let chunks = expected_chunks.get(&parse(&blob).unwrap()).unwrap();
+    let mut sorted = chunks.clone();
+    sorted.sort();
+    assert_ne!(
+        chunks, &sorted,
+        "fixture must distinguish chunk order from hash order"
+    );
+    drop(blobs);
+
+    let reopened = Blobs::open(dir.path()).unwrap();
+    let mut tx = conn.begin().await.unwrap();
+    // Make an unnecessary ordered catalog read use its hash index, rather
+    // than hiding that work behind a small-fixture in-memory sort.
+    sqlx::query("SET LOCAL enable_sort=off")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    reopened.load(&mut tx).await.unwrap();
+    let (heap_scans, index_scans): (i64, i64) = sqlx::query_as(
+        "SELECT seq_scan,idx_scan FROM pg_stat_xact_user_tables WHERE relid='core.blob_extents'::regclass",
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
+    assert_eq!((heap_scans, index_scans), (1, 0));
+    tx.rollback().await.unwrap();
+    {
+        let state = reopened.state().unwrap();
+        let extents: BTreeMap<_, _> = state
+            .extents
+            .iter()
+            .map(|(hash, extent)| (*hash, extent.encode()))
+            .collect();
+        assert_eq!(extents, expected_extents);
+        assert_eq!(state.chunk_lists, expected_chunks);
+    }
+    assert_eq!(reopened.read(&blob).unwrap(), bytes);
+    assert!(!reopened.contains(&deleted).unwrap());
+    // Deleting rows still undergo descriptor/name validation.
+    sqlx::query(
+        "UPDATE core.blob_extents SET descriptor=convert_to('invalid','UTF8') WHERE hash=$1",
+    )
+    .bind(&deleted)
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    let error = Blobs::open(dir.path())
+        .unwrap()
+        .load(&mut conn)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, crate::Error::Blob(hashed_blobs::Error::Refused(ref reason))
+        if reason == "invalid extent descriptor")
+    );
+}
+
+#[devkit::test]
 fn a_rewrite_changed_in_one_place_stores_only_the_changed_chunks() {
     let dir = tempfile::tempdir().unwrap();
     let scratch = tempfile::tempdir().unwrap();
