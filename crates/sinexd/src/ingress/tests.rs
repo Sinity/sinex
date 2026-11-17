@@ -2248,3 +2248,128 @@ async fn chunks_that_are_not_the_material_are_refused(db: devkit::pg::TestDataba
     );
     assert_eq!(h.count("SELECT count(*) FROM core.blob_chunks").await, 0);
 }
+
+#[devkit::test]
+async fn append_integrity_failure_keeps_ingress_unacknowledged_and_spooled(
+    db: devkit::pg::TestDatabase,
+) {
+    use std::os::unix::fs::FileExt;
+    let root = tempfile::tempdir().unwrap();
+    let scratch = tempfile::tempdir().unwrap();
+    let blobs = Blobs::open(root.path()).unwrap();
+    let original = b"producer original retained until admission";
+    let prepared = hashed_blobs::Preparation::new(scratch.path())
+        .unwrap()
+        .plain(original.as_slice(), 3)
+        .unwrap();
+    let descriptor = prepared.descriptor();
+    let file = prepared.into_file();
+    let corruptor = file.try_clone().unwrap();
+    let blob = blobs
+        .put_prepared(hashed_blobs::Prepared::from_own_encoding(file, descriptor).unwrap())
+        .unwrap();
+    let mut first = [0];
+    corruptor.read_exact_at(&mut first, 0).unwrap();
+    corruptor.write_all_at(&[first[0] ^ 1], 0).unwrap();
+    let url = db.url(None);
+    let write = test_write("node", sinex_model::event_types::declarations().to_vec());
+    let mut catalog = PgConnection::connect(&url).await.unwrap();
+    sinex_store::source_declarations::register(&mut catalog, &write.source_declarations)
+        .await
+        .unwrap();
+    let (writer, queues) = writer::channels();
+    let task = tokio::spawn(writer::run(
+        url.clone(),
+        writer::claim(PgConnection::connect(&url).await.unwrap())
+            .await
+            .unwrap(),
+        queues,
+        Arc::new(sinex_store::NoDerivations),
+        Some(blobs.clone()),
+    ));
+    let mut ingest = Ingest::new(
+        Subjects::sinex(),
+        writer.clone(),
+        PgConnection::connect(&url).await.unwrap(),
+        blobs,
+        "synthetic".into(),
+        Arc::new(std::collections::BTreeMap::from([(
+            "node".into(),
+            fetch::Grants {
+                write: Some(write),
+                ..Default::default()
+            },
+        )])),
+    )
+    .unwrap();
+    let frame_name = "damaged-append";
+    frame_bytes::write(
+        root.path(),
+        "node",
+        frame_name,
+        &blob,
+        original.len() as u64,
+        original.as_slice(),
+    )
+    .unwrap();
+    let frame = Ingress::Material {
+        frame: frame_name.into(),
+        material: Box::new(MaterialFrame {
+            source: test_source("node"),
+            id: MaterialId::new(),
+            input: InputRef {
+                kind: "file".into(),
+                locator: "synthetic".into(),
+                host: "synthetic".into(),
+            },
+            blob: blob.clone(),
+            length: original.len() as u64,
+            chunks: vec![],
+            parser: "synthetic".into(),
+            parser_version: 1,
+            part_index: 0,
+            previous_part: None,
+            manifest: Default::default(),
+        }),
+    };
+    let staged = frame_bytes::directory(root.path(), "node", frame_name).join(&blob[7..]);
+    let original_encoding = std::fs::read(&staged).unwrap();
+    let result = ingest
+        .handle("node", &serde_json::to_vec(&frame).unwrap())
+        .await;
+    assert!(
+        matches!(result, Err(Error::Write(WriteError::StorageRefused(ref reason)))
+        if reason.contains("prepared encoding changed before append"))
+    );
+    let recorded = commit_log::frames(&mut catalog, "node", &[frame_name.to_owned()])
+        .await
+        .unwrap();
+    assert!(
+        recorded.is_empty(),
+        "storage failure cannot record an acknowledged content refusal"
+    );
+    assert_eq!(std::fs::read(&staged).unwrap(), original_encoding);
+    let retained = frame_bytes::prepared(
+        root.path(),
+        "node",
+        frame_name,
+        &blob,
+        original.len() as u64,
+    )
+    .unwrap();
+    let mut reader = retained
+        .reader(
+            None,
+            hashed_blobs::ReadLimits {
+                frame_bytes: hashed_blobs::DEFAULT_FRAME,
+                index_bytes: 65536,
+            },
+        )
+        .unwrap();
+    let mut decoded = Vec::new();
+    std::io::Read::read_to_end(&mut reader, &mut decoded).unwrap();
+    assert_eq!(decoded, original);
+    drop(ingest);
+    drop(writer);
+    task.await.unwrap();
+}

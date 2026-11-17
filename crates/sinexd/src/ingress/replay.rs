@@ -395,6 +395,7 @@ impl Ingest {
                 Ok(_) => {}
                 Err(
                     error @ (WriteError::Unavailable(_)
+                    | WriteError::StorageRefused(_)
                     | WriteError::Stopped
                     | WriteError::ReadDeadline),
                 ) => {

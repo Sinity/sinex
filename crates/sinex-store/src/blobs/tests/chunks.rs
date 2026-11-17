@@ -57,7 +57,7 @@ fn a_rewrite_changed_in_one_place_stores_only_the_changed_chunks() {
     blobs
         .put_chunks(&name(&first), first.len() as u64, offered)
         .unwrap();
-    blobs.sync_pending().unwrap();
+    blobs.sync_pending(&[name(&first)]).unwrap();
     let before = segment_len(dir.path());
 
     let offered = offer(&blobs, scratch.path(), &second);
@@ -71,7 +71,7 @@ fn a_rewrite_changed_in_one_place_stores_only_the_changed_chunks() {
     blobs
         .put_chunks(&name(&second), second.len() as u64, offered)
         .unwrap();
-    blobs.sync_pending().unwrap();
+    blobs.sync_pending(&[name(&second)]).unwrap();
     let grown = segment_len(dir.path()) - before;
     let new_bytes: u64 = new.iter().sum();
     assert!(
@@ -119,7 +119,7 @@ async fn removing_a_chunked_blob_keeps_the_chunks_another_blob_holds(db: devkit:
         blobs
             .put_chunks(&name(bytes), bytes.len() as u64, offered)
             .unwrap();
-        blobs.sync_pending().unwrap();
+        blobs.sync_pending(&[name(bytes)]).unwrap();
         sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES($1,$2,'present')")
             .bind(name(bytes))
             .bind(bytes.len() as i64)
@@ -127,7 +127,9 @@ async fn removing_a_chunked_blob_keeps_the_chunks_another_blob_holds(db: devkit:
             .await
             .unwrap();
     }
-    commit_pending_extents(&mut conn, &blobs).await.unwrap();
+    commit_pending_extents(&mut conn, &blobs, &[name(&first), name(&second)])
+        .await
+        .unwrap();
     let stored: i64 = sqlx::query_scalar("SELECT count(*) FROM core.blob_extents")
         .fetch_one(&mut conn)
         .await
@@ -170,4 +172,86 @@ async fn removing_a_chunked_blob_keeps_the_chunks_another_blob_holds(db: devkit:
     reopened.recover(&mut conn).await.unwrap();
     assert_eq!(reopened.read(&name(&second)).unwrap(), second);
     assert!(!reopened.contains(&name(&first)).unwrap());
+}
+
+#[devkit::test]
+async fn unrelated_commit_and_cleanup_keep_pending_chunk_ownership(db: devkit::pg::TestDatabase) {
+    use sqlx::Connection;
+    let mut conn = sqlx::PgConnection::connect(&db.url(None)).await.unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let scratch = tempfile::tempdir().unwrap();
+    let blobs = Blobs::open(dir.path()).unwrap();
+    let shared = noise(4096, 17);
+    let shared_name = blobs.put(&shared).unwrap();
+    commit_pending_extents(&mut conn, &blobs, std::slice::from_ref(&shared_name))
+        .await
+        .unwrap();
+    let tail = noise(4096, 91);
+    let mut original = shared.clone();
+    original.extend_from_slice(&tail);
+    let pending = name(&original);
+    blobs
+        .put_chunks(
+            &pending,
+            original.len() as u64,
+            vec![
+                (shared_name.clone(), None),
+                (
+                    name(&tail),
+                    Some(
+                        Preparation::new(scratch.path())
+                            .unwrap()
+                            .plain(tail.as_slice(), 3)
+                            .unwrap(),
+                    ),
+                ),
+            ],
+        )
+        .unwrap();
+    let unrelated = blobs.put(b"independently admitted bytes").unwrap();
+    sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES($1,28,'present')")
+        .bind(&unrelated)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    commit_pending_extents(&mut conn, &blobs, std::slice::from_ref(&unrelated))
+        .await
+        .unwrap();
+    assert!(blobs.held_by_pending_chunk(&shared_name).unwrap());
+    let recorded: i64 = sqlx::query_scalar("SELECT count(*) FROM core.blob_chunks WHERE blob=$1")
+        .bind(&pending)
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(
+        recorded, 0,
+        "an unrelated commit cannot acknowledge this chunk list"
+    );
+    delete_unreferenced_extents(&mut conn, &blobs)
+        .await
+        .unwrap();
+    let retained: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM core.blob_extents WHERE hash=$1)")
+            .bind(&shared_name)
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    assert!(
+        retained,
+        "cleanup keeps the catalog as well as the shared bytes"
+    );
+    sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES($1,$2,'present')")
+        .bind(&pending)
+        .bind(original.len() as i64)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    commit_pending_extents(&mut conn, &blobs, std::slice::from_ref(&pending))
+        .await
+        .unwrap();
+    assert!(!blobs.held_by_pending_chunk(&shared_name).unwrap());
+    drop(blobs);
+    let reopened = Blobs::open(dir.path()).unwrap();
+    reopened.recover(&mut conn).await.unwrap();
+    assert_eq!(reopened.read(&pending).unwrap(), original);
 }

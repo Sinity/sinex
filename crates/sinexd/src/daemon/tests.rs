@@ -50,8 +50,9 @@ async fn shutdown_cleanup_releases_the_writer_claim_even_on_failure(db: devkit::
             .unwrap()
     );
     conn.close().await.unwrap();
-    // Exercise the real extent flush error, with bytes queued for shutdown.
-    blobs.put(b"synthetic pending shutdown bytes").unwrap();
+    // Shutdown catalogs already synced groups without draining preparations.
+    let synced = blobs.put(b"synthetic pending shutdown bytes").unwrap();
+    blobs.descriptors(&synced).unwrap();
     let mut fault = connect(&url, "sinex.test").await.unwrap();
     sqlx::query("DROP TABLE core.blob_extents")
         .execute(&mut fault)
@@ -294,7 +295,8 @@ async fn shutdown_fails_when_writer_backend_cleanup_fails(db: devkit::pg::TestDa
     let url = db.url(None);
     let dir = tempfile::tempdir().unwrap();
     let blobs = Blobs::open(dir.path()).unwrap();
-    blobs.put(b"synthetic pending shutdown bytes").unwrap();
+    let synced = blobs.put(b"synthetic pending shutdown bytes").unwrap();
+    blobs.descriptors(&synced).unwrap();
     let mut conn = connect(&url, "sinex.test").await.unwrap();
     sqlx::query("DROP TABLE core.blob_extents")
         .execute(&mut conn)

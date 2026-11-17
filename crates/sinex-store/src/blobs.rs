@@ -107,7 +107,7 @@ impl Blobs {
     pub fn put_prepared(&self, prepared: Prepared) -> Result<String> {
         self.prepare(prepared)
     }
-    /// Compression and hashing happen outside the writer lock; admission syncs all waiting bytes together.
+    /// Compression and hashing happen outside the writer lock; admission syncs its named bytes.
     pub fn put(&self, bytes: &[u8]) -> Result<String> {
         self.prepare(self.preparation()?.plain(bytes, 3)?)
     }
@@ -179,10 +179,19 @@ impl Blobs {
         Ok(hash.to_string())
     }
 
-    /// Append all prepared blobs in one group and wait for its dedicated sync thread.
-    pub fn sync_pending(&self) -> Result<()> {
+    /// Append only the named blobs' prepared parts and wait for their sync.
+    pub fn sync_pending(&self, names: &[String]) -> Result<()> {
         let mut state = self.state()?;
-        if state.prepared.is_empty() {
+        let mut parts = BTreeSet::new();
+        for name in names {
+            let hash = parse(name)?;
+            if let Some(chunks) = state.chunk_lists.get(&hash) {
+                parts.extend(chunks.iter().copied());
+            } else {
+                parts.insert(hash);
+            }
+        }
+        if !parts.iter().any(|hash| state.prepared.contains_key(hash)) {
             return Ok(());
         }
         if !state.initialized {
@@ -199,7 +208,11 @@ impl Blobs {
                 self.0.mode,
             )?);
         }
-        let prepared = std::mem::take(&mut state.prepared).into_values().map(Ok);
+        let prepared: Vec<_> = parts
+            .into_iter()
+            .filter_map(|hash| state.prepared.remove(&hash))
+            .map(Ok)
+            .collect();
         let State {
             writer,
             extents,
@@ -223,7 +236,7 @@ impl Blobs {
         if let Some(extents) = self.state()?.held_extents(&hash) {
             return Ok(extents);
         }
-        self.sync_pending()?;
+        self.sync_pending(&[name.to_owned()])?;
         self.state()?.held_extents(&hash).ok_or_else(|| {
             crate::Error::Invalid(format!("blob {name} has no committed or pending extent"))
         })
@@ -447,7 +460,7 @@ impl Blobs {
             }
             removed.push((chunk, extent));
         }
-        self.sync_pending()?;
+        self.sync_pending(&[name.to_owned()])?;
         {
             let mut state = self.state()?;
             if !removed.is_empty() {
@@ -485,7 +498,7 @@ impl Blobs {
     }
     fn punch(&self, name: &str, recorded: Option<&Extent>) -> Result<()> {
         let hash = parse(name)?;
-        self.sync_pending()?;
+        self.sync_pending(&[name.to_owned()])?;
         let mut state = self.state()?;
         if let Some(extent) = recorded
             .cloned()
