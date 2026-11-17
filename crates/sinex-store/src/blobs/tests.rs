@@ -634,7 +634,7 @@ async fn material_without_held_bytes_cannot_commit_an_acknowledged_reference(
     .unwrap();
     let error = tx.commit().await.unwrap_err();
     assert!(
-        matches!(error, crate::Error::Invalid(reason) if reason.contains("has no synced extent"))
+        matches!(error, crate::Error::Blob(hashed_blobs::Error::Refused(reason)) if reason.contains("has no synced extent"))
     );
     let materials: i64 = sqlx::query_scalar("SELECT count(*) FROM raw.materials")
         .fetch_one(&mut *writer)

@@ -127,9 +127,10 @@ impl Blobs {
             let state = self.state()?;
             for hash in &required {
                 if state.held_extents(hash).is_none() {
-                    return Err(crate::Error::Invalid(format!(
+                    return Err(hashed_blobs::Error::Refused(format!(
                         "admitted blob {hash} has no synced extent"
-                    )));
+                    ))
+                    .into());
                 }
             }
         }

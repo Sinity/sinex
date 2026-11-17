@@ -367,7 +367,7 @@ async fn a_batch_whose_bytes_are_not_stored_is_refused(db: devkit::pg::TestDatab
         .await
         .unwrap_err();
     assert!(
-        matches!(error, WriteError::Refused(reason) if reason.contains("prepared encoding changed before append"))
+        matches!(error, WriteError::StorageRefused(reason) if reason.contains("prepared encoding changed before append"))
     );
     let damaged_positions: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM raw.positions WHERE binding='damaged-preparation'",
@@ -826,7 +826,7 @@ fn required_blob_refusals_stop_while_storage_io_remains_retryable() {
             "integrity failures cannot become recorded content refusals"
         );
         assert!(
-            matches!(WriteError::from(error), WriteError::Refused(reason) if reason == expected)
+            matches!(WriteError::from(error), WriteError::StorageRefused(reason) if reason == expected)
         );
     }
     for kind in [
@@ -835,7 +835,10 @@ fn required_blob_refusals_stop_while_storage_io_remains_retryable() {
     ] {
         let error = sinex_store::Error::Blob(hashed_blobs::Error::Io(std::io::Error::from(kind)));
         assert!(!content_error(&error));
-        assert!(matches!(WriteError::from(error), WriteError::Refused(_)));
+        assert!(matches!(
+            WriteError::from(error),
+            WriteError::StorageRefused(_)
+        ));
     }
     let error = std::io::Error::from_raw_os_error(5);
     assert!(matches!(
