@@ -1,7 +1,7 @@
 use super::*;
 
 #[devkit::test]
-async fn moment_marks_are_authored_material_records_recalled_by_number_and_visibility(
+async fn moment_notes_are_authored_material_records_recalled_by_number_and_visibility(
     db: devkit::pg::TestDatabase,
 ) {
     let w = world(db).await;
@@ -11,25 +11,29 @@ async fn moment_marks_are_authored_material_records_recalled_by_number_and_visib
         0,
     )
     .await;
-    let (_, denied) =
-        call_unbounded(&w, Some(READ), json!({"method":"mark","text":"synthetic"})).await;
-    assert_eq!(denied["outcome"], "failed");
+    let (_, denied) = surface::rows_as(&w, READ, moment_request(json!({"text":"synthetic"}))).await;
+    assert_eq!(denied["outcome"], "error");
     let (status, _) =
-        call_unbounded(&w, Some(AGENT), json!({"method":"mark","text":"synthetic"})).await;
+        surface::rows_as(&w, AGENT, moment_request(json!({"text":"synthetic"}))).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     let mut citations = Vec::new();
     for (at, note) in [
         ("2026-09-14T08:00:00Z", "synthetic first mark"),
         ("2026-09-14T08:01:00Z", "synthetic second mark"),
     ] {
-        let (_, answer) = call_unbounded(
+        let (_, answer) = surface::rows_as(
             &w,
-            Some(OPERATOR),
-            json!({"method":"mark","text":note,"at":at,"cwd":"/src/tide"}),
+            OPERATOR,
+            moment_request(json!({"text":note,"at":at,"cwd":"/src/tide"})),
         )
         .await;
         assert_eq!(answer["outcome"], "ok", "{answer}");
-        citations.push(answer["result"]["citation"].clone());
+        assert_eq!(
+            answer["value"]["steps"][0]["outcome"]["status"], "done",
+            "{answer}"
+        );
+        citations
+            .push(answer["value"]["steps"][0]["outcome"]["reply"]["reply"]["citation"].clone());
     }
     let (_, shown) = call_unbounded(
         &w,
@@ -543,4 +547,62 @@ async fn indexed_word_candidates_obey_each_api_callers_grants(db: devkit::pg::Te
             expected as usize
         );
     }
+}
+
+#[devkit::test]
+async fn moment_note_retry_preserves_original_context_and_committed_identity(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
+    let body = moment_request(json!({
+        "text":"", "at":"2026-09-14T08:00:00.123456789Z", "cwd":"/src/tide",
+        "command":"printf synthetic", "app":"synthetic-terminal", "title":"synthetic title",
+        "command_record":"synthetic-command", "focus_record":"synthetic-focus"
+    }));
+    let (status, first) = surface::rows_as(&w, OPERATOR, body.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    let receipt = &first["value"]["steps"][0]["outcome"]["reply"]["reply"];
+    assert!(receipt["event"].is_string(), "{first}");
+    let (_, shown) = call_unbounded(
+        &w,
+        Some(OPERATOR),
+        json!({"method":"show","reference":receipt["citation"]}),
+    )
+    .await;
+    let event = &shown["result"]["event"];
+    assert_eq!(event["event_type"], "operator.mark");
+    assert_eq!(event["time_quality"], "operator");
+    let payload = &event["payload"];
+    for field in [
+        "text",
+        "at",
+        "cwd",
+        "command",
+        "app",
+        "title",
+        "command_record",
+        "focus_record",
+    ] {
+        assert_eq!(
+            payload[field], body["arguments"]["steps"][0][field],
+            "{field}: {shown}"
+        );
+    }
+    assert_eq!(payload["by"], "operator");
+    let (_, repeated) = surface::rows_as(&w, OPERATOR, body.clone()).await;
+    assert_eq!(
+        repeated["value"]["steps"], first["value"]["steps"],
+        "{repeated}"
+    );
+    let mut conn = w.reads.acquire().await.unwrap();
+    let count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM core.events WHERE event_type='operator.mark'")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+    assert_eq!(count, 1);
+    let mut changed = body;
+    changed["arguments"]["steps"][0]["text"] = json!("changed");
+    let (_, conflict) = surface::rows_as(&w, OPERATOR, changed).await;
+    assert_eq!(conflict["error"]["kind"], "conflict", "{conflict}");
 }

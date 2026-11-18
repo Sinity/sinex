@@ -240,7 +240,6 @@ impl Api {
             request @ (Request::Query { .. }
             | Request::QueryComplete { .. }
             | Request::QueryList
-            | Request::Mark { .. }
             | Request::Context { .. }
             | Request::Timeline { .. }
             | Request::Search { .. }

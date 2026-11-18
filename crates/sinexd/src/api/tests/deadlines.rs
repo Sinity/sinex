@@ -109,7 +109,24 @@ async fn admitted_mutation_returns_ack_after_read_deadline(db: devkit::pg::TestD
     let mut lock = locked(&w, "SHARE").await;
     let app = w.app.clone();
     let request = tokio::spawn(async move {
-        let response = app.oneshot(HttpRequest::post("/v1").header("authorization",format!("Bearer {OPERATOR}")).header("content-type","application/json").body(Body::from(json!({"method":"mark","text":"synthetic deadline acknowledgment","deadline":200}).to_string())).unwrap()).await.unwrap();
+        let response = app
+            .oneshot(
+                HttpRequest::post("/v1/rows")
+                    .header("authorization", format!("Bearer {OPERATOR}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        {
+                            let mut body =
+                                moment_request(json!({"text":"synthetic deadline acknowledgment"}));
+                            body["deadline"] = json!(200);
+                            body
+                        }
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         serde_json::from_slice::<Value>(&response.into_body().collect().await.unwrap().to_bytes())
             .unwrap()
     });
@@ -121,7 +138,10 @@ async fn admitted_mutation_returns_ack_after_read_deadline(db: devkit::pg::TestD
     sqlx::query("ROLLBACK").execute(&mut lock).await.unwrap();
     let reply = request.await.unwrap();
     assert_eq!(reply["outcome"], "ok", "{reply}");
-    assert!(reply["result"]["event"].is_string(), "{reply}");
+    assert!(
+        reply["value"]["steps"][0]["outcome"]["reply"]["reply"]["event"].is_string(),
+        "{reply}"
+    );
 }
 
 #[devkit::test]
@@ -132,7 +152,18 @@ async fn disconnect_after_admission_does_not_revoke_the_owned_mutation(
     let mut lock = locked(&w, "SHARE").await;
     let app = w.app.clone();
     let request = tokio::spawn(async move {
-        app.oneshot(HttpRequest::post("/v1").header("authorization",format!("Bearer {OPERATOR}")).header("content-type","application/json").body(Body::from(json!({"method":"mark","text":"synthetic disconnected acknowledgment","deadline":null}).to_string())).unwrap()).await.unwrap()
+        app.oneshot(
+            HttpRequest::post("/v1/rows")
+                .header("authorization", format!("Bearer {OPERATOR}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    moment_request(json!({"text":"synthetic disconnected acknowledgment"}))
+                        .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
     });
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     loop {

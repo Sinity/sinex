@@ -35,9 +35,12 @@ fn tool_examples_follow_the_table() {
     assert_eq!(stage.input_schema["required"], json!(["path"]));
     assert_eq!(stage.input_schema["properties"]["path"]["type"], "array");
     assert_eq!(stage.input_schema["properties"]["parser"]["type"], "array");
+    assert!(names.contains(&"sinex_act"));
+    let note: sinex_protocol::rows::Step =
+        serde_json::from_value(json!({"verb":"note","text":"synthetic"})).unwrap();
     assert_eq!(
-        sinex_protocol::command("mark").unwrap().access,
-        sinex_protocol::Access::Operator
+        sinex_commands::required_access(&[note]),
+        command_surface::Access::Permanent
     );
     for name in [
         "sinex_context",
@@ -177,7 +180,7 @@ fn array_results_keep_their_text_without_invalid_structured_content() {
 }
 
 #[test]
-fn read_and_write_cards_expose_their_actual_step_access() {
+fn read_write_and_act_cards_expose_their_actual_step_access() {
     let tools = tools();
     let read = tools.iter().find(|tool| tool.name == "sinex_read").unwrap();
     let write = tools
@@ -194,4 +197,29 @@ fn read_and_write_cards_expose_their_actual_step_access() {
             ["verb"]["enum"],
         json!(["read", "save"])
     );
+}
+
+#[test]
+fn act_card_exposes_the_moment_note_arguments() {
+    let tools = tools();
+    let act = tools.iter().find(|tool| tool.name == "sinex_act").unwrap();
+    let step = &act.input_schema["properties"]["arguments"]["properties"]["steps"]["items"];
+    assert!(
+        step["properties"]["verb"]["enum"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("note"))
+    );
+    for field in [
+        "text",
+        "at",
+        "cwd",
+        "command",
+        "app",
+        "title",
+        "command_record",
+        "focus_record",
+    ] {
+        assert!(step["properties"].get(field).is_some(), "{field}: {step}");
+    }
 }

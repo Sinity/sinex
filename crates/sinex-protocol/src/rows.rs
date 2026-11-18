@@ -48,10 +48,14 @@ impl Rows {
                 "a reference is empty",
             ));
         }
-        if self.selection.is_none() && self.references.is_none() {
+        if self.selection.is_none()
+            && self.references.is_none()
+            && (self.steps.is_empty()
+                || self.steps.iter().any(|step| !matches!(step, Step::Note(_))))
+        {
             return Err(Failure::new(
                 FailureKind::BadRequest,
-                "read needs a selection or references",
+                "this line needs a selection or references",
             ));
         }
         if self.accepted.is_some() && self.steps.iter().any(|step| !matches!(step, Step::Read(_))) {
@@ -64,6 +68,14 @@ impl Rows {
             return Err(Failure::new(
                 FailureKind::BadRequest,
                 "save needs a question in selection",
+            ));
+        }
+        if self.steps.iter().any(|step| matches!(step, Step::Note(_)))
+            && (self.selection.is_some() || self.references.is_some())
+        {
+            return Err(Failure::new(
+                FailureKind::BadRequest,
+                "a moment note takes no selection",
             ));
         }
         for step in &self.steps {
@@ -84,6 +96,38 @@ impl Rows {
 pub enum Step {
     Read(Read),
     Save(Save),
+    Note(Note),
+}
+
+impl Step {
+    pub fn verb(&self) -> &'static str {
+        match self {
+            Self::Read(_) => "read",
+            Self::Save(_) => "save",
+            Self::Note(_) => "note",
+        }
+    }
+}
+
+/// A moment note with context explicitly observed by its client.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Note {
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command_record: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focus_record: Option<String>,
 }
 
 /// Store the selected question without requiring its current data to exist.

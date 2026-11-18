@@ -26,3 +26,18 @@ fn full_reads_do_not_silently_ignore_trace_paging_options() {
     let trace: Rows = serde_json::from_value(json!({"selection":"events", "steps":[{"verb":"read", "view":"trace", "cursor":"page", "page_size":2}]})).unwrap();
     trace.validate().unwrap();
 }
+
+#[test]
+fn a_moment_note_needs_text_but_no_selection() {
+    let note: Rows = serde_json::from_value(json!({"steps":[{"verb":"note","text":""}]})).unwrap();
+    note.validate().unwrap();
+    let selected: Rows = serde_json::from_value(
+        json!({"selection":"events","steps":[{"verb":"note","text":"synthetic"}]}),
+    )
+    .unwrap();
+    assert_eq!(
+        selected.validate().unwrap_err().kind,
+        FailureKind::BadRequest
+    );
+    assert!(serde_json::from_value::<Rows>(json!({"steps":[{"verb":"note"}]})).is_err());
+}

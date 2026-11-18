@@ -103,7 +103,6 @@ impl Api {
                     json!({"queries": sinex_store::query::saved_records(&mut conn).await?}),
                 ))
             }
-            request @ Request::Mark { .. } => self.mark(request, caller).await.map(data),
             _ => unreachable!("query request"),
         }
     }
@@ -136,36 +135,39 @@ impl Api {
         self.acquire(caller).await
     }
 
-    async fn mark(&self, request: Request, caller: &Caller) -> Result<Value> {
-        let Request::Mark {
-            text,
-            at,
-            cwd,
-            command,
-            app,
-            title,
-            command_record,
-            focus_record,
-        } = request
-        else {
-            unreachable!("mark request");
-        };
+    pub(super) async fn note_moment(
+        &self,
+        note: &sinex_protocol::rows::Note,
+        caller: &Caller,
+        operation: sinex_model::OperationId,
+        index: usize,
+        metadata: &command_surface::RequestContext,
+    ) -> Result<Value> {
         let mut conn = self.query_authoring_connection(caller).await?;
+        if let Some(saved) = sinex_store::requests::step(&mut conn, operation, index).await? {
+            let saved: sinex_store::requests::CommittedStep = serde_json::from_value(saved)?;
+            return Ok(saved.reply);
+        }
         let now = Timestamp::now();
         let record = QueryRecord::Mark(Mark {
-            command_record,
-            focus_record,
+            command_record: note.command_record.clone(),
+            focus_record: note.focus_record.clone(),
             host: self.host.clone(),
-            at: at.as_deref().map(timestamp).transpose()?.unwrap_or(now),
-            text,
-            cwd,
-            command,
-            app,
-            title,
+            at: note
+                .at
+                .as_deref()
+                .map(timestamp)
+                .transpose()?
+                .unwrap_or(now),
+            text: Some(note.text.clone()),
+            cwd: note.cwd.clone(),
+            command: note.command.clone(),
+            app: note.app.clone(),
+            title: note.title.clone(),
             by: caller.actor.into(),
             written_at: now,
         });
-        self.admit_query_record(&mut conn, caller, record, now, None)
+        self.admit_query_record(&mut conn, caller, record, now, (operation, index, metadata))
             .await
     }
 
@@ -217,14 +219,8 @@ impl Api {
             by: caller.actor.into(),
             written_at: now,
         });
-        self.admit_query_record(
-            &mut conn,
-            caller,
-            record,
-            now,
-            Some((operation, index, metadata)),
-        )
-        .await
+        self.admit_query_record(&mut conn, caller, record, now, (operation, index, metadata))
+            .await
     }
 
     async fn admit_query_record(
@@ -233,11 +229,11 @@ impl Api {
         caller: &Caller,
         record: QueryRecord,
         now: Timestamp,
-        step: Option<(
+        step: (
             sinex_model::OperationId,
             usize,
             &command_surface::RequestContext,
-        )>,
+        ),
     ) -> Result<Value> {
         let writer = self.writer.as_ref().ok_or_else(Error::no_writer)?;
         let acquired =
@@ -249,35 +245,23 @@ impl Api {
             .ok_or_else(|| Error::internal("query acquisition has no material"))?;
         let source = std::sync::Arc::new(sinex_sources::sources::query::request_source());
         let binding = format!("query.request:{}@{}", caller.actor, self.host);
-        let done = if let Some((operation, index, metadata)) = step {
-            metadata.finish_read_phase()?;
-            crate::submit::request_step(
-                conn,
-                writer,
-                &self.blobs,
-                source,
-                &binding,
-                &self.host,
-                acquired,
-                crate::writer::RequestStep {
-                    operation,
-                    index,
-                    response: std::sync::Arc::new(move |outcome| authored_reply(material, outcome)),
-                },
-            )
-            .await?
-        } else {
-            crate::submit::request(
-                conn,
-                writer,
-                &self.blobs,
-                source,
-                &binding,
-                &self.host,
-                acquired,
-            )
-            .await?
-        };
+        let (operation, index, metadata) = step;
+        metadata.finish_read_phase()?;
+        let done = crate::submit::request_step(
+            conn,
+            writer,
+            &self.blobs,
+            source,
+            &binding,
+            &self.host,
+            acquired,
+            crate::writer::RequestStep {
+                operation,
+                index,
+                response: std::sync::Arc::new(move |outcome| authored_reply(material, outcome)),
+            },
+        )
+        .await?;
         if let Some(reply) = done.reply {
             return Ok(reply);
         }

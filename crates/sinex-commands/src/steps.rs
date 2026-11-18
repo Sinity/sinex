@@ -1,6 +1,6 @@
 //! One typed declaration of each verb's CLI fields and wire arguments.
 use command_surface::{ArgumentForm, ArgumentSpec, StepDeclarations};
-use sinex_protocol::rows::{Read, Save, Step};
+use sinex_protocol::rows::{Note, Read, Save, Step};
 use std::sync::LazyLock;
 
 /// Step argument ownership is shared by all parsers. The CLI's
@@ -37,6 +37,49 @@ pub fn steps() -> &'static StepDeclarations {
             )
             .expect("save fields match their declaration");
         steps
+            .declare::<Note>(
+                "note",
+                vec![
+                    ArgumentSpec::new(
+                        "text",
+                        ArgumentForm::Positional,
+                        "text about the moment; empty text keeps context only",
+                    ),
+                    ArgumentSpec::new("at", ArgumentForm::Named, "RFC3339 moment; default now"),
+                    ArgumentSpec::new(
+                        "cwd",
+                        ArgumentForm::Named,
+                        "directory observed by the client",
+                    ),
+                    ArgumentSpec::new(
+                        "command",
+                        ArgumentForm::Named,
+                        "command observed by the client",
+                    ),
+                    ArgumentSpec::new(
+                        "app",
+                        ArgumentForm::Named,
+                        "application observed by the client",
+                    ),
+                    ArgumentSpec::new(
+                        "title",
+                        ArgumentForm::Named,
+                        "window title observed by the client",
+                    ),
+                    ArgumentSpec::new(
+                        "command_record",
+                        ArgumentForm::Named,
+                        "the shell's ID for the command",
+                    ),
+                    ArgumentSpec::new(
+                        "focus_record",
+                        ArgumentForm::Named,
+                        "the window manager's ID for the focus change",
+                    ),
+                ],
+            )
+            .expect("note fields match their declaration");
+        steps
     });
     &STEPS
 }
@@ -48,6 +91,7 @@ pub fn required_access(steps: &[Step]) -> command_surface::Access {
         .map(|step| match step {
             Step::Read(_) => command_surface::Access::Read,
             Step::Save(_) => command_surface::Access::Write,
+            Step::Note(_) => command_surface::Access::Permanent,
         })
         .max()
         .unwrap_or(command_surface::Access::Read)

@@ -278,3 +278,60 @@ fn a_typed_request_from_stdin_keeps_its_original_options() {
     assert_eq!(path, "/v1/rows");
     assert_eq!(request, expected);
 }
+
+#[devkit::test]
+fn moment_note_keeps_text_context_options_and_explicit_request_identity() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let incoming = request(&mut stream);
+        let mut body = answer();
+        body["value"]["steps"] = json!([{"verb":"note","outcome":{"status":"done","reply":{"kind":"written","reply":{"event":"original-note"}}}}]);
+        reply(&mut stream, &body);
+        incoming
+    });
+    let output = cli(&endpoint)
+        .args([
+            "--json",
+            "--request-id",
+            "moment-fixture",
+            "note",
+            "read",
+            "--at",
+            "2026-09-14T08:00:00Z",
+            "--cwd",
+            "/src/tide",
+            "--command",
+            "printf synthetic",
+            "--app",
+            "synthetic-terminal",
+            "--title",
+            "synthetic title",
+            "--command-record",
+            "synthetic-command",
+            "--focus-record",
+            "synthetic-focus",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let (path, body) = server.join().unwrap();
+    assert_eq!(path, "/v1/rows");
+    assert_eq!(body["request_id"], "moment-fixture");
+    assert_eq!(
+        body["arguments"],
+        json!({"steps":[{"verb":"note","text":"read",
+        "at":"2026-09-14T08:00:00Z","cwd":"/src/tide","command":"printf synthetic",
+        "app":"synthetic-terminal","title":"synthetic title", "command_record":"synthetic-command","focus_record":"synthetic-focus"}]})
+    );
+    let answer: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        answer["value"]["steps"][0]["outcome"]["reply"]["reply"]["event"],
+        "original-note"
+    );
+}

@@ -218,9 +218,10 @@ act or by session undo. Programs that derive continuously use the ingress as
 
 **Decided target binary (2026-11-18): `sinex`.** The daemon and its
 maintenance commands remain `sinexd` and `sinexd admin`. The current build ships
-`sinexctl`. It accepts selection lines for typed reads and saved questions, alongside
-the existing commands. Typed read and saved-question operations use the `sinex_read`
-and `sinex_write` tools; remaining domain commands retain their individual tools. Use `sinexctl --help`, `sinexctl COMMAND --help`, the generated tool list and
+`sinexctl`. It accepts selection lines for typed reads and saved questions, and moment notes
+without a selection, alongside the existing commands. The `sinex_read`,
+`sinex_write` and `sinex_act` tools expose those typed operations at their required
+access levels; remaining domain commands retain their individual tools. Use `sinexctl --help`, `sinexctl COMMAND --help`, the generated tool list and
 `GET /v1/commands` for that build. The examples in this section specify the target;
 they do not claim that the binary rename or command port has shipped. The rename
 moves callers, packaging and integrations together and leaves one client name.
@@ -228,7 +229,8 @@ moves callers, packaging and integrations together and leaves one client name.
 ### Current selection lines
 
 The current `sinexctl` accepts a query or exact source reference as one argument,
-followed by the declared `read` and `save` steps. The shared step declarations own
+followed by the declared `read` and `save` steps. `sinexctl note TEXT` writes a
+moment note without a selection and requires operator credentials. The shared step declarations own
 argument arity and option types. Existing command words take precedence and keep
 their existing handlers; `--` forces the next word to be a selection. Query parsing,
 saved `query:NAME` expansion, reference resolution and permissions remain daemon
@@ -246,6 +248,13 @@ After `read`, those options belong to the trace view. `--endpoint`, `--token-fil
 `--json`, `--request-id`, `--deadline` and `--budget` are line options. A new
 invocation gets a fresh UUIDv7 request identity; supplying `--request-id` retains
 the intended retry identity. Saving a parameterized question does not execute it.
+
+Moment notes retain explicit `--at`, `--cwd`, `--command`, `--app`, `--title`,
+`--command-record` and `--focus-record` observations. `note ''` records empty text
+with context. The daemon supplies the author and write time. A retry with the
+same request identity returns its original committed receipt; changed arguments
+under that identity are refused. Row-anchored notes, forms and triggers remain
+part of the decided target below.
 
 These lines print the complete typed JSON answer, preserving partial results,
 committed receipts, failures and ready read requests. Without `--json`, a next

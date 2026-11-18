@@ -107,28 +107,13 @@ fn duplicate_decisions_are_agent_commands_naming_two_records() {
 #[cfg(feature = "cli")]
 #[devkit::test]
 fn query_authoring_options_are_not_consumed_by_the_text_argument() {
-    for (name, args, field, expected) in [
-        (
-            "mark",
-            vec!["mark", "synthetic note", "--at", "2026-09-14T08:00:00Z"],
-            "at",
-            json!("2026-09-14T08:00:00Z"),
-        ),
-        (
-            "timeline",
-            vec!["timeline", "where source = synthetic", "--page-size", "2"],
-            "page-size",
-            json!(2),
-        ),
-    ] {
-        let spec = command(name).unwrap();
-        let matches = crate::cli::subcommand(spec)
-            .try_get_matches_from(args)
-            .unwrap();
-        let arguments = crate::cli::arguments(spec, &matches);
-        assert_eq!(arguments[field], expected);
-        Request::from_args(name, arguments).unwrap();
-    }
+    let spec = command("timeline").unwrap();
+    let matches = crate::cli::subcommand(spec)
+        .try_get_matches_from(["timeline", "where source = synthetic", "--page-size", "2"])
+        .unwrap();
+    let arguments = crate::cli::arguments(spec, &matches);
+    assert_eq!(arguments["page-size"], json!(2));
+    Request::from_args("timeline", arguments).unwrap();
 }
 
 #[devkit::test]

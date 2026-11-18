@@ -84,10 +84,7 @@ async fn a_firing_whose_reading_was_replayed_is_withdrawn_then_cites_the_new_rea
         json!({"method":"watch","action":"add","name":"held","rule":held.to_string()}),
     );
     wait_scalar(&mut conn, ADOPTED, 1).await;
-    ok(
-        &socket,
-        json!({"method":"mark","text":"synthetic replayed occurrence"}),
-    );
+    moment_note(&socket, "synthetic replayed occurrence");
     wait_scalar(
         &mut conn,
         "SELECT count(*) FROM core.signal_checkpoints WHERE state->'inputs' <> '{}'::jsonb",
@@ -173,10 +170,7 @@ async fn a_step_refused_for_a_changed_checkpoint_is_taken_again() {
     ] {
         sqlx::query(statement).execute(&mut conn).await.unwrap();
     }
-    ok(
-        &socket,
-        json!({"method":"mark","text":"synthetic contested occurrence"}),
-    );
+    moment_note(&socket, "synthetic contested occurrence");
     wait_scalar(
         &mut conn,
         "SELECT count(*) FROM core.events WHERE event_type='signal.delivery'",

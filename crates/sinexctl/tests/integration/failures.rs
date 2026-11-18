@@ -522,3 +522,32 @@ fn mcp_save_without_request_id_keeps_retry_identity_and_uses_write_tool() {
     );
     assert_eq!(requests[0]["arguments"], arguments["arguments"]);
 }
+
+#[devkit::test]
+fn mcp_moment_note_uses_act_tool_and_keeps_retry_identity() {
+    let arguments = json!({"arguments":{"steps":[{"verb":"note","text":"synthetic moment","cwd":"/src/tide"}]},"format":"json","deadline":null});
+    for tool in ["sinex_read", "sinex_write"] {
+        let denied = mcp_call("http://127.0.0.1:1", tool, arguments.clone());
+        assert_eq!(denied["result"]["isError"], true, "{denied}");
+        assert_eq!(
+            denied["result"]["structuredContent"]["error"]["kind"],
+            "refused"
+        );
+    }
+    let body = json!({"outcome":"ok","value":{"population":null,"references":[],"steps":[{"verb":"note","outcome":{"status":"done","reply":{"kind":"written","reply":{"event":"one-note","material":"source"}}}}]}}).to_string();
+    let (endpoint, server) = daemon(vec![(200, body.clone()), (200, body)]);
+    let first = mcp_call(&endpoint, "sinex_act", arguments.clone());
+    let second = mcp_call(&endpoint, "sinex_act", arguments);
+    assert_eq!(first["result"]["isError"], false, "{first}");
+    assert_eq!(
+        second["result"]["structuredContent"],
+        first["result"]["structuredContent"]
+    );
+    let requests = server.join().unwrap();
+    assert_eq!(requests[0], requests[1]);
+    assert!(!requests[0]["request_id"].as_str().unwrap().is_empty());
+    assert_eq!(
+        requests[0]["arguments"]["steps"][0]["text"],
+        "synthetic moment"
+    );
+}

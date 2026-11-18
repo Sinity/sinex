@@ -447,47 +447,6 @@ pub const COMMANDS: &[Command] = &[
         mcp: true,
     },
     Command {
-        examples: &["sinexctl mark 'Started the sample task'"],
-        name: "mark",
-        summary: "Mark a moment for recall, with an optional note and client-observed context.",
-        args: &[
-            pos_opt("text", ArgKind::Rest, "note about the moment"),
-            opt("at", ArgKind::Text, "RFC3339 moment; default now"),
-            opt(
-                "cwd",
-                ArgKind::Text,
-                "directory observed by the marking client",
-            ),
-            opt(
-                "command",
-                ArgKind::Text,
-                "command observed by the marking client",
-            ),
-            opt(
-                "app",
-                ArgKind::Text,
-                "focused application observed by the client",
-            ),
-            opt(
-                "title",
-                ArgKind::Text,
-                "focused window title observed by the client",
-            ),
-            opt(
-                "command-record",
-                ArgKind::Text,
-                "the shell's own ID for the command",
-            ),
-            opt(
-                "focus-record",
-                ArgKind::Text,
-                "the window manager's own ID for the focus change",
-            ),
-        ],
-        access: Access::Operator,
-        mcp: false,
-    },
-    Command {
         examples: &["sinexctl query-list"],
         name: "query-list",
         summary: "List visible saved queries, names and declared parameters.",

@@ -2,8 +2,9 @@
 
 Answers to "what was happening": selections, the one `recall` verb, recipes and the packs compiled from them, recall classes, lanes, notes, and how an agent's session receives Sinex's context when it starts. What the products contain and how they are computed (presence, agency, episodes, the resume card) is in [higher layer](higher-layer.md); the query rules every answer follows (read context, budgets, citations) are in [query](query.md); coverage is in [sources](sources.md#completeness); the views that render recall are in [web](web.md).
 
-**Decided target surface, not built.** The current build still exposes `recall`,
-`context`, `brief` and `mark` separately through `sinexctl`. Its interactive recall
+**Decided target recall surface, not built.** The current build still exposes
+`recall`, `context` and `brief` separately through `sinexctl`. Moment notes use
+`sinexctl note TEXT`, retaining explicit time and client-context options. Its interactive recall
 returns a window's event rows and read position, not a completed cited pack. The
 selection-first surface below preserves the broader pack, recipe and recall-class
 design; the implementing batch must prove that content as well as routing.

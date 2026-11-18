@@ -123,10 +123,7 @@ async fn an_unanswered_notification_stays_unknown_and_never_holds_admission() {
         json!({"method":"watch","action":"add","name":"desktop-guard","rule":rule.to_string()}),
     );
     wait_scalar(&mut conn, ADOPTED, 1).await;
-    ok(
-        &socket,
-        json!({"method":"mark","text":"synthetic controlled desktop handoff"}),
-    );
+    moment_note(&socket, "synthetic controlled desktop handoff");
     if let Err(elapsed) = tokio::time::timeout(Duration::from_secs(30), entered.notified()).await {
         panic!(
             "first desktop Notify: {elapsed}; observed calls: {}; daemon log:\n{}",
@@ -136,10 +133,7 @@ async fn an_unanswered_notification_stays_unknown_and_never_holds_admission() {
     }
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     // The issued platform call shares no admission lock.
-    let another = ok(
-        &socket,
-        json!({"method":"mark","text":"synthetic admission during desktop timeout"}),
-    );
+    let another = moment_note(&socket, "synthetic admission during desktop timeout");
     assert!(another["event"].as_str().is_some());
     let mut policy_conn = PgConnection::connect(&database).await.unwrap();
     let policy = tokio::spawn(async move {
@@ -239,10 +233,7 @@ async fn a_missing_server_is_retried_once_when_it_appears() {
         json!({"method":"watch","action":"add","name":"held-group","rule":watched.to_string()}),
     );
     wait_scalar(&mut conn, ADOPTED, 1).await;
-    let original = ok(
-        &socket,
-        json!({"method":"mark","text":"synthetic watched input"}),
-    );
+    let original = moment_note(&socket, "synthetic watched input");
     let matched = ok(&socket, json!({"method":"query","query":watched["query"]}));
     assert_eq!(
         matched["total"], 1,
@@ -305,10 +296,7 @@ async fn a_missing_server_is_retried_once_when_it_appears() {
     process.stop().await;
     let mut process = start(&database, &store, root, &nats);
     ready(&mut process, &socket).await;
-    ok(
-        &socket,
-        json!({"method":"mark","text":"synthetic unrelated input"}),
-    );
+    moment_note(&socket, "synthetic unrelated input");
     wait_scalar(&mut conn, "SELECT count(*) FROM core.signal_checkpoints WHERE (state->>'observed_seq')::bigint >= (SELECT max(commit_seq) FROM core.events WHERE event_type='operator.mark')", 1).await;
     assert_eq!(
         calls.load(Ordering::SeqCst),

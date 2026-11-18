@@ -1150,3 +1150,9 @@ async fn save_question(
         other => panic!("unexpected saved-question outcome: {other:?}"),
     }
 }
+
+fn moment_request(mut note: Value) -> Value {
+    note["verb"] = json!("note");
+    json!({"operation":"rows", "request_id":sinex_model::OperationId::new().to_string(),
+        "deadline":null, "arguments":{"steps":[note]}})
+}

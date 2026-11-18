@@ -344,24 +344,7 @@ pub enum Request {
         a: String,
         b: String,
     },
-    Mark {
-        #[serde(default)]
-        text: Option<String>,
-        #[serde(default)]
-        at: Option<String>,
-        #[serde(default)]
-        cwd: Option<String>,
-        #[serde(default)]
-        command: Option<String>,
-        #[serde(default)]
-        app: Option<String>,
-        #[serde(default)]
-        title: Option<String>,
-        #[serde(default)]
-        command_record: Option<String>,
-        #[serde(default)]
-        focus_record: Option<String>,
-    },
+
     PrivacyRules {
         #[serde(default)]
         history: Option<bool>,

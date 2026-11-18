@@ -14,7 +14,10 @@ const TOKEN: &str = "synthetic-signal-operator";
 fn call(socket: &Path, request: Value) -> Value {
     call_as(socket, request, TOKEN)
 }
-fn call_as(socket: &Path, mut request: Value, token: &str) -> Value {
+fn call_as(socket: &Path, request: Value, token: &str) -> Value {
+    call_route_as(socket, "/v1", request, token)
+}
+fn call_route_as(socket: &Path, route: &str, mut request: Value, token: &str) -> Value {
     // These fixtures assert delivered facts, not the operation's latency.
     request
         .as_object_mut()
@@ -26,7 +29,7 @@ fn call_as(socket: &Path, mut request: Value, token: &str) -> Value {
     stream
         .set_read_timeout(Some(Duration::from_secs(20)))
         .unwrap();
-    write!(stream,"POST /v1 HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",body.len()).unwrap();
+    write!(stream,"POST {route} HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",body.len()).unwrap();
     stream.write_all(&body).unwrap();
     let mut response = Vec::new();
     stream.read_to_end(&mut response).unwrap();
@@ -41,6 +44,21 @@ fn ok(socket: &Path, request: Value) -> Value {
     let reply = call(socket, request.clone());
     assert_eq!(reply["outcome"], "ok", "{request}: {reply}");
     reply["result"].clone()
+}
+fn moment_note(socket: &Path, text: &str) -> Value {
+    let request = json!({"operation":"rows", "request_id":sinex_model::OperationId::new().to_string(),
+        "deadline":null,"arguments":{"steps":[{"verb":"note","text":text}]}});
+    let answer = call_route_as(socket, "/v1/rows", request, TOKEN);
+    assert_eq!(answer["outcome"], "ok", "{answer}");
+    assert_eq!(
+        answer["value"]["steps"][0]["outcome"]["status"], "done",
+        "{answer}"
+    );
+    assert_eq!(
+        answer["value"]["steps"][0]["outcome"]["reply"]["kind"], "written",
+        "{answer}"
+    );
+    answer["value"]["steps"][0]["outcome"]["reply"]["reply"].clone()
 }
 async fn wait_scalar(conn: &mut PgConnection, sql: &str, minimum: i64) {
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -161,10 +179,7 @@ async fn real_daemon_checkpoints_precede_effects_and_unknown_actions_survive_res
     }
     // Both rules are adopted, with their empty baseline, before the input.
     wait_scalar(&mut conn, ADOPTED, 2).await;
-    let first = ok(
-        &socket,
-        json!({"method":"mark","text":"synthetic first occurrence"}),
-    );
+    let first = moment_note(&socket, "synthetic first occurrence");
     let deadline = Instant::now() + Duration::from_secs(30);
     while !entered.exists() {
         process.running();
@@ -179,12 +194,9 @@ async fn real_daemon_checkpoints_precede_effects_and_unknown_actions_survive_res
         unknown, 1,
         "unknown is committed before the controlled child starts"
     );
-    // The blocked outside command does not own the writer. The public mark
+    // The blocked outside command does not own the writer. The public moment note
     // returns a committed source record while that process is still waiting.
-    let second = ok(
-        &socket,
-        json!({"method":"mark","text":"synthetic writer independence"}),
-    );
+    let second = moment_note(&socket, "synthetic writer independence");
     assert_ne!(first["event"], second["event"]);
     assert!(!release.exists());
     drop(process);

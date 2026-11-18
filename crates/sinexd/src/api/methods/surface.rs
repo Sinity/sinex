@@ -131,7 +131,7 @@ impl Api {
         let writes = request
             .steps
             .iter()
-            .any(|step| matches!(step, Step::Save(_)));
+            .any(|step| !matches!(step, Step::Read(_)));
         let reads = request.steps.is_empty()
             || request
                 .steps
@@ -295,9 +295,6 @@ impl Api {
         let mut failed = false;
         for (index, step) in request.steps.iter().enumerate() {
             let Step::Read(read) = step else {
-                let Step::Save(save) = step else {
-                    unreachable!("declared step")
-                };
                 let recorded = accepted.as_ref().and_then(|accepted| accepted.step(index));
                 let outcome = if let Some(recorded) = recorded {
                     let recorded: sinex_store::requests::CommittedStep =
@@ -309,17 +306,25 @@ impl Api {
                     StepOutcome::NotRun
                 } else {
                     let operation = accepted.as_ref().expect("write request accepted").operation;
-                    match self
-                        .save_question(
-                            request.selection.as_deref().expect("save has a question"),
-                            save,
-                            caller,
-                            operation,
-                            index,
-                            metadata,
-                        )
-                        .await
-                    {
+                    let result = match step {
+                        Step::Save(save) => {
+                            self.save_question(
+                                request.selection.as_deref().expect("save has a question"),
+                                save,
+                                caller,
+                                operation,
+                                index,
+                                metadata,
+                            )
+                            .await
+                        }
+                        Step::Note(note) => {
+                            self.note_moment(note, caller, operation, index, metadata)
+                                .await
+                        }
+                        Step::Read(_) => unreachable!("read step handled separately"),
+                    };
+                    match result {
                         Ok(reply) => {
                             if request.steps[index + 1..]
                                 .iter()
@@ -340,7 +345,7 @@ impl Api {
                     }
                 };
                 reports.push(StepReport {
-                    verb: "save".into(),
+                    verb: step.verb().into(),
                     outcome,
                 });
                 continue;
@@ -538,7 +543,7 @@ fn retained_write_reply(
                 },
             ),
             Step::Read(_) => ("read", StepOutcome::NotRun),
-            Step::Save(_) => {
+            Step::Save(_) | Step::Note(_) => {
                 let outcome = if let Some(recorded) = accepted.step(index) {
                     let recorded: sinex_store::requests::CommittedStep =
                         serde_json::from_value(recorded.clone())?;
@@ -548,7 +553,7 @@ fn retained_write_reply(
                 } else {
                     StepOutcome::NotRun
                 };
-                ("save", outcome)
+                (step.verb(), outcome)
             }
         };
         reports.push(StepReport {
