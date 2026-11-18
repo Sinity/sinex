@@ -486,16 +486,33 @@ async fn nested_saved_query_literals_are_validated_before_admission(db: devkit::
     )
     .await
     .unwrap();
-    let error = save_question(&w, "invalid-literal", "query:by-class(class=unknown)", &[])
-        .await
-        .unwrap_err();
-    assert_eq!(
-        error.kind,
-        command_surface::FailureKind::BadValue,
-        "{error:?}"
-    );
-    let (_, listed) = call_unbounded(&w, Some(OPERATOR), json!({"method":"query-list"})).await;
-    assert_eq!(listed["result"]["queries"].as_array().unwrap().len(), 1);
+    for (query, kind) in [
+        (
+            "query:by-class(class=unknown)",
+            command_surface::FailureKind::InvalidQuery,
+        ),
+        (
+            r#"query:by-class(class="unknown")"#,
+            command_surface::FailureKind::BadValue,
+        ),
+    ] {
+        let error = save_question(&w, "invalid-literal", query, &[])
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind, kind, "{error:?}");
+        let (_, listed) = call_unbounded(&w, Some(OPERATOR), json!({"method":"query-list"})).await;
+        assert_eq!(listed["result"]["queries"].as_array().unwrap().len(), 1);
+    }
+    for query in [
+        "query:by-class(class=guarded)",
+        r#"query:by-class(class="guarded")"#,
+    ] {
+        save_question(&w, "valid-literal", query, &[])
+            .await
+            .unwrap();
+        let (_, listed) = call_unbounded(&w, Some(OPERATOR), json!({"method":"query-list"})).await;
+        assert_eq!(listed["result"]["queries"].as_array().unwrap().len(), 2);
+    }
 }
 
 #[devkit::test]

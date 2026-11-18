@@ -505,17 +505,31 @@ fn saved_literal_arguments_are_checked_without_placeholder_values() {
     )
     .unwrap();
     let definitions = BTreeMap::from([("base".into(), base)]);
-    let mut saved = crate::saved::from_text(
-        "literal".into(),
-        "query:base(value=unknown)".into(),
-        vec![],
-        &ctx(),
-    )
-    .unwrap();
-    assert!(crate::saved::validate_with(&saved, &ctx(), &definitions).is_err());
-    saved.query = "query:base(value=guarded)".into();
-    saved.template = template::parse(&saved.query, &ctx()).unwrap();
-    crate::saved::validate_with(&saved, &ctx(), &definitions).unwrap();
+    for (query, kind) in [
+        (
+            "query:base(value=unknown)",
+            command_surface::FailureKind::InvalidQuery,
+        ),
+        (
+            r#"query:base(value="unknown")"#,
+            command_surface::FailureKind::BadValue,
+        ),
+    ] {
+        let saved =
+            crate::saved::from_text("literal".into(), query.into(), vec![], &ctx()).unwrap();
+        let error = crate::saved::validate_with(&saved, &ctx(), &definitions)
+            .unwrap_err()
+            .failure(query);
+        assert_eq!(error.kind, kind, "{error:?}");
+    }
+    for query in [
+        "query:base(value=guarded)",
+        r#"query:base(value="guarded")"#,
+    ] {
+        let saved =
+            crate::saved::from_text("literal".into(), query.into(), vec![], &ctx()).unwrap();
+        crate::saved::validate_with(&saved, &ctx(), &definitions).unwrap();
+    }
 }
 
 #[devkit::test]
