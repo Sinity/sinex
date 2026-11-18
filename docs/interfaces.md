@@ -449,9 +449,9 @@ prerequisites.
 
 **Complete target.** Three nested tools replace the command-specific tools.
 The current build's tool schemas enumerate its implemented operations. Read
-operations use the same typed declarations and ready requests as HTTP. `sinex_write`
-also saves a question through the typed `save` step, preserving its parameters and
-existing credential requirement. Saving a question does not execute it. Its request
+operations use the same typed declarations and ready requests as HTTP. Saved
+questions use the typed `save` step across CLI, HTTP and `sinex_write`, preserving
+its parameters and existing credential requirement. Saving a question does not execute it. Its request
 identity, admitted event identity and reply are kept in the operations log. The
 original input and expanded question are private request state; the public operation
 scope contains only declared operation and verb names. Selection copies its ordered

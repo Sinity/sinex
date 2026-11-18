@@ -488,22 +488,6 @@ pub const COMMANDS: &[Command] = &[
         mcp: false,
     },
     Command {
-        examples: &["sinexctl save recent-commands 'commands where since:1h'"],
-        name: "save",
-        summary: "Save a named query with scalar parameters ($name), attributed to the caller.",
-        args: &[
-            pos("name", ArgKind::Text, "saved query name"),
-            pos("query", ArgKind::Rest, "query text with $name parameters"),
-            opt(
-                "parameter",
-                ArgKind::List,
-                "name:text, integer, number, bool, time or duration; repeatable",
-            ),
-        ],
-        access: Access::Agent,
-        mcp: false,
-    },
-    Command {
         examples: &["sinexctl query-list"],
         name: "query-list",
         summary: "List visible saved queries, names and declared parameters.",

@@ -1112,3 +1112,41 @@ async fn declaration_discovery_pages_through_the_public_commands(db: devkit::pg:
     assert_eq!(body["result"]["fields"].as_array().unwrap().len(), 1);
     assert!(body["result"]["cursor"].is_string());
 }
+
+/// Saved-question fixtures use the actual typed route and require a committed
+/// write, rather than treating an outer answer containing a failed step as success.
+async fn save_question(
+    world: &World,
+    name: &str,
+    query: &str,
+    parameters: &[&str],
+) -> std::result::Result<Value, command_surface::Failure> {
+    use command_surface::Outcome;
+    use sinex_protocol::rows::{StepOutcome, StepReply};
+    let (_,body)=surface::rows_as(world,OPERATOR,json!({
+        "operation":"rows","request_id":sinex_model::OperationId::new(),"deadline":null,
+        "arguments":{"selection":query,"steps":[{"verb":"save","name":name,"parameter":parameters}]},
+    })).await;
+    let answer: command_surface::Answer<sinex_protocol::rows::RowsReply> =
+        serde_json::from_value(body).unwrap();
+    match answer.outcome {
+        Outcome::Ok(rows) => {
+            assert!(
+                rows.population.is_none(),
+                "saving a question must not execute it"
+            );
+            assert_eq!(rows.steps.len(), 1);
+            let step = rows.steps.into_iter().next().unwrap();
+            assert_eq!(step.verb, "save");
+            match step.outcome {
+                StepOutcome::Done {
+                    reply: StepReply::Written(receipt),
+                } => Ok(receipt),
+                StepOutcome::Failed { error } => Err(error),
+                other => panic!("save has no committed receipt or diagnosed error: {other:?}"),
+            }
+        }
+        Outcome::Error(error) => Err(error),
+        other => panic!("unexpected saved-question outcome: {other:?}"),
+    }
+}

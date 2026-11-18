@@ -103,9 +103,7 @@ impl Api {
                     json!({"queries": sinex_store::query::saved_records(&mut conn).await?}),
                 ))
             }
-            request @ (Request::Save { .. } | Request::Mark { .. }) => {
-                self.query_record(request, caller).await.map(data)
-            }
+            request @ Request::Mark { .. } => self.mark(request, caller).await.map(data),
             _ => unreachable!("query request"),
         }
     }
@@ -131,100 +129,116 @@ impl Api {
         ))
     }
 
-    pub(super) async fn query_record(&self, request: Request, caller: &Caller) -> Result<Value> {
-        self.query_record_using(request, caller, None, None).await
+    async fn query_authoring_connection(&self, caller: &Caller) -> Result<Conn> {
+        if !caller.grants.split(',').any(|grant| grant == "guarded") {
+            return Err(Error::refused("query authoring requires the guarded grant"));
+        }
+        self.acquire(caller).await
     }
 
-    pub(super) async fn query_record_step(
+    async fn mark(&self, request: Request, caller: &Caller) -> Result<Value> {
+        let Request::Mark {
+            text,
+            at,
+            cwd,
+            command,
+            app,
+            title,
+            command_record,
+            focus_record,
+        } = request
+        else {
+            unreachable!("mark request");
+        };
+        let mut conn = self.query_authoring_connection(caller).await?;
+        let now = Timestamp::now();
+        let record = QueryRecord::Mark(Mark {
+            command_record,
+            focus_record,
+            host: self.host.clone(),
+            at: at.as_deref().map(timestamp).transpose()?.unwrap_or(now),
+            text,
+            cwd,
+            command,
+            app,
+            title,
+            by: caller.actor.into(),
+            written_at: now,
+        });
+        self.admit_query_record(&mut conn, caller, record, now, None)
+            .await
+    }
+
+    pub(super) async fn save_question(
         &self,
-        request: Request,
+        query: &str,
+        save: &sinex_protocol::rows::Save,
         caller: &Caller,
         operation: sinex_model::OperationId,
         index: usize,
         metadata: &command_surface::RequestContext,
     ) -> Result<Value> {
-        self.query_record_using(request, caller, Some((operation, index)), Some(metadata))
-            .await
-    }
-
-    async fn query_record_using(
-        &self,
-        request: Request,
-        caller: &Caller,
-        step: Option<(sinex_model::OperationId, usize)>,
-        metadata: Option<&command_surface::RequestContext>,
-    ) -> Result<Value> {
-        if !caller.grants.split(',').any(|g| g == "guarded") {
-            return Err(Error::refused("query authoring requires the guarded grant"));
-        }
-        let mut conn = self.acquire(caller).await?;
-        if let Some((operation, index)) = step
-            && let Some(saved) = sinex_store::requests::step(&mut conn, operation, index).await?
-        {
+        let mut conn = self.query_authoring_connection(caller).await?;
+        if let Some(saved) = sinex_store::requests::step(&mut conn, operation, index).await? {
             let saved: sinex_store::requests::CommittedStep = serde_json::from_value(saved)?;
             return Ok(saved.reply);
         }
         let now = Timestamp::now();
-        let record = match request {
-            Request::Mark {
-                text,
-                at,
-                cwd,
-                command,
-                app,
-                title,
-                command_record,
-                focus_record,
-            } => QueryRecord::Mark(Mark {
-                command_record,
-                focus_record,
-                host: self.host.clone(),
-                at: at.as_deref().map(timestamp).transpose()?.unwrap_or(now),
-                text,
-                cwd,
-                command,
-                app,
-                title,
-                by: caller.actor.into(),
-                written_at: now,
-            }),
-            Request::Save {
-                name,
-                query,
-                parameter: declarations,
-            } => {
-                let parameters = declarations
-                    .iter()
-                    .map(|s| parameter(s))
-                    .collect::<Result<Vec<_>, _>>()?;
-                let mut definitions = if let Some(reference) = query::saved::reference_name(&query)
-                {
-                    definitions(&mut conn, &reference).await?
-                } else {
-                    BTreeMap::new()
-                };
-                let definition = SavedQuery {
-                    name: name.clone(),
-                    query: query.clone(),
-                    template: query::template::parse(&query, &self.context())
-                        .map_err(|error| error.failure(&query))?,
-                    parameters: parameters.clone(),
-                };
-                definitions.insert(name.clone(), definition.clone());
-                definitions.insert(format!("{name}@{}", caller.actor), definition.clone());
-                query::saved::validate_with(&definition, &self.context(), &definitions)
-                    .map_err(|error| error.failure(&query))?;
-                QueryRecord::Saved(Saved {
-                    template: definition.template,
-                    name,
-                    query,
-                    parameters,
-                    by: caller.actor.into(),
-                    written_at: now,
-                })
-            }
-            _ => return Err(Error::bad_request("not a query authoring command")),
+        let parameters = save
+            .parameter
+            .iter()
+            .map(|value| parameter(value))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut definitions = if let Some(reference) = query::saved::reference_name(query) {
+            definitions(&mut conn, &reference).await?
+        } else {
+            BTreeMap::new()
         };
+        let context = self.context();
+        let definition = SavedQuery {
+            name: save.name.clone(),
+            query: query.into(),
+            template: query::template::parse(query, &context)
+                .map_err(|error| error.failure(query))?,
+            parameters: parameters.clone(),
+        };
+        definitions.insert(save.name.clone(), definition.clone());
+        definitions.insert(
+            format!("{}@{}", save.name, caller.actor),
+            definition.clone(),
+        );
+        query::saved::validate_with(&definition, &context, &definitions)
+            .map_err(|error| error.failure(query))?;
+        let record = QueryRecord::Saved(Saved {
+            template: definition.template,
+            name: save.name.clone(),
+            query: query.into(),
+            parameters,
+            by: caller.actor.into(),
+            written_at: now,
+        });
+        self.admit_query_record(
+            &mut conn,
+            caller,
+            record,
+            now,
+            Some((operation, index, metadata)),
+        )
+        .await
+    }
+
+    async fn admit_query_record(
+        &self,
+        conn: &mut sqlx::PgConnection,
+        caller: &Caller,
+        record: QueryRecord,
+        now: Timestamp,
+        step: Option<(
+            sinex_model::OperationId,
+            usize,
+            &command_surface::RequestContext,
+        )>,
+    ) -> Result<Value> {
         let writer = self.writer.as_ref().ok_or_else(Error::no_writer)?;
         let acquired =
             sinex_sources::sources::query::request_material(record, caller.actor, &self.host, now);
@@ -235,12 +249,10 @@ impl Api {
             .ok_or_else(|| Error::internal("query acquisition has no material"))?;
         let source = std::sync::Arc::new(sinex_sources::sources::query::request_source());
         let binding = format!("query.request:{}@{}", caller.actor, self.host);
-        if let Some(metadata) = metadata {
+        let done = if let Some((operation, index, metadata)) = step {
             metadata.finish_read_phase()?;
-        }
-        let done = if let Some((operation, index)) = step {
             crate::submit::request_step(
-                &mut conn,
+                conn,
                 writer,
                 &self.blobs,
                 source,
@@ -256,7 +268,7 @@ impl Api {
             .await?
         } else {
             crate::submit::request(
-                &mut conn,
+                conn,
                 writer,
                 &self.blobs,
                 source,

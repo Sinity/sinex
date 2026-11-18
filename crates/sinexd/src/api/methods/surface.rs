@@ -84,19 +84,7 @@ impl Operation for RowsOperation {
         _: command_surface::Access,
         _: &command_surface::Caller,
     ) -> command_surface::Access {
-        if request
-            .steps
-            .iter()
-            .any(|step| matches!(step, sinex_protocol::rows::Step::Save(_)))
-        {
-            crate::api::surface_access(
-                sinex_protocol::command("save")
-                    .expect("save declared")
-                    .access,
-            )
-        } else {
-            command_surface::Access::Read
-        }
+        sinex_commands::required_access(&request.steps)
     }
 
     fn execute(
@@ -322,12 +310,9 @@ impl Api {
                 } else {
                     let operation = accepted.as_ref().expect("write request accepted").operation;
                     match self
-                        .query_record_step(
-                            Request::Save {
-                                name: save.name.clone(),
-                                query: request.selection.clone().expect("save has a question"),
-                                parameter: save.parameter.clone(),
-                            },
+                        .save_question(
+                            request.selection.as_deref().expect("save has a question"),
+                            save,
                             caller,
                             operation,
                             index,

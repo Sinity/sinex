@@ -135,12 +135,6 @@ pub enum Request {
     },
     ForecastReport,
 
-    Save {
-        name: String,
-        query: String,
-        #[serde(default)]
-        parameter: Vec<String>,
-    },
     QueryList,
     QueryComplete {
         query: String,

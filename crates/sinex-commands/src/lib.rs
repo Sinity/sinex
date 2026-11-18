@@ -9,7 +9,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sinex_protocol::rows::{Rows, RowsReply};
 use std::sync::{Arc, LazyLock};
-pub use steps::steps;
+pub use steps::{required_access, steps};
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]

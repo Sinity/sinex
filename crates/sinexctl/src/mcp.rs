@@ -155,11 +155,7 @@ impl Sinex {
                         );
                     }
                 };
-            if rows
-                .steps
-                .iter()
-                .any(|step| matches!(step, sinex_protocol::rows::Step::Save(_)))
-            {
+            if sinex_commands::required_access(&rows.steps) != command_surface::Access::Read {
                 return failure_result(
                     &Failure::new(FailureKind::Refused, "save needs sinex_write")
                         .with_hint("call sinex_write with the same request"),

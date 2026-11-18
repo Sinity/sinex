@@ -59,7 +59,7 @@ async fn rows_call(w: &World, body: Value) -> (StatusCode, Value) {
     rows_as(w, READ, body).await
 }
 
-async fn rows_as(w: &World, token: &str, body: Value) -> (StatusCode, Value) {
+pub(super) async fn rows_as(w: &World, token: &str, body: Value) -> (StatusCode, Value) {
     let response = w
         .app
         .clone()
@@ -184,8 +184,14 @@ async fn retry_keeps_expanded_question_and_committed_save_after_predicate_change
 ) {
     let w = world(db).await;
     admit(&w, &["synthetic first", "synthetic second"], 0).await;
-    let (_, saved) = call_unbounded(&w, Some(OPERATOR), json!({"method":"save","name":"original","query":"events where event_type = command.executed"})).await;
-    assert_eq!(saved["outcome"], "ok", "{saved}");
+    save_question(
+        &w,
+        "original",
+        "events where event_type = command.executed",
+        &[],
+    )
+    .await
+    .unwrap();
     let request = json!({"operation":"rows", "request_id":"keep-accepted", "arguments":{
         "selection":"query:original", "page_size":1, "steps":[{"verb":"read"},{"verb":"save","name":"copy"}]
     }, "deadline":null});
@@ -198,13 +204,9 @@ async fn retry_keeps_expanded_question_and_committed_save_after_predicate_change
     let written = first["value"]["steps"][1]["outcome"].clone();
     assert_eq!(written["reply"]["kind"], "written");
     assert!(written["reply"]["reply"]["event"].is_string());
-    let (_, changed) = call_unbounded(
-        &w,
-        Some(OPERATOR),
-        json!({"method":"save","name":"original","query":"events where source = absent"}),
-    )
-    .await;
-    assert_eq!(changed["outcome"], "ok", "{changed}");
+    save_question(&w, "original", "events where source = absent", &[])
+        .await
+        .unwrap();
     admit(&w, &["synthetic newly matching"], 2).await;
     let mut conn = w.reads.acquire().await.unwrap();
     let before: (i64,i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM core.events),(SELECT count(*) FROM raw.materials),(SELECT count(*) FROM core.runs)").fetch_one(&mut *conn).await.unwrap();

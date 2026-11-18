@@ -115,18 +115,6 @@ fn query_authoring_options_are_not_consumed_by_the_text_argument() {
             json!("2026-09-14T08:00:00Z"),
         ),
         (
-            "save",
-            vec![
-                "save",
-                "by-source",
-                "events where source = $name",
-                "--parameter",
-                "name:text",
-            ],
-            "parameter",
-            json!(["name:text"]),
-        ),
-        (
             "timeline",
             vec!["timeline", "where source = synthetic", "--page-size", "2"],
             "page-size",

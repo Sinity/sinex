@@ -418,8 +418,14 @@ async fn saved_recall_and_context_pages_keep_their_clock_and_grants(db: devkit::
     );
     let activity_ids = activity.iter().map(|event| event.id).collect::<Vec<_>>();
     admit_events(&w, activity).await;
-    let (_,saved) = call_unbounded(&w,Some(OPERATOR),json!({"method":"save","name":"remember-tide","query":"recall last where cwds ^ /src/tide"})).await;
-    assert_eq!(saved["outcome"], "ok", "{saved}");
+    save_question(
+        &w,
+        "remember-tide",
+        "recall last where cwds ^ /src/tide",
+        &[],
+    )
+    .await
+    .unwrap();
     let (_, first) = call_unbounded(
         &w,
         Some(OPERATOR),

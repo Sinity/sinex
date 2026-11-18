@@ -1,6 +1,6 @@
 //! One typed declaration of each verb's CLI fields and wire arguments.
 use command_surface::{ArgumentForm, ArgumentSpec, StepDeclarations};
-use sinex_protocol::rows::{Read, Save};
+use sinex_protocol::rows::{Read, Save, Step};
 use std::sync::LazyLock;
 
 /// Step argument ownership is shared by all parsers. The CLI's
@@ -39,6 +39,18 @@ pub fn steps() -> &'static StepDeclarations {
         steps
     });
     &STEPS
+}
+
+/// Required credentials come from the typed steps, independently of tool names.
+pub fn required_access(steps: &[Step]) -> command_surface::Access {
+    steps
+        .iter()
+        .map(|step| match step {
+            Step::Read(_) => command_surface::Access::Read,
+            Step::Save(_) => command_surface::Access::Write,
+        })
+        .max()
+        .unwrap_or(command_surface::Access::Read)
 }
 
 #[cfg(test)]
