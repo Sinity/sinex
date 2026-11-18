@@ -26,14 +26,6 @@ impl Api {
         caller: &Caller,
         request: Request,
     ) -> Result<Reply> {
-        if let Request::Undo { operation, dry_run } = request {
-            let scope = Scope::Operation {
-                operation: OperationId(uuid("operation", &operation)?),
-            };
-            return self
-                .lifecycle(caller, Act::Undo, scope, dry_run.unwrap_or(false))
-                .await;
-        }
         let (act, args, dry_run) = match request {
             Request::Tombstone {
                 target,

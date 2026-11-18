@@ -335,3 +335,48 @@ fn moment_note_keeps_text_context_options_and_explicit_request_identity() {
         "original-note"
     );
 }
+
+#[devkit::test]
+fn operation_undo_reaches_rows_with_preview_and_retry_identity() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let incoming = request(&mut stream);
+        let body = json!({"outcome":"ok","value":{"population":null,"references":[],"steps":[{"verb":"undo","outcome":{"status":"done","reply":{"kind":"written","reply":{"compare_only":true,"cascade":{"restored":{"command.executed":2}}}}}}]}});
+        reply(&mut stream, &body);
+        incoming
+    });
+    let output = cli(&endpoint)
+        .args([
+            "--json",
+            "op:00000000-0000-7000-8000-000000000001",
+            "undo",
+            "--dry-run",
+            "--request-id",
+            "undo-once",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let body: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        body["value"]["steps"][0]["outcome"]["reply"]["reply"]["cascade"]["restored"]["command.executed"],
+        2
+    );
+    let (path, request) = server.join().unwrap();
+    assert_eq!(path, "/v1/rows");
+    assert_eq!(request["request_id"], "undo-once");
+    assert_eq!(
+        request["arguments"]["selection"],
+        "op:00000000-0000-7000-8000-000000000001"
+    );
+    assert_eq!(
+        request["arguments"]["steps"],
+        json!([{"verb":"undo","all":false,"dry_run":true}])
+    );
+}

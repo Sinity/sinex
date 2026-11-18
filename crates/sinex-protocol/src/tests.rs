@@ -36,21 +36,16 @@ fn the_table_and_the_requests_agree() {
 
 #[devkit::test]
 fn requests_have_stable_wire_names() {
-    let r = Request::Undo {
-        operation: "x".into(),
-        dry_run: None,
-    };
-    assert_eq!(
-        serde_json::to_value(&r).unwrap(),
-        json!({"method": "undo", "operation": "x", "dry-run": null})
-    );
-    assert_eq!(r.access(), Access::Agent);
     let tombstone = Request::from_args(
         "tombstone",
         serde_json::from_value(json!({"material": ["m"]})).unwrap(),
     )
     .unwrap();
     assert_eq!(tombstone.access(), Access::Operator);
+    assert_eq!(
+        serde_json::to_value(&tombstone).unwrap()["method"],
+        "tombstone"
+    );
     assert_eq!(Request::Status.access(), Access::Read);
 }
 
@@ -229,7 +224,6 @@ fn every_option_name_has_one_kind() {
         ("tombstone", "since", ArgKind::Text),
         ("tombstone", "until", ArgKind::Text),
         ("tombstone", "dry-run", ArgKind::Bool),
-        ("undo", "dry-run", ArgKind::Bool),
         ("replay", "dry-run", ArgKind::Bool),
         ("backup", "to", ArgKind::Text),
         ("library-curate", "request-id", ArgKind::Text),

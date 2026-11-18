@@ -284,11 +284,6 @@ pub enum Request {
         #[serde(default)]
         dry_run: Option<bool>,
     },
-    Undo {
-        operation: String,
-        #[serde(default)]
-        dry_run: Option<bool>,
-    },
     Resume {
         operation: String,
     },

@@ -99,6 +99,7 @@ pub enum Step {
     Note(Note),
     Archive(Lifecycle),
     Restore(Lifecycle),
+    Undo(Lifecycle),
 }
 
 impl Step {
@@ -109,6 +110,7 @@ impl Step {
             Self::Note(_) => "note",
             Self::Archive(_) => "archive",
             Self::Restore(_) => "restore",
+            Self::Undo(_) => "undo",
         }
     }
 }

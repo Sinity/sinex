@@ -1,13 +1,18 @@
 # The lifecycle
 
 **Decided target surface:** examples use `sinex SELECTION VERB`. The current
-binary is `sinexctl`. Archive and restore already use selection-first lines and
-typed rows requests; replay, tombstone, undo and resume retain their generated
+binary is `sinexctl`. Archive, restore and operation undo use selection-first lines and
+typed rows requests; replay, tombstone and resume retain their generated
 command forms. Generated help describes that build.
 
 Nothing in Sinex is deleted by default. Readings and materials are **live**, **archived** (the trash, reversible) or **tombstoned** (irreversible, from the archive only), and whole provenance chains move between those states together. This page owns the states, archive and restore, replay and its undo, the whole-chain rule, material status, tombstoning, archive reasons, how the states are stored, as-of reads, and operations with their actors. Records and readings are defined in [events](events.md); the lifecycle verbs on the CLI are in [the CLI](interfaces.md#cli); lifecycle requests on the wire are in [producers](producers.md#lifecycle-requests); the as-of query syntax is in [query](query.md); how derivations recompute after a move is in [derivations](derivations.md#derivations-and-the-lifecycle).
 
 ## Lines and accepted scope
+
+The current operation reversal is `sinexctl op:OPERATION_ID undo`, optionally
+with `--dry-run`. It reverses archive, restore, replay or another undo, retaining
+one accepted identity and receipt across retries. Authored-write and session
+undo in the decided surface below remain separate capabilities.
 
 ```sh
 sinex 'events where source:desktop.clipboard since:1h' archive --dry-run

@@ -8,7 +8,7 @@ use std::sync::LazyLock;
 pub fn steps() -> &'static StepDeclarations {
     static STEPS: LazyLock<StepDeclarations> = LazyLock::new(|| {
         let mut steps = StepDeclarations::default().cli_selection("selection", "references");
-        for verb in ["archive", "restore"] {
+        for verb in ["archive", "restore", "undo"] {
             steps
                 .declare::<Lifecycle>(
                     verb,
@@ -107,7 +107,7 @@ pub fn required_access(steps: &[Step]) -> command_surface::Access {
             Step::Read(_) => command_surface::Access::Read,
             Step::Save(_) => command_surface::Access::Write,
             Step::Note(_) => command_surface::Access::Permanent,
-            Step::Archive(_) | Step::Restore(_) => command_surface::Access::Write,
+            Step::Archive(_) | Step::Restore(_) | Step::Undo(_) => command_surface::Access::Write,
         })
         .max()
         .unwrap_or(command_surface::Access::Read)

@@ -64,17 +64,17 @@ pub(crate) fn tools() -> Vec<Tool> {
     let mut write = read.clone();
     write["name"] = json!("sinex_write");
     write["description"] = json!(
-        "Read evidence, save questions, archive and restore selected chains. Use all for a multirow lifecycle write or dry_run for a preview. Writes retain their receipt across retries. Follow returned ready requests."
+        "Read evidence, save questions, archive and restore selected chains, and reverse lifecycle operations. Use all for a multirow lifecycle write or dry_run for a preview. Writes retain their receipt across retries. Follow returned ready requests."
     );
     write["annotations"] =
         json!({"readOnlyHint":false,"idempotentHint":true,"openWorldHint":false});
     let mut act = write.clone();
     act["name"] = json!("sinex_act");
     act["description"] = json!(
-        "Read evidence, save questions, archive and restore selected chains, and write moment notes. Operator credentials are required for notes. Retries retain committed receipts."
+        "Read evidence, save questions, archive and restore selected chains, reverse lifecycle operations, and write moment notes. Operator credentials are required for notes. Retries retain committed receipts."
     );
     write["inputSchema"]["properties"]["arguments"]["properties"]["steps"]["items"]["properties"]
-        ["verb"]["enum"] = json!(["read", "save", "archive", "restore"]);
+        ["verb"]["enum"] = json!(["read", "save", "archive", "restore", "undo"]);
     read["annotations"] = json!({"readOnlyHint":true,"openWorldHint":false});
     read["inputSchema"]["properties"]["arguments"]["properties"]["steps"]["items"]["properties"]
         ["verb"]["enum"] = json!(["read"]);

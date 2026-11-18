@@ -199,13 +199,15 @@ impl Api {
         let mut conn = self.acquire(caller).await?;
         let writes = request.steps.iter().any(|step| match step {
             Step::Read(_) => false,
-            Step::Archive(options) | Step::Restore(options) => !options.dry_run,
+            Step::Archive(options) | Step::Restore(options) | Step::Undo(options) => {
+                !options.dry_run
+            }
             Step::Save(_) | Step::Note(_) => true,
         });
         let lifecycle = request
             .steps
             .iter()
-            .any(|step| matches!(step, Step::Archive(_) | Step::Restore(_)));
+            .any(|step| matches!(step, Step::Archive(_) | Step::Restore(_) | Step::Undo(_)));
         let reads = request.steps.is_empty()
             || request
                 .steps
@@ -378,7 +380,7 @@ impl Api {
         let mut failed = false;
         for (index, step) in request.steps.iter().enumerate() {
             let Step::Read(read) = step else {
-                if matches!(step, Step::Archive(_) | Step::Restore(_)) {
+                if matches!(step, Step::Archive(_) | Step::Restore(_) | Step::Undo(_)) {
                     let outcome = if failed {
                         StepOutcome::NotRun
                     } else {
@@ -436,7 +438,7 @@ impl Api {
                             self.note_moment(note, caller, operation, index, metadata)
                                 .await
                         }
-                        Step::Read(_) | Step::Archive(_) | Step::Restore(_) => {
+                        Step::Read(_) | Step::Archive(_) | Step::Restore(_) | Step::Undo(_) => {
                             unreachable!("step handled separately")
                         }
                     };
@@ -661,11 +663,11 @@ fn retained_write_reply(
                 },
             ),
             Step::Read(_) => ("read", StepOutcome::NotRun),
-            Step::Save(_) | Step::Note(_) | Step::Archive(_) | Step::Restore(_) => {
+            Step::Save(_) | Step::Note(_) | Step::Archive(_) | Step::Restore(_) | Step::Undo(_) => {
                 let outcome = if let Some(recorded) = accepted.step(index) {
                     let recorded: sinex_store::requests::CommittedStep =
                         serde_json::from_value(recorded.clone())?;
-                    if matches!(step, Step::Archive(_) | Step::Restore(_)) {
+                    if matches!(step, Step::Archive(_) | Step::Restore(_) | Step::Undo(_)) {
                         lifecycle::lifecycle_outcome(recorded.reply)
                     } else {
                         StepOutcome::Done {

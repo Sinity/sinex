@@ -172,3 +172,23 @@ fn a_literal_json_word_does_not_change_failure_presentation() {
         .unwrap();
     assert!(json);
 }
+
+#[devkit::test]
+fn operation_undo_keeps_selection_preview_and_request_identity() {
+    let line = rows(&[
+        "op:00000000-0000-7000-8000-000000000001",
+        "undo",
+        "--dry-run",
+        "--request-id",
+        "undo-once",
+    ]);
+    assert_eq!(line.request.request_id, "undo-once");
+    assert_eq!(
+        line.request.arguments["selection"],
+        "op:00000000-0000-7000-8000-000000000001"
+    );
+    assert_eq!(
+        line.request.arguments["steps"],
+        serde_json::json!([{"verb":"undo","dry_run":true,"all":false}])
+    );
+}

@@ -55,12 +55,20 @@ fn tool_examples_follow_the_table() {
         sinex_protocol::command("tombstone").unwrap().access,
         sinex_protocol::Access::Operator
     );
-    for name in ["sinex_undo", "sinex_resume"] {
-        assert!(
-            names.contains(&name),
-            "agents archive, restore and undo: {name}"
-        );
-    }
+    assert!(names.contains(&"sinex_resume"));
+    let write = tools.iter().find(|t| t.name == "sinex_write").unwrap();
+    assert!(
+        write.input_schema["properties"]["arguments"]["properties"]["steps"]["items"]["properties"]
+            ["verb"]["enum"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("undo"))
+    );
+    let undo: sinex_protocol::rows::Step = serde_json::from_value(json!({"verb":"undo"})).unwrap();
+    assert_eq!(
+        sinex_commands::required_access(&[undo]),
+        command_surface::Access::Write
+    );
     let read = tools.iter().find(|t| t.name == "sinex_read").unwrap();
     assert_eq!(
         read.input_schema["properties"]["operation"]["enum"],

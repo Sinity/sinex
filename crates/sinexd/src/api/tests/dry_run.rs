@@ -87,7 +87,11 @@ async fn tombstone_dry_run_changes_nothing(db: devkit::pg::TestDatabase) {
 async fn undo_dry_run_changes_nothing(db: devkit::pg::TestDatabase) {
     let world = world(db).await;
     let operation = archived(&world).await;
-    preview(&world, json!({"method":"undo","operation":operation})).await;
+    preview_rows(
+        &world,
+        surface::lifecycle_request(format!("op:{operation}"), "undo"),
+    )
+    .await;
 }
 
 #[devkit::test]

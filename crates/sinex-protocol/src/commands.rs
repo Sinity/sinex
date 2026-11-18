@@ -608,21 +608,6 @@ pub const COMMANDS: &[Command] = &[
         mcp: false,
     },
     Command {
-        examples: &["sinexctl undo 00000000-0000-7000-8000-000000000001 --dry-run"],
-        name: "undo",
-        summary: "Reverse an operation: archive what it made live, then restore what it archived. Undoes archive, restore, replay and undo; a tombstone is irreversible.",
-        args: &[
-            pos("operation", ArgKind::Text, "the operation to reverse"),
-            opt(
-                "dry-run",
-                ArgKind::Bool,
-                "show what would move and change nothing",
-            ),
-        ],
-        access: Access::Agent,
-        mcp: true,
-    },
-    Command {
         examples: &["sinexctl backup list"],
         name: "backup",
         summary: "Pause cleanup so a backup is consistent, prepare a local backup (database, keys, event log files and capture positions), release the pause, or list open pauses. The deployment's backup tool archives the backup.",

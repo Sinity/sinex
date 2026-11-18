@@ -244,3 +244,63 @@ async fn typed_lifecycle_moves_material_status_and_uses_hidden_run_identities(
         2
     );
 }
+
+#[devkit::test]
+async fn typed_operation_undo_reverses_both_phases_and_retries_its_receipt(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
+    admit(&w, &["first undo subject", "second undo subject"], 0).await;
+    let (_, archived) = rows_as(
+        &w,
+        AGENT,
+        move_request("undo-archive", "events", "archive", false, true),
+    )
+    .await;
+    let operation = receipt(&archived)["operation"].as_str().unwrap();
+    assert_eq!(
+        receipt(&archived)["undo"],
+        format!("sinexctl op:{operation} undo")
+    );
+    assert_eq!(live_count(&w).await, 0);
+    let selection = format!("op:{operation}");
+    let before = operation_count(&w).await;
+    let (_, preview) = rows_as(
+        &w,
+        AGENT,
+        move_request("undo-preview", &selection, "undo", true, false),
+    )
+    .await;
+    assert_eq!(
+        receipt(&preview)["cascade"]["restored"]["command.executed"],
+        2
+    );
+    assert_eq!(operation_count(&w).await, before);
+    assert_eq!(live_count(&w).await, 0);
+    let request = move_request("undo-once", &selection, "undo", false, false);
+    let (_, undone) = rows_as(&w, AGENT, request.clone()).await;
+    let undone = receipt(&undone).clone();
+    assert_eq!(undone["cascade"]["restored"]["command.executed"], 2);
+    assert_eq!(live_count(&w).await, 2);
+    let before = operation_count(&w).await;
+    // Lost final request receipt must recover the same native undo operation.
+    let lost = sqlx::query("UPDATE core.operations o SET progress=o.progress-'steps' FROM core.operation_requests r WHERE o.id=r.operation_id AND r.request_id='undo-once'")
+        .execute(&w.reads).await.unwrap();
+    assert_eq!(lost.rows_affected(), 1);
+    let (_, repeated) = rows_as(&w, AGENT, request).await;
+    assert_eq!(receipt(&repeated), &undone);
+    assert_eq!(operation_count(&w).await, before);
+    assert_eq!(live_count(&w).await, 2);
+    let selection = format!("op:{}", undone["operation"].as_str().unwrap());
+    let (_, reversed) = rows_as(
+        &w,
+        AGENT,
+        move_request("undo-the-undo", &selection, "undo", false, false),
+    )
+    .await;
+    assert_eq!(
+        receipt(&reversed)["cascade"]["archived"]["command.executed"],
+        2
+    );
+    assert_eq!(live_count(&w).await, 0);
+}

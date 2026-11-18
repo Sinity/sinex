@@ -630,3 +630,31 @@ fn mcp_sql_uses_the_read_operation_and_follows_the_exact_ready_page() {
     assert_eq!(requests[1], next);
     assert_eq!(requests[0]["operation"], "sql");
 }
+
+#[devkit::test]
+fn mcp_operation_undo_uses_write_access_and_one_retry_identity() {
+    let arguments = json!({"arguments":{"selection":"op:00000000-0000-7000-8000-000000000001","steps":[{"verb":"undo"}]},"format":"json","deadline":null});
+    let denied = mcp_call("http://127.0.0.1:1", "sinex_read", arguments.clone());
+    assert_eq!(
+        denied["result"]["structuredContent"]["error"]["kind"],
+        "refused"
+    );
+    let body=json!({"outcome":"ok","value":{"population":null,"references":[],"steps":[{"verb":"undo","outcome":{"status":"done","reply":{"kind":"written","reply":{"operation":"one-undo","cascade":{"restored":{"command.executed":2}}}}}}]}}).to_string();
+    let (endpoint, server) = daemon(vec![(200, body.clone()), (200, body)]);
+    let first = mcp_call(&endpoint, "sinex_write", arguments.clone());
+    let second = mcp_call(&endpoint, "sinex_write", arguments.clone());
+    assert_eq!(first["result"]["isError"], false, "{first}");
+    assert_eq!(
+        first["result"]["structuredContent"],
+        second["result"]["structuredContent"]
+    );
+    let requests = server.join().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0], requests[1]);
+    assert_eq!(requests[0]["arguments"], arguments["arguments"]);
+    assert!(
+        requests[0]["request_id"]
+            .as_str()
+            .is_some_and(|id| !id.is_empty())
+    );
+}

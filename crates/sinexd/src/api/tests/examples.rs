@@ -85,17 +85,6 @@ async fn help_examples_run_on_fixture(db: devkit::pg::TestDatabase) {
     .await
     .unwrap();
     let item = copies[0].item.clone();
-    admit(&world, &["synthetic example history"], 0).await;
-    let (_, archived) = surface::rows_as(
-        &world,
-        OPERATOR,
-        surface::lifecycle_request("sources where source = terminal.atuin", "archive"),
-    )
-    .await;
-    assert_eq!(archived["outcome"], "ok", "{archived}");
-    let operation = surface::lifecycle_receipt(&archived)["operation"]
-        .as_str()
-        .unwrap();
     let mut failures = Vec::new();
     for command in sinex_protocol::COMMANDS {
         for example in command.examples {
@@ -109,9 +98,6 @@ async fn help_examples_run_on_fixture(db: devkit::pg::TestDatabase) {
                     "/synthetic/library-sidecar.json" => sidecar.display().to_string(),
                     "/synthetic/identity.age" => identity_file.display().to_string(),
                     "library:example" => item.clone(),
-                    "00000000-0000-7000-8000-000000000001" if command.name == "undo" => {
-                        operation.to_owned()
-                    }
                     _ => word.clone(),
                 };
             }

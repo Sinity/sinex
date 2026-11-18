@@ -237,7 +237,7 @@ fn report(op: &Operation, progress: &Progress, moved: &Counts, refusals: &[Refus
         "cascade": moved,
         "refusals": refusals,
         "result": if refusals.is_empty() { "ok" } else { "stopped_early" },
-        "undo": format!("sinexctl undo {}", op.id),
+        "undo": format!("sinexctl op:{} undo", op.id),
     })
 }
 

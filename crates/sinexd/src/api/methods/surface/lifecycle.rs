@@ -23,6 +23,7 @@ impl Api {
         let (act, options) = match &request.steps[index] {
             Step::Archive(options) => (Act::Archive, options),
             Step::Restore(options) => (Act::Restore, options),
+            Step::Undo(options) => (Act::Undo, options),
             _ => unreachable!("lifecycle step"),
         };
         let writer = self.writer()?;
