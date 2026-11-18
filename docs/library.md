@@ -416,8 +416,8 @@ actual display. `note '' --as view --seconds N --player P` preserves an external
 view report without invented text.
 
 MCP has three target tools: reads and rankings through `sinex_read`, authored
-curation through `sinex_write`, staging and host application opening through
-`sinex_act`. Their [typed line contract](interfaces.md#mcp) supplies ordered
+curation and staging local paths/text through `sinex_write`, URL staging and
+host application opening through `sinex_act`. Their [typed line contract](interfaces.md#mcp) supplies ordered
 references, caller metadata, access validation and retry. No separate
 library-specific request schema or reconstruction path is introduced.
 

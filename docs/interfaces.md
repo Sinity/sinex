@@ -414,13 +414,14 @@ prerequisites.
 | Tool | Access |
 |---|---|
 | `sinex_read` | reads, including rows, recall, status, help and read-only SQL |
-| `sinex_write` | reads and authored writes, including notes, curation, saved queries, watches and judgments |
-| `sinex_act` | reads, writes and actions, including stage, lifecycle, application opening and experiment acts |
+| `sinex_write` | reads, authored writes, reversible lifecycle steps, and staging paths/text |
+| `sinex_act` | reads/writes plus URL staging, work resume, tombstone, interruption requests and host application opening |
 
-They carry one typed command/line shape, for example:
+They carry the shared envelope `{operation?, arguments, request_id?, deadline?,
+budget_tokens?, cursor?}`. `operation` defaults to `rows`; a rows call is, for example:
 
 ```json
-{"operation":"line","arguments":{"selection":"yesterday","steps":[{"verb":"recall"}]}}
+{"operation":"rows","arguments":{"selection":"yesterday","steps":[{"verb":"recall"}]}}
 ```
 
 An ordered `references` array can replace `selection`; the two are mutually
@@ -428,6 +429,8 @@ exclusive. MCP never reads a terminal's `@N` file. The connection supplies calle
 session metadata, while the daemon computes authorship. Credential roles
 (read/agent/operator) remain separate from tool read/write/act access. Dispatch
 checks both before effects; a higher-access tool does not grant a higher credential.
+A line requires its highest step access. Interrupting notes and host-opening reads
+require act access. Paths/text stage as writes; URLs stage as acts.
 Read-only SQL retains the reader role, current output rules and caller-bound
 paging. Host-opening `read.to` requires act access and one idempotent launch;
 FILE/DIR, pager and clipboard destinations belong to the calling process.
@@ -438,7 +441,11 @@ replace those schemas. Each answer retains the common envelope, structured rows,
 read context, continuation, data notice and per-row delimiters. Budgets count the
 encoded answer and cut whole items with omission counts. Failed steps retain
 prior outcomes and undo lines; MCP sets `isError` for the actual failure. A
-continuation repeats only its read. No raw material bytes are returned over MCP.
+continuation repeats only its read. MCP excludes the terminal picker, row numbers,
+raw material bytes, live `read --follow` streams, local destinations, offline/byte
+diagnostics, unlock, install, web, demo, MCP-server startup and backup commands.
+A streaming refusal gives a finite read or CLI form. Read-only SQL remains in
+the read tool, under its existing reader role and output rules.
 
 ## Status
 
@@ -699,9 +706,10 @@ decides which prompts may be sent (default; open operator question).
 
 ## Follow
 
-- `QUERY follow` (SSE over HTTP, a subscription over MCP) is a signal without a delivery
+- **Decided target:** `sinex 'QUERY' read --follow` (SSE over HTTP, CLI stream) is a signal without a delivery
   rule: the same standing evaluator delivered to the open connection, `on_new` by
-  default, `--for` and `--what` as in rules. Nothing is recorded.
+  default; `--after POSITION` continues it and `--until-idle` bounds the CLI wait.
+  The stream itself stores no new authored question.
 - The initial data notice follows initialization of the subscription's watch and
   commit cursor. A matching commit admitted after that notice is beyond the initial
   cursor position and is delivered once.
