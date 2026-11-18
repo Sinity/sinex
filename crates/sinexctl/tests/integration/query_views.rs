@@ -173,19 +173,6 @@ fn answer_times_share_one_labelled_zone() {
 }
 
 #[devkit::test]
-fn sql_times_are_labelled_utc() {
-    let text = answered(
-        &["sql", "SELECT now()"],
-        json!({
-            "columns":["when"], "rows":[{"when":"2026-09-14T08:00:00Z"}],
-            "page":{"size":50,"cursor":null}
-        }),
-    );
-    assert!(text.contains("2026-09-14 08:00:00+00:00"), "{text}");
-    assert!(text.ends_with("1 rows; times in UTC\n"), "{text}");
-}
-
-#[devkit::test]
 fn lists_continue_their_own_command() {
     for args in [
         vec!["comparisons", "--page-size", "1"],

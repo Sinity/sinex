@@ -443,20 +443,32 @@ async fn archive_and_restore_go_through_the_writer(db: devkit::pg::TestDatabase)
 async fn sql_reads_as_the_reader_role(db: devkit::pg::TestDatabase) {
     let w = world(db).await;
     admit(&w, &["ls"], 0).await;
-    let (_, body) = call_unbounded(
+    let (_, body) = surface::request_as(
         &w,
-        Some(READ),
-        json!({"method": "sql", "sql": "SELECT count(*) AS n FROM core.visible_events"}),
+        "/v1/sql",
+        READ,
+        sql_request(
+            "SELECT count(*) AS n FROM core.visible_events",
+            None,
+            None,
+            command_surface::Deadline::None,
+        ),
     )
     .await;
-    assert_eq!(body["result"]["rows"], json!([{"n": 1}]), "{body}");
-    let (_, body) = call_unbounded(
+    assert_eq!(body["value"]["rows"], json!([{"n": 1}]), "{body}");
+    let (_, body) = surface::request_as(
         &w,
-        Some(OPERATOR),
-        json!({"method": "sql", "sql": "DELETE FROM core.events RETURNING id"}),
+        "/v1/sql",
+        OPERATOR,
+        sql_request(
+            "DELETE FROM core.events RETURNING id",
+            None,
+            None,
+            command_surface::Deadline::None,
+        ),
     )
     .await;
-    assert_eq!(body["outcome"], json!("failed"));
+    assert_eq!(body["outcome"], json!("error"));
 }
 
 #[devkit::test]
@@ -467,19 +479,25 @@ async fn sql_answers_a_page_at_a_time_and_every_row_is_reachable(db: devkit::pg:
     let mut seen = Vec::new();
     let mut pages = 0;
     loop {
-        let (_, body) = call_unbounded(
+        let (_, body) = surface::request_as(
             &w,
-            Some(READ),
-            json!({"method": "sql", "sql": sql, "page-size": 3, "cursor": cursor}),
+            "/v1/sql",
+            READ,
+            sql_request(
+                sql,
+                Some(3),
+                cursor.as_deref(),
+                command_surface::Deadline::None,
+            ),
         )
         .await;
-        let rows = body["result"]["rows"]
+        let rows = body["value"]["rows"]
             .as_array()
             .unwrap_or_else(|| panic!("{body}"));
         assert!(rows.len() <= 3, "{body}");
         seen.extend(rows.iter().map(|r| r["n"].as_i64().unwrap()));
         pages += 1;
-        cursor = body["result"]["page"]["cursor"].as_str().map(String::from);
+        cursor = body["value"]["page"]["cursor"].as_str().map(String::from);
         if cursor.is_none() {
             break;
         }
@@ -494,26 +512,30 @@ async fn sql_pages_end_early_once_they_hold_their_bytes(db: devkit::pg::TestData
     // Rows of 3 MiB each: an 8 MiB page holds three at most, whatever the
     // row count asked for, and the rest stay reachable.
     let sql = "SELECT repeat('x', 3 * 1024 * 1024) AS wide FROM generate_series(1, 5)";
-    let (_, body) = call_unbounded(
+    let (_, body) = surface::request_as(
         &w,
-        Some(READ),
-        json!({"method": "sql", "sql": sql, "page-size": 10}),
+        "/v1/sql",
+        READ,
+        sql_request(sql, Some(10), None, command_surface::Deadline::None),
     )
     .await;
-    let first = body["result"]["rows"].as_array().unwrap().len();
+    let first = body["value"]["rows"].as_array().unwrap().len();
     assert!((1..=3).contains(&first), "{first} rows on the first page");
-    let cursor = body["result"]["page"]["cursor"]
-        .as_str()
-        .unwrap()
-        .to_owned();
-    let (_, body) = call_unbounded(
+    let cursor = body["value"]["page"]["cursor"].as_str().unwrap().to_owned();
+    let (_, body) = surface::request_as(
         &w,
-        Some(READ),
-        json!({"method": "sql", "sql": sql, "page-size": 10, "cursor": cursor}),
+        "/v1/sql",
+        READ,
+        sql_request(
+            sql,
+            Some(10),
+            Some(&cursor),
+            command_surface::Deadline::None,
+        ),
     )
     .await;
     assert!(
-        !body["result"]["rows"].as_array().unwrap().is_empty(),
+        !body["value"]["rows"].as_array().unwrap().is_empty(),
         "{body}"
     );
 }
@@ -522,62 +544,69 @@ async fn sql_pages_end_early_once_they_hold_their_bytes(db: devkit::pg::TestData
 async fn an_sql_cursor_serves_only_its_statement_and_caller(db: devkit::pg::TestDatabase) {
     let w = world(db).await;
     let sql = "SELECT n FROM generate_series(1, 4) AS n";
-    let (_, body) = call_unbounded(
+    let (_, body) = surface::request_as(
         &w,
-        Some(READ),
-        json!({"method": "sql", "sql": sql, "page-size": 1}),
+        "/v1/sql",
+        READ,
+        sql_request(sql, Some(1), None, command_surface::Deadline::None),
     )
     .await;
-    let cursor = body["result"]["page"]["cursor"]
-        .as_str()
-        .unwrap()
-        .to_owned();
-    let (_, other) = call_unbounded(
+    let cursor = body["value"]["page"]["cursor"].as_str().unwrap().to_owned();
+    let (_, other) = surface::request_as(
         &w,
-        Some(OPERATOR),
-        json!({"method": "sql", "sql": sql, "page-size": 1, "cursor": cursor}),
+        "/v1/sql",
+        OPERATOR,
+        sql_request(sql, Some(1), Some(&cursor), command_surface::Deadline::None),
     )
     .await;
-    assert_eq!(other["outcome"], json!("failed"), "{other}");
-    let (_, other) = call_unbounded(
+    assert_eq!(other["outcome"], json!("error"), "{other}");
+    let (_, other) = surface::request_as(
         &w,
-        Some(READ),
-        json!({"method": "sql", "sql": "SELECT 1 AS n", "page-size": 1, "cursor": cursor}),
+        "/v1/sql",
+        READ,
+        sql_request(
+            "SELECT 1 AS n",
+            Some(1),
+            Some(&cursor),
+            command_surface::Deadline::None,
+        ),
     )
     .await;
-    assert_eq!(other["outcome"], json!("failed"), "{other}");
-    let (_, next) = call_unbounded(
+    assert_eq!(other["outcome"], json!("error"), "{other}");
+    let (_, next) = surface::request_as(
         &w,
-        Some(READ),
-        json!({"method": "sql", "sql": sql, "page-size": 1, "cursor": cursor}),
+        "/v1/sql",
+        READ,
+        sql_request(sql, Some(1), Some(&cursor), command_surface::Deadline::None),
     )
     .await;
-    assert_eq!(next["result"]["rows"], json!([{"n": 2}]), "{next}");
+    assert_eq!(next["value"]["rows"], json!([{"n": 2}]), "{next}");
 }
 
 #[devkit::test]
 async fn sql_reads_a_column_named_like_the_row_alias(db: devkit::pg::TestDatabase) {
     let w = world(db).await;
-    let (_, body) = call_unbounded(
+    let (_, body) = surface::request_as(
         &w,
-        Some(READ),
-        json!({"method": "sql", "sql": "SELECT 1 AS q"}),
+        "/v1/sql",
+        READ,
+        sql_request("SELECT 1 AS q", None, None, command_surface::Deadline::None),
     )
     .await;
-    assert_eq!(body["result"]["rows"], json!([{"q": 1}]), "{body}");
+    assert_eq!(body["value"]["rows"], json!([{"q": 1}]), "{body}");
 }
 
 #[devkit::test]
 async fn sql_runs_under_a_statement_time_limit(db: devkit::pg::TestDatabase) {
     let w = world(db).await;
     admit(&w, &["ls"], 0).await;
-    let (_, body) = call_unbounded(
+    let (_, body) = surface::request_as(
         &w,
-        Some(READ),
-        json!({"method": "sql", "deadline":2000, "sql": "SELECT extract(epoch FROM current_setting('statement_timeout')::interval)*1000 AS bound"}),
+        "/v1/sql", READ,
+        sql_request("SELECT extract(epoch FROM current_setting('statement_timeout')::interval)*1000 AS bound", None, None, command_surface::Deadline::Milliseconds(2000)),
     )
     .await;
-    let bound = body["result"]["rows"][0]["bound"].as_f64().unwrap();
+    let bound = body["value"]["rows"][0]["bound"].as_f64().unwrap();
     assert!(bound > 0. && bound <= 2000., "{body}");
 }
 
@@ -1155,4 +1184,24 @@ fn moment_request(mut note: Value) -> Value {
     note["verb"] = json!("note");
     json!({"operation":"rows", "request_id":sinex_model::OperationId::new().to_string(),
         "deadline":null, "arguments":{"steps":[note]}})
+}
+
+fn sql_request(
+    statement: &str,
+    page_size: Option<u64>,
+    cursor: Option<&str>,
+    deadline: command_surface::Deadline,
+) -> Value {
+    let mut request = command_surface::RunnableRequest::new(
+        "sql",
+        serde_json::to_value(sinex_protocol::sql::Sql {
+            sql: statement.into(),
+            page_size,
+        })
+        .unwrap(),
+        sinex_model::OperationId::new().to_string(),
+    );
+    request.cursor = cursor.map(str::to_owned);
+    request.deadline = deadline;
+    serde_json::to_value(request).unwrap()
 }

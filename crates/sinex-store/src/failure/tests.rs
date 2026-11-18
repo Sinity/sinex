@@ -53,6 +53,12 @@ async fn every_sqlx_error_class_maps_to_its_kind(db: devkit::pg::TestDatabase) {
     let other = failure_of(&url, &["SELECT 1 / 0"]).await;
     expect(&other, FailureKind::Internal, false, "22012");
 
+    for native in [&unique, &foreign, &serialization, &other] {
+        assert!(accepts_database_failure_code(
+            native.code.as_deref().unwrap(),
+            native.kind
+        ));
+    }
     // One connection, held: the next acquire waits out its timeout.
     let pool = PgPoolOptions::new()
         .max_connections(1)

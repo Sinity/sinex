@@ -207,6 +207,7 @@ pub(crate) fn router(
         .route("/v1", post(call))
         .route("/v1/status", post(surface_call))
         .route("/v1/rows", post(surface_call))
+        .route("/v1/sql", post(surface_call))
         .route("/v1/commands", get(commands))
         .route("/v1/follow", get(follow))
         .route("/v1/backup/prepare", get(backup_prepare))

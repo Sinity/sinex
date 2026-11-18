@@ -551,3 +551,26 @@ fn mcp_moment_note_uses_act_tool_and_keeps_retry_identity() {
         "synthetic moment"
     );
 }
+
+#[devkit::test]
+fn mcp_sql_uses_the_read_operation_and_follows_the_exact_ready_page() {
+    let arguments = json!({"operation":"sql","arguments":{"sql":"SELECT 1 AS number","page_size":1},"deadline":null,"format":"json"});
+    let mut next = arguments.clone();
+    next["request_id"] = json!("sql-next");
+    next["cursor"] = json!("sql-page");
+    let first = json!({"outcome":"ok","value":{"count":1,"rows":[{"number":1}],"page":{"size":1,"cursor":"sql-page"}},"next":[{"label":"next","request":next} ]});
+    let last = json!({"outcome":"ok","value":{"count":1,"rows":[{"number":2}],"page":{"size":1,"cursor":null}}});
+    let (endpoint, server) = daemon(vec![(200, first.to_string()), (200, last.to_string())]);
+    let reply = mcp_call(&endpoint, "sinex_read", arguments);
+    assert_eq!(reply["result"]["isError"], false, "{reply}");
+    let ready = reply["result"]["structuredContent"]["next"][0]["request"].clone();
+    assert_eq!(ready, next);
+    let followed = mcp_call(&endpoint, "sinex_read", ready);
+    assert_eq!(
+        followed["result"]["structuredContent"]["value"]["rows"],
+        json!([{"number":2}])
+    );
+    let requests = server.join().unwrap();
+    assert_eq!(requests[1], next);
+    assert_eq!(requests[0]["operation"], "sql");
+}

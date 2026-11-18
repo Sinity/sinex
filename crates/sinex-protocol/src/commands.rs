@@ -62,10 +62,8 @@ impl Command {
             "status" => Status,
             "query-complete" => Completion,
             "search" | "recall" => Search,
-            "query" | "context" | "timeline" | "sql" | "brief" | "forecast-report"
-            | "analysis-run" | "analysis-panel" | "analysis-why" | "gaps" | "library-rank" => {
-                Aggregate
-            }
+            "query" | "context" | "timeline" | "brief" | "forecast-report" | "analysis-run"
+            | "analysis-panel" | "analysis-why" | "gaps" | "library-rank" => Aggregate,
             _ => Read,
         }
     }
@@ -459,14 +457,6 @@ pub const COMMANDS: &[Command] = &[
         name: "query-complete",
         summary: "Complete the fields a query can use here.",
         args: &[pos("query", ArgKind::Rest, "query prefix to complete")],
-        access: Access::Read,
-        mcp: true,
-    },
-    Command {
-        examples: &["sinexctl sql 'SELECT 1 AS number'"],
-        name: "sql",
-        summary: "Run one read-only SQL statement; rows as JSON objects, a page at a time.",
-        args: &[pos("sql", ArgKind::Rest, "the SQL statement"), PAGE, CURSOR],
         access: Access::Read,
         mcp: true,
     },

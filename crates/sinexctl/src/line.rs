@@ -27,6 +27,7 @@ pub(crate) struct Line {
     request: RunnableRequest,
     options: Options,
     stdin: Stdin,
+    whole_sql: bool,
 }
 
 struct Rules;
@@ -36,7 +37,7 @@ impl SelectionRules for Rules {
         sinex_protocol::command(word).is_some()
             || matches!(
                 word,
-                "mcp" | "doctor" | "store" | "help" | "--help" | "-h" | "--version" | "-V"
+                "mcp" | "doctor" | "store" | "dev" | "help" | "--help" | "-h" | "--version" | "-V"
             )
     }
     // These distinctions do not change a rows request. The daemon owns its
@@ -152,19 +153,69 @@ pub(crate) fn parse(args: &[String]) -> Result<Option<Line>, (Failure, bool)> {
     parse_input(args, &mut options).map_err(|error| (error, options.json))
 }
 
+fn command_start(args: &[String]) -> (usize, bool) {
+    let mut index = 0;
+    let mut json = false;
+    while index < args.len() {
+        let (name, inline) = args[index]
+            .split_once('=')
+            .map_or((args[index].as_str(), false), |(name, _)| (name, true));
+        match name {
+            "--endpoint" | "--token-file" | "--deadline" | "--request-id" | "--budget"
+            | "--cursor" => index += if inline { 1 } else { 2 },
+            "--json" => {
+                json = true;
+                index += 1;
+            }
+            "--all" => index += 1,
+            _ => break,
+        }
+    }
+    (index, json)
+}
+
+pub(crate) fn help(args: &[String]) -> Option<String> {
+    let (index, _) = command_start(args);
+    let words: Vec<_> = args.get(index..)?.iter().map(String::as_str).collect();
+    matches!(
+        words.as_slice(),
+        ["dev", "sql", "--help" | "-h"] | ["help", "dev", "sql"] | ["dev", "--help" | "-h"]
+    )
+    .then(sql_help)
+}
+
+pub(crate) fn sql_help() -> String {
+    sinex_commands::declarations()
+        .help_for("sql")
+        .expect("SQL has declared help")
+        .replacen("sinex ", "sinexctl ", 1)
+}
+
 fn parse_input(args: &[String], options: &mut Options) -> Result<Option<Line>, Failure> {
     // The original command parser still owns these commands and their flags.
     // In particular its --all means pagination, unlike selection-line --all.
-    let mut command = 0;
-    while command < args.len() {
-        let (name, inline) = args[command]
-            .split_once('=')
-            .map_or((args[command].as_str(), false), |(name, _)| (name, true));
-        match name {
-            "--endpoint" | "--token-file" | "--deadline" => command += if inline { 1 } else { 2 },
-            "--json" | "--all" => command += 1,
-            _ => break,
-        }
+    let (command, json) = command_start(args);
+    if args.get(command).is_some_and(|word| word == "dev") {
+        options.json = json;
+        let parsed = sinex_commands::declarations()
+            .parse_cli(args, sinex_model::OperationId::new().to_string())?;
+        options.json = parsed.json;
+        options.endpoint = parsed
+            .calling_process
+            .get("endpoint")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        options.token_file = parsed
+            .calling_process
+            .get("token_file")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        return Ok(Some(Line {
+            request: parsed.request,
+            options: std::mem::take(options),
+            stdin: Stdin::Unused,
+            whole_sql: true,
+        }));
     }
     if command >= args.len()
         || command_surface::line::classify_first(
@@ -216,6 +267,7 @@ fn parse_input(args: &[String], options: &mut Options) -> Result<Option<Line>, F
         return Ok(Some(Line {
             request,
             options: std::mem::take(options),
+            whole_sql: false,
             stdin: if stdin_request {
                 Stdin::Request
             } else {
@@ -294,16 +346,22 @@ fn parse_input(args: &[String], options: &mut Options) -> Result<Option<Line>, F
         request,
         options: std::mem::take(options),
         stdin,
+        whole_sql: false,
     }))
 }
 
 /// Structured follow-ups retain every request option and never repeat writes.
 fn validate(request: &RunnableRequest) -> Result<(), Failure> {
-    if request.operation != "rows" {
-        return Err(bad("this request form takes the rows operation"));
-    }
     if request.request_id.is_empty() {
         return Err(bad("request_id must not be empty"));
+    }
+    if request.operation == "sql" {
+        serde_json::from_value::<sinex_protocol::sql::Sql>(request.arguments.clone())
+            .map_err(|error| bad(error.to_string()))?;
+        return Ok(());
+    }
+    if request.operation != "rows" {
+        return Err(bad("this request form takes the rows or sql operation"));
     }
     let rows: Rows = serde_json::from_value(request.arguments.clone())
         .map_err(|error| bad(error.to_string()))?;
@@ -347,6 +405,20 @@ pub(crate) async fn run(mut line: Line) -> std::process::ExitCode {
         Ok(client) => client,
         Err(error) => return failure(&error, line.options.json),
     };
+    if line.request.operation == "sql" {
+        if line.whole_sql {
+            return super::sql::whole(&client, line.request, line.options.json).await;
+        }
+        let answer = match client
+            .surface::<sinex_protocol::sql::SqlReply>(&line.request)
+            .await
+        {
+            Ok(answer) => answer,
+            Err(error) => command_surface::Answer::error(error.failure("sql")),
+        };
+        let exit = answer.exit_code();
+        return print_answer(&line, &answer, exit);
+    }
     let answer = match client
         .surface::<sinex_protocol::rows::RowsReply>(&line.request)
         .await
@@ -358,6 +430,14 @@ pub(crate) async fn run(mut line: Line) -> std::process::ExitCode {
         .value()
         .and_then(|rows| rows.failure())
         .map_or_else(|| answer.exit_code(), |error| error.kind.exit_code());
+    print_answer(&line, &answer, exit)
+}
+
+fn print_answer<T: serde::Serialize>(
+    line: &Line,
+    answer: &command_surface::Answer<T>,
+    exit: u8,
+) -> std::process::ExitCode {
     // The complete typed envelope keeps receipts, partial results and ready
     // requests available to scripts as well as a person reading the JSON.
     let value = serde_json::to_value(&answer).expect("answer serializes");

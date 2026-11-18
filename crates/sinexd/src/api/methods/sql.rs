@@ -32,7 +32,7 @@ impl Api {
         statement: String,
         page_size: Option<u64>,
         cursor: Option<String>,
-    ) -> Result<Reply> {
+    ) -> Result<sinex_protocol::sql::SqlReply> {
         let rows = page_size.unwrap_or(read_sql::DEFAULT_ROWS);
         let mut held = match cursor {
             Some(token) => self.take_cursor(caller, &statement, &token).await?,
@@ -52,7 +52,7 @@ impl Api {
         };
         held.conn.prepare().await?;
         sinex_store::query::local_request_deadline(&mut held.conn).await?;
-        let page = match read_sql::fetch(&mut held.conn, rows).await {
+        let mut page = match read_sql::fetch(&mut held.conn, rows).await {
             Ok(page) => page,
             Err(e) => {
                 let _ = read_sql::end(&mut held.conn).await;
@@ -60,11 +60,10 @@ impl Api {
             }
         };
         let count = page.rows.len();
-        let mut result = json!({"rows": page.rows, "count": count});
         // Do not publish a continuation whose first page could still fail or
         // time out while unsealing. The local guard owns its reader until then.
         if caller.grants.split(',').any(|grant| grant == "sealed") {
-            self.unseal(&mut result).await?;
+            self.unseal_values(page.rows.iter_mut()).await?;
         }
         let next = if page.done {
             let _ = read_sql::end(&mut held.conn).await;
@@ -75,8 +74,14 @@ impl Api {
             self.sql_cursors.lock().await.insert(token.clone(), held);
             Some(token)
         };
-        result["page"] = json!({"size": rows, "cursor": next});
-        Ok(data(result))
+        Ok(sinex_protocol::sql::SqlReply {
+            rows: page.rows,
+            count,
+            page: sinex_model::query_reply::QueryPageInfo {
+                size: rows,
+                cursor: next,
+            },
+        })
     }
 
     /// The held cursor for `token`, if it is still open and belongs to this

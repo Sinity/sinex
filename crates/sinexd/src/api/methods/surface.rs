@@ -12,9 +12,76 @@ pub(crate) fn table(api: Api) -> command_surface::OperationTable {
         .bind("rows", RowsOperation(api.clone()))
         .expect("rows binds its declared request and reply");
     table
-        .bind("status", StatusOperation(api))
+        .bind("status", StatusOperation(api.clone()))
         .expect("status binds its declared request and reply");
     table
+        .bind("sql", SqlOperation(api))
+        .expect("SQL binds its typed request and page");
+    table
+}
+
+struct SqlOperation(Api);
+impl Operation for SqlOperation {
+    type Request = sinex_protocol::sql::Sql;
+    type Response = sinex_protocol::sql::SqlReply;
+    fn required_access(
+        &self,
+        _: &Self::Request,
+        _: command_surface::Access,
+        _: &command_surface::Caller,
+    ) -> command_surface::Access {
+        command_surface::Access::Read
+    }
+    fn accepts_native_failure_code(&self, code: &str, kind: command_surface::FailureKind) -> bool {
+        sinex_store::failure::accepts_database_failure_code(code, kind)
+    }
+    fn execute(
+        &self,
+        request: Self::Request,
+        context: RequestContext,
+    ) -> OperationFuture<'_, SurfaceAnswer<Self::Response>> {
+        Box::pin(async move {
+            let Some(caller) = context.caller().identity::<Caller>().cloned() else {
+                return SurfaceAnswer::error(
+                    Error::refused("SQL needs an authenticated Sinex caller").failure(),
+                );
+            };
+            let api = self.0.clone();
+            let cursor = context.request().cursor.clone();
+            let remaining = context
+                .read_deadline()
+                .map(|deadline| deadline.saturating_duration_since(tokio::time::Instant::now()));
+            let result = crate::request_deadline::run(remaining, async move {
+                api.sql(&caller, request.sql, request.page_size, cursor)
+                    .await
+            })
+            .await;
+            match result {
+                Ok(page) => {
+                    let mut answer = SurfaceAnswer::ok(page);
+                    answer
+                        .envelope
+                        .notes
+                        .push(sinex_protocol::DATA_NOTICE.into());
+                    if let Some(cursor) = answer.value().and_then(|page| page.page.cursor.clone()) {
+                        match read_continuation(
+                            &context,
+                            &context.request().arguments,
+                            Some(cursor),
+                        ) {
+                            Ok(request) => answer.envelope.next.push(command_surface::Next {
+                                label: "next".into(),
+                                request,
+                            }),
+                            Err(error) => return SurfaceAnswer::error(error.failure()),
+                        }
+                    }
+                    answer
+                }
+                Err(error) => SurfaceAnswer::error(error.failure()),
+            }
+        })
+    }
 }
 
 struct StatusOperation(Api);
@@ -575,12 +642,11 @@ fn retained_write_reply(
 
 fn read_continuation(
     metadata: &RequestContext,
-    rows: sinex_protocol::rows::Rows,
+    arguments: impl serde::Serialize,
     cursor: Option<String>,
 ) -> Result<command_surface::RunnableRequest> {
     let mut request = metadata.request().clone();
-    request.operation = "rows".into();
-    request.arguments = serde_json::to_value(rows)?;
+    request.arguments = serde_json::to_value(arguments)?;
     request.cursor = cursor;
     let identity = blake3::hash(&serde_json::to_vec(&(
         metadata.caller().scope(),

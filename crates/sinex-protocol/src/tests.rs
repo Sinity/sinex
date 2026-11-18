@@ -219,7 +219,6 @@ fn every_option_name_has_one_kind() {
     }
     for (name, option, kind) in [
         ("query", "page-size", ArgKind::Integer),
-        ("sql", "page-size", ArgKind::Integer),
         ("backup", "page-size", ArgKind::Integer),
         ("comparisons", "page-size", ArgKind::Integer),
         ("comparisons", "cursor", ArgKind::Text),

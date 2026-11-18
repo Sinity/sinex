@@ -24,22 +24,14 @@ pub fn database_failure(error: &sqlx::Error) -> Failure {
         sqlx::Error::Database(database) => {
             let state = database.code().map(|code| code.into_owned());
             let constraint = database.constraint().map(str::to_owned);
-            let (kind, retryable, code) = match state.as_deref() {
-                Some("23505") => (FailureKind::Conflict, false, constraint.or(state)),
-                Some("23503" | "23502" | "23514") => {
-                    (FailureKind::BadValue, false, constraint.or(state))
+            let (kind, retryable) = sqlstate_kind(state.as_deref().unwrap_or_default());
+            let code = match state.as_deref() {
+                Some("23505" | "23503" | "23502" | "23514") => constraint.or(state),
+                Some("57014") => Some("statement_timeout".into()),
+                Some(class) if class.starts_with("08") || class.starts_with("57P") => {
+                    Some("database_unavailable".into())
                 }
-                Some("57014") => (FailureKind::Timeout, true, Some("statement_timeout".into())),
-                // The reader role may not do this.
-                Some("42501") => (FailureKind::Refused, false, state),
-                Some("40001" | "40P01") => (FailureKind::Conflict, true, state),
-                // A connection that ended, or a server shutting down.
-                Some(class) if class.starts_with("08") || class.starts_with("57P") => (
-                    FailureKind::NotRunning,
-                    true,
-                    Some("database_unavailable".into()),
-                ),
-                _ => (FailureKind::Internal, false, state),
+                _ => state,
             };
             let mut failure = Failure::new(kind, message);
             failure.retryable = retryable;
@@ -48,6 +40,32 @@ pub fn database_failure(error: &sqlx::Error) -> Failure {
         }
         _ => Failure::new(FailureKind::Internal, message),
     }
+}
+
+fn sqlstate_kind(state: &str) -> (FailureKind, bool) {
+    match state {
+        "23505" | "40001" | "40P01" => (FailureKind::Conflict, state != "23505"),
+        "23503" | "23502" | "23514" => (FailureKind::BadValue, false),
+        "57014" => (FailureKind::Timeout, true),
+        "42501" => (FailureKind::Refused, false),
+        class if class.starts_with("08") || class.starts_with("57P") => {
+            (FailureKind::NotRunning, true)
+        }
+        _ => (FailureKind::Internal, false),
+    }
+}
+
+/// Native diagnostics of the database operation. Constraint failures may carry
+/// the server's constraint name instead of SQLSTATE, as database_failure does.
+pub fn accepts_database_failure_code(code: &str, kind: FailureKind) -> bool {
+    let sqlstate = code.len() == 5
+        && code
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit());
+    (sqlstate && sqlstate_kind(code).0 == kind)
+        || (matches!(kind, FailureKind::Conflict | FailureKind::BadValue)
+            && !code.is_empty()
+            && !code.contains('\0'))
 }
 
 impl From<Error> for Failure {

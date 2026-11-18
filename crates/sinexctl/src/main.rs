@@ -12,6 +12,7 @@ mod client;
 mod line;
 mod mcp;
 mod output;
+mod sql;
 
 mod diagnostics;
 
@@ -115,21 +116,38 @@ fn cli() -> Command {
         }
         app = app.subcommand(sub);
     }
-    app.subcommand(Command::new("mcp").about("Serve the MCP tools on stdin and stdout"))
-        .subcommand(
-            Command::new("doctor")
-                .about("Diagnose Sinex without the daemon: database, schema, content store, search index")
-                .arg(Arg::new("database").long("database").required(true))
-                .arg(Arg::new("store").long("store").required(true).value_parser(clap::value_parser!(PathBuf))),
-        )
-        .subcommand(
-            Command::new("store").about("The content store").subcommand(
-                Command::new("verify")
-                    .about("Read every stored blob back and check it against its name (offline)")
-                    .arg(Arg::new("database").long("database").required(true))
-                    .arg(Arg::new("store").long("store").required(true).value_parser(clap::value_parser!(PathBuf))),
+    app.subcommand(
+        Command::new("dev")
+            .about("Read-only developer operations")
+            .after_help(line::sql_help()),
+    )
+    .subcommand(Command::new("mcp").about("Serve the MCP tools on stdin and stdout"))
+    .subcommand(
+        Command::new("doctor")
+            .about(
+                "Diagnose Sinex without the daemon: database, schema, content store, search index",
+            )
+            .arg(Arg::new("database").long("database").required(true))
+            .arg(
+                Arg::new("store")
+                    .long("store")
+                    .required(true)
+                    .value_parser(clap::value_parser!(PathBuf)),
             ),
-        )
+    )
+    .subcommand(
+        Command::new("store").about("The content store").subcommand(
+            Command::new("verify")
+                .about("Read every stored blob back and check it against its name (offline)")
+                .arg(Arg::new("database").long("database").required(true))
+                .arg(
+                    Arg::new("store")
+                        .long("store")
+                        .required(true)
+                        .value_parser(clap::value_parser!(PathBuf)),
+                ),
+        ),
+    )
 }
 
 /// A command's arguments as the JSON object its request is built from.
@@ -365,6 +383,10 @@ async fn main() -> ExitCode {
         .map(|word| word.into_string())
         .collect::<Result<Vec<_>, _>>()
     {
+        if let Some(help) = line::help(&words) {
+            output::emit(&help);
+            return ExitCode::SUCCESS;
+        }
         match line::parse(&words) {
             Ok(Some(line)) => return line::run(line).await,
             Ok(None) => {}
@@ -585,35 +607,6 @@ async fn main() -> ExitCode {
         };
         if name == "status" {
             capture_health::attach(&mut result, capture_state);
-        }
-        if let Request::Sql { sql, page_size, .. } = &request {
-            // The daemon answers a statement a page at a time; the command
-            // line reads every page and prints the whole result.
-            collected.extend(result["rows"].as_array().cloned().unwrap_or_default());
-            if let Some(cursor) = result["page"]["cursor"].as_str() {
-                request = Request::Sql {
-                    sql: sql.clone(),
-                    page_size: *page_size,
-                    cursor: Some(cursor.to_owned()),
-                };
-                continue;
-            }
-            if json {
-                print_json(&serde_json::json!({ "rows": collected, "count": collected.len() }));
-            } else {
-                let columns: Vec<String> = collected
-                    .first()
-                    .and_then(Value::as_object)
-                    .map(|o| o.keys().cloned().collect())
-                    .unwrap_or_default();
-                output::emit(&output::table(
-                    &columns,
-                    &collected,
-                    &output::Local::new(None),
-                ));
-                output::emit(&format!("{} rows; times in UTC\n", collected.len()));
-            }
-            return answered(collected.is_empty());
         }
         let paged = result["page"].is_object() && result["rows"].is_array();
         if !paged {

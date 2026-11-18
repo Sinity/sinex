@@ -181,13 +181,7 @@ pub enum Request {
         #[serde(default)]
         cursor: Option<String>,
     },
-    Sql {
-        sql: String,
-        #[serde(default)]
-        page_size: Option<u64>,
-        #[serde(default)]
-        cursor: Option<String>,
-    },
+
     Show {
         reference: String,
     },

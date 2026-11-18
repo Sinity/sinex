@@ -69,7 +69,7 @@ fn tool_examples_follow_the_table() {
     let read = tools.iter().find(|t| t.name == "sinex_read").unwrap();
     assert_eq!(
         read.input_schema["properties"]["operation"]["enum"],
-        json!(["rows", "status"])
+        json!(["rows", "status", "sql"])
     );
     let request = sinex_commands::declarations().parse_mcp_call("sinex_read", json!({
         "arguments":{"selection":"events", "page_size":3}, "cursor":"saved", "deadline":null,
@@ -127,7 +127,6 @@ fn tool_effects_match_backend_command_access() {
     let tools = tools();
     for (name, read_only) in [
         ("sinex_read", true),
-        ("sinex_sql", true),
         ("sinex_archive", false),
         ("sinex_forecast-issue", false),
         ("sinex_library-curate", false),

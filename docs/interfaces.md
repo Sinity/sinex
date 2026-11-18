@@ -75,7 +75,9 @@ retryable), mapped once to an exit code and an HTTP status by the shared table
 in `command-surface`. Sinex uses the shared kinds as they are; `stopped_early`
 is the shared kind for an operation that did not finish.
 
-- **On the wire** a reply is `{"outcome": "ok", "result": …}`,
+- **On the wire**, typed operations use the shared answer envelope with `value`,
+  `error` and ready requests under `next`. Remaining command-first routes reply
+  with `{"outcome": "ok", "result": …}`,
   `{"outcome": "failed", "failure": {…}}`, or `{"outcome": "stopped_early",
   "failure": {…}, "result": …}` when an archive, restore, replay, recompute,
   stage or tombstone moved some batches and then stopped; `result` names what
@@ -225,6 +227,21 @@ access levels; remaining domain commands retain their individual tools. Use `sin
 `GET /v1/commands` for that build. The examples in this section specify the target;
 they do not claim that the binary rename or command port has shipped. The rename
 moves callers, packaging and integrations together and leaves one client name.
+
+### Current developer SQL
+
+`sinexctl dev sql [--page-size N] SQL` runs a read-only statement. Its arguments,
+help and MCP fields come from the typed SQL declaration. The command prints the
+complete result as a table with UTC times, or `--json` as rows and their count.
+`sinexctl dev sql --help` lists its SQL and connection arguments.
+
+HTTP `/v1/sql` and `sinex_read` with `operation: "sql"` return one bounded page
+and an exact ready request for the next page. `sinexctl --request JSON|-` reads
+that one page and retains the typed answer and ready requests. Continuations
+keep the original statement, caller grants, database snapshot, deadline and
+request options. Sealed values are unsealed before publishing the continuation.
+Native SQLSTATE and constraint diagnostics retain the database failure mapping
+above; SQL never changes grants or escapes the reader role.
 
 ### Current selection lines
 

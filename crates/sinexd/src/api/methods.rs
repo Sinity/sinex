@@ -174,12 +174,11 @@ impl Api {
     }
 
     async fn answer(&self, request: Request, caller: &Caller) -> Result<Reply> {
-        let sql_page = matches!(&request, Request::Sql { .. });
         let reply = self.dispatch(request, caller).await?;
         // Sealed values are unsealed only for a caller holding the class.
         match reply {
             Reply::Ok { mut result } => {
-                if !sql_page && caller.grants.split(',').any(|g| g == "sealed") {
+                if caller.grants.split(',').any(|g| g == "sealed") {
                     self.unseal(&mut result).await?;
                 }
                 Ok(Reply::Ok { result })
@@ -245,11 +244,6 @@ impl Api {
             | Request::Search { .. }
             | Request::Trace { .. }) => self.query_request(caller, request).await,
             request @ Request::Recall { .. } => self.recall_request(caller, request).await,
-            Request::Sql {
-                sql,
-                page_size,
-                cursor,
-            } => self.sql(caller, sql, page_size, cursor).await,
             request @ Request::Show { .. } => self.show(caller, request).await,
             request @ (Request::Archive { .. }
             | Request::Restore { .. }

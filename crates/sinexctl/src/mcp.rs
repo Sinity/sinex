@@ -202,6 +202,17 @@ impl Sinex {
                         failed,
                     ))
                 }
+                "sql" => {
+                    let answer = self
+                        .client
+                        .surface::<sinex_protocol::sql::SqlReply>(&request)
+                        .await?;
+                    let failed = answer.is_error();
+                    Ok((
+                        answer.map(|page| serde_json::to_value(page).expect("SQL page serializes")),
+                        failed,
+                    ))
+                }
                 "status" => {
                     let answer = self.client.surface::<Value>(&request).await?;
                     let failed = answer.is_error();

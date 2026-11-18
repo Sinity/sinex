@@ -22,6 +22,7 @@ pub use replay::{
     SnapshotNext, SnapshotReading, SnapshotReply, SnapshotStart,
 };
 pub mod rows;
+pub mod sql;
 pub mod stage_report;
 
 pub use commands::{Access, Arg, ArgKind, COMMANDS, Command, command};

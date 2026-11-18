@@ -22,12 +22,19 @@ pub fn declarations() -> &'static Arc<OperationDeclarations> {
             deadlines.set(command.latency(), Some(command.default_deadline()));
         }
         let mut table = OperationDeclarations::builder("sinex", deadlines);
+        table
+            .declare_cli_global("endpoint", "daemon socket or HTTP endpoint")
+            .expect("endpoint is a calling-process option");
+        table
+            .declare_cli_global("token_file", "file holding the API token")
+            .expect("token file is a calling-process option");
         table.accept(RequestOption::Cursor);
         table.accept(RequestOption::BudgetTokens);
         table.accept(RequestOption::Format);
         for (code, kind) in [
             ("no_writer", FailureKind::NotConfigured),
             ("read_pool_busy", FailureKind::Timeout),
+            ("statement_timeout", FailureKind::Timeout),
             ("database_unavailable", FailureKind::NotRunning),
             ("writer_stopped", FailureKind::NotRunning),
             ("storage_refused", FailureKind::Refused),
@@ -42,11 +49,12 @@ pub fn declarations() -> &'static Arc<OperationDeclarations> {
             .declare_tool(ToolFamily {
                 name: "read".into(),
                 description: concat!(
-                    "Read stored evidence, its provenance and capture status. Follow returned ready requests.\n",
+                    "Read stored evidence, its provenance, capture status and read-only SQL. Follow returned ready requests.\n",
                     "Examples:\n",
                     "{\"arguments\":{\"selection\":\"events\"}}\n",
                     "{\"arguments\":{\"selection\":\"events\",\"steps\":[{\"verb\":\"read\"}]}}\n",
-                    "{\"operation\":\"status\",\"arguments\":{}}",
+                    "{\"operation\":\"status\",\"arguments\":{}}\n",
+                    "{\"operation\":\"sql\",\"arguments\":{\"sql\":\"SELECT 1 AS number\"}}",
                 ).into(),
                 open_world: false,
                 idempotent: true,
@@ -98,6 +106,37 @@ pub fn declarations() -> &'static Arc<OperationDeclarations> {
         table
             .declare::<Status, serde_json::Value>(status, render_status)
             .expect("status request matches its declaration");
+        let mut sql = OperationSpec::request(
+            "sql",
+            &["dev", "sql"],
+            "read",
+            "Run one read-only SQL statement",
+            "The reader role, grants and statement remain bound across pages",
+        );
+        sql.failures = vec![
+            FailureKind::BadValue,
+            FailureKind::Refused,
+            FailureKind::NotFound,
+            FailureKind::NotRunning,
+            FailureKind::StaleCursor,
+            FailureKind::Internal,
+        ];
+        sql.latency = LatencyClass::Aggregate;
+        sql.access = command_surface::Access::Permanent;
+        sql.http_route = Some("/v1/sql".into());
+        sql.arguments = vec![
+            ArgumentSpec::new("sql", ArgumentForm::Rest, "one read-only SQL statement"),
+            ArgumentSpec::new(
+                "page_size",
+                ArgumentForm::Named,
+                "maximum rows in a transport page",
+            ),
+        ];
+        table
+            .declare::<sinex_protocol::sql::Sql, sinex_protocol::sql::SqlReply>(sql, |page, _| {
+                serde_json::to_string_pretty(page).expect("SQL page serializes")
+            })
+            .expect("SQL request and page match their declaration");
         table
             .set_tool_default("read", "rows")
             .expect("rows belongs to the read tool");

@@ -4,3 +4,4 @@ mod diagnostics;
 mod failures;
 mod query_views;
 mod selection_lines;
+mod sql;

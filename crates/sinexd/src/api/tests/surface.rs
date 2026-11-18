@@ -60,11 +60,20 @@ async fn rows_call(w: &World, body: Value) -> (StatusCode, Value) {
 }
 
 pub(super) async fn rows_as(w: &World, token: &str, body: Value) -> (StatusCode, Value) {
+    request_as(w, "/v1/rows", token, body).await
+}
+
+pub(super) async fn request_as(
+    w: &World,
+    route: &str,
+    token: &str,
+    body: Value,
+) -> (StatusCode, Value) {
     let response = w
         .app
         .clone()
         .oneshot(
-            HttpRequest::post("/v1/rows")
+            HttpRequest::post(route)
                 .header("content-type", "application/json")
                 .header("authorization", format!("Bearer {token}"))
                 .body(Body::from(body.to_string()))
