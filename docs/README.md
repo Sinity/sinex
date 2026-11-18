@@ -29,7 +29,7 @@ test.
 | [evidence.md](evidence.md) | personal evidence: constructs and metrics, figure cells, studies, experiments, forecasts and track records, places, money, retiring Lynchpin |
 | [query.md](query.md) | the query surface: tables, clocks and units, joins, paging, saved queries, kept results, citation forms, read, trace, related |
 | [recall.md](recall.md) | selections, the `recall` verb, recipes and packs, recall classes, lanes, notes, agent arrival |
-| [interfaces.md](interfaces.md) | the operation table and its transports, callers and powers, the CLI, MCP's eight tools, status, signals and the host deliverer, follow, latency budgets |
+| [interfaces.md](interfaces.md) | the operation table and its transports, callers and powers, the CLI, MCP's three target tools, status, signals and the host deliverer, follow, latency budgets |
 | [web.md](web.md) | Today, the reader web, keys and counterparts |
 | [library.md](library.md) | the library: items with any locator, encounters, page captures, curation, rankings, the link to Polylogue |
 | [operations.md](operations.md) | deployment, the NixOS and Home Manager modules, configuration, backup and restore |
@@ -60,7 +60,7 @@ How Polylogue uses Sinex is in Polylogue's
   shared by both products. A default the operator may still change is marked
   "(default; open operator question)".
 - **Decided targets.** A section marked *decided target* states a decision
-  (most from the 2026-11-01 feature designs) that the code does not implement yet. Its
+  (including the reviewed command surface) that the code does not implement yet. Its
   acceptance and the work is tracked outside the repository. Unmarked text
   is the design as the code is meant to hold it.
 - **Generated artifacts** are changed through their declarations, not by

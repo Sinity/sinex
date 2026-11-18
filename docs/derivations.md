@@ -72,11 +72,20 @@ Admission checks affected output ranges in the same transaction as the input cha
 
 ## Versions
 
+**Decided target client surface:** a derivation is a selection and `replay` owns
+version work. `sinex derivation:NAME replay --dry-run` previews changes without
+writing any request, run or trial. `sinex derivation:NAME replay --trial` explicitly
+retains the comparison as `trial:ID`, queried through `trials`.
+`sinex derivation:NAME replay --switch ID` consumes that trial and refuses changed
+inputs. Library comparisons retain their separate rating meaning. The current
+build still exposes `sinexctl recompute --compare` and `--switch`; its stored
+comparison and switch validation described below is the surviving mechanism.
+
 Configured derivations and their document/OCR reader versions are initialized once at daemon start. Execution, comparisons and status share those same objects, so an available version identifies the reader actually running.
 
 Every event records the producer version of the parser or derivation that made it ([producer versions](events.md#producer-versions-runs-and-manifests)). For derivations that version governs history as follows.
 
-- **A new version is compared before it switches.** `recompute DERIVATION --compare` runs the new version against the live outputs on real data and stores what would change (counts per key, examples, keys added and removed) as a comparison, leaving the selected outputs in place. Switching is a separate, attributed operation recorded in the [operations log](lifecycle.md#operations-and-actors).
+- **A new version is tried before it switches.** `recompute DERIVATION --compare` runs the new version against the live outputs on real data and stores what would change (counts per key, examples, keys added and removed) as a comparison, leaving the selected outputs in place. Switching is a separate, attributed operation recorded in the [operations log](lifecycle.md#operations-and-actors).
 - **Each derivation declares what a switch does to history.** `recompute` replays its whole history through the dirty-key path, archiving the old outputs as a set with their chains; `keep_history` keeps outputs made by the old version and applies the new one from the switch onward. Readers see the producer version on every output, and an answer spanning outputs of several versions says so.
 - **Nothing recomputes at daemon start.** A build carrying a new version computes only new and dirty keys with it, and answers spanning both versions disclose the mix. History is recomputed, for `recompute` derivations, only by the switch, after its compare. Status shows each derivation's pending switch and its compare result.
 - **A changed setting is a new version.** A change to anything a derivation reads as configuration (a profile parameter, the logical-day boundary, a fusion rule file) is a version change of that derivation and follows the same rules.

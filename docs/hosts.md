@@ -139,14 +139,20 @@ AI apps on the phone are not phone capture: Polylogue's provider sources own the
 
 ## Surfaces
 
+**Decided target client surface:**
+
+```sh
+sinex hosts
+sinex host:server read
+sinex 'sources where host:server'
+sinex 'inputs | fields host, placement, source'
+sinex status
+sinex-capture key                    # generate a producer key on a new host
+sinex-capture status                 # that producer's held data and spool
 ```
-sinexctl hosts                       # one row per host and producer: contact, held, spool and runway, clock offset
-sinexctl hosts show <host>           # producers, inputs, contact history, clock samples, held and spool
-sinexctl sources --host <host>       # the Sources grid for one host; by default rows group by host
-sinexctl placement                   # host-free inputs and where each is placed
-sinex-capture key                    # on a new host: generate this producer's key and print the public half
-sinex-capture status                 # on the host: spool, held per input, last acknowledgment, runway
-```
+
+The current `sinexctl` command forms remain in generated help. The new client
+spelling does not rename the independent capture-only producer or change enrollment.
 
 ```
 host     kind         producer   contact       held             spool / runway   clock
@@ -156,6 +162,6 @@ server   server       capture    live          0                0 / 412 d       
 phone    phone        app        2 h 14 m ago  1.3 GB · 9 in.   1.3 GB / 21 d    +2.31 s ±0.04
 ```
 
-Placement and enrollment are configuration: the CLI shows them and never edits them. Over MCP, `sinex_status` gains a hosts section and `sinex_query` serves the `hosts` unit, the `host` field, `host:<name>` and `group by host`. The query language gains a `host` field on every event (derived events carry their scope's host or none) and uses aligned time automatically when a query spans hosts. References: `host:<name>` and `producer:<component>@<host>`.
+Placement and enrollment are configuration: the CLI shows them and never edits them. Over MCP, `sinex_read` serves status with a hosts section and the `hosts` unit, the `host` field, `host:<name>` and `group by host`. The query language gains a `host` field on every event (derived events carry their scope's host or none) and uses aligned time automatically when a query spans hosts. References: `host:<name>` and `producer:<component>@<host>`.
 
 In the web, Sources groups rows by host with a header row for contact, held, runway and clock, and draws `held` hatched with its arrival estimate; `/hosts/<name>` shows a 30-day contact strip, the clock offset with its uncertainty band, spool size over time and inputs with their transfer classes; Day and Timeline get one lane per host plus the operator lane, with late spans marked.

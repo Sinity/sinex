@@ -1,5 +1,10 @@
 # Query
 
+**Decided target surface, not built.** Examples use the selection-first `sinex`
+client described in [interfaces](interfaces.md#cli). The current build's
+`sinexctl --help` and generated catalog describe available commands and fields.
+Query semantics below retain their existing compiler and privacy owners.
+
 Sinex's query catalog and what its compiler adds: tables and aliases, typed payload
 fields, clocks, the logical day as Sinex uses it, units and fill, joins, read context,
 paging and budgets, saved queries and kept results, citation forms, and `read`, `trace`
@@ -23,15 +28,42 @@ coverage is not complete is marked `lower bound` ([completeness](sources.md#comp
 decided target):
 
 ```sh
-sinexctl query 'commands where cwd ^ /src/tide AND when in last 7d | sort by when desc'
-sinexctl query 'shell-sessions where cwds ^ /src/tide | sort by start desc'
-sinexctl search rate limit
+sinex 'commands where cwd ^ /src/tide AND when in last 7d | sort by when desc'
+sinex 'shell-sessions where cwds ^ /src/tide | sort by start desc'
+sinex 'rate limit'
 ```
 
 The bundled declaration snapshot is immutable for one executable, so its query
 field descriptions and definition hashes are prepared once and reused. Queries
 with a supplied declaration snapshot use that snapshot, including later changes
 to registered kinds, without copying or replacing it with the bundled catalog.
+
+## Selections
+
+A selection is one argument: a query, time, path, URL, reference, terminal row
+number, saved name or `-` (one reference per stdin line). Plain words search;
+`sinex vacuum` is a ranked word search. A complete time expression selects the
+moment/window/period, and its default rendering is a timeline. `sinex yesterday`
+and `sinex 'last week' recall` ask different presentations of time selections.
+The complete classifier must consume the argument; a time followed by `|`
+remains query text. Commands, verbs, saved names and units take precedence
+([grammar](interfaces.md#grammar)).
+
+A path selects its edits, commands, focus, commits, encounters and related item
+history. A URL resolves through the canonical locator to its item or recorded
+visits. A selection never fetches a page: explicit `stage` owns acquisition.
+`here` selects the current directory's project and acts; `latest` selects the
+latest timed shell session, narrowed by `recall --cwd DIR`. Unknown time remains
+unknown. Relative times resolve once under the logical-day settings.
+
+### Short references
+
+Full global citations are the durable form. Terminal output can print `e:` plus
+the last eight hexadecimal digits of an event ID; an ambiguous suffix reports
+candidates and never chooses one. Row
+numbers (`@3`, `@2-5`, `@all`) resolve only in the terminal that displayed the list;
+stored records and MCP use full references. [Citation forms](#citation-forms)
+distinguish an exact reading from a current source record or question.
 
 ## Tables
 
@@ -44,7 +76,7 @@ through its registered bindings.
 | `archive` | an archived reading: the event fields plus `archived`, `reason`, `operation`, `archived_seq`; history is implicit, so there is no pointer to a replacing reading |
 | `tombstones` | a tombstone skeleton: event ID, source, type, `ts_orig`, time, reason, operation, material and record offset |
 | `materials` | a stored material: `id`, `binding`, `parser`, `parser_version`, `hash`, `size`, `status` (`live`, `archived`, `tombstoned`), `origin_path`, `host`, `part`, `previous_part`, `events`, `first`, `last` |
-| `runs` | a producer execution: `id`, `producer`, `producer_version`, `host`, `started`, `ended`, `status`, `events`, `failed`, `refused` |
+| `runs` | an execution, qualified as producer or query; producer fields: `id`, `producer`, `producer_version`, `host`, `started`, `ended`, `status`, `events`, `failed`, `refused` |
 | `operations` | a user act: `id`, `kind`, `author`, `via`, `scope`, `started`, `outcome`, `affected` |
 | `sources` | one source and binding, with the [status fields](interfaces.md#the-sources-relation) and its [input state](sources.md#input-states) |
 | `inputs` | one input of a binding (a file, an export, an archive member): records read, events made, suppressed, matched to another input, record errors with the first unparsed form |
@@ -55,16 +87,15 @@ through its registered bindings.
 | `coverage` | one source, input and hour in the [coverage vocabulary](sources.md#completeness) (decided target) |
 | `stages` | one stage operation with its inventory and accounting ([staging](materials.md#inventory-and-progress); decided target) |
 | `hosts` | one host and producer with contact, held data, spool and clock offset ([hosts](hosts.md); decided target) |
-| `answers` | one evaluation of a query; `answer:<id>`, and `@last` is the caller's latest |
-| `queries` | one saved query definition |
+| `saved` | one saved query definition and name |
 | `result:<id>` | a kept result, read as a relation |
 
 Further units belong to the pages that own their concepts: `packs`, `notes`, `lanes` and
-`instruments` ([recall](recall.md)); `items`, `copies`, `encounters`, `captures`,
+`forms` ([recall](recall.md)); `items`, `copies`, `encounters`, `captures`,
 `curation`, `collections`, `entries`, `comparisons`, `scales` and `tags`
 ([library](library.md#surfaces)); `figures`, `metrics`, `constructs`, `studies`,
 `findings`, `forecasts`, `places`, `visits` and `intakes`
-([personal evidence](evidence.md#surfaces)); `signals`, `deliveries` and `prompts`
+([personal evidence](evidence.md#surfaces)); `watches`, `deliveries` and `prompts`
 ([signals](interfaces.md#signals)). Every event row carries `recall_class` (its kind's
 [recall class](recall.md#recall-classes)) and `host`; act and span rows carry `agency`.
 
@@ -84,9 +115,9 @@ and tombstone policy still applies. There is no separate `archived` table name
 or global include-archived switch.
 
 ```sh
-sinexctl 'gaps where binding = desktop.clipboard | sort by from'
-sinexctl 'shapes where source = health.samsung'
-sinexctl 'failures where source = health.samsung'
+sinex 'gaps where binding = desktop.clipboard | sort by from'
+sinex 'shapes where source = health.samsung'
+sinex 'failures where source = health.samsung'
 ```
 
 ### Aliases
@@ -96,13 +127,13 @@ Aliases are payload views over registered, produced event types: `commands`,
 `focus`, `visits`, `plays`, `items`, `media`, `curation`, and one for each
 [higher-layer](higher-layer.md) kind once its producer exists. An alias exists only with
 its producer, so an alias never answers from nothing. Decided target, not built:
-every duration column carries its unit in the answer metadata. `kinds [KIND]` lists which aliases expand to which event types.
+every duration column carries its unit in the answer metadata. `sinex kinds` and `sinex help fields KIND` list which aliases expand to which event types.
 
 `commands` reads a [fusion family](derivations.md#fusion): its fused commands plus the
 shell records no fused command joins (the shell integration's reports, Atuin and the
 history files), so each command is one row and `observed_by` names the sources that
 saw it. `duplicates` lists the pairs a fusion family had to choose about, with their
-decision state; `same`, `distinct` and `withdraw-decision` decide them. `focus` (compositor focus intervals and ActivityWatch
+decision state; `judge same`, `judge distinct` and `withdraw` decide them. `focus` (compositor focus intervals and ActivityWatch
 window spans), `visits` (browser history, history exports and followed links) and
 `plays` (streaming history and the player's reports while playing) have no fusion:
 each source's records are rows of their own, so counts across sources are per source.
@@ -119,8 +150,8 @@ Payload paths come from the kind registry, including nested objects, optional fi
 timestamp fields. Filtering on an event type selects its schema:
 
 ```sh
-sinexctl 'events where event_type = command.executed AND payload.exit_code > 0'
-sinexctl 'events where event_type = command.executed | agg sum(payload.duration_ns)'
+sinex 'events where event_type = command.executed AND payload.exit_code > 0'
+sinex 'events where event_type = command.executed | agg sum(payload.duration_ns)'
 ```
 
 - A path shared by several schemas can be used without an event-type filter when its
@@ -175,8 +206,8 @@ sinexctl 'events where event_type = command.executed | agg sum(payload.duration_
 range:
 
 ```sh
-sinexctl 'commands where when in last 7d | group by day(when) | count | fill'
-sinexctl 'commands where when in last 7d | group by day(when), cwd | count | fill | where count > 0'
+sinex 'commands where when in last 7d | group by day(when) | count | fill'
+sinex 'commands where when in last 7d | group by day(when), cwd | count | fill | where count > 0'
 ```
 
 - The grouping needs one time-bucket key and a finite range on its time field. A lower
@@ -267,15 +298,15 @@ keep their original position.
 - Graph walks, source details and `sql` output page or stream at the execution
   boundary. There is no depth cap and no fetch of a whole result before slicing, because
   a cap would truncate valid answers.
-- `sql` is read-only SQL on the reader role over the documented relations, under the
+- `dev sql` is read-only SQL on the reader role over the documented relations, under the
   same output rules as every output; the reader role cannot reach withheld fields or keys
   ([privacy](privacy.md)). PostgreSQL cancels a statement that runs longer than 120 seconds,
   even after its caller has gone away.
-- `sql` answers a page at a time from a database cursor: up to `--page-size` rows (50 when
+- `dev sql` answers a page at a time from a database cursor: up to `--page-size` rows (50 when
   not given), ending early once a page holds 8 MiB of row text, so a statement costs the
   daemon one page however many rows it selects. While rows remain, the answer's
   `page.cursor` continues the same statement; the cursor serves only that statement and
-  caller, and closes after five idle minutes (rerun the statement then). `sinexctl sql`
+  caller, and closes after five idle minutes (rerun the statement then). `sinex dev sql`
   reads every page and prints the whole result; MCP and HTTP callers pass the cursor back.
 
 ## Saved queries
@@ -283,10 +314,10 @@ keep their original position.
 A query can be saved, named and invoked inside another query. (ruling 2026-07-09, cc-queued:3b0038ec-234c-44b8-bb88-fe222b44fe0f@2026-07-09T20:06Z).
 
 ```sh
-sinexctl save in-directory --parameter directory:text --parameter period:duration \
-  'commands where cwd ^ $directory AND since:$period | count'
-sinexctl query 'query:in-directory(directory="/src/tide", period=7d)'
-sinexctl query-list
+sinex 'commands where cwd ^ $directory AND since:$period | count' \
+  save in-directory --parameter directory:text --parameter period:duration
+sinex 'query:in-directory(directory="/src/tide", period=7d)'
+sinex saved
 ```
 
 - **A saved query has a content identity,** `sinex:query/<hash>` over its canonical AST
@@ -313,14 +344,29 @@ sinexctl query-list
 - An archived definition is unavailable, and a changed definition invalidates the
   continuation of the previous question.
 
+### Shipped saved questions
+
+Decided targets include `unfinished`, `stalled`, `not-captured`, `notices`, `review`,
+`reading`, `uncurated`, `resurface`, `spending` and the topic-oriented questions
+owned by their domain pages. A shipped name is advertised only with its producer
+and required tables. Saving a name captured by a command, verb, unit or time is
+refused with its reason. Own saved names precede shipped names; authors' colliding
+definitions require qualification and never silently replace each other.
+
 ## Kept results
 
-- `QUERY keep` stores the answer as a derived event keyed `query:<hash>` plus its
+- `sinex 'QUERY' save` stores the answer as a derived event keyed `query:<hash>` plus its
   resolved read context: its rows by reference, its total, its context and its author.
   It is cited as `sinex:result/<id>` and read as the relation `result:<id>` inside
   another query, where it reproduces at its read context.
 - Any answer that is cited, delivered (a brief, a signal delivery, a context pack) or
   produced by a recipe is stored the same way. An interactive read is not.
+
+Query evaluations use `run:<id>`; producer executions remain runs with their
+producer identity. Renaming a query evaluation does not turn it into a producer
+run or change event provenance. A kept result is the selected rows of that run,
+not a query to rerun when read later. `save NAME` keeps the question and today's
+rows; `result:NAME` names the kept selection separately from `query:NAME`.
 
 ## Citation forms
 
@@ -365,11 +411,11 @@ condition. What each identity means is in [events](events.md#citations); the for
     status, record accounting, and a continuation over its events;
   - a run: producer and version, lifetime, progress, failures, refusals, events;
   - an operation: author, via, scope, outcome and affected references.
-- **`REF trace [--down] [--bytes]`** walks provenance up to the stored byte range, or
+- **`REF read --view trace [--down]`** walks provenance up to the stored byte range, or
   down to descendants. Each event appears once and distinct branches are kept;
   unavailable, withheld, archived and tombstoned links are named; continuation reaches
-  any depth. `--bytes` prints the stored range on a terminal only.
-- **`REF related`** lists events sharing a key such as a URL, path, commit or thread with
+  any depth. Raw byte output is terminal-only and remains subject to output rules.
+- **`related REF` (a query relation)** lists events sharing a key such as a URL, path, commit or thread with
   the reference, naming the matching field and the key's domain.
 
 ## AI conversation text

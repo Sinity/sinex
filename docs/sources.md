@@ -8,6 +8,17 @@ Sinex keeps the operator's digital exhaust as source-shaped material, at the fin
 
 Scope is every input that is not an AI session: shell and terminal, desktop state, browsers, account archives, mail, calendars and contacts, finance, health, wearables and phone, location, social and chat, media and reading, code and work records, notes, documents and files, filesystem, audit and network, journal and machine records, audio and screen, and the operator's own acts and self-reports. [Source families](source-families.md) state each at full fidelity. Polylogue acquires and parses AI sessions, including AI members inside account archives, and sends its materials and `polylogue.*` events through the ingress ([producers](producers.md)); Sinex has no AI-session parser.
 
+## Reading source state
+
+**Decided target surface:** `sinex sources` is the coverage grid; `sinex inputs`
+lists discovered inputs, `sinex gaps` their gaps, and `sinex stalled` and
+`sinex not-captured` are shipped saved questions over those relations. `sinex
+status` summarizes states, rates and positions; `sinex status --offline` reads
+stored state through the existing diagnostic owner. `sinex 'sources where
+host:server'` narrows the grid. The current client remains `sinexctl`; generated
+help owns its current discovery and status options. A saved question is exposed
+only when its underlying relation and observations exist.
+
 ## Capture by default
 
 `services.sinex.enable = true` captures every source whose canonical input exists on the host. There is no per-source enable option and no opt-in feature: a source that is built is on. (ruling 2025-06-27, cc:57547e40-5ef5-4e62-b089-a09820967865:e0902901-9329-4f3f-a320-461eca10109c). (ruling 2026-05-24, cc-queued:67eb2417-f1d1-4623-a652-ceb0e4c653e3@2026-05-24T10:09:42Z).
@@ -16,7 +27,7 @@ Scope is every input that is not an AI session: shell and terminal, desktop stat
 
 Discovery gives every input one availability before any record is read: **capturing** (found and read, or captured into a spool), **unavailable** with its cause (not present, permission denied, awaiting credentials, not applicable, failed), **excluded** with the operator's reason, **on demand** (records written only by request, so there is no input to find), or reported by a session producer. Whether a capturing input is current, backlogged, quiet or stalled comes later, from its records and its declared expectation. Status builds producer-only session stream entries from their declarations; it does not probe their availability from the daemon account. Explicit local or archived inputs of those formats still use local discovery.
 
-**Discovery dry run**: `sinexctl sources-discover` (the `sources-discover` command on every surface) prints every input with its availability and reason, and the **unimplemented census**: catalog sources with no implementation whose provider's data exists on this host (a Firefox profile, a nushell history), found by checking only their canonical locations. How much of the catalog the host has becomes measurable, and source work can be ordered by what the host has.
+**Discovery dry run**: the current `sinexctl sources-discover` (target `sinex inputs` and `sinex not-captured`) prints every input with its availability and reason, and the **unimplemented census**: catalog sources with no implementation whose provider's data exists on this host (a Firefox profile, a nushell history), found by checking only their canonical locations. How much of the catalog the host has becomes measurable, and source work can be ordered by what the host has.
 
 **Exclusion is the only per-source setting:** `exclude.<source> = { reason = "…"; }`, optionally narrowed to one input. Status lists every exclusion with its reason. No answer means everything; a subset needs a recorded reason. Content that should not be shown is handled by output rules in [privacy](privacy.md), which never limit capture.
 

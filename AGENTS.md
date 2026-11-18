@@ -19,8 +19,9 @@ working rules that apply here.
 - [`docs/`](docs/README.md) is the design of record: each area page owns its
   behaviour, model and formats, and [docs/architecture.md](docs/architecture.md)
   is the orientation across them. The docs describe Sinex as designed, not
-  as built; when code and design differ, the design is the target and
-  closing the difference is the work.
+  as built. The selected Bead bounds the current delivery; target features
+  outside it remain separately selected work. CLI and MCP changes distinguish
+  decided target syntax from the generated capabilities of the current build.
 - CLI help, MCP tool schemas, the generated catalog and each module's `//!`
   documentation describe the current build.
 - Plans, open questions, decisions and acceptance criteria live in Beads, the

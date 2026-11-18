@@ -18,12 +18,15 @@ Five jobs:
 
 ## An example, on the synthetic world
 
+**Decided target, not built:** the example uses the selection-first surface.
+
 Iris's Today shows last night on the rest lane: `5 h 58 min asleep (band) · usual 6 h 30 – 7 h 40 (prior 28 nights, 25 observed)`, with a thinner bar for the phone app's session of the same night and the standing agreement between the two instruments (`bias −5 min, 95% of nights within −28 to +20 min, 180 paired nights`). Nothing calls the night poor.
 
 She asks whether late screen time goes with shorter sleep:
 
 ```
-sinexctl study new late-screen --x 'activity.operator_seconds{hours 22-02}' --y rest.duration --lag 0
+sinex study:late-screen note 'Does late screen time go with shorter sleep?' --as study \
+  --x 'activity.operator_seconds{hours 22-02}' --y rest.duration --lag 0
 ```
 
 ```
@@ -120,7 +123,7 @@ A study's computed product is a **`study.result`**: a keyed derived event per st
 
 A one-off `compute` is an unnamed study and is listed in the ledger like any other; there is no second analysis path. Every study ever run, null ones included, is a row of the `studies` unit. **Templates** (lifestyle and productivity, weather and outcomes, mood and day, intake and body, evening activity and the night, a generic exposures-versus-outcome scan) are data that fix a family's shape.
 
-**Methods** are pure functions in `sinex-analysis`, each with an estimand, applicability checks and refusals, and each tested against an independent reference and a planted faulty implementation: lagged and rank correlation, trend (Mann–Kendall with Sen's slope), change points (binary segmentation with a BIC penalty; boundaries never moved toward annotations), robust baseline, anomaly, interval regularity (the Sleep Regularity Index), within-unit contrast, the exposure model, composite index (always labelled an index, with prior-only standardization and per-weight sensitivity), agreement, linear forecast, randomization test, bootstrap and permutation deltas, and recurrence.
+**Methods** are pure functions in `sinex-analysis`, each declaring the quantity it estimates, applicability checks and refusals, and each tested against an independent reference and a planted faulty implementation: lagged and rank correlation, trend (Mann–Kendall with Sen's slope), change points (binary segmentation with a BIC penalty; boundaries never moved toward annotations), robust baseline, anomaly, interval regularity (the Sleep Regularity Index), within-unit contrast, the exposure model, composite index (always labelled an index, with prior-only standardization and per-weight sensitivity), agreement, linear forecast, randomization test, bootstrap and permutation deltas, and recurrence.
 
 ### Experiments
 
@@ -136,7 +139,7 @@ An **experiment** is a study with `design = experiment` and a protocol. It is th
 | `primary`, `secondary` | one primary outcome with direction and smallest effect of interest; a family of secondary outcomes |
 | `exposure` | how the condition a unit received is recorded |
 | `blinding` | `open`; `coded` (identical containers labelled with codes, the key withheld); `self-shuffled` (the key is revealed at the end and recorded) |
-| `analysis` | the estimand by assignment (intention to treat) and the randomization test; per protocol as secondary |
+| `analysis` | the quantity estimated by assignment (intention to treat) and the randomization test; per protocol as secondary |
 | `prompts` | the instrument prompts the experiment owns |
 
 Its records, in order: draft revisions with a **plan check** (the detectable effect for the planned length, from the primary outcome's own prior history, by simulation); `experiment.started` (an act that fixes the protocol revision and commits the hashes of the seed and schedule; the seed is a withheld field); `experiment.assignment` per unit, derived from the seed, with the condition withheld while blinded; exposure, adherence and guess notes with the assignment as parent; `experiment.unblinded` (reading a withheld condition before the planned end needs this act, and units with outcome evidence after it are flagged); `experiment.stopped` for an early stop or amendment; and the `study.result`, **locked** until the planned end or the declared interim unless an `experiment.peeked` act exists, which the result reports.
@@ -169,7 +172,7 @@ Agent rules are enforced in the answer: a study result rendered for an agent car
 
 Lynchpin's purposes are judged one row at a time. The ledger of rows lives in the task tracker as one task per purpose, each with its replacement, acceptance and Lynchpin unit, moving `designed → implemented → verified → retired` (or retired deliberately, or set aside with its contract designed). A row closes as verified only with its evidence:
 
-- **reachable**: the replacement answers through `sinex_query`, `sinex_recall` or `sinex_explain` and the CLI, and the web view where the row names one;
+- **reachable**: the replacement answers through the typed `sinex_read` query, recall or help operation and the CLI, and the web view where the row names one;
 - **original formats**: a test runs it from original-format materials, never from Lynchpin's outputs;
 - **known defect**: the row's named Lynchpin defect, replayed as a case, fails the Sinex test;
 - **parity**: a stored parity study over at least 28 shared logical days, read at Lynchpin's day boundary by re-bucketing hourly cells, with every difference above the row's tolerance attributed to a named cause;
@@ -179,34 +182,56 @@ Rows whose purpose needs model calls are set aside while model features are off 
 
 ## Surfaces
 
-Decided target, not built. The commands and grouped MCP tools below describe the planned surfaces; the current command table exposes `analysis-*` and `forecast-*` operations.
+**Decided target (2026-11-18), not built.** Current generated help still exposes
+`analysis-*` and `forecast-*`. New domain capabilities below remain selected
+implementation work; an advertised refusal is not their completion.
 
+```sh
+sinex metrics
+sinex metric:rest.duration read
+sinex 'figures where metric in (rest.duration, activity.operator_seconds) since:90d | fill'
+sinex 'figures where since:90d | measure correlations'
+sinex study:late-screen note 'Does late screen time go with shorter sleep?' --as study \
+  --x 'activity.operator_seconds{hours 22-02}' --y rest.duration --lag 0
+sinex study:late-screen read --view panel
+sinex study:late-screen recall
+sinex experiment:trial note 'Does the intervention change sleep?' --as experiment \
+  --conditions 'A: intervention' --conditions 'B: control' --unit night \
+  --assignment blocked:2 --washout 1 --length 40 --primary rest.duration:+15m --blinding coded
+sinex experiment:trial note 'protocol agreed' --as start
+sinex note 'The tests fail next week' --as forecast --p 0.35 \
+  --by 2030-01-14 --criteria 'A failed required check' --cutoff 2030-01-06
+sinex forecast:FORECAST_ID judge unknown --reason 'outcome not observed'
+sinex 'forecasts where backtest:true | measure track-record'
+sinex note 3 --as mood.valence
+sinex note complete --as intake.day
+sinex place:home note 'Home' --as place --center 52.23,21.01 --radius 75m
+sinex spending
 ```
-sinexctl explain metric NAME | construct NAME | method NAME | instrument NAME | missing METRIC UNIT
-sinexctl 'figures where metric in (rest.duration, activity.operator_seconds) since:90d | fill'
-sinexctl study new NAME --x M --y M [--lag 0,1] [--grain night|day|week] [--method ID] [--template T]
-sinexctl study NAME [--findings | --band | --placebo | --readset] | confirm [--for 60d] | revise …
-sinexctl compute lagged_correlation(x = M, y = M, lags = [0, 1]) over ('figures …')
-sinexctl experiment plan NAME --conditions 'A: …' 'B: …' --unit night --assignment blocked:2 --washout 1 --length 40 --primary M:+15m --blinding coded
-sinexctl experiment NAME [start | unblind | peek | stop --reason TEXT] | experiment today
-sinexctl forecast "TEXT" --p 0.35 --resolves-by 'QUERY' --expect '>= N' | forecast 'figures where …' --quantiles 10%=…,50%=…,90%=…
-sinexctl forecast record [--issuer me|method:NAME|agent] [--family F] [--backtest]
-sinexctl note --value mood.valence=3 | note --value intake.day=complete
-sinexctl place name NAME --at here|LAT,LON [--radius 75m]
-```
 
-Every printed number ends with a short citation (`[f:3a1c]` for a cell, `[e:91c2#2]` for a finding). `not_estimable` is a successful answer, not an error.
+A forecast preserves its free-text target, probability, criteria, horizon,
+information cutoff and cited information. `--information REF…` retains evidence;
+information recorded after cutoff is refused. `--cutoff` is a timestamp distinct
+from the issue's exact read position; it defaults to issue time and cannot be
+future. Without a check query, `--criteria` and `--by` specify manual resolution.
+A finite check query can supply its end. A manual `judge true|false|unknown`
+retains its evidence (`--evidence`) and optional outcome time (`--at`); unknown
+time stays unknown. No query or timestamp is fabricated to express a manual
+proposition. Numeric forecasts retain their quantiles.
 
-| MCP tool | Rows |
-|---|---|
-| `sinex_query` | the units below; `compute` |
-| `sinex_read` | a study result, a finding, a forecast with its issuer's track record, an experiment's status (withheld fields stay withheld) |
-| `sinex_recall` | the `study` and `experiment` recipes; rest, body and money sections in `day`, `period` and `compare` |
-| `sinex_write` | studies, experiment plans, forecasts, places, instruments, notes |
-| `sinex_act` | experiment start, unblind, peek and stop; manual forecast resolution |
-| `sinex_explain` | metric, construct, method, instrument, missing |
+Study registration, confirmation, revisions, experiment protocol acts, place
+naming and forms use `note --as` with their typed domain options. `edit`,
+`withdraw` and `judge` preserve history, provenance, protocol restrictions and
+the models described above. Experiment start retains its operator requirement.
+`read --view panel|backtest`, recall recipes and query measures are reads.
+`--why` explains missing or partial figures. A number carries its citation;
+`not_estimable` is an answer state with a reason, not a fabricated number or an
+operation failure. Confirmatory status and role remain visible to agents.
 
-The current `sinex_analysis-catalog`, `-panel`, `-run`, `-why`, `sinex_forecast-issue`, `-report`, `-resolve` and `sinex_comparisons` are intended to fold into these rows.
+The three MCP tools use the same [typed requests](interfaces.md#mcp):
+`sinex_read` for queries, measures and packs, `sinex_write` for authored evidence,
+and `sinex_act` for experiment actions. Credential restrictions still apply.
+The evidence units and web designs remain part of the domain contract:
 
 | Unit | Rows | Notable fields |
 |---|---|---|

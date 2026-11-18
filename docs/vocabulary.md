@@ -40,7 +40,7 @@ state, signal rule, delivery, outcome, route, attention, inhibition, lane and se
 - **expiry race**: the margin between a source's last capture and the provider's own expiry (`expires_after`), watched by a signal.
 - **accounting identity**: records framed = admitted + repeats + revisions + removed + failures + headers, per material and per input.
 - **inventory**: what a stage holds, listed before parsing finishes, with per-product accounting ([staging](materials.md#inventory-and-progress)).
-- **stored, not interpreted**: material staged with no parser, waiting in the parser backlog; `parser try` parses it as a dry run.
+- **stored, not interpreted**: material staged with no parser, waiting in the parser backlog; `sinex mat:ID replay --parser NAME --dry-run` tries an interpretation without writing (decided target).
 - **execution token**: the identifier the shipped shell integration makes per command execution, seen by every observer of that command.
 
 ## Hosts
@@ -149,7 +149,7 @@ state, signal rule, delivery, outcome, route, attention, inhibition, lane and se
 - **study**: an authored question in computable form (design, family, population, method); **confirmatory** when registered before its outcome period, otherwise **exploratory**; its computed product is a **study result** (`study.result`).
 - **finding**: a typed statement in a study result, with role, support status, caveats and evidence.
 - **specification band**: a result's range across the declared reasonable alternatives of its parameters.
-- **estimand**: what a method estimates: its question, the units and population it applies to, the dependence between units, and whether the design identifies a cause. A lagged correlation estimates the association of one metric with another at a stated lag; it does not identify a causal effect.
+- **quantity being estimated**: what a method estimates: its question, the units and population it applies to, the dependence between units, and whether the design identifies a cause. A lagged correlation estimates the association of one metric with another at a stated lag; it does not identify a causal effect.
 - **detectable effect**: the smallest effect a result's units could have detected at 80% power.
 - **experiment**: a study with a protocol whose assignment Sinex fixes from a committed seed before exposure.
 - **track record**: a forecaster's scores over its resolved forecasts, with skill against climatology and persistence.
@@ -164,18 +164,32 @@ state, signal rule, delivery, outcome, route, attention, inhibition, lane and se
 - **query table**: what a query reads (`events`, `materials`, `runs`, `sources`, `failures` …), with its fields ([query](query.md)).
 - **saved query**: a named query with declared scalar parameters.
 - **kept result**: a query's result stored as an event so it can be cited.
-- **selection**: what a recall is about: a subject (moment, window, period, episode, project, here, last, query) plus read context; `sinex:sel/<hash>` ([selections](recall.md#selections)).
+- **selection**: the first argument, a query, time, path, URL, reference, terminal row number, saved name or stdin references, resolved with its read context; `sinex:sel/<hash>` ([selections](recall.md#selections)).
 - **recall**: build a pack about a selection from what Sinex already holds; the one verb for time questions ([recall](recall.md)).
-- **note**: an authored statement anchored at an instant or on targets, with text or an instrument value; the one kind for moment notes, notes on events and items, and self-reports ([notes](recall.md#notes)).
-- **instrument**: a declared, short self-report question set.
+- **note**: an authored statement anchored at an instant or on targets, with text or a form value; the one kind for moment notes, notes on events and items, and self-reports ([notes](recall.md#notes)).
+- **form**: a declared, short self-report question set, answered with `note VALUE --as FORM` (decided target surface; stored instrument kinds keep their declared identity).
 - **tripwire**: a note with a trigger query that returns it when the trigger first holds.
 - **lane**: a timeline row defined by a query, with a render and a grouping ([lanes](recall.md#lanes)).
 - **open loop**: an unfinished thing gathered for Today: a failing check with no later pass, a wait, an unanswered thread, a tripwire note.
 - **here pack**: the pack for a working directory, Sinex's machine section in an agent's brief.
 - **signal**: what a rule surfaces without being asked; **interrupting** signals are few and explicit. A **notice** is a signal delivery's content, passive or interrupting; the **inbox** is the list of notices.
 - **status**: what Sinex holds, what it failed to read and what it has not processed.
-- **follow**: a live, resumable read of new events matching a query.
+- **live read**: a resumable read of new matching events, `read --follow` in the decided surface.
 - **Today**: the view Sinex opens with ([web](web.md#today)).
+
+The following surface names are decided targets; current generated help and
+catalogs describe which have shipped:
+
+- **continue**: continue an operation from its committed position (`op:ID continue`).
+- **resume**: reopen work where it stopped, an episode or item, not a lifecycle move.
+- **run**: one execution, qualified as a producer run or query run (`run:ID`); event provenance retains the producer's identity.
+- **trial**: a derivation comparison explicitly retained by `replay --trial`, with build/settings/input identity; `--dry-run` stores none.
+- **watch**: a saved question with a delivery rule (`save NAME --watch`); stored `signal.*` kinds and the common evaluator remain unchanged.
+- **latest**: the most recent timed shell session, optionally narrowed by directory.
+- **short reference**: `e:` and an event ID's last eight hexadecimal digits; ambiguous forms return candidates.
+- **writes**: authored writes with computed author, channel and targets, selectable for undo.
+- **stay**: a stay at a place, distinguished from a browser visit.
+- **coverage line**: the answer's statement of what was and was not observed over its selected span.
 
 ## Library
 
@@ -185,7 +199,7 @@ state, signal rule, delivery, outcome, route, attention, inhibition, lane and se
 - **correspondence**: a typed, derived relation between two items with its evidence; it never moves curation.
 - **curation record**: an authored or imported statement about a target (tag, property, note, rating, comparison, entry, tag relation, duplicate decision, dismissal) with the authored-record header.
 - **scale**: a named dimension with its question, for ratings and comparisons.
-- **comparison**: an authored order or preference over k targets on a scale; **judge** is the verb that writes it, and **compare** only reads.
+- **comparison**: an authored order or preference over k targets on a scale; **judge** writes it, while `read --view compare` renders without writing. A derivation comparison is called a trial on the surface.
 - **judgment**: a verdict on one exact revision: accepted, rejected or deferred (`judge accept|reject|defer`).
 - **judge set**: whose comparisons a ranking counts.
 

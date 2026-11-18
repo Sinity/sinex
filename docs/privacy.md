@@ -11,6 +11,30 @@ Privacy in Sinex is an optional output feature the operator configures: field hi
 - **Sending data to model providers or archive APIs is acceptable**; privacy is no reason to leave a feature unused. (ruling 2026-08-12, cc:049c6f6c-9252-44c7-a0b2-3a585f63b686:891f917e-080f-4506-835b-5f8eaa94e456).
 - **Privacy is low priority** next to capture, storage and performance. (ruling 2026-06-15, cc:1cb95099-0044-4613-97e1-1bac25f8077a:6a77d81c-0e0f-47fa-9e60-715826cd3e6f).
 
+## Surface
+
+**Decided target, not built.** Rules are authored through the ordinary note and
+withdrawal path, while their matcher, class and output semantics remain below:
+
+```sh
+sinex rules
+sinex rule:card-numbers note 'mask card numbers in commands' --as rule \
+  --kind command.executed --field /command --matcher luhn --action mask
+sinex rule:shell-sealed note 'seal shell history' --as rule \
+  --source terminal.atuin-history --class sealed
+sinex e:EVENT_SUFFIX read --view privacy
+sinex rule:card-numbers withdraw
+```
+
+Adding protection and weakening it are distinct permissions. The proposed
+operator default allows agents to add rules or raise a class; ending a rule or
+lowering a class stays with the operator (open operator question). Same-user
+readability of an operator token is a separate unresolved boundary. These target
+examples change no live grants. `status` lists non-operator changes and readings
+below their configured class; explicit replay can reclassify them. Current
+`sinexctl privacy-*` help describes the deployed command forms. Credential roles
+and tool access are checked independently as [interfaces](interfaces.md#mcp) specifies.
+
 ## Field hints
 
 Each kind declaration names, per payload field, zero or more hints from one vocabulary:

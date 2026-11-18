@@ -110,6 +110,14 @@ against the unpatched receiver. This check uses separate disposable clusters.
 
 ## Published package
 
+The decided command-surface rename changes the client binary to `sinex` and its
+crate to `sinex-cli`, together with callers, tests and packaging. The package
+inventory below describes the current build until that implementation lands;
+this documentation change does not rename an artifact. Client-facing setup and
+examples use generated help for the exact binary being tested. `sinexd admin`
+continues to own database operations, with the existing xtask and declared
+verification workflow unchanged.
+
 The `package` workflow builds `.#default` for every master commit and pushes
 its runtime closure and `.#sinex-dependencies` to `sinity.cachix.org`. The
 dependency artifact uses the exact production Cargo graph; the runtime

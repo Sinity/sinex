@@ -54,7 +54,7 @@ A view with no board follows the nearest baseline's patterns and the shell's tok
 
 ## Today
 
-One view model serves bare `sinexctl`, the `today` recipe over MCP (`sinex_recall`) and HTTP, and the reader's home page (`/`). It can be installed as a web app and used as the browser's home tab, which the deployment configures.
+**Decided target:** one view model serves bare `sinex`, the `today` recall recipe over `sinex_read` and HTTP, and the reader's home page (`/`). It can be installed as a web app and used as the browser's home tab, which the deployment configures.
 
 ```
 Sun 1 Nov · logical day from 04:00 · so far 4 h 10 min          [since woke 07:52]   [◀ yesterday]
@@ -110,13 +110,13 @@ Every view has a data contract: the operation it calls and what it must show. Ev
 | Timeline (`/timeline?from…&until…`, decided target) | one zoomable element over the lane tiles: year (one column per day, coloured by operator time per agency), month and week (day strips with episode bars), day (the Day lanes), episode (its trail beside its span), act (the object view: reading, three clocks, citations) and bytes (the stored range). Each level is reached by following parent links, so Trace is the bottom zoom level, not a separate destination |
 | Trace | from a figure down through hourly and daily figures, the fused record where the family is fused (or the source record itself), a member's reading with its three clocks and citation, to the stored byte range; what a replay changed |
 | Moment (overlay on any page, `/at/TIME`; decided target) | the moment pack: what held, what you did (operator acts by lane), what agents did, incidents, notes near it, not observed; the radius widens in steps (±5 min, ±15, ±1 h, the activity session) |
-| Episodes (`/episodes`, `/episode/REF`) | episodes by state and project with operator and agent time apart; the resume card with its eight sections and Restore; the suspension and resumption history ([higher layer](higher-layer.md)) |
+| Episodes (`/episodes`, `/episode/REF`) | episodes by state and project with operator and agent time apart; the resume card with its eight sections and Resume; the suspension and resumption history ([higher layer](higher-layer.md)) |
 | Period and Compare (`/period/…`, `/compare?left=…&right=…`; decided target) | day rows with lane sparklines; figures with denominators; two selections' lanes aligned on relative time with differences in plain words |
 | Notes (`/notes`; decided target) | notes by time and author with anchors, values and triggers; instruments; revisions |
 | Sources (`/sources`) | one row per source (grouped by host), one cell per day in the coverage vocabulary, the state with its reason; derivation lag, failures, stored-unparsed materials, disk runway; missing is never drawn as zero |
 | Inputs (`/inputs/ID`) | `sources NAME` per-input accounting: records read, new, the same as another export, revised, removed at source, failures with the first unreadable form ([sources relation](interfaces.md#the-sources-relation)) |
 | Stage (`/stage`) | a drop zone and the list of stage operations, each opening to its inventory with per-product accounting, what paces it, and the stored-but-not-interpreted section with candidate parsers ([inventory](materials.md#inventory-and-progress)) |
-| Material (`/materials/ID`; decided target) | manifest, part sequence, a record strip (record offsets with their readings, live or archived, coloured by run), a byte view of any record range (escapes never executed), the runs that read it, and replay with compare |
+| Material (`/materials/ID`; decided target) | manifest, part sequence, a record strip (record offsets with their readings, live or archived, coloured by run), a byte view of any record range (escapes never executed), the runs that read it, and replay with a no-write preview |
 | Hosts (`/hosts/NAME`; decided target) | contact, clock offset, spool and inputs with transfer classes ([hosts](hosts.md#surfaces)) |
 | Backed | Polylogue on Sinex, from both sides ([status](interfaces.md#polylogue-on-sinex)) |
 | Inbox, Why, Signals, Attention (`/notices`, `/signals`, `/attention`) | the common `signals` views: notices by interrupted, held and passive with `why`; rules with author, channel, last firing and usefulness, and a rule editor with a live backtest strip; a 24-hour strip of presence, deep work and quiet hours with every interrupting delivery drawn on it |
@@ -129,6 +129,37 @@ Every view has a data contract: the operation it calls and what it must show. Ev
 
 - A **coverage strip** under every timeline (Day, Trace, recall) shows each source's coverage for the visible span, so absence is visible where the eye already is.
 - In primary mode, Day and Timeline gain the AI lanes (agent sessions by live interval, prompts, notices) from Polylogue's kinds already in Sinex; **Add as lane** pins any query with times; a selection's second tab shows the AI work in that span through Polylogue; and `g o` goes to the matching place in Polylogue ([counterparts](#keys-and-counterparts)).
+
+### CLI counterparts
+
+**Decided target, not built:** each view displays its exact selection, read
+context and line to reproduce it. Its MCP call uses the same typed line through
+`sinex_read`, or the write/act tool when the action requires it.
+
+| View | CLI line |
+|---|---|
+| Today | `sinex` or `sinex recall --as today` |
+| Day | `sinex DATE recall` |
+| Timeline | `sinex 'FROM..UNTIL'` |
+| Trace | `sinex REF read --view trace` |
+| Moment | `sinex TIME recall` |
+| Episodes | `sinex unfinished`; `sinex episode:ID recall`; `sinex episode:ID resume` |
+| Period and Compare | `sinex 'last week' recall`; `sinex 'last week, this week' recall --as compare` |
+| Sources and Inputs | `sinex sources`; `sinex inputs`; `sinex not-captured` |
+| Hosts | `sinex hosts`; `sinex host:NAME read` |
+| Import and Material | `sinex stages`; `sinex op:ID read`; `sinex mat:ID read` |
+| Query | `sinex 'QUERY'` |
+| Writing | `sinex writes`; `sinex review` |
+| Notices | `sinex notices`; `sinex delivery:ID read` |
+| Narratives | `sinex 'events where kind:narrative.period' read` |
+| Library | `sinex items`; `sinex item:ID read`; `sinex collection:NAME` |
+| Evidence | `sinex figures`; `sinex study:NAME read --view panel`; `sinex spending` |
+
+Resume reopens the selected worktree, agent session and windows, or an item at its
+recorded position; the button is labelled Resume. Lifecycle restoration remains
+a separate action. A page records display acknowledgement only when actually
+shown, under the shared seen-mark rule; rendering, prefetch or an agent read
+does not acknowledge it.
 
 ### Keys and counterparts
 

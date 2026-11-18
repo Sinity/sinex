@@ -6,6 +6,16 @@ Sinex keeps the exact bytes of everything one person's digital life produces and
 
 Sinex is the substrate for everything the operator's life produces: shell history, browsers, the desktop session, mail, chat, exports from online services, files, devices, audio, and the AI sessions Polylogue sends. Its core takes a firehose, survives interruption, and says what it holds, what it failed to read and what it has not processed yet. Above the stored readings it builds derived events in layers (fused records, intervals, presence, activity, figures) and answers questions about all of it through one query language, recall, the CLI, MCP, HTTP and the reader web.
 
+## Command surface
+
+The [decided target](interfaces.md#cli) is a selection-first `sinex` client and
+three nested MCP tools. A selection is resolved once, typed verbs run in order,
+and the existing request/admission owner records writes and retries. The client
+rename and command port are implementation work; generated help and the command
+table describe the current build. The daemon remains `sinexd`, with maintenance
+under `sinexd admin`. The chosen task bounds each delivery while the domain pages
+retain the full future design.
+
 ## Scope
 
 - **Sinex's concepts are its own.** Polylogue is about AI work: sessions, their lineage, and the accumulated understanding of them (Pages, annotations, judgments). Sinex is the substrate. Similar words do not make a shared concept, and neither product bends a concept to fit the other. (ruling 2026-10-27, cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:a5b1490b-01e2-4dd1-9c85-8370ccc4bfee).

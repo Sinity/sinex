@@ -1,6 +1,34 @@
 # The lifecycle
 
+**Decided target surface:** examples use `sinex SELECTION VERB`. The current
+build still uses `sinexctl` and its command-first scope flags; generated help is
+authoritative for that build. The state and preservation rules below are unchanged.
+
 Nothing in Sinex is deleted by default. Readings and materials are **live**, **archived** (the trash, reversible) or **tombstoned** (irreversible, from the archive only), and whole provenance chains move between those states together. This page owns the states, archive and restore, replay and its undo, the whole-chain rule, material status, tombstoning, archive reasons, how the states are stored, as-of reads, and operations with their actors. Records and readings are defined in [events](events.md); the lifecycle verbs on the CLI are in [the CLI](interfaces.md#cli); lifecycle requests on the wire are in [producers](producers.md#lifecycle-requests); the as-of query syntax is in [query](query.md); how derivations recompute after a move is in [derivations](derivations.md#derivations-and-the-lifecycle).
+
+## Lines and accepted scope
+
+```sh
+sinex 'events where source:desktop.clipboard since:1h' archive --dry-run
+sinex 'events where source:desktop.clipboard since:1h' archive --all
+sinex 'archive where source:desktop.clipboard since:1h' restore --all
+sinex op:OPERATION_ID undo
+sinex op:OPERATION_ID continue
+sinex 'writes where by:self since:1d' undo --all --dry-run
+```
+
+The selection resolves once and the operation stores that exact scope. Event rows
+mean their readings and chains; material rows mean whole materials; run rows mean
+the readings produced by that run. Operation rows use `undo`, not archive/restore.
+A retry retains the accepted scope, per-step identities, committed outcomes and
+undo lines; it cannot pick newly matching rows after an earlier step changed the
+query. `--all` authorizes a multirow query write. A preview writes nothing,
+including request records, run records and retained derivation trials.
+
+`undo` reverses an operation or a request's authored writes, refusing a stale
+revision rather than overwriting a later author. Session undo is an explicit
+`writes where by:SESSION` selection. `continue` resumes committed operation
+progress; `resume` reopens work and is not a lifecycle command.
 
 ## States
 
@@ -20,7 +48,7 @@ In primary mode, Polylogue's materials and the `polylogue.*` readings made from 
 
 Archive (live → archived) is how anything is deleted, and there is no other way to delete. Archiving is reversible, like an operating system's trash. (ruling 2025-08-11, cc:505f40e8-3618-4857-81d3-e201f417a2ff:9833b29b-2a3a-4d64-9ee3-d04f6eb0748e). (ruling 2026-02-03, cc:7ef0e4c5-d017-412d-b3d8-42ad7d0c2819:89712340-bbdf-4b1b-9220-ce7b4fafbf20).
 
-- **Scope**: a reference, a query (`--source terminal --until 2026-09-01`, any `events where …`), a material, or a run.
+- **Scope**: a reference, a query (for example `events where source:terminal until:2026-09-01`), a material, or a run.
 - **It moves the scope's live readings and their whole live chains** ([whole chains](#whole-chains-move-together)).
 - **The answer reports the cascade it moved**: readings by kind and reason, materials whose status changed, keyed aggregates dirtied. `--dry-run` reports the same cascade and writes nothing.
 - **It refuses if any part cannot move**, naming each reason. The checks run on every batch ([the operation is the unit](#the-operation-is-the-unit)): a refusal before the first batch commits changes nothing; a refusal after it ends the operation `stopped_early`, naming what moved. (ruling 2025-07, aistudio:Sinex core.events, audit.log refactoring:31).
@@ -114,6 +142,12 @@ A material is `live`, `archived` or `tombstoned`, and its status cascades to eve
 
 ## Tombstone
 
+**Proposed operator default (open operator question):** the operator confirms the
+preview by typing its count on a terminal; operator scripts use `--yes`. Other
+callers receive the preview and a line to hand the operator. A credential label
+alone does not isolate a token readable by same-user agents. This documentation
+does not grant new deletion authority or change the deployed access policy.
+
 Tombstone (archived → tombstoned) is irreversible and allowed only on archived chains. A live member refuses the whole request.
 
 - **It drops payloads and keeps a skeleton forever**: event ID, source, type, `ts_orig` with its quality, tombstone time, reason, operation, and the record's place (material, record offset, output index; for a derived event, its key hash, never the key's fields). The skeleton keeps the provenance structure.
@@ -170,6 +204,6 @@ Every user act that changes state is an **operation**: stage, archive, restore, 
 
 - **Operations have no workflow states**: no preview, approval, expiry or cancel lifecycle. A multi-batch operation's saved position is progress, not a state; it ends ok or `stopped_early`, and a stopped one resumes from its position. A `--dry-run` is a read and writes nothing.
 - **The actor is computed by the daemon** from the authenticated caller: the operator, an agent session with its harness and session ID, an outside producer's credential, or `sinexd` itself. No command supplies it. Writes through the API keep their actor. How callers are authenticated is in [callers](interfaces.md#callers).
-- **No act is refused because the caller is an agent.** Agents have the same lifecycle powers as the operator; what differs is the recorded actor.
+- **Agent authorship alone is not a refusal.** The configured credential grants and reserved irreversible acts apply as [callers](interfaces.md#callers) specifies; every act retains its computed actor.
 
-A stage keeps reading after its start answer. A failure writing progress ends the stage `stopped_early`, with the error available through `stage-show`. If writing a successful end fails, the stage records a stopped-early end instead. Background failures are logged, including a writer failure that prevents recording the end.
+A stage keeps reading after its start answer. A failure writing progress ends the stage `stopped_early`, with the error available through `sinex op:ID read`. If writing a successful end fails, the stage records a stopped-early end instead. Background failures are logged, including a writer failure that prevents recording the end.

@@ -4,6 +4,11 @@ How Sinex is deployed, configured and backed up: the flake's NixOS and Home Mana
 
 ## Deployment
 
+**Current package:** deployment commands on this page use the shipped `sinexctl`.
+The decided client surface is `sinex`; its binary, callers and Nix declarations
+move together when implemented, with no second alias. `sinexd admin` continues
+to own database maintenance. [Interfaces](interfaces.md#cli) specifies that target.
+
 Sinex ships its own NixOS and Home Manager modules in its flake, and a host configuration only sets their options. Nothing in Sinex assumes a particular host's layout, paths or accounts (ruling 2026-10-28, cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:3ae3257e-e70a-433a-be97-d1222670c284).
 
 ### The flake
@@ -84,7 +89,7 @@ Reaching Sinex from a phone or another machine (a tailnet address, a reverse pro
 
 Clients find the daemon through `SINEX_ENDPOINT` (the socket or HTTP address) and `SINEX_TOKEN_FILE`, which the modules set for login shells. Integrations in other languages (Kitty, Neovim) read the one variable the deployment sets for them. Which callers hold which powers is [interfaces.md](interfaces.md).
 
-A producer credential authenticates a transport identity; writes additionally require an explicit [write family](producers.md#explicit-write-families). Decided target (2026-11-01): credentials become per-host nkeys bound to (component, host), and the `attestedHost` and canonical-publisher options go ([hosts and placement](#hosts-and-placement)). Configure `services.sinex.nats.producers.<name>.writeFamily`, `attestedHost`, `writeSourcePrefixes`, `writeKindPrefixes` and `writeClasses` for the intended capture. The session service’s generated password entry preserves those configured capabilities and grants no write access by itself. A missing grant leaves capture spooling locally with a reported refusal. A file-watch-only producer uses the installed built-in family `sinex`, source `machine.file-watch`, kind `file.changed`, class `guarded` and its own host. Discovery also selects other session sources whose bus or runtime inputs are available. Cover those sources explicitly in the grant, or configure reasoned `services.sinex.exclude.<source>.reason` entries for a deliberately narrower capture plan. Read and canonical-publisher grants remain separate.
+A producer credential authenticates a transport identity; writes additionally require an explicit [write family](producers.md#producer-identity-and-credentials). Decided target (2026-11-01): credentials become per-host nkeys bound to (component, host), and the `attestedHost` and canonical-publisher options go ([hosts and placement](#hosts-and-placement)). Configure `services.sinex.nats.producers.<name>.writeFamily`, `attestedHost`, `writeSourcePrefixes`, `writeKindPrefixes` and `writeClasses` for the intended capture. The session service’s generated password entry preserves those configured capabilities and grants no write access by itself. A missing grant leaves capture spooling locally with a reported refusal. A file-watch-only producer uses the installed built-in family `sinex`, source `machine.file-watch`, kind `file.changed`, class `guarded` and its own host. Discovery also selects other session sources whose bus or runtime inputs are available. Cover those sources explicitly in the grant, or configure reasoned `services.sinex.exclude.<source>.reason` entries for a deliberately narrower capture plan. Read and canonical-publisher grants remain separate.
 
 ## Hosts and placement
 
@@ -134,6 +139,11 @@ One configurable day boundary per deployment, used by every day- and hour-grain 
 - A wake-to-wake view is a separate derived kind shown beside the logical day, never a second definition of it ([higher-layer.md](higher-layer.md)). A coarse source time stays in the calendar the source meant ([events.md](events.md#time)).
 
 ## Status
+
+The decided target folds client diagnostics into `sinex status --offline` and
+`sinex status --verify`; `sinex status --line` is the bar form. Their database
+access and byte checks retain their existing diagnostic implementation. These
+target spellings are not a claim about the currently installed client.
 
 `sinexctl status` reports the daemon's stored progress, its consumer rates and each
 source's computed state. The [status view](interfaces.md#the-status-view) owns its
@@ -197,6 +207,11 @@ preparation that fails after taking its hold releases that hold; the error
 names the hold and whether the release succeeded.
 
 ### Holds and the boundary
+
+The decided client form is `sinex dev backup hold|prepare|release`, with
+`prepare --to PATH`. It retains the same snapshot, hold, copy and restore
+requirements below; it does not create a second backup path. Current operational
+examples intentionally use the shipped command spelling.
 
 Admission continues while `pg_dump` holds its relation locks: batch payloads use the writer's temporary staging table, which logical dumps omit. The dump includes the declared empty staging template; the restored writer clones that layout through its normal claim path.
 

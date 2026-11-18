@@ -1,7 +1,7 @@
 # Interfaces
 
 Every way to reach Sinex: the operation table and its transports, callers and their
-powers, the `sinexctl` CLI, MCP, status, signals and stall alerts, `follow`, and the
+powers, the CLI, MCP, status, watches and stall alerts, live reads, and the
 latency budgets. The query catalog and its behaviour are in [query](query.md); recall
 and agent arrival in [recall](recall.md); Today and the reader in
 [web](web.md). The shared mechanics (the `Operation` trait, request and answer
@@ -42,7 +42,7 @@ function are common
   from the table fails closed.
 - **Every feature reachable through MCP is in the CLI**, and the reverse, unless the
   table records a reason. (ruling 2026-07-29, cc-queued:d6f4b0c3-840b-47b6-bd57-5f1bd6c9c7d4@2026-07-29T01:12Z).
-- **The write path.** Handlers hold only the read pool. Every write (stage, `record`,
+- **The write path.** Handlers hold only the read pool. Every write (stage, derived note,
   note, duplicate decision, curation, saved query, signal rule, archive request) goes to the one
   [admission function](admission.md) as a request material plus events.
 
@@ -69,7 +69,7 @@ function are common
 
 ## Failures
 
-Every failure is the shared `command_surface::Failure` (kind, message, product
+**Current build.** Every failure is the shared `command_surface::Failure` (kind, message, product
 code, position and caret in the input, hint, suggestion, candidates,
 retryable), mapped once to an exit code and an HTTP status by the shared table
 in `command-surface`. Sinex uses the shared kinds as they are; `stopped_early`
@@ -129,6 +129,17 @@ is the shared kind for an operation that did not finish.
   message with its caret and correction, and whose structured content is
   `{"error": failure}`; never a success with empty rows.
 
+### Target line failures
+
+**Decided target, not built.** The common request-level outcomes are `ok`,
+`empty`, `degraded` and `error`. A failed step has `status: "failed"` inside the
+line answer; previous step reports and undo lines remain present. Grammar reasons
+such as `needs_all` are product codes under `bad_request`, not new shared kinds.
+The shared failure table determines HTTP status and exit code: 0 success, 1 empty,
+2 invalid input, 3 refusal, 4 not-found/conflict/I/O/internal, 5 stopped-early or
+degraded, 6 not-running, 7 timeout/cancelled. Current wire examples above describe
+the command-first build and do not replace the typed target line contract.
+
 ## Callers
 
 ### One command set
@@ -172,29 +183,29 @@ The operator and agents hold the same command set; there are no ordered access t
 ### Agent writes are visible and undoable
 
 - Status lists the last week's agent writes by session and kind.
-- **`undo --session S [--dry-run]`** reverts every write one session made, listing it
+- **Decided target: `sinex 'writes where by:S' undo --all [--dry-run]`** reverts every write one session made, listing it
   first and recording each reversal with its own author. It archives the session's
-  notes, duplicate decisions, curation, saved queries, signal rules and `record` outputs; archives
+  notes, duplicate decisions, curation, saved queries, signal rules and derived-note outputs; archives
   what the session's stages admitted; and undoes the session's replays by the usual
   [replay undo](lifecycle.md#undo), possible at any later time. A tombstone confirmed in
   the session is listed as not revertible. A second undo restores what the first
   archived.
 
-### Derived conclusions: `record`
+### Derived conclusions
 
-`record KIND PAYLOAD --parent REF…` (a `sinex_write` row over MCP) writes an agent's derived
+**Decided target:** `sinex 'PARENT-REFERENCES' note PAYLOAD --as KIND` writes an agent's derived
 conclusion: a registered kind, a payload matching its schema, at least one parent
 citation, the computed author, and the producer `agent:<session>` with its model as
 producer version. It passes the same admission and is withdrawn by its author's archive
 act or by session undo. Programs that derive continuously use the ingress as
-[outside handlers](producers.md#outside-consumers-and-handlers), not `record`.
+[outside handlers](producers.md#outside-consumers-and-handlers), not a one-off note.
 
 ### Agent guidance shipped with Sinex
 
 - Sinex ships a skill text **generated from the operation table**: what Sinex holds, the
   core operations, example queries with their `read_as`, the data notice, and the rule
   "cite event IDs". Sinex's NixOS module installs it into each harness's skill
-  directory; `sinexctl skill print` prints it for any other installation. (ruling 2026-10-18, cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:12f1a067-cc5b-41b7-9209-297099d6b0c1).
+  directory; the target `sinex help --all` prints it for other installations. (ruling 2026-10-18, cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:12f1a067-cc5b-41b7-9209-297099d6b0c1).
 - The MCP `instructions` field carries its summary; each tool description is short and
   says when to use the tool.
 - Context reaches agents without their asking, through Polylogue's session-start brief
@@ -202,224 +213,232 @@ act or by session undo. Programs that derive continuously use the ingress as
 
 ## CLI
 
-The CLI and MCP server use a current-thread async runtime. One-shot requests run on the main thread.
-
-`sinexctl` is product UI, not developer tooling. (ruling 2026-02-12, claude.ai:7abe2ed3-2651-4e23-a23a-48a61c82bb85:019c5366-a07e-7623-9477-9d8a857b0aa3).
-
-### Current commands
-
-The command table supplies the CLI, API and MCP names. Common reads start with
-`status`, `query`, `recall`, `brief`, `search`, `context`, `timeline`, `show` and
-`trace`. `save NAME QUERY` stores a query; `watch` manages rules that raise notices.
-Their MCP tools are `sinex_save` and `sinex_watch`. `stage` hands source files to
-Sinex; `library-add` and `library-import` keep their library meanings.
-
-- `--page-size` is rows per page, default 50, including SQL and backup lists. A
-  returned `page.cursor` continues a list; `comparisons` also takes `--cursor`.
-  `crawl --limit` is a total number of pages to visit.
-- `--since` and `--until` bound times; `--kind` selects an event kind, such as
-  `command.executed`. Analysis ranges use positional `first` and `last` logical days,
-  with the last day included.
-- `--dry-run` shows what lifecycle operations and replay would change and writes
-  nothing. `recompute --compare` stores a comparison for a later version switch.
-- `backup prepare --to PATH` writes a backup; `library-curate --request-id ID`
-  identifies a retried write. `brief --bytes N` measures presentation bytes.
-- Compound option and request argument names use hyphens, including `command-record`
-  and `focus-record`. `library-rank --next-size` selects the next comparison's size;
-  `replay --every-change` lists each change, while the global `--all` follows list
-  pages to the end.
-
-The query-first grammar below is a decided target, not built.
+**Decided target (2026-11-18), not built.** The client is `sinex`; the daemon and its
+maintenance commands remain `sinexd` and `sinexd admin`. The current build still
+ships `sinexctl` with command-first parsing and one MCP tool per exposed command.
+Use `sinexctl --help`, `sinexctl COMMAND --help`, the generated tool list and
+`GET /v1/commands` for that build. The examples in this section specify the target;
+they do not claim that the binary rename or command port has shipped. The rename
+moves callers, packaging and integrations together and leaves one client name.
 
 ### Grammar
 
-- **One grammar rule, shared with Polylogue**
-  ([Polylogue's grammar](https://github.com/Sinity/polylogue/blob/master/docs/interfaces.md#grammar)):
-  the first argument is a command name, otherwise the start of a query, which needs a
-  signal (a field, a table, a reference, `find`, or one argument holding whitespace or
-  query punctuation). An unsignalled first word is refused within the local budget
-  with the nearest command and the `find WORDS` form.
-- **Verbs act on rows after a query:** `QUERY read`, `QUERY trace`, `QUERY follow`,
-  `QUERY keep`, `QUERY save NAME`, `QUERY archive`, `QUERY replay`; `REF read`,
-  `REF trace`, `REF related`.
-- **There is no `query`, `search` or `timeline` command.** Bare words in a signalled
-  query already search, and a timeline is the default rendering of an event query
-  sorted by time. `recall` is a command because it assembles several queries into one
-  answer ([recall](recall.md)); the current `context` and `brief` verbs fold into it.
-- **Groups, not hyphens:** `library add|import|save` (curation acts on a query or
-  reference: `QUERY tag add`, `QUERY judge SCALE`; [library](library.md#surfaces)),
-  `privacy rules|rule|class|verify`, `study`, `experiment`, `forecast`, `place`
-  ([personal evidence](evidence.md#surfaces)), `sources [NAME] | discover`,
-  `stage list|show`, `parser try`, `parsers`, `hosts`, `placement`, `kinds [KIND]`,
-  `store verify`. Rules, saved queries and lanes are authored records written through
-  `write` (`write signal:NAME …`). Decided target (2026-11-01): this replaces the
-  current `library tag|untag|set|…`, `analysis` and `watch add|…` groups.
-- **Export is `read --to`.** `QUERY read --to DIR` writes the bundle atomically with its
-  manifest: the question, its resolved read context, the selected records, references to
-  the material bytes they came from, what was left out, and the replay recipe.
-  `--to FILE` writes one document. There is no `export` verb. Results produced outside
-  from a bundle come back as attributed derived events through `record` or the ingress,
-  never as edits.
-- **No aliases.** Each name is fixed once; [vocabulary](vocabulary.md) holds every
-  command word and flag.
+```text
+sinex                                      Today on a terminal; status otherwise
+sinex COMMAND [ARGS] [OPTIONS]
+sinex SELECTION [OPTIONS] [VERB [ARG] [OPTIONS]]…
+sinex recall | note TEXT | resume           the forms needing no selection
+```
 
-### Alignment with Polylogue's CLI
+A selection is one shell argument. Quotes hold which rows; the words after them
+say what to do. A time lists its timeline, a path or URL its history, and a plain
+word searches. Queries retain the shared language's explicit `|` transforms:
 
-Each product's concepts are its own; the CLI mechanics are shared through
-`command-surface` and `query-language`:
+```sh
+sinex 'commands where cwd:/src/tide since:7d' read
+sinex yesterday recall
+sinex ~/src/tide/src/store.rs
+sinex 'items where tag:place:norway' pick save collection:wallpapers
+sinex note 'check bench disk' --when here
+```
 
-- the grammar rule above, with Sinex's own catalog; `|` between stages and the rest of
-  the query-language spelling;
-- the exit table, the request envelope with deadline classes and lifting, the answer
-  envelope and SSE framing;
-- the grammar-position completer, a catalog file published by the daemon, and shell
-  registration scripts;
-- global flags with the same names and meanings: `--json`, `--jsonl`, `--ids`,
-  `--page-size N`, `--cursor C`, `--fields`, `--why`, `--deadline MS`; Sinex's own
-  target flag is `--endpoint`;
-- space-separated command groups, and MCP names joined with `_`;
-- the same words for the same mechanical acts: `read` (one thing rendered), `follow`
-  (a stream of new rows), `trace`, `changes --since POS`, `explain`, `sql`, `status`,
-  `keep`, `save`, `judge` (write an evaluative record), `compare` (a read), `verify`,
-  `mcp`, `completions`, `setting`, and `read --to` for writing out. A vocabulary check
-  compares both products' tables.
+The first matching rule classifies the first argument locally, from declarations
+and the cached catalog: no argument; `-` for stdin references; command; verb;
+saved query name; unit; complete time expression; path or URL; reference; query
+text; plain-word search. Commands and verbs beat saved names. A time classifier
+must consume the complete argument: `'yesterday | where source:desktop.*'` is a
+query, not a time with an ignored suffix. Paths begin `/`, `~/`, `./` or `../`;
+URLs begin `http://` or `https://`. A reserved word can be searched with inner
+quotes, for example `sinex '"status"'`.
 
-Not shared, because they are Sinex's own concepts: the lifecycle verbs (archive,
-restore, replay, tombstone, stage), library curation, privacy rules and personal
-evidence. **Recall** means the same act in both products: build a pack about a subject
-from what is already held. Sinex's verb is `recall SUBJECT`; Polylogue's is its `recall`
-recipe. **Brief** is only Polylogue's session-start recipe; Sinex's part of it is the
-here pack.
+Each verb takes its declared number of words. Required text stays text even when
+it names a verb: `note read` writes `read`. The optional name in `save read` is
+absent, so `read` starts the next step. Literal `--` marks one selection or required
+word, without disabling option parsing for the remaining line. Free text is one
+argument or `-`; stdin can be read once per line. An unquoted multiword query is
+refused with a shell-quoted correction. Commands and verbs are never guessed.
 
-### Lifecycle and staging verbs
+### Verbs
 
-The semantics are [lifecycle](lifecycle.md)'s and [staging](materials.md#staging)'s;
-the surfaces are:
+| Verb | Words | What it does |
+|---|---:|---|
+| `read` | 0 | render rows in full; `--view trace`, `--view privacy`, `--view compare`; `--follow` streams; `--to` chooses output or an application |
+| `pick` | 0 | narrow rows with the embedded picker before later steps |
+| `recall` | 0 | build a cited pack; `--as RECIPE`, `--rows LANE`, `--at then` ([recall](recall.md)) |
+| `note` | 1 | write text; `--as KIND` writes a form, definition, forecast or derived conclusion |
+| `tag` | 1 | label rows with `NAME` or `NAME:VALUE`; `--remove` takes it off; `--empty` records an explicit empty property |
+| `edit` | 1 | revise an authored record, retaining its history; `--expects REV` checks the base |
+| `withdraw` | 0 | take back an authored record, with history retained |
+| `judge` | 1 | accept/reject/defer, rate `--on SCALE`, compare named rows, decide same/distinct or resolve a forecast |
+| `save` | 0 or 1 | keep the question and selected rows; optionally name it, add `--watch`, or save to `collection:NAME` |
+| `archive` | 0 | move selected live chains to the archive |
+| `restore` | 0 | restore archived chains |
+| `replay` | 0 | read stored originals again or recompute a derivation; `--trial` retains a comparison; `--switch TRIAL` selects its version |
+| `tombstone` | 0 | permanently remove archived payloads after the applicable operator confirmation |
+| `undo` | 0 | reverse an operation or request of writes |
+| `continue` | 0 | continue an operation from its committed position |
+| `resume` | 0 | reopen an episode or item where work stopped |
 
-- `stage PATH… [--parser NAME…] [--export-date DATE] [--account NAME] [--follow] [--batch-events N]`,
-  answering with the operation and the inventory of every staged member at once, and
-  with `--follow` ending with each product's accounting and `stopped_early` when it did
-  not finish ([staging](materials.md#inventory-and-accounting)); `stage-list
-  [--active]` and `stage-show OPERATION` read stages later. With the daemon stopped,
-  `sinexd admin stage` runs the same command with its own writer;
-- `archive REF | QUERY | --material ID… | --run ID | --source S [--since T] [--until T]`
-  and `restore` over the same scopes or `--operation OP` (the chains that operation
-  archived), each refusing when any part cannot move; `--dry-run` prints what moves with the selected events and
-  what would refuse and changes nothing;
-- `undo OPERATION [--dry-run]` archives what the operation made live and restores what it
-  archived, for an archive, a restore, a replay or an undo;
-- `resume OPERATION` continues an archive, restore, tombstone, undo, replay or stage that
-  ended `stopped_early` or whose daemon stopped mid-run;
-- `replay QUERY [--parser NAME] [--dry-run] [--batch-events N]` and its undo, with `--dry-run` showing per-field changes; `recompute DERIVATION [--compare]` and
-  `recompute DERIVATION --switch` ([versions](derivations.md#versions));
-- `tombstone` over the same scopes as `restore`, only on archived chains; `--dry-run`
-  previews what moves with the selected events, and the act is reserved to the operator
-  ([one command set](#one-command-set));
-- `backup hold` and `backup release HOLD`, called by the deployment's backup tool
-  around a copy ([backup](operations.md#backup-and-restore));
-- each records an operation with its computed author, and the preview is shown on
-  every surface before a state change runs.
+The lifecycle's meanings remain in [lifecycle](lifecycle.md); library curation in
+[library](library.md#surfaces); typed evidence records in [evidence](evidence.md#surfaces).
+`resume` means reopening work, while `continue` means an unfinished operation.
+There are no command aliases for replaced spellings.
 
-Archive and restore take something out of view and bring it back; tombstone is the
-one irreversible deletion; a refused material is read again by replay.
+### Commands
+
+Commands concern the system or intake rather than selected rows:
+
+| Command | Purpose |
+|---|---|
+| `help [TOPIC]` | one-screen cheatsheet; `help query`, `help units`, `help fields KIND`, `help --all` |
+| `status` | capture and consumer progress, hosts, disk, agent writes and privacy; `--line`, `--follow`, `--offline`, `--verify` |
+| `stage PATH…` | admit files, directories, databases, URLs or stdin ([staging](materials.md#staging)) |
+| `set [KEY [VALUE]]` | show effective settings and origins; change settings owned by Sinex |
+| `unlock FILE` | unlock sealed fields for `--for D`; `--off` locks them |
+| `install TARGET` | install shell completion/picker bindings or a harness MCP entry and skill; `--dry-run`, `--remove`, `--program NAME` |
+| `web` | open the reader |
+| `demo DIR` | build the synthetic world |
+| `mcp` | run the stdio MCP server |
+| `dev …` | read-only `sql`, `feed --after POSITION`, and `backup hold|prepare|release` |
+
+Bare `sinex` renders [Today](web.md#today) on a terminal and status otherwise.
+Deployment-owned settings are displayed with the option that owns them; `set`
+refuses to replace them. `status --offline` and `status --verify` use the existing
+`sinexd admin` diagnostic owner; this is not a second database implementation.
+
+### Options and chains
+
+Line options go anywhere: `--json`, `--deadline MS|none`, `--request-id ID`,
+`--dry-run`, `--explain`, `--wait D`, `--hold D`, `--until-empty`, `--all`,
+`--endpoint`, `--token-file`. Listing options before the first verb are
+`--page-size N`, `--fields a,b`, `--why`, `--to`, `--format` and `--cursor`.
+After a verb, options belong to that verb and undeclared options are refused.
+
+| Option | Meaning |
+|---|---|
+| `--page-size N` | transport rows per page, default 50; does not change selection |
+| `--budget N|none` | presentation tokens with the declared tokenizer; does not change selection |
+| `--cursor C` | continue the same question and read context |
+| `--all` | authorize a write or act on every row a query matched; not a paging option |
+| `--to stdout|pager|FILE|DIR|clipboard|browser|app|PROGRAM` | output destination; never a time bound |
+| `--format F` | document encoding, including JSONL and full citations |
+| `--json` | encode the whole reply as JSON |
+| `--why` | explain matches, defaults, or a figure's missing/partial state |
+| `--explain` | explain the parsed line and intended effects without running them |
+| `--dry-run` | report all effects without writing requests, runs, trials or other records |
+
+The selection resolves once at the first step's position. Only `pick` narrows it.
+Steps finish in order; a failure stops the line and retains each completed result
+and its undo line. Grouped/measured rows accept listing, `read`, `recall` and
+`save`. Writes and acts over several query rows require `--all`, with a count and
+runnable correction on refusal. A one-row act never chooses an arbitrary row:
+it offers a picker on a terminal or candidates otherwise. `read --follow` is last.
+
+Retry retains the accepted selection, options, step identities and committed
+outcomes through the existing request/operation owner. It must neither select
+newly matching rows nor replay committed writes or application launches. A read
+continuation contains only that read and its original options and grants. Every
+state change prints its reversal (`withdraw`, request `undo`, or operation `undo`),
+including what cannot be reversed. Captured text is escaped and delimited under
+the same output rules on every surface.
 
 ### Output
 
-- Typed printers per operation, from its answer type. Modes: a table (default on a
-  terminal), `--json` (one complete document), `--jsonl` (rows streamed after a
-  documented metadata frame), `--ids`. An answer rendered as text (a pack, a panel,
-  `explain missing`) prints that text once by default; its JSON document is printed only
-  with `--json`.
-- Colour only on a terminal with `NO_COLOR` unset. Colour and weight encode status only
-  (ok, stale, missing, provisional, error), never source identity. Provisional rows look
-  provisional; unknown is printed "unknown", never blank. Widths count display columns.
-  Answer times use the resolved context zone, or UTC when the answer has no zone,
-  and print as `YYYY-MM-DD HH:MM:SS±HH:MM`; the footer names that same zone. `follow`
-  and SQL output use and label UTC. Captured control characters are escaped.
-- Long output on a terminal streams into `$PAGER`, fetching later pages only as the
-  pager reads.
-- **Errors** are one line of what failed and what to do, positioned in the query, with a
-  runnable correction when one exists; with `--json`, an error object on stdout. An
-  empty result says why: nothing matched, the source was not observed, or the rows are
-  outside the caller's grants.
-- A closed output pipe ends `sinexctl` or `sinexd admin` with exit 141 and no panic
-  message. Other standard-output errors print one line and use the shared `io` exit
-  code.
-- `--deadline` has no upper bound; `--deadline none` lifts it.
+Lists are newest first unless the question orders them, with one screen of 50
+rows and a footer carrying the read position, coverage, omissions and next lines.
+A terminal uses the pager for more; a machine receives structured rows and a
+continuation. Rendering goes to stdout; guidance and undo lines go to stderr.
+Colour encodes status, respects `NO_COLOR`, and is used only on a terminal.
+Unknown values say `unknown`; a count over incomplete coverage says `lower bound`.
+An empty answer distinguishes no match from unobserved or withheld evidence.
+A closed output pipe exits 141 without a panic.
+
+`read --to FILE` writes one document; `--to DIR` writes an atomic bundle with its
+manifest, question, read context, references, omissions and replay recipe. It
+retains original-byte citations and applies output rules. Opening through
+`--to app` uses a declared opener and exact part/position, recording a view only
+when it was actually shown. A missing file or application is a typed failure.
 
 ### Completion, picker and references
 
-Completion and fuzzy finding are part of the product. (ruling 2026-10-27, cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:dad489d4-a1b8-48bd-bbc0-26262f34b262).
+Completion uses the catalog atomically published by the daemon and works offline.
+It understands the grammar position, query fields/types/values, saved names,
+valid next verbs and their options, and says why a candidate applies. Shell
+registration for bash, zsh and fish comes from `install`; wrappers use
+`--program NAME`. MCP completion and the reader query box use the same typed
+query completion. No completion round trip waits on the daemon.
 
-- **Completion runs in the CLI process from a catalog file `sinexd` publishes**: tables,
-  aliases, fields per event type from the kind registry, sources, hosts, recent event
-  types, saved queries. The daemon rewrites it atomically after committed batches. It
-  works with the daemon down and never waits on it. The grammar-position completer is
-  the shared `query-language` function; MCP `completion/complete`, HTTP and the reader's
-  query box call the same function.
-- `completions SHELL` prints registration scripts for bash, zsh and fish.
-- **One embedded picker** (`nucleo` matching) opens only when stdin and stdout are
-  terminals and no machine format or harness is present. Otherwise an ambiguous
-  reference refuses (exit 2) with the candidates and the exact non-interactive call.
-  `pick` prints chosen references for shell widgets.
-- **References:** full IDs; unique prefixes of at least 8 characters; `@N`, `@N.M`,
-  `@N-M`, `@*` from the previous list in this terminal (a row file holding the list's
-  query, read context and next cursor, so `next` continues it); `last`; the
-  [citation forms](query.md#citation-forms). Over MCP, `@N` names the agent session's
-  previous result. `@` rewriting applies only to reference and query arguments.
-- There is no REPL and no full-screen terminal interface: the shell with completion,
-  `@N`, the pager and the picker is the interactive loop, and the [reader](web.md) is
-  the exploration surface.
+The embedded picker opens only with terminal input/output and no harness or
+machine format. It shows the selected question, counts and preview, keeps exact
+references and supports multi-select before subsequent verbs. Its key table and
+the completion/help/refusal rendering have one common owner shared with Polylogue.
+The immediate parser reuse is narrower: classification and argv step splitting
+around `StepDeclarations::parse_step`; product resolution and I/O remain local.
+
+`@3`, `@3.2`, `@2-5`, `@1,4` and `@all` refer to the last displayed listing in this
+terminal, with its question, read context and continuation. They are terminal
+convenience, never stored citations or MCP references. Durable references and
+ambiguous short forms are defined in [citation forms](query.md#citation-forms).
+There is no REPL; the shell, pager, completion, picker and reader form the loop.
 
 ### Help and orientation
 
-- Help is generated from the command table. Each command carries one to three full
-  `sinexctl` examples, printed after its help and in its MCP tool description. The
-  examples run against the development fixture. `query --help` names query units and
-  points to [the query language](query.md).
-- **Decided target, not built:** `explain QUERY` prints the query read back as a
-  sentence (`read_as`), its field phrases and the resolved read context. Current query
-  answers include `read_as` directly.
-- `kinds [KIND]` lists event types with counts, schemas, time quality and the aliases
-  that expand to them; `kinds export DIR` writes JSON Schemas for outside producers.
-- **Decided target, not built:** `setting` prints the effective configuration and
-  where each value came from; bare `sinexctl` renders [Today](web.md#today).
+`help` is a one-screen cheatsheet with runnable examples drawn from available
+data, plus `help VERB`, `help query`, `help units`, `help fields KIND` and
+`help --all` for the generated agent guide. With no matching data an example
+says so. `--explain` reports classification, resolved scope and effects without
+executing them. Every shipped example is exercised on the synthetic world by
+its implementing command; future features are absent from current generated
+help and tool schemas until implemented. A `not_built` refusal is not a shipped
+future capability.
+
+### Family with Polylogue
+
+Both products use one-argument selections, typed verb arity, ordered chains,
+common request/answer/failure contracts, deadline and presentation semantics,
+terminal row numbers, completion, picker and help mechanics. `run:` names an
+execution, `--to` an output destination, `resume` reopens work, and `save` keeps
+a question and its selected result. Shared mechanics live in common; product
+resolvers, SQL lowering and domain models stay in their products.
+
+Sinex retains its lifecycle, intake, library and evidence semantics. Its `recall`
+builds packs across personal evidence; Polylogue's `brief` packages AI work.
+Polylogue's brief can carry Sinex's here pack through global references. The
+relationship does not make one product's future features the other's release
+prerequisites.
 
 ## MCP
 
-- `sinexctl mcp` (stdio, on `rmcp`) advertises the operations the table marks for MCP,
-  with strict argument schemas and `outputSchema`. Each current tool corresponds to
-  one command row. A list answer includes `page.cursor` in its structured content
-  whenever rows remain; pass it back with `page-size` to continue.
-- **Eight tools** (decided target, 2026-11-01). Agents bypass a long flat tool list by
-  reaching for raw SQL, so Sinex groups its rows into eight tools named like
-  Polylogue's:
+**Decided target, not built.** Three nested tools replace the flat current list:
 
-| Tool | Rows |
+| Tool | Access |
 |---|---|
-| `sinex_status` | daemon, sources summary, hosts, attention, budget |
-| `sinex_query` | every unit (sources, inputs, coverage, items, encounters, figures, studies, …), `sort by rank(scale)`, `judge next`, `signal:NAME backtest`, the `wait` option |
-| `sinex_read` | any reference: an event, a material range, an item, a pack's expand handle, a study result; `parser try` (a dry run that admits nothing) |
-| `sinex_trace` | the provenance walk |
-| `sinex_recall` | every recipe: resume, moment, day, period, here, project, compare, today, study, experiment |
-| `sinex_write` | notes, curation, comparisons, scales, rules and watches, saved queries and lanes, instruments, studies, forecasts, places |
-| `sinex_act` | stage, replay (compare by default), archive, restore, tombstone, undo, library add, import, save, open and viewed, experiment acts, notify, ack, snooze |
-| `sinex_explain` | syntax, units, fields, a query's reading, metrics, methods, missing cells |
+| `sinex_read` | reads, including rows, recall, status, help and read-only SQL |
+| `sinex_write` | reads and authored writes, including notes, curation, saved queries, watches and judgments |
+| `sinex_act` | reads, writes and actions, including stage, lifecycle, application opening and experiment acts |
 
-  In this target design, `sinex_sql` stays a local operator tool. The current flat
-  tools, including `sinex_brief`, `sinex_archive`, `sinex_restore`, `sinex_save`,
-  `sinex_watch`, `sinex_library-*`, `sinex_analysis-*`, `sinex_forecast-*`,
-  `sinex_privacy-*` and `sinex_comparisons`, are intended to fold into these rows.
-- Every answer uses the common answer contract: the text part is the rendering, rows
-  appear as JSON only with `format: json`, and a budget cuts whole lines with counts of
-  what was left out and expand handles.
-- `follow` is available as a resumable subscription of `sinex_query`, with the same positions as SSE.
-- Output rules, the data notice and per-row delimiting apply exactly as on HTTP and the
-  CLI. `@N` and `since last_seen` are per agent session; one client's state never
-  affects another's.
-- A query that would exceed MCP's deadline is refused with its estimate and the CLI
-  form, never answered differently.
-- MCP never returns raw material bytes.
+They carry one typed command/line shape, for example:
+
+```json
+{"operation":"line","arguments":{"selection":"yesterday","steps":[{"verb":"recall"}]}}
+```
+
+An ordered `references` array can replace `selection`; the two are mutually
+exclusive. MCP never reads a terminal's `@N` file. The connection supplies caller
+session metadata, while the daemon computes authorship. Credential roles
+(read/agent/operator) remain separate from tool read/write/act access. Dispatch
+checks both before effects; a higher-access tool does not grant a higher credential.
+Read-only SQL retains the reader role, current output rules and caller-bound
+paging. Host-opening `read.to` requires act access and one idempotent launch;
+FILE/DIR, pager and clipboard destinations belong to the calling process.
+
+Existing common declarations generate the compact tool-list projection and
+validate the complete typed arguments at dispatch. Handwritten examples do not
+replace those schemas. Each answer retains the common envelope, structured rows,
+read context, continuation, data notice and per-row delimiters. Budgets count the
+encoded answer and cut whole items with omission counts. Failed steps retain
+prior outcomes and undo lines; MCP sets `isError` for the actual failure. A
+continuation repeats only its read. No raw material bytes are returned over MCP.
 
 ## Status
 
@@ -453,7 +472,7 @@ reader sooner.
 50-row page. `source_states` counts rows in each [input state](sources.md#input-states).
 The same source relation supplies offline status and the `doctor` sources check. Status and diagnostics read its rows directly, without preparing calendar rows, loading event declarations or creating continuation tokens.
 `doctor` reports the search backlog and failures in the last 24 hours as information;
-the failure detail points to `sinexctl query 'failures where since:24h'`.
+the failure detail points to `sinex 'failures where since:24h'`.
 The informational `located_files` doctor check counts retained live located
 contents with no current recorded file path available on this machine. It
 does not add a counter or filesystem walk to ordinary status.
@@ -519,7 +538,7 @@ time window, class visibility and order within each consumer's samples.
 
 ### The status bar
 
-`status --bar` emits one JSON line on change, for a desktop bar or dashboard to
+**Decided target:** `status --line` emits one JSON line on change, for a desktop bar or dashboard to
 consume:
 
 - the **capture stripe**, coloured by the most invasive capture running now: green for
@@ -537,6 +556,10 @@ is unreachable, pending counts are `not_measured` and `up_to_date: false` is sho
 never success ([Polylogue primary mode](https://github.com/Sinity/polylogue/blob/master/docs/primary-mode.md)).
 
 ## Signals
+
+**Decided target surface:** a signal rule is called a watch. `sinex 'QUERY' save NAME --watch`
+creates one; `sinex watches` lists them. Stored `signal.*` kinds and the shared
+evaluator remain unchanged. Full rules use `sinex query:NAME note RULE-JSON --as watch`.
 
 A **signal** is a standing query with a declared delivery rule. It is the only way Sinex
 surfaces anything unasked. The rule schema, the evaluator, the route
@@ -556,7 +579,7 @@ its conformance cases run in Sinex. What Sinex supplies:
 ### Rules, deliveries and acts
 
 - **Declared, never inferred.** A rule is an authored record written by the operator or
-  an agent through `write` (`write signal:NAME …`, or `QUERY watch`) and runs as
+  an agent through a saved query with `--watch` or `note --as watch` and runs as
   written. Status lists rules written by others since the operator last looked;
   disabling one is an authored revision.
 - **Passive by default:** a delivery appears in the inbox, Today's Signals pane, the
@@ -567,13 +590,13 @@ its conformance cases run in Sinex. What Sinex supplies:
   and the readings its rows were computed from) and `signal.outcome` (what happened to
   a delivery afterwards: an outlet's attempt, shown, cleared, closed), plus
   `signal.report` for evaluator reports another product forwards. Decided target, not
-  built: `notice.submitted` from producers and `instrument.defined` for elicitation.
+  built: form definitions for elicitation.
   The evaluator and host policy checkpoint is daemon state, not events. Every delivery
   stores its route decision, holds and attention, so "why did this fire" and "why
   didn't it interrupt" are both queries.
-- **Acts:** `delivery:ID open|ack|snooze 1h`, `quiet until 14:00 | quiet off`.
-  `QUERY wait [--for D] [--timeout T] [--until-empty]` blocks until the query first
-  matches or empties, recording nothing; `signal:NAME backtest since:30d` replays a rule
+- **Acts:** `sinex delivery:ID read`, `judge accept|reject`, `judge defer --until 1h`,
+  and `sinex set quiet 14:00|off`. `sinex 'QUERY' --wait D [--hold D] [--until-empty]` blocks until the query first
+  matches or empties, recording nothing; `sinex query:NAME read --view backtest --from 30d` replays a rule
   over stored history with the route decisions it would have received, and writes
   nothing.
 - **Three deliveries, one mechanism:** a notice, a value, an action. An action names
@@ -617,18 +640,16 @@ because its configured outlet belongs to its own product. Polylogue shows only i
   firing fires again only on a new crossing, change or day.
   The current build checks the cited readings against the lifecycle. Policy-change
   withdrawal belongs to the output-time privacy design and is not built.
-- **Any producer may notify** (decided target, not built). A credentialed producer submits a `notice.submitted` fact
-  (title, body, reference or URL, an interrupt request, a `key` for grouping and
-  replacement, an optional `clears` key); it is a delivery of the implicit rule
-  `producer:<name>` with author class `producer`, inside the budget and passive unless
-  it asks to interrupt. `sinexctl notify --title T [--body B] [--ref REF|--url U]
-  [--key K] [--clears K] [--interrupt]` is the CLI for scripts, so a host's scripts, job
-  runners and CI reports share one budget, grouping, quiet hours and inbox instead of
-  calling a notification command themselves.
+- **Any producer may notify** (decided target, not built). A credentialed producer
+  writes an attributed note, optionally with a cited target, `--notify` and
+  `--interrupt`. `sinex note TEXT --notify --key K` is the script form; a later
+  note under that key replaces the notice, and withdrawing it clears the notice.
+  The same evaluator and host deliverer apply grouping, quiet hours and the
+  interrupt budget. A second `notice.submitted` intake kind is not introduced.
 - **Own notifications are excluded** (decided target, not built). A notification captured by Sinex's D-Bus source
   whose hints carry a product's delivery identifier is marked as a signal origin, and no
   rule reads it.
-- **Decided target, not built:** `sinexctl attention` prints presence, quiet, the budget, held notices and the last 24
+- **Decided target, not built:** `sinex status` prints presence, quiet, the budget, held notices and the last 24
   hours of interruptions.
 
 ### Shipped rules
@@ -662,7 +683,7 @@ start or resume an agent, because a run would spend quota with no one acting.
 Self-report prompts are deliveries of rules with `deliver: ask` and an instrument
 ([elicitation](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/signals/README.md#elicitation)).
 The answer is a [note](recall.md#notes) with the delivery as parent and its latency;
-`sinexctl delivery:ID answer 4` and `sinexctl note --value mood=3` answer from the CLI,
+`sinex delivery:ID note 4` and `sinex note 3 --as mood` answer from the CLI,
 and notification actions answer with one click. Nothing is asked until the operator
 decides which prompts may be sent (default; open operator question).
 
@@ -708,7 +729,7 @@ belongs to one class of the shared `command-surface` classes; Sinex's budgets pe
 | Class | Sinex operations | Budget |
 |---|---|---|
 | local | help, version, grammar completion, refusals of malformed input | ≤ 15 ms |
-| status | `status`, the first screen of bare `sinexctl`, `status --bar` | ≤ 100 ms |
+| status | `status`, the first screen of bare `sinex`, `status --line` | ≤ 100 ms |
 | completion | each keystroke, daemon up or down | ≤ 50 ms |
 | read | `REF read`, indexed lists | ≤ 100 ms to the first screen |
 | search | bare-word queries, `recall` | ≤ 250 ms to the first page |
@@ -739,7 +760,7 @@ own task in `application_name`, including writer, publisher and API.
 
 Journey budgets on top:
 
-- the morning view (bare `sinexctl`, Today) renders in under 1 s;
+- the morning view (bare `sinex`, Today) renders in under 1 s;
 - resuming work takes at most two commands or interactions to reach evidence;
 - a prepared pack is read in ≤ 20 ms, a moment pack on request in ≤ 250 ms, a closed day in ≤ 100 ms, a week in ≤ 400 ms and a month in ≤ 1 s;
 - `note` commits in under 1 s;

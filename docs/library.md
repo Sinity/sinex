@@ -248,11 +248,11 @@ A **collection** is an ordered list of entries with a stable ID independent of i
 
 ## Saved queries and kept results
 
-- A **live set** or reading list is a [saved query](query.md#saved-queries) plus arguments, evaluated in the one query language and cited by its query identity. Updating its query text creates a new revision, even when the label stays. Setting a property on items is `property set`, a different operation. The shipped saved queries include `query:reading` (over the `status` property, ordered by the `reading` collection when one exists), `query:uncurated` (new items nobody has curated) and `query:resurface` (saved or highly rated items not encountered for a year, one or two a day in Today).
-- A **fixed selection** is a [kept result](query.md#kept-results) (`QUERY keep` → `result:<id>`): the query, its read context and the ordered references it resolved to, with unavailable ones and their reasons. Decided target: this replaces the separate `library.selection` record, which was the same object. A collection can take entries from it (`collect --from result:<id>`).
+- A **live set** or reading list is a [saved query](query.md#saved-queries) plus arguments, evaluated in the one query language and cited by its query identity. Updating its query text creates a new revision, even when the label stays. Setting a property on items is `tag NAME:VALUE`, a different operation. The shipped saved queries include `query:reading` (over the `status` property, ordered by the `reading` collection when one exists), `query:uncurated` (new items nobody has curated) and `query:resurface` (saved or highly rated items not encountered for a year, one or two a day in Today).
+- A **fixed selection** is a [kept result](query.md#kept-results) (`sinex 'QUERY' save` → `result:<id>`): the query, its read context and the ordered references it resolved to, with unavailable ones and their reasons. Decided target: this replaces the separate `library.selection` record, which was the same object. A collection can take entries from it (`sinex result:ID save collection:NAME`).
 - Set membership and collection entries mean different things. A collection keeps its own order and multiplicity.
 - A saved query offers **suggestions** to a collection without changing it. Accepting a suggestion creates an entry; refreshing adds, removes or reorders no existing entry. A **dismissal** is scoped to the collection, the target and the saved query's revision, so it does not carry over to a new revision.
-- Paging and the language's set operations apply before a bulk action, and no hidden maximum truncates a valid selection. A failed member of a bulk action is reported per member. A single-valued property set over more than one target needs `--each`, so one pass cannot silently overwrite many operator values; many-valued tags and notes need no flag.
+- Paging and the language's set operations apply before a bulk action, and no hidden maximum truncates a valid selection. A failed member of a bulk action is reported per member. A write over several query rows requires `--all`, including tags and notes; a single-valued kind over several explicit rows also requires it. This target rule prevents a line from silently overwriting many values.
 
 ## Ratings
 
@@ -367,37 +367,59 @@ Agents have every library power the operator has: add, import, open, preview, cu
 - Library scan, import and request materials follow [the one lifecycle](lifecycle.md): live, archived, tombstoned.
 - Archiving one scan's material archives the item and availability readings derived from it and removes only that scan's support; another live scan can still support the item. Authored curation stays live and shows "target lacks live support" until support returns. Restoring or replaying the scan reads it again normally.
 - Tombstoning an item's original material removes its bytes only when no other material or rendition reads them, so equal-byte items are untouched.
-- Withdrawing a curation act is not deletion ([withdrawals](#withdrawals)).
+- Withdrawing a curation act is not deletion ([withdrawals](#withdrawals-and-currency)).
 
 ## Surfaces
 
-Decided target (2026-11-01). Verbs follow a query or a reference, as everywhere in `sinexctl`; `library` keeps only the verbs that add items, so curation is never an island command.
+**Decided target (2026-11-18), not built.** Library rows use the same selections,
+verbs and typed requests as other evidence. The current build retains its
+`sinexctl library-*` operations; generated help and tools describe those calls.
+Intake becomes `stage`, curation becomes authored verbs, ranking remains a read
+measure, and opening uses `read --to app`:
 
+```sh
+sinex stage ~/Pictures --parser library
+sinex stage ~/exports/items.json --parser gallery-dl
+sinex stage https://example.org/paper --allow example.org --pause 2
+sinex 'items where tag:place:norway' tag mood:calm --all
+sinex item:ITEM_ID tag status:reading
+sinex item:ITEM_ID tag caption --empty
+sinex item:ITEM_ID note 'check the original colour' --part page:2
+sinex item:ITEM_ID judge 4 --on stars
+sinex 'item:FIRST,item:SECOND' judge item:FIRST --on quality
+sinex 'items where in:collection:wallpapers | measure ranking quality'
+sinex 'items where tag:place:norway' pick save collection:wallpapers
+sinex entry:ENTRY_ID save collection:wallpapers --after entry:OTHER_ID
+sinex item:ITEM_ID read --view compare --blind --seed 17
+sinex item:ITEM_ID read --to app
+sinex item:ITEM_ID resume
+sinex scale:quality note 'Which is better made?' --as scale --range 0..5
+sinex collection:wallpapers note 'Wallpapers' --as collection
 ```
-sinexctl library add PATH… [--reference] [--root NAME]
-sinexctl library import PATH… [--format gallery-dl|hydrus|raindrop|pocket|zotero|calibre|netscape|warc|wacz|singlefile]
-sinexctl library save URL… [--collection C]
-sinexctl QUERY|REF tag add|remove TAG… [--part SEL] [--expects REV]
-sinexctl QUERY|REF property set PROP VALUE|--empty [--each] [--expects REV]
-sinexctl QUERY|REF note "TEXT" [--part SEL]
-sinexctl QUERY|REF rate SCALE VALUE
-sinexctl QUERY|REF collect COLLECTION [--after ENTRY|--before ENTRY|--at end] [--from result:ID]
-sinexctl ENTRY… uncollect | move --after ENTRY
-sinexctl QUERY judge SCALE [--k N] [--judges SET] [--blind] [--rule information|random|uncompared-first]
-sinexctl REF,REF… judge SCALE --order A,B,C | --tie
-sinexctl QUERY rank SCALE [--judges SET] [--levels N]        # QUERY | sort by rank(SCALE)
-sinexctl QUERY duplicates [--distance N]
-sinexctl REF open [--player mpv|xdg|web] [--resume|--at SEL]
-sinexctl REF read [--to DIR]
-sinexctl CURATION withdraw | undo OP
-sinexctl tag define NAME [--namespace NS] | tag alias A B | tag implies A B
-sinexctl scale define NAME --question "…" (--range 0..5 | --choices a,b,c)
-sinexctl collection create NAME [--suggest-from QUERY]
-```
 
-Every write prints the request ID, the records written with their revisions, and conflicts with the current revision and its author; exit 3 is refused, 5 is partial in a bulk act.
+`tag NAME:VALUE` sets a declared property; `--remove` withdraws a tag and `--empty`
+records explicit empty. `--expects REV` checks a tag or edit's base revision.
+`note --as tag|property|scale|collection` defines those records on their named
+references. `edit TEXT`, `withdraw`, request `undo`, and a collection entry's
+`save --after|--before` preserve the existing authorship, revision and ordering
+rules above. A bulk curation step is one atomic authored request; a multirow
+query write requires `--all`. Every answer names its request, records and
+revisions, conflicts and undo line. A partial lifecycle operation is distinct
+from an atomic curation refusal.
 
-Over MCP, adding items (`add`, `import`, `save`), `open` and `viewed` are rows of `sinex_act`; every curation act is one atomic request through `sinex_write` (`writes: [{act, target or query, …, expects?}]`); `judge next` and `rank` are rows of `sinex_query`; items and collections are read through `sinex_query` and `sinex_read`. The deployed `sinex_library-*` tools fold into these rows.
+Ratings and comparison judgments use the existing ranking model, including
+judge sets, uncertainty, ties, scale and fit diagnostics. `| measure ranking SCALE`
+reads it; it never substitutes a newly invented score. Blind comparison hides
+identities only in presentation and retains the seed. An opener lands at the
+exact rendition/part and last recorded position; a view is recorded only after
+actual display. `note '' --as view --seconds N --player P` preserves an external
+view report without invented text.
+
+MCP has three target tools: reads and rankings through `sinex_read`, authored
+curation through `sinex_write`, staging and host application opening through
+`sinex_act`. Their [typed line contract](interfaces.md#mcp) supplies ordered
+references, caller metadata, access validation and retry. No separate
+library-specific request schema or reconstruction path is introduced.
 
 | Unit | Rows |
 |---|---|
@@ -405,7 +427,7 @@ Over MCP, adding items (`add`, `import`, `save`), `open` and `viewed` are rows o
 | `copies`, `encounters`, `captures` | copies, encounters and captures with their grades |
 | `curation`, `collections`, `entries`, `comparisons`, `scales`, `tags` | curation records and their views |
 
-Curation predicates: `tag:x`, `tag_direct:x`, `tag_by:(operator|agent|import)`, `prop(name) = v`, `rating(scale) >= 4`, `rank(scale) <= 10` with `judges:`, `conflict:any`, `value_state(prop) = unknown|empty|conflict|withheld`. Relations: `encountered_by:ACTOR`, `encountered during(Q)`, `corresponds(rel, REF)`, `captured: during|after|archive|none`. Bare words search titles, tags, notes and extracted content, and hits carry their rendition and selector, so `@1 open` lands at the hit. References: `sinex:item/<id>[@<rev>][#selector]`, `sinex:collection/<id>[@<rev>]`, `sinex:scale/<name>`, `sinex:content/<blake3>`, `sinex:curation/<root>@<rev>`; a pasted URL resolves to its item through the canonicalizer.
+Curation predicates: `tag:x`, `tag_direct:x`, `tag_by:(operator|agent|import)`, `prop(name) = v`, `rating(scale) >= 4`, `rank(scale) <= 10` with `judges:`, `conflict:any`, `value_state(prop) = unknown|empty|conflict|withheld`. Relations: `encountered_by:ACTOR`, `encountered during(Q)`, `corresponds(rel, REF)`, `captured: during|after|archive|none`. Bare words search titles, tags, notes and extracted content, and hits carry their rendition and selector, so `sinex @1 read --to app` lands at the hit. References: `sinex:item/<id>[@<rev>][#selector]`, `sinex:collection/<id>[@<rev>]`, `sinex:scale/<name>`, `sinex:content/<blake3>`, `sinex:curation/<root>@<rev>`; a pasted URL resolves to its item through the canonicalizer.
 
 Web views come from common `web-shell` and print the CLI and MCP call that reproduces them: the **grid** over any `items` query (`/q?q=…&layout=grid`, thumbnails loaded only for visible tiles, video tiles scrubbing sprite sheets, audio only on explicit request, facets including the origin of shown values); the **item** page (preview, values with level and supporting records, the encounter strip, captures with grades, copies and availability, correspondences, collections, *In AI sessions*, notes, history); the **reader** (`/item/<id>/read`); **judge** (`/judge?q=…&scale=…`, two-up or up to six-up with the scale's question on top, `←`/`→` or `1`–`6`, `=` tie, `s` skip, `u` undo, `b` blind, the ranking panel updating after each comparison); **collection** and **duplicates**.
 

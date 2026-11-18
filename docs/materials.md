@@ -17,7 +17,6 @@ or permission refusal leaves source progress and producer acknowledgement
 uncommitted; it is distinct from a recorded content refusal. Transient storage
 I/O keeps the input available for retry.
 
-
 **A path is never a material.** A file referred to by path can change or disappear, and then nothing could be read again. (ruling 2026-03-29, cc-queued:ea2bf14e-10bb-42e9-9ff5-616882baaf1c@2026-03-29T19:12Z).
 
 **Materials are source-shaped.** A material is a unit the source itself has: a file revision, a part of a growing file, a capture segment, an export member, a set of database rows. (ruling 2026-03-29, cc:ea2bf14e-10bb-42e9-9ff5-616882baaf1c:bbe835e2-4b30-498e-bc5b-d257f4d82323).
@@ -156,6 +155,23 @@ A continuous binding is a staged input declared in configuration: Sinex's own Ni
 
 ### One-shot staging
 
+**Decided target client surface:** `sinex stage PATH|URL|-…` uses the existing
+staging operation and inventory. `--parser NAME`, `--account NAME`, `--export-date
+DATE`, `--follow` and `--batch-events N` keep their meanings; `--parser library`
+selects media intake, and named sidecar parsers select library imports.
+`--reference` with `--root NAME` records library locations without retaining their
+bytes, under the library's explicit acquisition policy. URL staging retains
+`--allow DOMAIN` (repeatable), redirect/subdomain validation, the source's network
+rules and `--pause S` per host. Reading a URL's history never fetches it. Web-fetch
+authority for agents remains an open operator question.
+
+`sinex stages` lists stage operations, `sinex op:ID read` reads their accounting,
+and `sinex op:ID continue` continues accepted progress. Materials without a parser
+are queried through `materials`; `sinex 'materials where parser is none' replay
+--parser NAME --dry-run` tries a reader without storing results. `sinex parsers`
+shows declarations. These target lines are not current-build help: the current
+client is `sinexctl`, with its existing stage-list/stage-show/resume commands.
+
 `stage PATH… [--parser NAME…] [--export-date DATE] [--account NAME] [--follow] [--batch-events N]` is the imperative form. `--batch-events` sets how many readings commit together (10,000 by default). It is an [operation](lifecycle.md#operations-and-actors), and each source it reads has its [run](events.md#producer-versions-runs-and-manifests). The daemon runs it for `sinexctl stage`; with the daemon stopped, `sinexd admin stage` runs the same command with its own writer. Paths are absolute, because the daemon reads them and the operation records them. The CLI form and its output are in [the CLI](interfaces.md#cli).
 
 - **One parser for every path, or one per path.** `--parser` once names the format for every path; given once per path, the n-th names the n-th path's; without it, each file is recognised by [parser selection](#parser-selection).
@@ -187,7 +203,7 @@ A stage records what it holds before any record is parsed: its **inventory**. Ev
 | failed | the binding that would read it failed; the bytes stay stored |
 | stored, not interpreted | kept in the stored original and read by nothing; when several sources would read it, they are listed as candidates |
 
-Planning, progress, and output share typed inventory and accounting records. They are serialized at storage and transport boundaries; malformed reports are refused rather than displayed with missing counts replaced by zero. Stored progress keeps typed inventory and binding checkpoints; checkpoint accounting commits atomically with its batch and cursor. Finalization failures use the same `failures` field in the immediate report, `stage-show` and `stage-list`, and are printed by the CLI. Counts are absent until the stage has ended once.
+Planning, progress, and output share typed inventory and accounting records. They are serialized at storage and transport boundaries; malformed reports are refused rather than displayed with missing counts replaced by zero. Stored progress keeps typed inventory and binding checkpoints; checkpoint accounting commits atomically with its batch and cursor. Finalization failures use the same `failures` field in the immediate report, the operation read and stages list, and are printed by the CLI. Counts are absent until the stage has ended once.
 
 As each staged file is read, each product's line carries its **accounting**: the records the driver framed and what the parser made of them (read into readings, headers with no reading, failures with the first unreadable form), and the readings and what admission made of them (new, the same as an earlier export, revised, older, superseded), with the records the input no longer holds that were archived as removed at the source. Two identities hold for every product, every file and the whole stage, each side counted at a different point of the pipeline: records framed = read + headers + failures, and readings offered = new + same + revised + older + superseded. A product whose accounting does not balance ends the stage `stopped_early`, because a mismatch is a defect, not a status.
 
@@ -200,11 +216,11 @@ stage 0190…  ok
 /exports/takeout-20300101T000000Z-003.zip  1 member(s)  stored, not interpreted (no parser)
 ```
 
-`stage` answers with the operation and the inventory as soon as the stage is recorded and reads on in the daemon; with `--follow` it answers when the stage ends, with the final inventory and accounting. `stage-list [--active]` and `stage-show OPERATION` read them later. A binding is read by one stage at a time, and a path the daemon reads continuously is not staged again. A stage that stopped early, or whose daemon stopped while it read, ends `stopped_early` or without a result and is read again with `resume OPERATION`: it plans the recorded scope again, keeps the accounting of the files it finished and the materials it stored, and each binding continues from its committed cursor. Each batch's transaction also saves the binding's accounting so far under the stage's `checkpoints`, and a resumed binding starts from it, so a product interrupted partway accounts for everything read before and after the interruption. The part of a material committed before the interruption counts its committed records as framed, because a resumed driver frames only the records after the cursor; everything else counts the driver's own framing. A stage that ended ok is not resumed.
+`stage` answers with the operation and the inventory as soon as the stage is recorded and reads on in the daemon; with `--follow` it answers when the stage ends, with the final inventory and accounting. `sinex stages` and `sinex op:OPERATION read` read them later in the target surface. A binding is read by one stage at a time, and a path the daemon reads continuously is not staged again. A stage that stopped early, or whose daemon stopped while it read, ends `stopped_early` or without a result and is continued with `sinex op:OPERATION continue`: it plans the recorded scope again, keeps the accounting of the files it finished and the materials it stored, and each binding continues from its committed cursor. Each batch's transaction also saves the binding's accounting so far under the stage's `checkpoints`, and a resumed binding starts from it, so a product interrupted partway accounts for everything read before and after the interruption. The part of a material committed before the interruption counts its committed records as framed, because a resumed driver frames only the records after the cursor; everything else counts the driver's own framing. A stage that ended ok is not resumed.
 
 ### Staging before a parser exists
 
-When detection finds no parser, or more than one, the file is stored byte for byte as material with no parser, its candidates listed in its manifest. Nothing is guessed and nothing is refused. Each stage of such a file is a new material of the same input; replay reads no material that has no parser. A parser is assigned later through replay (`replay "materials where parser is none and …" --parser NAME`), recorded on the material and on the operation. When a new parser version arrives, records with no live reading are read automatically ([parser versions](events.md#parser-versions)).
+When detection finds no parser, or more than one, the file is stored byte for byte as material with no parser, its candidates listed in its manifest. Nothing is guessed and nothing is refused. Each stage of such a file is a new material of the same input; replay reads no material that has no parser. A parser is assigned later through replay (`sinex 'materials where parser is none and …' replay --parser NAME --all`), recorded on the material and on the operation. When a new parser version arrives, records with no live reading are read automatically ([parser versions](events.md#parser-versions)).
 
 ### Stage as you go
 

@@ -14,6 +14,8 @@ rule changes. People and agents use it through the same commands.
 
 ## Run it locally
 
+The commands below use the current build, whose client is `sinexctl`.
+
 Sinex needs PostgreSQL with TimescaleDB, and NATS for producers outside the
 daemon. With Nix, `nix develop` provides both, and `nix build` builds
 `sinexd`, `sinexctl` and `sinex-schema`.
@@ -48,6 +50,26 @@ failures; `recall` reads around a time, a day or the latest shell session;
 `brief` is the daily summary; `show` and `trace` read one event and follow it
 down to its bytes. `sinexctl --help` and the MCP tool list describe current
 operations.
+
+## Decided command surface
+
+The next client surface uses the product name, `sinex`, with one selected query,
+time, path, URL or reference followed by verbs. It is a decided target, not
+implemented by this documentation change:
+
+```sh
+sinex 'commands where cwd:/src/tide since:7d'
+sinex yesterday recall
+sinex e:EVENT_SUFFIX read --view trace
+sinex here recall --cwd ~/src/tide
+sinex stage ~/exports/history.zip
+sinex stages
+```
+
+`sinex_read`, `sinex_write` and `sinex_act` share typed requests and answers,
+with access checked by the daemon. Domain designs, including future evidence,
+library and reader features, remain in their owning pages. See
+[the complete grammar and current-build distinction](docs/interfaces.md#cli).
 
 ## Read next
 
