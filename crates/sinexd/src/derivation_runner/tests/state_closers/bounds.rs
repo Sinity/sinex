@@ -39,8 +39,13 @@ fn contents(computed: &Computed) -> Vec<IntervalContents> {
     result
 }
 async fn compare_full(conn: &mut PgConnection, state: &str) -> Computed {
-    let env = environment();
-    let key = key(state, &env);
+    compare_day(conn, state, 0).await
+}
+async fn compare_day(conn: &mut PgConnection, state: &str, day: i64) -> Computed {
+    let mut env = environment();
+    env.now = at((day + 1) * 86400);
+    let key =
+        json!({"state":state,"day":env.time_settings.day(at(day * 86400)).unwrap().to_string()});
     let query = AnyKeyed::inputs(&StateIntervals, &key, &env).unwrap();
     let bounded = sinex_store::derivations::read_window(conn, &to_window(&query, env.now))
         .await
@@ -538,4 +543,59 @@ async fn explicit_key_recompute_preserves_history_and_other_keys(db: devkit::pg:
     }
     assert_eq!(<StateIntervals as Keyed>::VERSION, 4);
     corrected.end_runs().await.unwrap();
+}
+
+#[devkit::test]
+async fn bounded_days_match_full_history_after_late_correction_archive_and_restore(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = World::with_keys(db, state_keys()).await;
+    let mut inputs = vec![observation("week", "a", 0, 0, "fixture.week")];
+    for day in 1..10 {
+        let mut refresh = observation("week", "a", day * 86400, day, "fixture.week");
+        refresh.payload["title"] = json!(format!("label-{day}"));
+        refresh.record_hash = *blake3::hash(refresh.payload.to_string().as_bytes()).as_bytes();
+        inputs.push(refresh);
+    }
+    inputs.push(observation("week", "b", 10 * 86400, 10, "fixture.week"));
+    let start = inputs[0].id;
+    let refreshed = inputs[9].id;
+    w.admit(inputs).await;
+    let mut runner = w.driver_with(state_keys(), vec![]).await;
+    runner.clock = Some(at(13 * 86400));
+    runner.catch_up().await.unwrap();
+    let mut conn = PgConnection::connect(&w.url).await.unwrap();
+    for day in 0..12 {
+        compare_day(&mut conn, "desktop.focus", day).await;
+    }
+    let original = compare_day(&mut conn, "desktop.focus", 0).await;
+    let original = interval(&original, "a");
+    assert!(has_parent(original, start));
+    assert!(has_parent(original, refreshed));
+    assert_eq!(original.payload["attributes"]["title"], json!("label-9"));
+    let late = observation("week", "late", 4 * 86400 + 3600, 20, "fixture.week");
+    let late_id = late.id;
+    w.admit(vec![late]).await;
+    runner.catch_up().await.unwrap();
+    for day in 0..12 {
+        compare_day(&mut conn, "desktop.focus", day).await;
+    }
+    let corrected = compare_day(&mut conn, "desktop.focus", 0).await;
+    assert_eq!(
+        interval(&corrected, "a").payload["ended_at"],
+        json!(at(4 * 86400 + 3600))
+    );
+    assert!(has_parent(interval(&corrected, "a"), start));
+    assert!(has_parent(interval(&corrected, "a"), late_id));
+    for act in [Act::Archive, Act::Restore] {
+        assert!(matches!(
+            w.lifecycle(act, vec![late_id]).await,
+            crate::lifecycle::Answer::Done(_)
+        ));
+        runner.catch_up().await.unwrap();
+        for day in 0..12 {
+            compare_day(&mut conn, "desktop.focus", day).await;
+        }
+    }
+    runner.end_runs().await.unwrap();
 }

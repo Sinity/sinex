@@ -1,12 +1,88 @@
-//! Read transition keys with the same interpretation as the pure fold.
+//! Read only the prior boundaries and the forward transitions a state day needs.
 use super::*;
-use futures::TryStreamExt;
 use sinex_model::state_transition::{self, SubjectField};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+
+const ROWS_PER_QUERY: i64 = 256;
+
+struct Row {
+    id: Uuid,
+    event_type: String,
+    source: String,
+    material_id: Option<Uuid>,
+    record_offset: Option<i64>,
+    output_index: i64,
+    at: OffsetDateTime,
+    reading_order: i64,
+    commit_seq: i64,
+    equivalence_key: Option<String>,
+    payload: Value,
+}
+impl Row {
+    fn stable(&self) -> Result<String> {
+        let location = match (self.material_id, self.record_offset) {
+            (Some(material), Some(offset)) => Some((
+                material.to_string(),
+                u64::try_from(offset)
+                    .map_err(|_| crate::Error::Invalid("negative record offset".into()))?,
+                u64::try_from(self.output_index)
+                    .map_err(|_| crate::Error::Invalid("negative output_index".into()))?,
+            )),
+            _ => None,
+        };
+        Ok(sinex_model::record::stable_from_parts(
+            &self.event_type,
+            &self.source,
+            &self.payload,
+            location,
+            self.equivalence_key.as_deref(),
+            &self.id.to_string(),
+        ))
+    }
+    fn scope(&self) -> Result<String> {
+        let stable = self.stable()?;
+        Ok(state_transition::scope(&self.payload, || stable))
+    }
+}
+
+#[derive(Default)]
+struct Candidates {
+    payloads: BTreeMap<String, Value>,
+    keys: BTreeSet<String>,
+    materials: BTreeSet<Uuid>,
+}
+impl Candidates {
+    fn field(&mut self, field: &str, value: &Value) {
+        let candidate = serde_json::json!({(field): value});
+        self.payloads.insert(candidate.to_string(), candidate);
+    }
+    fn state(&mut self, row: &Row) {
+        if let Some(scope) = state_transition::SCOPE_FIELDS
+            .iter()
+            .find_map(|field| row.payload.get(*field).filter(|value| value.is_string()))
+        {
+            // Fetch a superset; the shared Rust interpretation chooses the scope.
+            for field in state_transition::SCOPE_FIELDS {
+                self.field(field, scope);
+            }
+        } else if let Some(key) = &row.equivalence_key {
+            self.keys.insert(key.clone());
+        } else if let Some(native) = row
+            .payload
+            .get(sinex_model::record::NATIVE_ID)
+            .filter(|v| v.is_string())
+        {
+            self.field(sinex_model::record::NATIVE_ID, native);
+        } else if let Some(material) = row.material_id {
+            self.materials.insert(material);
+        }
+    }
+}
 
 #[derive(Default)]
 struct Scope {
     previous: Option<OffsetDateTime>,
+    prior: Vec<Uuid>,
     latest: Option<Observation>,
     closer: Option<OffsetDateTime>,
     refresh: Option<OffsetDateTime>,
@@ -18,28 +94,135 @@ struct Observation {
     stop: bool,
 }
 
-pub(super) async fn bounds(
+pub(super) struct Boundaries {
+    #[cfg(test)]
+    pub from: OffsetDateTime,
+    pub until: OffsetDateTime,
+    pub prior: Vec<Uuid>,
+    #[cfg(test)]
+    pub visited: usize,
+}
+
+async fn page(
+    conn: &mut PgConnection,
+    kinds: &[Kind],
+    fields: &[String],
+    start: Option<OffsetDateTime>,
+    end: Option<OffsetDateTime>,
+    cursor: Option<(OffsetDateTime, i64)>,
+    prior: Option<&Candidates>,
+) -> Result<Vec<Row>> {
+    let (types, contains) = kind_arrays(kinds);
+    let (at, seq) = cursor.map_or((None, None), |(at, seq)| (Some(at), Some(seq)));
+    Ok(if let Some(candidates) = prior {
+        let payloads: Vec<_> = candidates.payloads.values().cloned().collect();
+        let keys: Vec<_> = candidates.keys.iter().cloned().collect();
+        let materials: Vec<_> = candidates.materials.iter().copied().collect();
+        sqlx::query_file_as!(
+            Row,
+            "src/derivations/sql/state_transition_prior.sql",
+            &types,
+            &contains,
+            start,
+            end,
+            fields,
+            at,
+            seq,
+            ROWS_PER_QUERY,
+            &payloads,
+            &keys,
+            &materials,
+        )
+        .fetch_all(conn)
+        .await?
+    } else {
+        sqlx::query_file_as!(
+            Row,
+            "src/derivations/sql/state_transition_rows.sql",
+            &types,
+            &contains,
+            start,
+            end,
+            fields,
+            at,
+            seq,
+            ROWS_PER_QUERY,
+        )
+        .fetch_all(conn)
+        .await?
+    })
+}
+
+fn remember(scope: &mut Scope, row: &Row, fields: &[&'static str]) {
+    for field in fields {
+        if let Some(value) = row.payload.get(*field).and_then(Value::as_str) {
+            scope
+                .field_values
+                .entry(*field)
+                .or_default()
+                .insert(value.to_owned());
+        }
+    }
+}
+fn observe(
+    scope: &mut Scope,
+    row: &Row,
+    stable: &str,
+    stop: bool,
+    start: OffsetDateTime,
+    end: OffsetDateTime,
+    subjects: &[SubjectField],
+) {
+    if row.at < start && scope.previous.is_none_or(|prior| row.at >= prior) {
+        if scope.previous != Some(row.at) {
+            scope.prior.clear();
+        }
+        scope.previous = Some(row.at);
+        scope.prior.push(row.id);
+    }
+    if row.at < end {
+        let order = (row.at, row.reading_order, stable.to_owned());
+        if scope.latest.as_ref().is_none_or(|last| order >= last.order) {
+            scope.latest = Some(Observation {
+                order,
+                subject: state_transition::subject(subjects, &row.payload),
+                stop,
+            });
+        }
+    } else if scope.closer.is_none()
+        && let Some(last) = &scope.latest
+        && !last.stop
+    {
+        let subject = state_transition::subject(subjects, &row.payload);
+        if stop || last.subject.is_none() || last.subject != subject {
+            scope.closer = Some(row.at);
+        } else {
+            scope.refresh = Some(row.at);
+        }
+    }
+}
+
+pub(super) async fn resolve(
     conn: &mut PgConnection,
     kinds: &[Kind],
     start: OffsetDateTime,
     end: OffsetDateTime,
     subjects: &[SubjectField],
     interruptions: &[Nearest],
-) -> Result<(OffsetDateTime, OffsetDateTime)> {
+) -> Result<Boundaries> {
     let mut fields: Vec<String> = state_transition::payload_fields(subjects)
         .into_iter()
         .map(str::to_owned)
         .collect();
     let interruption_fields: Vec<_> = interruptions.iter().filter_map(|n| n.per).collect();
+    let mut selected = kinds.to_vec();
+    selected.extend(interruptions.iter().flat_map(|n| n.kinds.iter().cloned()));
     for field in &interruption_fields {
-        if !fields.iter().any(|selected| selected.as_str() == *field) {
-            fields.push((*field).to_owned());
+        if !fields.iter().any(|selected| selected == *field) {
+            fields.push((*field).into());
         }
     }
-    for kind in kinds
-        .iter()
-        .chain(interruptions.iter().flat_map(|n| &n.kinds))
-    {
+    for kind in &selected {
         if let Some(equal) = kind.contains.as_object() {
             for field in equal.keys() {
                 if !fields.contains(field) {
@@ -48,156 +231,264 @@ pub(super) async fn bounds(
             }
         }
     }
-    let (state_types, state_contains) = kind_arrays(kinds);
-    let mut selected = kinds.to_vec();
-    selected.extend(interruptions.iter().flat_map(|n| n.kinds.iter().cloned()));
     let mut scopes: HashMap<String, Scope> = HashMap::new();
-    // The bounded first pass selects touched scopes. History is streamed once,
-    // keeping one boundary state per touched scope rather than every event.
-    for day_only in [true, false] {
-        let (types, contains) = if day_only {
-            kind_arrays(kinds)
-        } else {
-            kind_arrays(&selected)
-        };
-        let mut rows = sqlx::query_file!(
-            "src/derivations/sql/state_transition_rows.sql",
-            &types,
-            &contains,
-            start,
-            end,
-            &fields,
-            &state_types,
-            &state_contains,
-            day_only,
-        )
-        .fetch(&mut *conn);
-        while let Some(row) = rows.try_next().await? {
-            let stops: Vec<_> = interruptions
+    let mut candidates = Candidates::default();
+    #[cfg(test)]
+    let mut visited = 0;
+    let mut cursor = None;
+    loop {
+        let rows = page(conn, kinds, &fields, Some(start), Some(end), cursor, None).await?;
+        if rows.is_empty() {
+            break;
+        }
+        for row in &rows {
+            #[cfg(test)]
+            {
+                visited += 1;
+            }
+            if kinds
                 .iter()
-                .filter(|n| {
-                    n.kinds
-                        .iter()
-                        .any(|kind| kind.admits(&row.event_type, &row.payload))
-                })
-                .collect();
-            let stop = !stops.is_empty();
-            let state = kinds
-                .iter()
-                .any(|kind| kind.admits(&row.event_type, &row.payload));
-            if !state && !stop {
-                continue;
-            }
-            let location = match (row.material_id, row.record_offset) {
-                (Some(material), Some(record_offset)) => Some((
-                    material.to_string(),
-                    u64::try_from(record_offset)
-                        .map_err(|_| crate::Error::Invalid("negative record offset".into()))?,
-                    u64::try_from(row.output_index)
-                        .map_err(|_| crate::Error::Invalid("negative output_index".into()))?,
-                )),
-                _ => None,
-            };
-            let stable = || {
-                sinex_model::record::stable_from_parts(
-                    &row.event_type,
-                    &row.source,
-                    &row.payload,
-                    location.clone(),
-                    row.equivalence_key.as_deref(),
-                    &row.id.to_string(),
-                )
-            };
-            let stable = stable();
-            let scope_name = state_transition::scope(&row.payload, || stable.clone());
-            let remember_fields = |scope: &mut Scope| {
-                for field in &interruption_fields {
-                    if let Some(value) = row.payload.get(*field).and_then(Value::as_str) {
-                        scope
-                            .field_values
-                            .entry(*field)
-                            .or_default()
-                            .insert(value.to_owned());
-                    }
-                }
-            };
-            if day_only {
-                if state {
-                    remember_fields(scopes.entry(scope_name).or_default());
-                }
-                continue;
-            }
-            if state && let Some(scope) = scopes.get_mut(&scope_name) {
-                remember_fields(scope);
-            }
-            let observe = |scope: &mut Scope| {
-                if row.at < start {
-                    scope.previous = Some(row.at);
-                }
-                if row.at < end {
-                    let order = (row.at, row.reading_order, stable.clone());
-                    if scope.latest.as_ref().is_none_or(|last| order >= last.order) {
-                        scope.latest = Some(Observation {
-                            order,
-                            subject: state_transition::subject(subjects, &row.payload),
-                            stop: stop && !state,
-                        });
-                    }
-                } else if scope.closer.is_none()
-                    && let Some(last) = &scope.latest
-                    && !last.stop
-                {
-                    let subject = state_transition::subject(subjects, &row.payload);
-                    if stop || last.subject.is_none() || last.subject != subject {
-                        scope.closer = Some(row.at);
-                    } else {
-                        scope.refresh = Some(row.at);
-                    }
-                }
-            };
-            if stop {
-                for (name, scope) in &mut scopes {
-                    let matching = stops.iter().any(|n| {
-                        n.per.is_some_and(|field| {
-                            row.payload
-                                .get(field)
-                                .and_then(Value::as_str)
-                                .is_some_and(|value| {
-                                    scope
-                                        .field_values
-                                        .get(field)
-                                        .is_some_and(|values| values.contains(value))
-                                })
-                        })
-                    });
-                    if name == &scope_name || matching {
-                        observe(scope);
-                    }
-                }
-            } else if let Some(scope) = scopes.get_mut(&scope_name) {
-                observe(scope);
+                .any(|kind| kind.admits(&row.event_type, &row.payload))
+            {
+                candidates.state(row);
+                remember(
+                    scopes.entry(row.scope()?).or_default(),
+                    row,
+                    &interruption_fields,
+                );
             }
         }
-        if scopes.is_empty() {
+        cursor = rows.last().map(|row| (row.at, row.commit_seq));
+    }
+    cursor = None;
+    while !scopes.is_empty() {
+        let rows = page(
+            conn,
+            kinds,
+            &fields,
+            None,
+            Some(start),
+            cursor,
+            Some(&candidates),
+        )
+        .await?;
+        if rows.is_empty() {
+            break;
+        }
+        for row in &rows {
+            #[cfg(test)]
+            {
+                visited += 1;
+            }
+            if !kinds
+                .iter()
+                .any(|kind| kind.admits(&row.event_type, &row.payload))
+            {
+                continue;
+            }
+            if let Some(scope) = scopes.get_mut(&row.scope()?) {
+                if scope.previous.is_none_or(|at| at == row.at) {
+                    remember(scope, row, &interruption_fields);
+                    observe(scope, row, &row.stable()?, false, start, end, subjects);
+                }
+            }
+        }
+        let row = rows.last().unwrap();
+        cursor = Some((row.at, row.commit_seq));
+        // Finish the entire timestamp, so recorded/stable ties remain visible.
+        if scopes
+            .values()
+            .all(|scope| scope.previous.is_some_and(|at| at > row.at))
+        {
             break;
         }
     }
+    // A stop after the selected prior state must also reach the fold. Its
+    // candidate fields come from the day and the selected prior observations.
+    let mut stops = Candidates::default();
+    for (name, scope) in &scopes {
+        for field in state_transition::SCOPE_FIELDS {
+            stops.field(field, &Value::String(name.clone()));
+        }
+        for (field, values) in &scope.field_values {
+            for value in values {
+                stops.field(field, &Value::String(value.clone()));
+            }
+        }
+    }
+    let stop_kinds: Vec<_> = interruptions
+        .iter()
+        .flat_map(|stop| stop.kinds.iter().cloned())
+        .collect();
+    if let Some(from) = scopes.values().filter_map(|scope| scope.previous).min() {
+        cursor = None;
+        loop {
+            let rows = page(
+                conn,
+                &stop_kinds,
+                &fields,
+                Some(from),
+                Some(start),
+                cursor,
+                Some(&stops),
+            )
+            .await?;
+            if rows.is_empty() {
+                break;
+            }
+            for row in &rows {
+                #[cfg(test)]
+                {
+                    visited += 1;
+                }
+                apply(
+                    &mut scopes,
+                    row,
+                    kinds,
+                    subjects,
+                    interruptions,
+                    &interruption_fields,
+                    start,
+                    end,
+                )?;
+            }
+            let row = rows.last().unwrap();
+            cursor = Some((row.at, row.commit_seq));
+        }
+    }
+    cursor = None;
+    while !scopes.is_empty() {
+        let rows = page(conn, &selected, &fields, Some(start), None, cursor, None).await?;
+        if rows.is_empty() {
+            break;
+        }
+        for row in &rows {
+            #[cfg(test)]
+            {
+                visited += 1;
+            }
+            apply(
+                &mut scopes,
+                row,
+                kinds,
+                subjects,
+                interruptions,
+                &interruption_fields,
+                start,
+                end,
+            )?;
+        }
+        let row = rows.last().unwrap();
+        cursor = Some((row.at, row.commit_seq));
+        if row.at >= end
+            && scopes.values().all(|scope| {
+                scope.closer.is_some_and(|at| at < row.at)
+                    || scope.latest.as_ref().is_some_and(|last| last.stop)
+            })
+        {
+            break;
+        }
+    }
+    #[cfg(test)]
     let from = scopes
         .values()
         .filter_map(|scope| scope.previous)
         .min()
-        .map_or(start, |prior| start.min(prior));
+        .map_or(start, |at| start.min(at));
     let until = scopes
         .values()
         .filter_map(|scope| scope.closer.or(scope.refresh))
         .max()
-        .map_or(end, |last| end.max(last));
-    // Include all records at the closing time; the fold orders them by their
-    // recorded sequence and stable record identity, never by arrival.
+        .map_or(end, |at| end.max(at));
     let until = Timestamp::from_unix_ns(Timestamp(until).unix_ns() + 1_000)
         .map_err(|error| crate::Error::Invalid(error.to_string()))?
         .0;
-    Ok((from, until))
+    Ok(Boundaries {
+        #[cfg(test)]
+        from,
+        until,
+        prior: scopes.into_values().flat_map(|scope| scope.prior).collect(),
+        #[cfg(test)]
+        visited,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply(
+    scopes: &mut HashMap<String, Scope>,
+    row: &Row,
+    kinds: &[Kind],
+    subjects: &[SubjectField],
+    interruptions: &[Nearest],
+    fields: &[&'static str],
+    start: OffsetDateTime,
+    end: OffsetDateTime,
+) -> Result<()> {
+    let stops: Vec<_> = interruptions
+        .iter()
+        .filter(|n| {
+            n.kinds
+                .iter()
+                .any(|kind| kind.admits(&row.event_type, &row.payload))
+        })
+        .collect();
+    let state = kinds
+        .iter()
+        .any(|kind| kind.admits(&row.event_type, &row.payload));
+    if !state && stops.is_empty() {
+        return Ok(());
+    }
+    let name = row.scope()?;
+    let stable = row.stable()?;
+    if state && let Some(scope) = scopes.get_mut(&name) {
+        remember(scope, row, fields);
+    }
+    if stops.is_empty() {
+        if let Some(scope) = scopes.get_mut(&name) {
+            observe(scope, row, &stable, false, start, end, subjects);
+        }
+        return Ok(());
+    }
+    for (scope_name, scope) in scopes {
+        let matching = stops.iter().any(|n| {
+            n.per.is_some_and(|field| {
+                row.payload
+                    .get(field)
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| {
+                        scope
+                            .field_values
+                            .get(field)
+                            .is_some_and(|values| values.contains(value))
+                    })
+            })
+        });
+        if scope_name == &name || matching {
+            observe(
+                scope,
+                row,
+                &stable,
+                !stops.is_empty() && !state,
+                start,
+                end,
+                subjects,
+            );
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+async fn bounds(
+    conn: &mut PgConnection,
+    kinds: &[Kind],
+    start: OffsetDateTime,
+    end: OffsetDateTime,
+    subjects: &[SubjectField],
+    interruptions: &[Nearest],
+) -> Result<(OffsetDateTime, OffsetDateTime)> {
+    let result = resolve(conn, kinds, start, end, subjects, interruptions).await?;
+    Ok((result.from, result.until))
 }
 
 #[cfg(test)]

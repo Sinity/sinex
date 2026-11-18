@@ -355,3 +355,30 @@ async fn transition_window_stops_at_a_suspend_for_the_same_host(db: devkit::pg::
         expected
     );
 }
+
+#[devkit::test]
+async fn boundary_reads_visit_pages_instead_of_old_history_and_the_closed_tail(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = AdmissionContext::connect(&db.url(None)).await.unwrap();
+    let mut events: Vec<_> = (1..=4096)
+        .map(|n| focus(-n, Some("hot"), Some("a"), None))
+        .collect();
+    events.push(focus(1, Some("hot"), Some("a"), None));
+    events.push(focus(DAY + 1, Some("hot"), Some("b"), None));
+    events.extend((1..=4096).map(|n| focus(2 * DAY + n, Some("hot"), Some("c"), None)));
+    admit(&mut conn, events).await;
+    let actual = resolve(&mut conn, &kinds(None), at(0), at(DAY), FOCUS, &[])
+        .await
+        .unwrap();
+    assert_eq!(actual.from, at(-1));
+    assert_eq!(actual.until, at(DAY + 1) + time::Duration::microseconds(1));
+    assert_eq!(actual.prior.len(), 1);
+    // Count rows delivered by the real SQL pages, including their read-ahead.
+    // A whole-history stream visits all 8,194 records in this fixture.
+    assert!(
+        actual.visited <= 2 * usize::try_from(ROWS_PER_QUERY).unwrap() + 1,
+        "visited {} metadata rows",
+        actual.visited
+    );
+}

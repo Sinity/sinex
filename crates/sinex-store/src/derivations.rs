@@ -122,12 +122,13 @@ impl TryFrom<EventRow> for Committed {
     }
 }
 
-async fn resolve_range(conn: &mut PgConnection, w: &Window) -> Result<Option<Window>> {
+async fn resolve_range(conn: &mut PgConnection, w: &Window) -> Result<Option<(Window, Vec<Uuid>)>> {
     let Some(range) = &w.range else {
-        return Ok(Some(w.clone()));
+        return Ok(Some((w.clone(), Vec::new())));
     };
     let mut resolved = w.clone();
     resolved.range = None;
+    let mut prior = Vec::new();
     match range {
         InputRange::Connected {
             kinds,
@@ -200,11 +201,12 @@ async fn resolve_range(conn: &mut PgConnection, w: &Window) -> Result<Option<Win
             subjects,
             interruptions,
         } => {
-            let (from, until) =
-                state_transitions::bounds(conn, kinds, *start, *end, subjects, interruptions)
+            let boundaries =
+                state_transitions::resolve(conn, kinds, *start, *end, subjects, interruptions)
                     .await?;
-            resolved.start = Some(from);
-            resolved.end = Some(until);
+            resolved.start = Some(*start);
+            resolved.end = Some(boundaries.until);
+            prior = boundaries.prior;
         }
         InputRange::UntilNext {
             start,
@@ -226,13 +228,13 @@ async fn resolve_range(conn: &mut PgConnection, w: &Window) -> Result<Option<Win
             resolved.end = Some(end.unwrap_or(*now).min(*now));
         }
     }
-    Ok(Some(resolved))
+    Ok(Some((resolved, prior)))
 }
 
 /// Live events in the window, sorted by `ts_orig` then commit order, with the
 /// neighbours appended (also sorted, without repeats).
 pub async fn read_window(conn: &mut PgConnection, w: &Window) -> Result<Vec<Committed>> {
-    let Some(resolved) = resolve_range(conn, w).await? else {
+    let Some((resolved, prior)) = resolve_range(conn, w).await? else {
         return Ok(Vec::new());
     };
     let w = &resolved;
@@ -281,6 +283,16 @@ pub async fn read_window(conn: &mut PgConnection, w: &Window) -> Result<Vec<Comm
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
         out.push(Committed::try_from(r)?);
+    }
+    if !prior.is_empty() {
+        let rows = sqlx::query_as!(EventRow, r#"SELECT e.id AS "id!", e.event_type AS "event_type!", e.kind_version AS "kind_version!", e.validation AS "validation!", e.source AS "source!", e.run_id AS "run_id!", e.material_id, e.record_offset, e.output_index AS "output_index!", e.parents, e.ts_orig, e.ts_quality AS "ts_quality!", e.ts_coided, e.ts_persisted AS "ts_persisted!", e.payload AS "payload!", e.equivalence_key, e.reading_order AS "reading_order!", e.record_hash AS "record_hash!", e.record_state AS "record_state!", e.class AS "class!", e.commit_seq AS "commit_seq!", (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule
+           FROM core.events e WHERE e.id = ANY($1)
+             AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)"#,
+        &prior,
+    ).fetch_all(&mut *conn).await?;
+        for row in rows {
+            out.push(Committed::try_from(row)?);
+        }
     }
     let mut seen: HashSet<EventId> = out.iter().map(|c| c.event.id).collect();
     let mut extra = Vec::new();
