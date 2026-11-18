@@ -1,6 +1,11 @@
 use super::*;
 
-async fn ask_at(conn: &mut PgConnection, text: &str, ctx: &Context, page: Page) -> Result<Answer> {
+async fn ask_at(
+    conn: &mut PgConnection,
+    text: &str,
+    ctx: &Context,
+    page: Page,
+) -> Result<QueryPage> {
     let fixed = context_for_page(conn, ctx, &page, text).await?;
     if sinex_query::template::is_command(text) {
         let operation = sinex_query::template::parse(text, &fixed)

@@ -4,10 +4,11 @@
 use crate::writer::WriterHandle;
 use crate::{Error, Result};
 use serde_json::{Value, json};
+use sinex_model::query_reply::QueryPage;
 use sinex_model::{EventId, EventPayload, OperationId, RunId};
 use sinex_protocol::{Access, DATA_NOTICE, Reply, Request};
 use sinex_query::{self as query, Context, QueryError, Source};
-use sinex_store::query::{Answer, Page};
+use sinex_store::query::Page;
 use sqlx::PgPool;
 
 mod analysis;
@@ -23,6 +24,7 @@ mod recall;
 mod signals;
 mod sql;
 mod status;
+pub(crate) mod surface;
 pub(crate) use status::{HISTORY_WINDOW, status_fields};
 
 pub(crate) use sql::SqlCursors;
@@ -346,14 +348,27 @@ impl Api {
                 return self.recall(caller, text, page).await;
             }
         }
+        Ok(data(answer_json(
+            self.query_page(&mut conn, text, &ctx, &page).await?,
+        )))
+    }
+
+    async fn query_page(
+        &self,
+        conn: &mut Conn,
+        text: &str,
+        context: &Context,
+        page: &Page,
+    ) -> Result<QueryPage> {
+        let placed = |error: QueryError| Error::from(error).in_query(text);
         let result = if query::template::is_command(text) {
-            let operation = query::template::parse(text, &ctx).map_err(placed)?;
-            sinex_store::query::run_operation(&mut conn, text, &operation, &ctx, &page).await
+            let operation = query::template::parse(text, context).map_err(placed)?;
+            sinex_store::query::run_operation(conn, text, &operation, context, page).await
         } else {
-            sinex_store::query::run(&mut conn, text, None, &ctx, &page).await
+            sinex_store::query::run(conn, text, None, context, page).await
         };
         match result {
-            Ok(answer) => Ok(data(answer_json(answer))),
+            Ok(answer) => Ok(answer),
             Err(sinex_store::Error::Query(error)) => Err(placed(error)),
             Err(error) => Err(error.into()),
         }
@@ -375,6 +390,6 @@ impl Api {
     }
 }
 
-fn answer_json(a: Answer) -> Value {
+fn answer_json(a: QueryPage) -> Value {
     serde_json::to_value(a).expect("answers serialize")
 }

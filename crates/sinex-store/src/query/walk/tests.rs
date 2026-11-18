@@ -1,8 +1,9 @@
 use super::*;
-use crate::query::{Answer, Page};
+use crate::query::Page;
 use crate::{AdmissionContext, NoDerivations};
 use sinex_model::event_types::{CommandFused, CommandImported};
 use sinex_model::lifecycle::Act;
+use sinex_model::query_reply::QueryPage;
 use sinex_model::{
     Batch, BatchKind, Class, Event, EventId, MaterialId, Origin, ReadingOrder, RecordLocation,
     RecordOutcome, RunId, Timestamp,
@@ -94,7 +95,7 @@ async fn insert(conn: &mut AdmissionContext, event: Event) {
     tx.commit().await.unwrap();
 }
 
-async fn page(conn: &mut PgConnection, text: &str, size: u64, cursor: Option<String>) -> Answer {
+async fn page(conn: &mut PgConnection, text: &str, size: u64, cursor: Option<String>) -> QueryPage {
     let context = sinex_query::Context::utc("2026-09-15T00:00:00Z".parse().unwrap());
     let operation = sinex_query::template::parse(text, &context).unwrap();
     crate::query::run_operation(

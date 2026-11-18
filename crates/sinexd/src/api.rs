@@ -124,6 +124,7 @@ pub(crate) struct Config {
 #[derive(Clone)]
 struct AppState {
     api: Api,
+    operations: Arc<command_surface::OperationTable>,
     tokens: Arc<Tokens>,
     commits: watch::Receiver<u64>,
     read_models: watch::Receiver<()>,
@@ -155,35 +156,42 @@ fn respond(reply: Reply) -> Response {
 }
 
 fn authorize(state: &AppState, headers: &HeaderMap, needs: Access) -> Result<Access, Response> {
+    credential(state, headers, needs)
+        .map_err(|(status, failure)| (status, Json(Reply::failed(failure))).into_response())
+}
+
+fn credential(
+    state: &AppState,
+    headers: &HeaderMap,
+    needs: Access,
+) -> Result<Access, (StatusCode, command_surface::Failure)> {
     let presented = headers
         .get(axum::http::header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .map(str::trim);
-    let refuse = |message: String| respond(Reply::failed(Error::refused(message)));
-    // A missing or unknown credential is answered before any operation runs,
-    // as HTTP authentication: 401, with the same `refused` failure.
-    let unauthenticated = |message: &str| {
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .map(str::trim)
+        .ok_or_else(|| {
+            (
+                StatusCode::UNAUTHORIZED,
+                Error::refused("no token: send `Authorization: Bearer <token>`").failure(),
+            )
+        })?;
+    let granted = state.tokens.grant(presented).ok_or_else(|| {
         (
             StatusCode::UNAUTHORIZED,
-            Json(Reply::failed(Error::refused(message))),
+            Error::refused("unknown token").failure(),
         )
-            .into_response()
-    };
-    let Some(presented) = presented else {
-        return Err(unauthenticated(
-            "no token: send `Authorization: Bearer <token>`",
-        ));
-    };
-    let Some(granted) = state.tokens.grant(presented) else {
-        return Err(unauthenticated("unknown token"));
-    };
+    })?;
     if granted < needs {
-        return Err(refuse(format!(
-            "this token grants {} access; the request needs {}",
-            actor(granted),
-            actor(needs)
-        )));
+        return Err((
+            StatusCode::FORBIDDEN,
+            Error::refused(format!(
+                "this token grants {} access; the request needs {}",
+                actor(granted),
+                actor(needs),
+            ))
+            .failure(),
+        ));
     }
     Ok(granted)
 }
@@ -194,13 +202,16 @@ pub(crate) fn router(
     commits: watch::Receiver<u64>,
     read_models: watch::Receiver<()>,
 ) -> Router {
+    let operations = Arc::new(methods::surface::table(api.clone()));
     Router::new()
         .route("/v1", post(call))
+        .route("/v1/status", post(surface_call))
         .route("/v1/commands", get(commands))
         .route("/v1/follow", get(follow))
         .route("/v1/backup/prepare", get(backup_prepare))
         .with_state(AppState {
             api,
+            operations,
             tokens: Arc::new(tokens),
             commits,
             read_models,
@@ -216,6 +227,36 @@ async fn call(
         Ok(granted) => respond(state.api.call(request, granted).await),
         Err(r) => r,
     }
+}
+
+async fn surface_call(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
+    body: axum::body::Bytes,
+) -> Response {
+    let granted = match credential(&state, &headers, Access::Read) {
+        Ok(granted) => granted,
+        Err((status, failure)) => {
+            return (
+                status,
+                Json(command_surface::Answer::<Value>::error(failure)),
+            )
+                .into_response();
+        }
+    };
+    let caller = state.api.caller(granted).await;
+    let caller = command_surface::Caller::authenticated(actor(granted), caller);
+    let mut request = axum::http::Request::post(uri)
+        .body(body.to_vec())
+        .expect("accepted URI");
+    *request.headers_mut() = headers;
+    let response = state
+        .operations
+        .http_as(request, caller, command_surface::CancellationToken::new())
+        .await;
+    let (parts, body) = response.into_parts();
+    Response::from_parts(parts, axum::body::Body::from(body))
 }
 
 async fn commands() -> Json<Value> {

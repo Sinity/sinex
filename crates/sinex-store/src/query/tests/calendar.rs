@@ -11,7 +11,7 @@ fn clock(start: jiff::civil::Time, zone: &str) -> Context {
         start,
     )
 }
-async fn at(conn: &mut PgConnection, text: &str, ctx: &Context) -> Answer {
+async fn at(conn: &mut PgConnection, text: &str, ctx: &Context) -> QueryPage {
     run(conn, text, None, ctx, &Page::default()).await.unwrap()
 }
 

@@ -21,7 +21,10 @@ pub use replay::{
     LastStreamMessage, ReplayQuery, ReplayReply, SnapshotComplete, SnapshotCursor, SnapshotEvent,
     SnapshotNext, SnapshotReading, SnapshotReply, SnapshotStart,
 };
+pub mod rows;
 pub mod stage_report;
+#[cfg(feature = "surface")]
+pub mod surface;
 
 pub use commands::{Access, Arg, ArgKind, COMMANDS, Command, command};
 pub use nats::{

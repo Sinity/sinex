@@ -4,6 +4,7 @@ mod backups;
 mod deadlines;
 mod exact_payloads;
 mod sql_boundary;
+mod surface;
 mod versions;
 use super::*;
 use crate::writer;

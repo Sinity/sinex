@@ -6,14 +6,14 @@ use sinex_model::{Class, EventId, Timestamp};
 use std::collections::BTreeSet;
 
 pub(super) struct SelectedPage {
-    pub answer: Answer,
+    pub answer: QueryPage,
     pub selection: Option<QuerySelection>,
     pub parents: Vec<EventId>,
     pub class: Class,
 }
 
 pub struct SelectedAnswer {
-    pub answer: Answer,
+    pub answer: QueryPage,
     pub parents: Vec<EventId>,
     pub class: Class,
     pub signature: String,
@@ -133,7 +133,7 @@ pub async fn selected_page(
     } else {
         Some(sinex_query::template::parse(text, ctx)?)
     };
-    let selected = run_inner(conn, text, None, ctx, page, true, false, template.as_ref()).await?;
+    let selected = run_inner(conn, text, None, ctx, page, true, None, template.as_ref()).await?;
     let signature = selected
         .selection
         .as_ref()

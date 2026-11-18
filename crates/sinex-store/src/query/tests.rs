@@ -133,11 +133,11 @@ fn ctx() -> Context {
     Context::utc("2026-09-15T00:00:00Z".parse().unwrap())
 }
 
-async fn ask(conn: &mut PgConnection, text: &str) -> Answer {
+async fn ask(conn: &mut PgConnection, text: &str) -> QueryPage {
     ask_page(conn, text, Page::default()).await
 }
 
-async fn ask_page(conn: &mut PgConnection, text: &str, page: Page) -> Answer {
+async fn ask_page(conn: &mut PgConnection, text: &str, page: Page) -> QueryPage {
     let ctx = ctx();
     let result = if sinex_query::template::is_command(text) {
         let operation = sinex_query::template::parse(text, &ctx).unwrap();
@@ -148,7 +148,7 @@ async fn ask_page(conn: &mut PgConnection, text: &str, page: Page) -> Answer {
     result.unwrap_or_else(|e| panic!("{text}: {e}"))
 }
 
-fn column(a: &Answer, name: &str) -> Vec<serde_json::Value> {
+fn column(a: &QueryPage, name: &str) -> Vec<serde_json::Value> {
     a.rows.iter().map(|r| r[name].clone()).collect()
 }
 

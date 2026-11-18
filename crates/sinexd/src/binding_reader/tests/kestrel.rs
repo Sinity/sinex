@@ -1,7 +1,8 @@
 use super::*;
+use sinex_model::query_reply::QueryPage;
 use sinex_query::Context;
 use sinex_sources::sources::{activitywatch, atuin, goodreads, zsh};
-use sinex_store::query::{self, Answer, Page};
+use sinex_store::query::{self, Page};
 use std::path::{Path, PathBuf};
 
 fn fixture(name: &str) -> PathBuf {
@@ -38,7 +39,7 @@ async fn ingest(ctx: &mut ReaderContext, readers: &mut [BindingReader]) {
     }
 }
 
-async fn ask(ctx: &mut ReaderContext, text: &str) -> Answer {
+async fn ask(ctx: &mut ReaderContext, text: &str) -> QueryPage {
     let context = Context::new(
         "2026-09-16T10:00:00Z".parse().unwrap(),
         jiff::tz::TimeZone::get("Europe/Warsaw").unwrap(),

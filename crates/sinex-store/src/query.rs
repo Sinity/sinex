@@ -28,6 +28,7 @@ use compile::calendar::compile as compile_query;
 pub use compile::calendar::initialize as initialize_calendar;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
+use sinex_model::query_reply::{QueryPage, QueryPageInfo, ResolvedRead};
 use sinex_query::{AsOf, Context, Expr, FieldRef, Operand, Query, Source, Stage, Table, read_as};
 use sql::SqlFragment;
 use sqlx::{Connection, PgConnection};
@@ -47,40 +48,6 @@ pub struct Page {
 }
 
 pub const DEFAULT_PAGE: u64 = 50;
-
-/// One page of an answer.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct Answer {
-    pub table: String,
-    pub query: String,
-    pub read_as: String,
-    pub resolved: Resolved,
-    pub columns: Vec<String>,
-    pub rows: Vec<Json>,
-    /// Rows in the whole answer.
-    pub total: i64,
-    pub page: PageInfo,
-    /// What a recall found per source, and which sources had no data.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub recall: Option<Json>,
-}
-
-/// What the query used: `now`, the zone, the day start and the commit
-/// position it read at.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct Resolved {
-    pub now: String,
-    pub zone: String,
-    pub day_start: String,
-    pub commit_seq: i64,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct PageInfo {
-    pub size: u64,
-    /// `None` on the last page.
-    pub cursor: Option<String>,
-}
 
 /// The newest commit position.
 pub async fn current_seq(conn: &mut PgConnection) -> Result<i64> {
@@ -214,8 +181,22 @@ pub async fn run(
     query: Option<&Query>,
     ctx: &Context,
     page: &Page,
-) -> Result<Answer> {
-    run_inner(conn, text, query, ctx, page, false, false, None)
+) -> Result<QueryPage> {
+    run_inner(conn, text, query, ctx, page, false, None, None)
+        .await
+        .map(|selected| selected.answer)
+}
+
+/// Read at an already accepted position without rewriting a query's text or
+/// adding a relation stage to provenance walks. Continuations keep that position.
+pub async fn read_at(
+    conn: &mut PgConnection,
+    text: &str,
+    ctx: &Context,
+    page: &Page,
+    position: i64,
+) -> Result<QueryPage> {
+    run_inner(conn, text, None, ctx, page, false, Some(position), None)
         .await
         .map(|selected| selected.answer)
 }
@@ -227,8 +208,8 @@ pub async fn run_operation(
     operation: &sinex_model::query_definition::Template,
     ctx: &Context,
     page: &Page,
-) -> Result<Answer> {
-    run_inner(conn, text, None, ctx, page, false, false, Some(operation))
+) -> Result<QueryPage> {
+    run_inner(conn, text, None, ctx, page, false, None, Some(operation))
         .await
         .map(|selected| selected.answer)
 }
@@ -241,16 +222,12 @@ async fn run_inner(
     ctx: &Context,
     page: &Page,
     capture_selection: bool,
-    in_snapshot: bool,
+    position: Option<i64>,
     operation: Option<&sinex_model::query_definition::Template>,
 ) -> Result<selected::SelectedPage> {
-    if !in_snapshot {
-        initialize_calendar(conn).await?;
-    }
+    initialize_calendar(conn).await?;
     let mut tx = conn.begin().await?;
-    if !in_snapshot {
-        read_one_snapshot(&mut tx).await?;
-    }
+    read_one_snapshot(&mut tx).await?;
     sqlx::query(&format!(
         "SET LOCAL TimeZone = '{}'",
         ctx.zone_name().replace('\'', "''")
@@ -380,8 +357,13 @@ async fn run_inner(
             }
             cursor.seq
         }
-        None => current,
+        None => position.unwrap_or(current),
     };
+    if position.is_some_and(|position| position != seq) {
+        return Err(Error::Invalid(
+            "read cursor belongs to another position".into(),
+        ));
+    }
     if page.cursor.is_none() {
         for stage in &query.stages {
             match stage {
@@ -390,6 +372,11 @@ async fn run_inner(
                 _ => {}
             }
         }
+    }
+    if position.is_some_and(|position| position != seq) {
+        return Err(Error::Invalid(
+            "query context differs from the accepted read position".into(),
+        ));
     }
     if seq < 0 || seq > current {
         return Err(Error::Invalid(
@@ -482,7 +469,7 @@ async fn run_inner(
                     vec!["numeric".into(), "timestamp with time zone".into()],
                 )
             });
-            Answer {
+            QueryPage {
                 table,
                 query: text.into(),
                 read_as: reading,
@@ -599,8 +586,8 @@ impl ReadPage {
         }
         Ok(())
     }
-    fn resolved(&self) -> Resolved {
-        Resolved {
+    fn resolved(&self) -> ResolvedRead {
+        ResolvedRead {
             now: self.ctx.now.to_string(),
             zone: self.ctx.zone_name(),
             day_start: self.ctx.day_start.to_string(),
@@ -612,7 +599,7 @@ impl ReadPage {
         total: i64,
         more: bool,
         last: Option<(query_language::cursor::OrderPosition, Vec<String>)>,
-    ) -> Result<PageInfo> {
+    ) -> Result<QueryPageInfo> {
         let cursor = if more {
             let (position, types) =
                 last.ok_or_else(|| Error::Invalid("query page did not advance".into()))?;
@@ -630,7 +617,7 @@ impl ReadPage {
         } else {
             None
         };
-        Ok(PageInfo {
+        Ok(QueryPageInfo {
             size: self.size,
             cursor,
         })
@@ -747,7 +734,7 @@ async fn page_of(
     query: &Query,
     read: &ReadPage,
     recall: Option<Json>,
-) -> Result<Answer> {
+) -> Result<QueryPage> {
     let (sql, values) = rendered.rows;
     let mut selected: Vec<Json> = sql::bind_scalar(sqlx::query_scalar(&sql), values)
         .fetch_all(&mut *tx)
@@ -794,7 +781,7 @@ async fn page_of(
         })
         .transpose()?;
     let page = read.info(total, more, last)?;
-    Ok(Answer {
+    Ok(QueryPage {
         table,
         query: text.into(),
         read_as: read_as(query, &read.ctx.zone),
