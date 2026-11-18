@@ -112,8 +112,31 @@ pub async fn resolve(conn: &mut PgConnection, reference: &Reference) -> Result<U
 /// and its parents.
 pub async fn show(conn: &mut PgConnection, reference: &Reference) -> Result<Json> {
     let id = resolve(conn, reference).await?;
-    let row = sqlx::query_scalar!(
-        r#"SELECT jsonb_build_object(
+    Ok(read_events(conn, &[id], None).await?.remove(0))
+}
+
+/// Full selected events in input order, including duplicates. One payload
+/// query serves a page; projections never supply these trusted identities.
+pub async fn read_events(
+    conn: &mut PgConnection,
+    ids: &[Uuid],
+    position: Option<i64>,
+) -> Result<Vec<Json>> {
+    if let Some(position) = position {
+        if position < 0 || position > super::current_seq(conn).await? {
+            return Err(Error::Invalid(
+                "read position is outside the known archive".into(),
+            ));
+        }
+        if before_position(conn, ids, position).await?.len() != ids.len() {
+            return Err(Error::NotFound(
+                "a selected event was not present at the read position".into(),
+            ));
+        }
+    }
+    let rows = sqlx::query_scalar!(
+        r#"WITH selected AS (SELECT DISTINCT unnest($1::uuid[]) AS id)
+           SELECT jsonb_build_object(
              'id', e.id, 'event_type', e.event_type, 'kind_version', e.kind_version, 'validation', e.validation, 'source', e.source,
              'when', e.ts_orig, 'time_quality', e.ts_quality, 'seen', e.ts_coided,
              'written', e.ts_persisted, 'commit_seq', e.commit_seq,
@@ -128,39 +151,94 @@ pub async fn show(conn: &mut PgConnection, reference: &Reference) -> Result<Json
                THEN 'sinex:record/' || e.material_id || '/' || e.record_offset || '/' || e.event_type || '/' || e.output_index
                ELSE 'sinex:ev/' || e.id END,
              'payload', e.payload) AS "row!"
-           FROM core.visible_events e
-           LEFT JOIN audit.archived a ON a.event_id = e.id
+           FROM selected f CROSS JOIN LATERAL (
+             SELECT * FROM core.visible_events WHERE id=f.id
+             AND ($2::bigint IS NULL OR commit_seq <= $2) OFFSET 0
+           ) e
+           LEFT JOIN LATERAL (
+             SELECT a.event_id,a.archived_at,a.reason FROM audit.archived a WHERE a.event_id=e.id AND $2::bigint IS NULL
+             UNION ALL
+             SELECT e.id AS event_id,c.recorded_at,c.reason FROM (
+               SELECT archived,recorded_at,reason FROM audit.archive_changes
+               WHERE event_id=e.id AND commit_seq <= $2 ORDER BY commit_seq DESC LIMIT 1
+             ) c WHERE $2::bigint IS NOT NULL AND c.archived
+           ) a ON true
            LEFT JOIN core.runs r ON r.id = e.run_id
            LEFT JOIN raw.materials m ON m.id = e.material_id
-           WHERE e.id = $1"#,
-        id
+           "#,
+        ids,
+        position,
     )
-    .fetch_optional(&mut *conn)
+    .fetch_all(&mut *conn)
     .await?;
-    if let Some(row) = row {
-        return Ok(row);
-    }
-    Ok(sqlx::query_scalar!(
-        r#"SELECT jsonb_build_object('id',event_id,'source',source,'event_type',event_type,
+    let mut by_id = rows
+        .into_iter()
+        .map(|row| {
+            let id = row["id"]
+                .as_str()
+                .ok_or_else(|| Error::Invalid("read event has no identity".into()))?
+                .parse::<Uuid>()
+                .map_err(|error| Error::Invalid(error.to_string()))?;
+            Ok((id, row))
+        })
+        .collect::<Result<BTreeMap<_, _>>>()?;
+    let missing: Vec<_> = ids
+        .iter()
+        .filter(|id| !by_id.contains_key(id))
+        .copied()
+        .collect();
+    if !missing.is_empty() {
+        let tombstones = sqlx::query_scalar!(
+            r#"SELECT jsonb_build_object('id',event_id,'source',source,'event_type',event_type,
              'when',ts_orig,'state','tombstoned','class',class,'payload',NULL,
              'tombstone_operation',operation_id,'tombstoned',removed_at,
              'citation','sinex:ev/'||event_id,
              'unavailable','tombstoned reading has no payload') AS "row!"
-           FROM core.event_tombstones WHERE event_id=$1"#,
-        id,
-    )
-    .fetch_one(&mut *conn)
-    .await?)
+           FROM core.event_tombstones WHERE event_id=ANY($1)"#,
+            &missing,
+        )
+        .fetch_all(&mut *conn)
+        .await?;
+        for row in tombstones {
+            let id = row["id"]
+                .as_str()
+                .ok_or_else(|| Error::Invalid("tombstone has no identity".into()))?
+                .parse::<Uuid>()
+                .map_err(|error| Error::Invalid(error.to_string()))?;
+            by_id.insert(id, row);
+        }
+    }
+    ids.iter()
+        .map(|id| {
+            by_id
+                .get(id)
+                .cloned()
+                .ok_or_else(|| Error::NotFound(format!("no event {id}")))
+        })
+        .collect()
 }
 
 /// A provenance walk's rows.
-pub(crate) async fn walk(
+pub(crate) async fn walk_at(
     conn: &mut PgConnection,
     walk: Walk,
     reference: &Reference,
+    position: i64,
+    head: i64,
 ) -> Result<Vec<Json>> {
+    let historical = position < head;
+    if historical && !matches!(reference, Reference::Event(_)) {
+        return Err(Error::Invalid(
+            "historical provenance needs an exact event reference".into(),
+        ));
+    }
     let id = resolve(conn, reference).await?;
-    let depths = lineage(conn, id, walk).await?;
+    if historical && before_position(conn, &[id], position).await?.is_empty() {
+        return Err(Error::NotFound(
+            "the event was not present at this read position".into(),
+        ));
+    }
+    let depths = lineage(conn, id, walk, historical.then_some(position)).await?;
     let selected: Vec<Json> = depths
         .into_iter()
         .map(|(id, depth)| json!({"id":id,"depth":depth}))
@@ -179,7 +257,7 @@ pub(crate) async fn walk(
              'source', coalesce(e.source,t.source), 'when', coalesce(e.ts_orig,t.ts_orig),
              'state', CASE WHEN e.id IS NULL AND t.event_id IS NOT NULL THEN 'tombstoned'
                WHEN e.id IS NULL THEN 'unavailable'
-               WHEN a.event_id IS NOT NULL THEN 'archived' ELSE 'live' END,
+               WHEN audit.is_archived_at(f.id, $3) THEN 'archived' ELSE 'live' END,
              'unavailable', CASE WHEN e.id IS NULL AND t.event_id IS NULL THEN 'event record missing'
                WHEN t.event_id IS NOT NULL AND e.id IS NULL THEN 'tombstoned reading has no payload' END,
              'withheld', e.payload->'withheld', 'class', coalesce(e.class,t.class),
@@ -197,15 +275,41 @@ pub(crate) async fn walk(
            FROM selected f
            LEFT JOIN LATERAL (SELECT * FROM core.visible_events WHERE id=f.id OFFSET 0) e ON true
            LEFT JOIN LATERAL (SELECT * FROM core.event_tombstones WHERE event_id=f.id OFFSET 0) t ON true
-           LEFT JOIN LATERAL (SELECT event_id FROM audit.archived WHERE event_id=e.id OFFSET 0) a ON true
            LEFT JOIN LATERAL (SELECT * FROM raw.materials WHERE id=e.material_id OFFSET 0) m ON true
            LEFT JOIN LATERAL (SELECT * FROM core.runs WHERE id=e.run_id OFFSET 0) r ON true
            ORDER BY f.depth,
              CASE WHEN $2 THEN coalesce(e.ts_orig,t.ts_orig) END NULLS LAST, f.id"#,
         Json::Array(selected),
         !matches!(walk, Walk::Trace),
+        position,
     ).fetch_all(&mut *conn).await?;
     Ok(rows)
+}
+
+/// Read only the selected nodes' immutable commit metadata. A legacy skeleton
+/// without that fact cannot establish a historical graph membership.
+async fn before_position(
+    conn: &mut PgConnection,
+    ids: &[Uuid],
+    position: i64,
+) -> Result<Vec<Uuid>> {
+    let rows = sqlx::query!(
+        r#"SELECT f.id AS "id!", coalesce(e.commit_seq,t.original_commit_seq) AS position
+           FROM unnest($1::uuid[]) f(id)
+           LEFT JOIN LATERAL (SELECT commit_seq FROM core.events WHERE id=f.id OFFSET 0) e ON true
+           LEFT JOIN LATERAL (SELECT original_commit_seq FROM core.event_tombstones WHERE event_id=f.id OFFSET 0) t ON true"#,
+        ids,
+    ).fetch_all(&mut *conn).await?;
+    let mut selected = Vec::new();
+    for row in rows {
+        let committed = row.position.ok_or_else(|| Error::Invalid(format!(
+            "event {} has no recorded original commit position; historical provenance is unknown", row.id,
+        )))?;
+        if committed <= position {
+            selected.push(row.id);
+        }
+    }
+    Ok(selected)
 }
 
 /// Breadth-first rounds make the first visit the shortest distance. Keeping
@@ -214,12 +318,13 @@ async fn lineage(
     conn: &mut PgConnection,
     root: Uuid,
     direction: Walk,
+    position: Option<i64>,
 ) -> Result<BTreeMap<Uuid, u64>> {
     let mut visited = BTreeMap::from([(root, 0_u64)]);
     let mut next_nodes = vec![root];
     let mut depth = 0_u64;
     while !next_nodes.is_empty() {
-        let adjacent = match direction {
+        let mut adjacent = match direction {
             Walk::Descendants => sqlx::query_scalar!(
                 r#"SELECT DISTINCT c.child AS "child!" FROM unnest($1::uuid[]) f(id) CROSS JOIN LATERAL core.event_children_of(f.id) c ORDER BY 1"#,
                 &next_nodes,
@@ -229,6 +334,9 @@ async fn lineage(
                 &next_nodes,
             ).fetch_all(&mut *conn).await?,
         };
+        if let Some(position) = position {
+            adjacent = before_position(conn, &adjacent, position).await?;
+        }
         depth = depth
             .checked_add(1)
             .ok_or_else(|| Error::Invalid("lineage depth exceeds u64".into()))?;

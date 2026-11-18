@@ -6,7 +6,10 @@ fn explicit_references_keep_order_and_exclude_query_text() {
     let rows: Rows =
         serde_json::from_value(json!({"references":["sinex:ev/second","sinex:ev/first"]})).unwrap();
     rows.validate().unwrap();
-    assert_eq!(rows.references, ["sinex:ev/second", "sinex:ev/first"]);
+    assert_eq!(
+        rows.references.as_deref(),
+        Some(["sinex:ev/second".to_owned(), "sinex:ev/first".to_owned()].as_slice())
+    );
     let both: Rows =
         serde_json::from_value(json!({"selection":"events", "references":["sinex:ev/first"]}))
             .unwrap();

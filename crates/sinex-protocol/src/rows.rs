@@ -11,33 +11,22 @@ use std::sync::LazyLock;
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Rows {
-    /// A query, time, path, URL or reference, as one argument.
+    /// One query or source reference, as one argument.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selection: Option<String>,
     /// An ordered explicit population, instead of selection text.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub references: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub references: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub steps: Vec<Step>,
-    /// Authorize a write over every row a query matched; not a paging option.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub all: bool,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub dry_run: bool,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub explain: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page_size: Option<u64>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub fields: Vec<String>,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub why: bool,
 }
 
 impl Rows {
     /// Population constraints are independent of transport and verb spelling.
     pub fn validate(&self) -> Result<(), Failure> {
-        if self.selection.is_some() && !self.references.is_empty() {
+        if self.selection.is_some() && self.references.is_some() {
             return Err(Failure::new(
                 FailureKind::BadRequest,
                 "use selection or references, not both",
@@ -50,14 +39,20 @@ impl Rows {
         {
             return Err(Failure::new(FailureKind::BadRequest, "selection is empty"));
         }
-        if self
-            .references
-            .iter()
-            .any(|reference| reference.trim().is_empty())
-        {
+        if self.references.as_ref().is_some_and(|references| {
+            references
+                .iter()
+                .any(|reference| reference.trim().is_empty())
+        }) {
             return Err(Failure::new(
                 FailureKind::BadRequest,
                 "a reference is empty",
+            ));
+        }
+        if self.selection.is_none() && self.references.is_none() {
+            return Err(Failure::new(
+                FailureKind::BadRequest,
+                "read needs a selection or references",
             ));
         }
         Ok(())
@@ -90,6 +85,9 @@ pub struct Read {
     pub page_size: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
+    /// Exact accepted commit position for a continued provenance read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<String>,
 }
 
 /// Step argument ownership is shared by all parsers. The CLI's eventual
@@ -109,6 +107,7 @@ pub fn steps() -> &'static StepDeclarations {
                     ),
                     ArgumentSpec::new("page_size", ArgumentForm::Named, "rows in this page"),
                     ArgumentSpec::new("cursor", ArgumentForm::Named, "continue this read"),
+                    ArgumentSpec::new("at", ArgumentForm::Named, "exact accepted commit position"),
                 ],
             )
             .expect("read step fields match their typed declaration");

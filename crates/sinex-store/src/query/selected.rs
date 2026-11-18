@@ -7,6 +7,7 @@ use std::collections::BTreeSet;
 
 pub(super) struct SelectedPage {
     pub answer: QueryPage,
+    pub event_ids: Vec<Option<uuid::Uuid>>,
     pub selection: Option<QuerySelection>,
     pub parents: Vec<EventId>,
     pub class: Class,

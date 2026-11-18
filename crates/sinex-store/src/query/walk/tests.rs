@@ -10,6 +10,15 @@ use sinex_model::{
 };
 use std::collections::BTreeSet;
 
+async fn current_walk(
+    conn: &mut PgConnection,
+    direction: Walk,
+    reference: &Reference,
+) -> Result<Vec<Json>> {
+    let position = crate::query::current_seq(conn).await?;
+    walk_at(conn, direction, reference, position, position).await
+}
+
 fn source(class: Class) -> Event {
     Event::build(
         &CommandImported {
@@ -181,7 +190,7 @@ async fn no_depth_caps_complete_deep_branches_through_continuation(db: devkit::p
     for (index, id) in chain.iter().enumerate().skip(1) {
         assert_eq!(actual[&id.0], u64::try_from(index).unwrap());
     }
-    let parents = walk(&mut conn, Walk::Parents, &Reference::Event(join_id.0))
+    let parents = current_walk(&mut conn, Walk::Parents, &Reference::Event(join_id.0))
         .await
         .unwrap();
     assert_eq!(
@@ -229,7 +238,7 @@ async fn stored_edge_cycles_terminate_with_shortest_depths(db: devkit::pg::TestD
     );
     let up = tokio::time::timeout(
         std::time::Duration::from_secs(30),
-        walk(&mut conn, Walk::Trace, &Reference::Event(ids[3])),
+        current_walk(&mut conn, Walk::Trace, &Reference::Event(ids[3])),
     )
     .await
     .expect("a finite cyclic graph must terminate")
@@ -240,7 +249,7 @@ async fn stored_edge_cycles_terminate_with_shortest_depths(db: devkit::pg::TestD
     );
     let down = tokio::time::timeout(
         std::time::Duration::from_secs(30),
-        walk(&mut conn, Walk::Descendants, &Reference::Event(ids[0])),
+        current_walk(&mut conn, Walk::Descendants, &Reference::Event(ids[0])),
     )
     .await
     .expect("a finite cyclic graph must terminate")
@@ -250,7 +259,7 @@ async fn stored_edge_cycles_terminate_with_shortest_depths(db: devkit::pg::TestD
         BTreeMap::from([(ids[1], 1), (ids[2], 2), (ids[3], 1)])
     );
     assert_eq!(
-        walk(&mut conn, Walk::Trace, &Reference::Event(ids[3]))
+        current_walk(&mut conn, Walk::Trace, &Reference::Event(ids[3]))
             .await
             .unwrap(),
         up
@@ -270,7 +279,9 @@ async fn traces_name_masked_archived_missing_and_tombstoned_links(db: devkit::pg
     let leaf_id = leaf.id;
     insert(&mut conn, leaf).await;
     let reference = Reference::Event(leaf_id.0);
-    let masked = walk(&mut conn, Walk::Trace, &reference).await.unwrap();
+    let masked = current_walk(&mut conn, Walk::Trace, &reference)
+        .await
+        .unwrap();
     assert_eq!(masked.len(), 3);
     assert!(
         masked
@@ -283,7 +294,9 @@ async fn traces_name_masked_archived_missing_and_tombstoned_links(db: devkit::pg
         .execute(&mut conn)
         .await
         .unwrap();
-    let allowed = walk(&mut conn, Walk::Trace, &reference).await.unwrap();
+    let allowed = current_walk(&mut conn, Walk::Trace, &reference)
+        .await
+        .unwrap();
     assert!(
         allowed
             .iter()
@@ -294,7 +307,9 @@ async fn traces_name_masked_archived_missing_and_tombstoned_links(db: devkit::pg
         .await
         .unwrap();
     crate::lifecycle::move_events(&mut conn, Act::Archive, vec![child_id], &NoDerivations).await;
-    let archived = walk(&mut conn, Walk::Trace, &reference).await.unwrap();
+    let archived = current_walk(&mut conn, Walk::Trace, &reference)
+        .await
+        .unwrap();
     assert_eq!(archived[0]["state"], "archived");
     assert_eq!(archived[1]["state"], "archived");
     assert_eq!(archived[2]["state"], "live");
@@ -313,7 +328,9 @@ async fn traces_name_masked_archived_missing_and_tombstoned_links(db: devkit::pg
         .execute(&mut conn)
         .await
         .unwrap();
-    let rows = walk(&mut conn, Walk::Trace, &reference).await.unwrap();
+    let rows = current_walk(&mut conn, Walk::Trace, &reference)
+        .await
+        .unwrap();
     let by_id: BTreeMap<_, _> = rows
         .iter()
         .map(|row| (row["id"].as_str().unwrap().parse::<Uuid>().unwrap(), row))
@@ -327,7 +344,7 @@ async fn traces_name_masked_archived_missing_and_tombstoned_links(db: devkit::pg
         assert!(by_id[&id]["tombstone_operation"].is_string());
     }
     assert_eq!(by_id[&root_id.0]["payload"], json!({"withheld":"guarded"}));
-    let down = walk(&mut conn, Walk::Descendants, &Reference::Event(root_id.0))
+    let down = current_walk(&mut conn, Walk::Descendants, &Reference::Event(root_id.0))
         .await
         .unwrap();
     assert_eq!(down.len(), 2);
@@ -372,7 +389,7 @@ async fn trace_reads_selected_events_in_unrelated_history(db: devkit::pg::TestDa
             .unwrap(),
         8196
     );
-    let rows = walk(&mut conn, Walk::Trace, &Reference::Event(leaf_id.0))
+    let rows = current_walk(&mut conn, Walk::Trace, &Reference::Event(leaf_id.0))
         .await
         .unwrap();
     assert_eq!(
@@ -380,4 +397,70 @@ async fn trace_reads_selected_events_in_unrelated_history(db: devkit::pg::TestDa
         BTreeMap::from([(leaf_id.0, 0), (child_id.0, 1), (root_id.0, 2)])
     );
     assert!(rows.iter().all(|row| row["payload"]["command"].is_string()));
+}
+
+#[devkit::test]
+async fn historical_walk_excludes_a_later_child_and_keeps_prior_archive_state(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = AdmissionContext::connect(&db.url(None)).await.unwrap();
+    let root = source(Class::Open);
+    let root_id = root.id;
+    insert(&mut conn, root).await;
+    let early = derived(&[root_id], "before-selection");
+    let early_id = early.id;
+    insert(&mut conn, early).await;
+    let cut = crate::query::current_seq(&mut conn).await.unwrap();
+    let late = derived(&[root_id], "after-selection");
+    let late_id = late.id;
+    insert(&mut conn, late).await;
+    let moved =
+        crate::lifecycle::move_events(&mut conn, Act::Archive, vec![early_id], &NoDerivations)
+            .await;
+    assert!(
+        matches!(moved, crate::lifecycle::Ended::Ok { .. }),
+        "{moved:?}"
+    );
+    let context = sinex_query::Context::utc("2026-09-15T00:00:00Z".parse().unwrap());
+    let text = format!("descendants sinex:ev/{}", root_id.0);
+    let past = crate::query::read_at(&mut conn, &text, &context, &Page::default(), cut)
+        .await
+        .unwrap();
+    assert_eq!(past.resolved.commit_seq, cut);
+    assert_eq!(
+        past.rows
+            .iter()
+            .map(|row| row["id"].as_str().unwrap().to_owned())
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([early_id.0.to_string()])
+    );
+    assert!(past.rows.iter().all(|row| row["state"] == "live"));
+    let full = read_events(&mut conn, &[early_id.0, root_id.0, early_id.0], Some(cut))
+        .await
+        .unwrap();
+    assert_eq!(
+        full.iter()
+            .map(|row| row["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        [
+            early_id.0.to_string(),
+            root_id.0.to_string(),
+            early_id.0.to_string()
+        ]
+    );
+    assert!(full.iter().all(|row| row["state"] == "live"));
+    assert!(
+        read_events(&mut conn, &[late_id.0], Some(cut))
+            .await
+            .is_err()
+    );
+    let current = current_walk(&mut conn, Walk::Descendants, &Reference::Event(root_id.0))
+        .await
+        .unwrap();
+    assert!(current.iter().any(|row| row["id"] == late_id.0.to_string()));
+    assert!(
+        current
+            .iter()
+            .any(|row| row["id"] == early_id.0.to_string() && row["state"] == "archived")
+    );
 }

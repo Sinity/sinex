@@ -47,3 +47,88 @@ async fn declared_status_keeps_real_progress_and_strict_arguments(db: devkit::pg
     assert_eq!(answer["value"]["verdict"]["state"], "unknown");
     assert!(answer["value"]["commit_seq"].is_i64());
 }
+
+async fn rows_call(w: &World, body: Value) -> (StatusCode, Value) {
+    let response = w
+        .app
+        .clone()
+        .oneshot(
+            HttpRequest::post("/v1/rows")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {READ}"))
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    (status, serde_json::from_slice(&bytes).unwrap())
+}
+
+#[devkit::test]
+async fn declared_rows_trace_uses_the_selected_identity_after_projection(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
+    let event = command("echo projected identity", 1);
+    let id = event.id.0;
+    admit_events(&w, vec![event]).await;
+    let (status, answer) = rows_call(&w, json!({
+        "operation":"rows", "deadline":null, "format":"json",
+        "arguments":{"selection":"events | fields text as id", "steps":[{"verb":"read","view":"trace"}]},
+    })).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(
+        answer["value"]["references"],
+        json!([format!("sinex:ev/{id}")])
+    );
+    assert_eq!(
+        answer["value"]["steps"][0]["outcome"]["status"], "done",
+        "{answer}"
+    );
+    let graph = &answer["value"]["steps"][0]["outcome"]["reply"]["reply"][0];
+    assert_eq!(graph["rows"][0]["id"], id.to_string());
+    assert_eq!(
+        graph["rows"][0]["payload"]["command"],
+        "echo projected identity"
+    );
+}
+
+#[devkit::test]
+async fn declared_rows_followup_keeps_options_and_advances_the_actual_page(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
+    admit(&w, &["first", "second", "third"], 1).await;
+    let mut request = json!({
+        "operation":"rows", "request_id":"synthetic-read", "deadline":null,
+        "budget_tokens":300, "format":"json",
+        "arguments":{"selection":"events | sort by id","page_size":1},
+    });
+    let mut seen = std::collections::BTreeSet::new();
+    let mut identities = std::collections::BTreeSet::new();
+    loop {
+        let (status, answer) = rows_call(&w, request).await;
+        assert_eq!(status, StatusCode::OK, "{answer}");
+        assert_eq!(answer["value"]["population"]["total"], 3);
+        let rows = answer["value"]["population"]["rows"].as_array().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(seen.insert(rows[0]["id"].as_str().unwrap().to_owned()));
+        let Some(next) = answer["next"].as_array().and_then(|next| next.first()) else {
+            break;
+        };
+        request = next["request"].clone();
+        assert_eq!(request["deadline"], Value::Null);
+        assert_eq!(request["budget_tokens"], 300);
+        assert_eq!(request["format"], "json");
+        let identity = request["request_id"].as_str().unwrap();
+        assert!(identity.len() <= 80);
+        assert!(
+            identities.insert(identity.to_owned()),
+            "a new page reused the preceding request identity"
+        );
+    }
+    assert_eq!(seen.len(), 3);
+    assert_eq!(identities.len(), 2);
+}

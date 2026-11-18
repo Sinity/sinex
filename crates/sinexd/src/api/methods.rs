@@ -191,8 +191,18 @@ impl Api {
     /// Replace every sealed payload in `value` with its plaintext, unwrapping
     /// each data key once per session.
     async fn unseal(&self, value: &mut Value) -> Result<()> {
+        self.unseal_values(std::iter::once(value)).await
+    }
+
+    async fn unseal_values<'a>(
+        &self,
+        values: impl IntoIterator<Item = &'a mut Value>,
+    ) -> Result<()> {
+        let mut values: Vec<_> = values.into_iter().collect();
         let mut refs = Vec::new();
-        crate::material_access::sealing::collect_sealed(value, &mut refs);
+        for value in &values {
+            crate::material_access::sealing::collect_sealed(value, &mut refs);
+        }
         if refs.is_empty() {
             return Ok(());
         }
@@ -212,7 +222,9 @@ impl Api {
             }
         }
         s.unlock.check()?;
-        crate::material_access::sealing::unseal_in(value, &s.keys);
+        for value in &mut values {
+            crate::material_access::sealing::unseal_in(value, &s.keys);
+        }
         Ok(())
     }
 

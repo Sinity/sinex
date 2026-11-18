@@ -22,6 +22,7 @@ pub fn declarations() -> &'static Arc<OperationDeclarations> {
         let mut table = OperationDeclarations::builder("sinex", deadlines);
         table.accept(RequestOption::Cursor);
         table.accept(RequestOption::BudgetTokens);
+        table.accept(RequestOption::Format);
         table
             .declare_tool(ToolFamily {
                 name: "read".into(),
@@ -42,7 +43,7 @@ pub fn declarations() -> &'static Arc<OperationDeclarations> {
         rows.arguments = vec![ArgumentSpec::new(
             "selection",
             ArgumentForm::Positional,
-            "one query, time, path, URL or reference",
+            "one query or source reference",
         )];
         table
             .declare::<Rows, RowsReply>(rows, render_page)
