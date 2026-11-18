@@ -2,8 +2,8 @@
 //! these declarations; transports do not reconstruct another schema.
 mod steps;
 use command_surface::{
-    ArgumentForm, ArgumentSpec, Deadlines, LatencyClass, OperationDeclarations, OperationSpec,
-    RequestOption, TextStyle, ToolFamily,
+    ArgumentForm, ArgumentSpec, Deadlines, FailureKind, LatencyClass, OperationDeclarations,
+    OperationSpec, RequestOption, TextStyle, ToolFamily,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -25,6 +25,19 @@ pub fn declarations() -> &'static Arc<OperationDeclarations> {
         table.accept(RequestOption::Cursor);
         table.accept(RequestOption::BudgetTokens);
         table.accept(RequestOption::Format);
+        for (code, kind) in [
+            ("no_writer", FailureKind::NotConfigured),
+            ("read_pool_busy", FailureKind::Timeout),
+            ("database_unavailable", FailureKind::NotRunning),
+            ("writer_stopped", FailureKind::NotRunning),
+            ("storage_refused", FailureKind::Refused),
+            ("request_conflict", FailureKind::Conflict),
+            ("stale", FailureKind::Conflict),
+        ] {
+            table
+                .register_failure_code(code, kind)
+                .expect("request failure has one classification");
+        }
         table
             .declare_tool(ToolFamily {
                 name: "read".into(),
@@ -46,6 +59,19 @@ pub fn declarations() -> &'static Arc<OperationDeclarations> {
             "Read a selection and apply its typed steps",
             "A selection and its ordered steps are one question",
         );
+        rows.failures = vec![
+            FailureKind::InvalidQuery,
+            FailureKind::UnknownField,
+            FailureKind::BadValue,
+            FailureKind::NotAQuery,
+            FailureKind::Ambiguous,
+            FailureKind::StaleCursor,
+            FailureKind::NotFound,
+            FailureKind::Refused,
+            FailureKind::NotConfigured,
+            FailureKind::NotRunning,
+            FailureKind::Internal,
+        ];
         rows.latency = LatencyClass::Search;
         rows.access = command_surface::Access::Permanent;
         rows.http_route = Some("/v1/rows".into());
