@@ -4,7 +4,7 @@ use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sinex_model::{DbCheck, OperationId};
-use sqlx::PgConnection;
+use sqlx::{Connection, PgConnection};
 
 /// The authenticated retry namespace and original normalized request.
 pub struct Request<'a> {
@@ -42,13 +42,17 @@ pub async fn begin(conn: &mut PgConnection, request: &Request<'_>) -> Result<Acc
         .filter_map(|step| step["verb"].as_str())
         .collect();
     let scope = serde_json::json!({"operation":request.arguments["operation"],"steps":verbs});
-    let private = serde_json::json!({"input":request.arguments});
     sqlx::query!(
-        r#"INSERT INTO core.operations (id, kind, actor, request_scope, request_id, request, scope, start_seq)
-           VALUES ($1, 'request', $2, $3, $4, $5, $6,
+        r#"INSERT INTO core.operations (id, kind, actor, scope, start_seq)
+           VALUES ($1, 'request', $2, $3,
                    (SELECT value FROM core.counters WHERE name='commit_seq'))"#,
-        id.0, request.actor, request.caller, request.id, private, scope,
-    ).execute(conn).await?;
+        id.0,
+        request.actor,
+        scope,
+    )
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query!("INSERT INTO core.operation_requests (operation_id,caller,request_id,input) VALUES ($1,$2,$3,$4)",id.0,request.caller,request.id,request.arguments).execute(conn).await?;
     Ok(Accepted {
         operation: id,
         progress: serde_json::json!({}),
@@ -59,8 +63,9 @@ pub async fn begin(conn: &mut PgConnection, request: &Request<'_>) -> Result<Acc
 /// A repeat can return its committed outcome before preparing source material.
 pub async fn lookup(conn: &mut PgConnection, request: &Request<'_>) -> Result<Option<Accepted>> {
     let row = sqlx::query!(
-        r#"SELECT id, actor, request, progress FROM core.operations
-           WHERE request_scope=$1 AND request_id=$2 AND kind='request'"#,
+        r#"SELECT o.id, o.actor, o.progress, r.input, r.question FROM core.operations o
+           JOIN core.operation_requests r ON r.operation_id=o.id
+           WHERE r.caller=$1 AND r.request_id=$2 AND o.kind='request'"#,
         request.caller,
         request.id,
     )
@@ -69,15 +74,11 @@ pub async fn lookup(conn: &mut PgConnection, request: &Request<'_>) -> Result<Op
     let Some(row) = row else {
         return Ok(None);
     };
-    let private = row
-        .request
-        .ok_or_else(|| Error::Invalid("accepted request has no private input".into()))?;
-    if row.actor != request.actor || private["input"] != *request.arguments {
+    if row.actor != request.actor || row.input != *request.arguments {
         return Err(Error::RequestConflict);
     }
-    let question = private
-        .get("question")
-        .cloned()
+    let question = row
+        .question
         .map(serde_json::from_value)
         .transpose()
         .map_err(|error| Error::Invalid(format!("accepted question: {error}")))?;
@@ -88,29 +89,44 @@ pub async fn lookup(conn: &mut PgConnection, request: &Request<'_>) -> Result<Op
     }))
 }
 
-/// Save an accepted question before any effect can commit. Repeats never replace it.
+/// Accept subject identities and their question in one owned snapshot. This
+/// private request state does not take the event-admission writer or positions.
 pub async fn accept_question(
     conn: &mut PgConnection,
     operation: OperationId,
     mut question: crate::query::Question,
-    grants: &str,
 ) -> Result<crate::query::Question> {
-    question.accept_population(conn, operation, grants).await?;
+    let mut tx = conn.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        .execute(&mut *tx)
+        .await?;
+    crate::query::local_request_deadline(&mut tx).await?;
+    let stored = sqlx::query_scalar!(
+        "SELECT question FROM core.operation_requests WHERE operation_id=$1 FOR UPDATE",
+        operation.0
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    if let Some(stored) = stored {
+        tx.rollback().await?;
+        return serde_json::from_value(stored)
+            .map_err(|error| Error::Invalid(format!("accepted question: {error}")));
+    }
+    let zone = question.context()?.zone_name();
+    sqlx::query_scalar!("SELECT set_config('TimeZone',$1,true)", zone)
+        .fetch_one(&mut *tx)
+        .await?;
+    question.accept_population(&mut tx, operation).await?;
     let stored =
         serde_json::to_value(&question).map_err(|error| Error::Invalid(error.to_string()))?;
-    let updated = sqlx::query!(
-        r#"UPDATE core.operations SET request=jsonb_set(request, '{question}', $2)
-           WHERE id=$1 AND kind='request' AND NOT (request ? 'question')"#,
+    sqlx::query!(
+        "UPDATE core.operation_requests SET question=$2 WHERE operation_id=$1",
         operation.0,
-        stored,
+        stored
     )
-    .execute(conn)
+    .execute(&mut *tx)
     .await?;
-    if updated.rows_affected() != 1 {
-        return Err(Error::Invalid(
-            "request question is missing or already accepted".into(),
-        ));
-    }
+    tx.commit().await?;
     Ok(question)
 }
 
@@ -121,8 +137,8 @@ pub async fn question(
     caller: &str,
 ) -> Result<crate::query::Question> {
     let question = sqlx::query_scalar!(
-        r#"SELECT request->'question' AS "question?" FROM core.operations
-           WHERE id=$1 AND kind='request' AND request_scope=$2"#,
+        r#"SELECT question FROM core.operation_requests
+           WHERE operation_id=$1 AND caller=$2"#,
         operation.0,
         caller,
     )

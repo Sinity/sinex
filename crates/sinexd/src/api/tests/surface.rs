@@ -1,5 +1,6 @@
 //! The declared surface uses the real authenticated HTTP and status handler.
 use super::*;
+use sqlx::Connection;
 
 async fn status_call(w: &World, token: Option<&str>, arguments: Value) -> (StatusCode, Value) {
     let mut request = HttpRequest::post("/v1/status").header("content-type", "application/json");
@@ -358,19 +359,21 @@ async fn missing_accepted_subject_reports_failure_and_keeps_committed_write(
     db: devkit::pg::TestDatabase,
 ) {
     let w = world(db).await;
-    let (_, first_write)=rows_as(&w,OPERATOR,json!({"operation":"rows","request_id":"missing-first","arguments":{"selection":"events","steps":[{"verb":"save","name":"first"}]},"deadline":null})).await;
-    assert_eq!(first_write["outcome"], "ok", "{first_write}");
+    let missing = sinex_model::OperationId::new();
+    w.writer
+        .record_replay(missing, "operator".into(), json!({}), vec![])
+        .await
+        .unwrap();
     let request = json!({"operation":"rows","request_id":"missing-selected","arguments":{"selection":"operations where actor = operator","steps":[{"verb":"read"},{"verb":"save","name":"selected"}]},"deadline":null});
     let (_, first) = rows_as(&w, OPERATOR, request.clone()).await;
     assert_eq!(first["outcome"], "ok", "{first}");
-    // Remove one source subject in this fixture, retaining its authored source
-    // material. The request's accepted identity must not become another row.
-    sqlx::query(
-        "DELETE FROM core.operations WHERE request_scope='operator' AND request_id='missing-first'",
-    )
-    .execute(&w.reads)
-    .await
-    .unwrap();
+    // Remove one fixture operation after selection; the accepted identity
+    // must be reported missing while the committed write remains.
+    sqlx::query("DELETE FROM core.operations WHERE id=$1")
+        .bind(missing.0)
+        .execute(&w.reads)
+        .await
+        .unwrap();
     let (_, retry) = rows_as(&w, OPERATOR, request).await;
     assert_eq!(
         retry["value"]["steps"][0]["outcome"]["status"], "failed",
@@ -382,7 +385,7 @@ async fn missing_accepted_subject_reports_failure_and_keeps_committed_write(
     );
     assert_eq!(retry["value"]["steps"][1], first["value"]["steps"][1]);
     let result: Option<String> = sqlx::query_scalar(
-        "SELECT result FROM core.operations WHERE request_id='missing-selected'",
+        "SELECT o.result FROM core.operations o JOIN core.operation_requests r ON r.operation_id=o.id WHERE r.request_id='missing-selected'",
     )
     .fetch_one(&w.reads)
     .await
@@ -423,10 +426,52 @@ async fn request_intent_is_private_while_public_operation_scope_stays_readable(
         json!([]),
         "{continued}"
     );
-    let input:Option<String>=sqlx::query_scalar("SELECT request->'input'->'arguments'->>'selection' FROM core.operations WHERE request_id='private-question'").fetch_one(&w.reads).await.unwrap();
+    let input:Option<String>=sqlx::query_scalar("SELECT input->'arguments'->>'selection' FROM core.operation_requests WHERE request_id='private-question'").fetch_one(&w.reads).await.unwrap();
     assert_eq!(
         input.as_deref(),
         Some(question),
         "accepted intent is preserved privately"
     );
+}
+
+#[devkit::test]
+async fn selection_waiting_on_private_state_does_not_hold_event_admission(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
+    let arguments = json!({"selection":"operations","steps":[{"verb":"read"},{"verb":"save","name":"fixture"}]});
+    let accepted = w
+        .writer
+        .begin_request(
+            "operator".into(),
+            "separate-selection".into(),
+            "operator".into(),
+            json!({"operation":"rows","arguments":arguments}),
+        )
+        .await
+        .unwrap();
+    let mut blocking = w.reads.acquire().await.unwrap();
+    let pid = sinex_store::query::backend_pid(&mut blocking)
+        .await
+        .unwrap();
+    let mut hold = blocking.begin().await.unwrap();
+    sqlx::query("SELECT question FROM core.operation_requests WHERE operation_id=$1 FOR UPDATE")
+        .bind(accepted.operation.0)
+        .fetch_one(&mut *hold)
+        .await
+        .unwrap();
+    let request = json!({"operation":"rows","request_id":"separate-selection","arguments":arguments,"deadline":null});
+    let (reply, ()) = tokio::join!(rows_as(&w, OPERATOR, request), async {
+        loop {
+            let blocked:bool=sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM pg_stat_activity a WHERE a.datname=current_database() AND $1=ANY(pg_blocking_pids(a.pid)))").bind(pid).fetch_one(&w.reads).await.unwrap();
+            if blocked {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        admit(&w, &["synthetic live admission while selection waits"], 0).await;
+        hold.rollback().await.unwrap();
+    });
+    assert_eq!(reply.1["outcome"], "ok", "{}", reply.1);
+    assert_eq!(reply.1["value"]["steps"][1]["outcome"]["status"], "done");
 }

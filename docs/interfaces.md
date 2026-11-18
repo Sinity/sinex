@@ -417,7 +417,9 @@ also saves a question through the typed `save` step, preserving its parameters a
 existing credential requirement. Saving a question does not execute it. Its request
 identity, admitted event identity and reply are kept in the operations log. The
 original input and expanded question are private request state; the public operation
-scope contains only declared operation and verb names. The reply is committed in the transaction that admits the authored source record. A retry
+scope contains only declared operation and verb names. Selection copies its ordered
+subject identities and question in one owned snapshot transaction, leaving event
+admission free to serve capture. The reply is committed in the transaction that admits the authored source record. A retry
 returns that receipt before creating another source material or run. A mixed read
 keeps its expanded question, declaration identities, clock and event cut. Mutable
 units keep an ordered population of subject identities in the same operation,

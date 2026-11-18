@@ -56,12 +56,6 @@ pub(crate) fn check_read() -> Result<()> {
     current().map_or(Ok(()), |budget| budget.check())
 }
 
-/// The writer can keep checking a preparation after the caller hands it over.
-pub(crate) fn preparation_check() -> crate::writer::AdmissionCheck {
-    let budget = current();
-    Arc::new(move || budget.as_ref().map_or(Ok(()), |budget| budget.check()))
-}
-
 /// Queue reservation is still read work. Once the writer takes the job, the
 /// caller waits for its result even if the read budget then expires.
 pub(crate) fn admit() -> Result<()> {

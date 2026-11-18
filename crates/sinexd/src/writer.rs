@@ -1,4 +1,4 @@
-//! The writer task: the only database writer. It takes batches from three
+//! The event-admission writer. It takes batches from three
 //! channels in priority order, live before derived before bulk, so a stage
 //! never starves live capture, and runs admission for each batch in its own
 //! transaction.
@@ -108,7 +108,6 @@ enum WriterJob {
     },
     Request(Batch, RequestStep, AdmissionCheck, Reply<RequestAdmission>),
     FinishRequest(OperationId, bool, Reply<()>),
-    AcceptQuestion(Box<PreparedQuestion>, Reply<sinex_store::query::Question>),
     Signals(
         Option<Batch>,
         Box<sinex_store::signals::Commit>,
@@ -179,14 +178,6 @@ enum Saved<'a> {
     Stage(&'a StageCheckpoint),
     Curation,
     Request(&'a RequestStep),
-}
-
-pub(crate) struct PreparedQuestion {
-    pub operation: OperationId,
-    pub question: sinex_store::query::Question,
-    pub grants: String,
-    pub check: AdmissionCheck,
-    pub deadline: Option<tokio::time::Instant>,
 }
 
 /// The committed answer is computed from admission's actual outcome.
@@ -323,16 +314,6 @@ impl WriterHandle {
             actor,
             arguments,
             reply,
-        })
-        .await
-    }
-
-    pub(crate) async fn accept_question(
-        &self,
-        prepared: PreparedQuestion,
-    ) -> Result<sinex_store::query::Question, WriteError> {
-        self.ask(Priority::Live, |reply| {
-            WriterJob::AcceptQuestion(Box::new(prepared), reply)
         })
         .await
     }
@@ -570,10 +551,7 @@ impl WriterHandle {
         let queued_at = std::time::Instant::now();
         let permit = channel.reserve().await.map_err(|_| WriteError::Stopped)?;
         let work = make(reply);
-        if matches!(
-            &work,
-            WriterJob::BeginRequest { .. } | WriterJob::AcceptQuestion(..)
-        ) {
+        if matches!(&work, WriterJob::BeginRequest { .. }) {
             crate::request_deadline::check_read().map_err(|_| WriteError::ReadDeadline)?;
         } else {
             crate::request_deadline::admit().map_err(|_| WriteError::ReadDeadline)?;
@@ -709,37 +687,6 @@ pub(crate) async fn run_notifying(
                     sinex_store::requests::finish(tx.connection(), operation, failed).await?;
                     tx.commit().await?;
                     Ok(())
-                }
-                .await;
-                answer!(reply, result);
-            }
-            WriterJob::AcceptQuestion(prepared, reply) => {
-                let result: Result<_, WriteError> = async {
-                    (prepared.check)().map_err(|_| WriteError::ReadDeadline)?;
-                    let mut tx = connection.begin().await?;
-                    if let Some(deadline) = prepared.deadline {
-                        let milliseconds = deadline
-                            .saturating_duration_since(tokio::time::Instant::now())
-                            .as_millis()
-                            .max(1);
-                        if milliseconds <= i32::MAX as u128 {
-                            sqlx::query(&format!(
-                                "SET LOCAL statement_timeout = '{milliseconds}ms'"
-                            ))
-                            .execute(&mut *tx)
-                            .await?;
-                        }
-                    }
-                    let question = sinex_store::requests::accept_question(
-                        tx.connection(),
-                        prepared.operation,
-                        prepared.question,
-                        &prepared.grants,
-                    )
-                    .await?;
-                    (prepared.check)().map_err(|_| WriteError::ReadDeadline)?;
-                    tx.commit().await?;
-                    Ok(question)
                 }
                 .await;
                 answer!(reply, result);

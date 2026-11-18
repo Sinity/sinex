@@ -56,13 +56,12 @@ impl Question {
     }
 
     /// Materialize only ordered subject identities for mutable units. This is
-    /// one INSERT/SELECT inside the request writer transaction, with no client
+    /// one INSERT/SELECT inside the request snapshot transaction, with no client
     /// accumulation and no stored result text.
     pub(crate) async fn accept_population(
         &mut self,
         conn: &mut PgConnection,
         operation: sinex_model::OperationId,
-        grants: &str,
     ) -> Result<()> {
         let mut context = self.context()?;
         let refs: Vec<_> = self
@@ -82,9 +81,6 @@ impl Question {
         if !matches!(query.source, Source::Table { table,.. } if !table.is_events()) {
             return Ok(());
         }
-        sqlx::query_scalar!("SELECT set_config('sinex.grants', $1, true)", grants)
-            .fetch_one(&mut *conn)
-            .await?;
         initialize_calendar(conn).await?;
         let compiled = compile_query(conn, &context, self.position, &query).await?;
         let order = compiled.order_by();

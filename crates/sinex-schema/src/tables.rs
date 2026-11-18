@@ -81,9 +81,6 @@ fn operations(c: &Checks) -> String {
   id uuid PRIMARY KEY,
   kind text NOT NULL,
   actor text NOT NULL,
-  request_scope text,
-  request_id text,
-  request jsonb,
   scope jsonb NOT NULL,
   at timestamptz NOT NULL DEFAULT now(),
   start_seq bigint,
@@ -91,16 +88,23 @@ fn operations(c: &Checks) -> String {
   result text {result},
   counts jsonb NOT NULL DEFAULT '{{}}'::jsonb,
   progress jsonb NOT NULL DEFAULT '{{}}'::jsonb,
-  refusals jsonb NOT NULL DEFAULT '[]'::jsonb,
-  UNIQUE (request_scope, request_id),
-  CHECK ((request_scope IS NULL) = (request_id IS NULL) AND (request_scope IS NULL) = (request IS NULL))
+  refusals jsonb NOT NULL DEFAULT '[]'::jsonb
 )",
         result = c.operation_result
     )
 }
 
+pub(crate) const OPERATION_REQUESTS: &str = "CREATE TABLE core.operation_requests (
+  operation_id uuid PRIMARY KEY REFERENCES core.operations(id),
+  caller text NOT NULL,
+  request_id text NOT NULL,
+  input jsonb NOT NULL,
+  question jsonb,
+  UNIQUE (caller, request_id)
+)";
+
 pub(crate) const OPERATION_ROWS: &str = "CREATE TABLE core.operation_rows (
-  operation_id uuid NOT NULL REFERENCES core.operations(id),
+  operation_id uuid NOT NULL REFERENCES core.operation_requests(operation_id),
   ordinal bigint NOT NULL,
   identity text NOT NULL,
   PRIMARY KEY (operation_id, ordinal)
@@ -502,6 +506,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   events bigint NOT NULL DEFAULT 0
 )".into(),
         operations(c),
+        OPERATION_REQUESTS.into(),
         OPERATION_ROWS.into(),
         KIND_PREFIXES.into(),
         kind_declarations(),

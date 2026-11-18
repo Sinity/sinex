@@ -87,3 +87,29 @@ async fn committed_step_is_immutable_and_rolls_back_with_its_transaction(
         Some(reply)
     );
 }
+
+#[devkit::test]
+async fn accepted_timestamp_group_identity_uses_its_named_zone(db: devkit::pg::TestDatabase) {
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let accepted=begin(&mut conn,&Request {caller:"operator",id:"zone",actor:"operator",arguments:&json!({"operation":"rows","arguments":{"selection":"operations | group by started | count"}})}).await.unwrap();
+    let mut context = sinex_query::Context::utc(jiff::Timestamp::now());
+    context.zone = jiff::tz::TimeZone::get("Europe/Warsaw").unwrap();
+    let question = crate::query::Question::accept(
+        &mut conn,
+        "operations | group by started | count",
+        &context,
+    )
+    .await
+    .unwrap();
+    let question = accept_question(&mut conn, accepted.operation, question)
+        .await
+        .unwrap();
+    let answer = question
+        .read(&mut conn, &crate::query::Page::default())
+        .await
+        .unwrap();
+    assert_eq!(answer.answer.total, 1);
+    assert_eq!(answer.answer.rows[0]["count"], 1);
+    let stored=lookup(&mut conn,&Request {caller:"operator",id:"zone",actor:"operator",arguments:&json!({"operation":"rows","arguments":{"selection":"operations | group by started | count"}})}).await.unwrap().unwrap();
+    assert!(stored.question.is_some());
+}

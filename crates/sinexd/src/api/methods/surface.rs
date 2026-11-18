@@ -191,15 +191,7 @@ impl Api {
                         &context,
                     )
                     .await?;
-                    writer
-                        .expect("write request")
-                        .accept_question(crate::writer::PreparedQuestion {
-                            operation: accepted.operation,
-                            question,
-                            grants: caller.grants.clone(),
-                            check: crate::request_deadline::preparation_check(),
-                            deadline: metadata.read_deadline(),
-                        })
+                    sinex_store::requests::accept_question(&mut conn, accepted.operation, question)
                         .await?
                 };
                 context = question.context()?;
@@ -343,9 +335,17 @@ impl Api {
                         )
                         .await
                     {
-                        Ok(reply) => StepOutcome::Done {
-                            reply: StepReply::Written(reply),
-                        },
+                        Ok(reply) => {
+                            if request.steps[index + 1..]
+                                .iter()
+                                .any(|step| matches!(step, Step::Read(_)))
+                            {
+                                crate::request_deadline::handoff_read(&mut conn).await?;
+                            }
+                            StepOutcome::Done {
+                                reply: StepReply::Written(reply),
+                            }
+                        }
                         Err(error) => {
                             failed = true;
                             StepOutcome::Failed {
