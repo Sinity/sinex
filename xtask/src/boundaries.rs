@@ -60,6 +60,7 @@ fn allowed(name: &str) -> Result<&'static [&'static str], String> {
         "sinex-model" => Ok(&["sinex-macros"]),
         "sinex-query" => Ok(&["sinex-model"]),
         "sinex-protocol" | "sinex-schema" | "sinex-derivations" => Ok(&["sinex-model"]),
+        "sinex-commands" => Ok(&["sinex-protocol"]),
         // Statistics over derived events read the metric declarations.
         "sinex-analysis" => Ok(&["sinex-model", "sinex-derivations"]),
         "sinex-transport" => Ok(&["sinex-model", "sinex-protocol"]),
@@ -87,6 +88,7 @@ fn allowed(name: &str) -> Result<&'static [&'static str], String> {
         ]),
         "sinex-library" => Ok(&["sinex-model", "sinex-store"]),
         "sinexd" => Ok(&[
+            "sinex-commands",
             "sinex-process",
             "sinex-query",
             "sinex-model",
@@ -115,6 +117,7 @@ fn allowed(name: &str) -> Result<&'static [&'static str], String> {
             "sinex-source-core",
         ]),
         "sinexctl" => Ok(&[
+            "sinex-commands",
             "sinex-model",
             "sinex-protocol",
             "sinex-transport",
@@ -142,6 +145,7 @@ const RUNTIME_RULES: &[(&str, RuntimeRule)] = &[
     ("sinex-protocol", RuntimeRule::NoIo),
     ("sinex-derivations", RuntimeRule::NoIo),
     ("sinex-analysis", RuntimeRule::NoIo),
+    ("sinex-commands", RuntimeRule::NoDatabase),
     ("sinex-process", RuntimeRule::NoDatabase),
     ("sinexctl", RuntimeRule::NoDatabase),
 ];

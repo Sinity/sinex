@@ -232,7 +232,7 @@ impl Client {
         &self,
         request: &command_surface::RunnableRequest,
     ) -> Result<command_surface::Answer<T>, ClientError> {
-        let declarations = sinex_protocol::surface::declarations();
+        let declarations = sinex_commands::declarations();
         let spec = declarations.spec_named(&request.operation).ok_or_else(|| {
             ClientError::Protocol(format!("unknown operation {}", request.operation))
         })?;

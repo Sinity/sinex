@@ -23,8 +23,6 @@ pub use replay::{
 };
 pub mod rows;
 pub mod stage_report;
-#[cfg(feature = "surface")]
-pub mod surface;
 
 pub use commands::{Access, Arg, ArgKind, COMMANDS, Command, command};
 pub use nats::{

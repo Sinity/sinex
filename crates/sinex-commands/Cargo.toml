@@ -1,0 +1,20 @@
+[package]
+name = "sinex-commands"
+description = "Typed Sinex operation and step declarations shared by runtime clients and the daemon."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+sinex-protocol.workspace = true
+command-surface = { workspace = true, features = ["runtime"] }
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+devkit.workspace = true
+
+[lints]
+workspace = true

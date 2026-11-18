@@ -2,12 +2,12 @@
 //! the common table owns request metadata, schema validation and dispatch.
 use super::*;
 use command_surface::{Answer as SurfaceAnswer, Operation, OperationFuture, RequestContext};
-use sinex_protocol::surface::Status;
+use sinex_commands::Status;
 use std::sync::Arc;
 
 pub(crate) fn table(api: Api) -> command_surface::OperationTable {
     let mut table =
-        command_surface::OperationTable::new(Arc::clone(sinex_protocol::surface::declarations()));
+        command_surface::OperationTable::new(Arc::clone(sinex_commands::declarations()));
     table
         .bind("rows", RowsOperation(api.clone()))
         .expect("rows binds its declared request and reply");

@@ -7,8 +7,7 @@ publish.workspace = true
 license.workspace = true
 
 [features]
-surface = ["command-surface/runtime"]
-cli = ["dep:clap", "surface"]
+cli = ["dep:clap"]
 
 [dependencies]
 command-surface.workspace = true

@@ -6,6 +6,7 @@ members = [
     "crates/sinex-model",
     "crates/sinex-query",
     "crates/sinex-protocol",
+    "crates/sinex-commands",
     "crates/sinex-transport",
     "crates/sinex-schema",
     "crates/sinex-store",
@@ -95,6 +96,7 @@ sinex-process = { path = "crates/sinex-process" }
 sinex-model = { path = "crates/sinex-model" }
 sinex-query = { path = "crates/sinex-query" }
 sinex-protocol = { path = "crates/sinex-protocol" }
+sinex-commands = { path = "crates/sinex-commands" }
 sinex-transport = { path = "crates/sinex-transport" }
 sinex-schema = { path = "crates/sinex-schema" }
 sinex-store = { path = "crates/sinex-store" }

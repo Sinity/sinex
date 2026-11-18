@@ -1,12 +1,8 @@
 //! One resolved selection followed by typed steps. CLI spelling is a boundary;
 //! these requests carry the same fields over MCP and HTTP.
-#[cfg(feature = "surface")]
-use command_surface::{ArgumentForm, ArgumentSpec, StepDeclarations};
 use command_surface::{Failure, FailureKind};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-#[cfg(feature = "surface")]
-use std::sync::LazyLock;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -97,32 +93,6 @@ pub struct Read {
     /// Exact accepted commit position for a continued provenance read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub at: Option<String>,
-}
-
-/// Step argument ownership is shared by all parsers. The CLI's eventual
-/// splitter passes already-separated words to this declaration owner.
-#[cfg(feature = "surface")]
-pub fn steps() -> &'static StepDeclarations {
-    static STEPS: LazyLock<StepDeclarations> = LazyLock::new(|| {
-        let mut steps = StepDeclarations::default().cli_selection("selection", "references");
-        steps
-            .declare::<Read>(
-                "read",
-                vec![
-                    ArgumentSpec::new(
-                        "view",
-                        ArgumentForm::Named,
-                        "full content or provenance trace",
-                    ),
-                    ArgumentSpec::new("page_size", ArgumentForm::Named, "rows in a trace page"),
-                    ArgumentSpec::new("cursor", ArgumentForm::Named, "continue a trace page"),
-                    ArgumentSpec::new("at", ArgumentForm::Named, "exact accepted commit position"),
-                ],
-            )
-            .expect("read step fields match their typed declaration");
-        steps
-    });
-    &STEPS
 }
 
 #[cfg(test)]

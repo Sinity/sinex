@@ -68,7 +68,7 @@ fn tool_examples_follow_the_table() {
         read.input_schema["properties"]["operation"]["enum"],
         json!(["rows", "status"])
     );
-    let request = sinex_protocol::surface::declarations().parse_mcp_call("sinex_read", json!({
+    let request = sinex_commands::declarations().parse_mcp_call("sinex_read", json!({
         "arguments":{"selection":"events", "page_size":3}, "cursor":"saved", "deadline":null,
     })).unwrap();
     assert_eq!(request.operation, "rows");

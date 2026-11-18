@@ -56,7 +56,7 @@ fn schema(c: &Command) -> Map<String, Value> {
 }
 
 pub(crate) fn tools() -> Vec<Tool> {
-    let mut tools: Vec<Tool> = sinex_protocol::surface::declarations()
+    let mut tools: Vec<Tool> = sinex_commands::declarations()
         .mcp_tools()
         .into_iter()
         .map(|tool| {
@@ -114,7 +114,7 @@ impl Sinex {
         cancellation: command_surface::CancellationToken,
     ) -> CallToolResult {
         use command_surface::{Answer, Author, Format, TextStyle, Via};
-        let declarations = sinex_protocol::surface::declarations();
+        let declarations = sinex_commands::declarations();
         if self.client.deadline != command_surface::Deadline::Default {
             arguments.entry("deadline").or_insert_with(|| {
                 serde_json::to_value(self.client.deadline).expect("deadline serializes")

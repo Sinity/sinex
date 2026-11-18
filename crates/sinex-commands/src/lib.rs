@@ -1,13 +1,15 @@
 //! Typed declarations for the selection-first surface. Runtime handlers bind
 //! these declarations; transports do not reconstruct another schema.
-use crate::rows::{Rows, RowsReply, steps};
+mod steps;
 use command_surface::{
     ArgumentForm, ArgumentSpec, Deadlines, LatencyClass, OperationDeclarations, OperationSpec,
     RequestOption, TextStyle, ToolFamily,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use sinex_protocol::rows::{Rows, RowsReply};
 use std::sync::{Arc, LazyLock};
+pub use steps::steps;
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -16,7 +18,7 @@ pub struct Status {}
 pub fn declarations() -> &'static Arc<OperationDeclarations> {
     static DECLARATIONS: LazyLock<Arc<OperationDeclarations>> = LazyLock::new(|| {
         let mut deadlines = Deadlines::default();
-        for command in crate::COMMANDS {
+        for command in sinex_protocol::COMMANDS {
             deadlines.set(command.latency(), Some(command.default_deadline()));
         }
         let mut table = OperationDeclarations::builder("sinex", deadlines);

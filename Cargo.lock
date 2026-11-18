@@ -4371,6 +4371,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "sinex-commands"
+version = "0.1.0"
+dependencies = [
+ "command-surface",
+ "devkit",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sinex-protocol",
+]
+
+[[package]]
 name = "sinex-derivations"
 version = "0.1.0"
 dependencies = [
@@ -4684,6 +4696,7 @@ dependencies = [
  "rmcp",
  "serde",
  "serde_json",
+ "sinex-commands",
  "sinex-process",
  "sinex-protocol",
  "tempfile",
@@ -4724,6 +4737,7 @@ dependencies = [
  "signal-delivery",
  "signals",
  "sinex-analysis",
+ "sinex-commands",
  "sinex-derivations",
  "sinex-library",
  "sinex-model",
