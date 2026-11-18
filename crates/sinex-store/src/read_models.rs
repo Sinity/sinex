@@ -40,11 +40,11 @@ pub async fn set_search_position(conn: &mut PgConnection, commit_seq: i64) -> Re
 /// original work_mem. Call only inside the search consumer's transaction.
 pub async fn set_search_memory_budget(conn: &mut PgConnection) -> Result<()> {
     // Foreground pending-list cleanup uses work_mem, not maintenance_work_mem.
-    sqlx::query!(
+    sqlx::query_scalar!(
         "SELECT set_config('work_mem',
          LEAST(pg_size_bytes(current_setting('maintenance_work_mem')),536870912)::text || 'B',true)"
     )
-    .execute(conn)
+    .fetch_one(conn)
     .await?;
     Ok(())
 }
