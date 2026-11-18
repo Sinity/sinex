@@ -102,8 +102,8 @@ pub(crate) struct DerivationRunner {
     read: PgConnection,
     writer: WriterHandle,
     runs: BTreeMap<String, RunId>,
-    /// Largest stored reading order when each per-event run began.
-    previous_orders: BTreeMap<String, i64>,
+    /// Largest stored reading order before this runner writes per-event outputs.
+    previous_orders: Option<BTreeMap<String, i64>>,
     /// Where each per-event derivation's last pass that found no input ended.
     empty_passes: BTreeMap<String, EmptyPass>,
     pub counts: BTreeMap<String, Counts>,
@@ -237,14 +237,6 @@ impl DerivationRunner {
             let run = runs::start(&mut read, &manifest, host).await?;
             runs.insert(name.clone(), run);
         }
-        let per_event_names = catalog
-            .iter()
-            .filter(|d| d.kind == "per_event")
-            .map(|d| d.name.clone())
-            .collect::<Vec<_>>();
-        let previous_orders =
-            derivations::latest_reading_orders(&mut read, &per_event_names).await?;
-
         let ranks = ranks(&catalog);
         let mut runner = Self {
             keyed,
@@ -257,7 +249,7 @@ impl DerivationRunner {
             read,
             writer,
             runs,
-            previous_orders,
+            previous_orders: None,
             empty_passes: BTreeMap::new(),
             counts: BTreeMap::new(),
         };
@@ -424,7 +416,7 @@ impl DerivationRunner {
             read,
             writer,
             runs,
-            previous_orders: BTreeMap::new(),
+            previous_orders: Some(BTreeMap::new()),
             empty_passes: BTreeMap::new(),
             counts: BTreeMap::new(),
         })
@@ -556,6 +548,7 @@ impl DerivationRunner {
     /// derivations that ran, then its per-event derivations. Returns how much
     /// work it did.
     pub(crate) async fn pass(&mut self) -> Result<usize> {
+        self.seed_reading_orders().await?;
         let env = self.env();
         self.passes = self.passes.wrapping_add(1);
         let every_rank = self.passes.is_multiple_of(EVERY_LEVEL_EVERY);
@@ -570,6 +563,19 @@ impl DerivationRunner {
             }
         }
         Ok(work)
+    }
+
+    async fn seed_reading_orders(&mut self) -> Result<()> {
+        if self.previous_orders.is_none() {
+            let producers = self
+                .per_event
+                .iter()
+                .map(|derivation| derivation.name().to_owned())
+                .collect::<Vec<_>>();
+            self.previous_orders =
+                Some(derivations::latest_reading_orders(&mut self.read, &producers).await?);
+        }
+        Ok(())
     }
 
     fn rank_of(&self, name: &str) -> u32 {
@@ -670,6 +676,8 @@ impl DerivationRunner {
         self.empty_passes.remove(name);
         let reading_order = self
             .previous_orders
+            .as_ref()
+            .expect("the pass seeded reading orders")
             .get(name)
             .copied()
             .unwrap_or(0)
@@ -814,6 +822,13 @@ impl DerivationRunner {
         idle: Duration,
         mut stop: tokio::sync::watch::Receiver<bool>,
     ) -> Result<()> {
+        // A read-only seed can be abandoned on shutdown. Once a pass can
+        // submit writes, finish that pass and keep its acknowledgments.
+        tokio::select! {
+            biased;
+            _ = stop.wait_for(|stopped| *stopped) => return Ok(()),
+            result = self.seed_reading_orders() => result?,
+        }
         loop {
             if *stop.borrow() || stop.has_changed().is_err() {
                 break;

@@ -708,6 +708,37 @@ impl sinex_derivations::PerEvent for Echo {
 }
 
 #[devkit::test]
+async fn runner_start_does_not_wait_for_access_to_event_history(db: devkit::pg::TestDatabase) {
+    let w = World::new(db).await;
+    let mut lock = PgConnection::connect(&w.url).await.unwrap();
+    let mut transaction = lock.begin().await.unwrap();
+    sqlx::query("LOCK TABLE core.events IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *transaction)
+        .await
+        .unwrap();
+
+    let mut read = PgConnection::connect(&w.url).await.unwrap();
+    sqlx::query("SET lock_timeout = '250ms'")
+        .execute(&mut read)
+        .await
+        .unwrap();
+    let mut runner = DerivationRunner::start(
+        read,
+        w.handle.clone(),
+        vec![],
+        vec![Arc::new(Echo)],
+        "test",
+        TimeSettings::new("Europe/Warsaw", 4, 0).unwrap(),
+    )
+    .await
+    .unwrap();
+    let error = runner.pass().await.unwrap_err();
+    assert!(error.to_string().contains("lock timeout"), "{error}");
+    transaction.rollback().await.unwrap();
+    assert_eq!(runner.pass().await.unwrap(), 0);
+}
+
+#[devkit::test]
 async fn per_event_derivations_read_in_commit_order_and_keep_their_place(
     db: devkit::pg::TestDatabase,
 ) {
