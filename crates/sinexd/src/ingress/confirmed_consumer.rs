@@ -1,7 +1,7 @@
 //! The daemon provisions one grant-filtered durable consumer per authenticated identity.
 use super::*;
 use crate::Error;
-use sinex_protocol::{ConfirmedConsumer, ConfirmedConsumerReply};
+use sinex_protocol::{ConfirmedConsumer, ConfirmedConsumerReply, FetchRefusal, FetchRefusalKind};
 
 impl Requests {
     pub(super) async fn confirmed_consumer(
@@ -9,15 +9,17 @@ impl Requests {
         producer: &str,
         request: &ConfirmedConsumer,
     ) -> ConfirmedConsumerReply {
+        if request.after < 0 || request.cache.is_empty() {
+            return ConfirmedConsumerReply::Refused(FetchRefusal {
+                kind: FetchRefusalKind::Invalid,
+                reason: "consumer needs a nonnegative position and an index cache identity".into(),
+            });
+        }
+        let grant = match self.grants(producer) {
+            Ok(grant) => grant,
+            Err(refusal) => return ConfirmedConsumerReply::Refused(refusal),
+        };
         let result: Result<_> = async {
-            if request.after < 0 || request.cache.is_empty() {
-                return Err(Error::internal(
-                    "consumer needs a nonnegative position and an index cache identity",
-                ));
-            }
-            let grant = self
-                .grants(producer)
-                .map_err(|_| Error::refused("producer has no confirmed read grants"))?;
             let (filters, scope) = grant.consumer_scope(producer, &self.subjects);
             let cache = blake3::hash(request.cache.as_bytes()).to_hex().to_string();
             let stream_name = self.subjects.confirmed_stream();
@@ -118,8 +120,11 @@ impl Requests {
             })
         }
         .await;
-        result.unwrap_or_else(|error| ConfirmedConsumerReply::Refused {
-            reason: error.to_string(),
+        result.unwrap_or_else(|error| {
+            ConfirmedConsumerReply::Refused(FetchRefusal {
+                kind: FetchRefusalKind::Unavailable,
+                reason: error.to_string(),
+            })
         })
     }
 }

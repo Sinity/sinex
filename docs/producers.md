@@ -105,6 +105,7 @@ The producer client is the Rust implementation of this contract, in the `sinex-t
 - **Other events travel by ID.** `Withheld { commit_seq, event, event_type, class, reason }` stands in for an event whose class is not open, or whose complete message would exceed the broker's message size. A consumer fetches it by ID under its own grants ([privacy](privacy.md#output-parity)); a class outside its grants returns a typed refusal.
 - **Routing uses the stored class.** An event routes by its class and a lifecycle notice by the class recorded with the change.
 - **Subjects express the configured scope.** Events use `confirmed.event.<class>.<kind>`, lifecycle notices use `confirmed.lifecycle.<class>.<kind>`, and global completion and gap controls use `confirmed.control`, under the configured root. The daemon provisions each durable consumer's class and kind filters.
+- **Consumer refusals carry a kind.** A producer with no configured confirmed-read grant receives `denied`. A malformed request receives `invalid`. A database or broker failure receives `unavailable`, so a reader can distinguish an outage from withdrawal of its access.
 - **One stream for every consumer.** There is no per-consumer stream: each consumer's grants apply when it fetches a withheld event.
 
 ### Snapshots

@@ -1294,11 +1294,12 @@ impl Requests {
                 Ok(request) => {
                     ResponseBody::Consumer(self.confirmed_consumer(&producer, &request).await)
                 }
-                Err(error) => {
-                    ResponseBody::Consumer(sinex_protocol::ConfirmedConsumerReply::Refused {
+                Err(error) => ResponseBody::Consumer(
+                    sinex_protocol::ConfirmedConsumerReply::Refused(sinex_protocol::FetchRefusal {
+                        kind: sinex_protocol::FetchRefusalKind::Invalid,
                         reason: error.to_string(),
-                    })
-                }
+                    }),
+                ),
             }
         } else if subject == self.subjects.fetch_event(&producer) {
             match serde_json::from_slice::<sinex_protocol::FetchEvent>(payload) {

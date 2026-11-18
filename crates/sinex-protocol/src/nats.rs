@@ -920,9 +920,8 @@ pub enum ConfirmedConsumerReply {
         scope: String,
         reason: String,
     },
-    Refused {
-        reason: String,
-    },
+    /// The caller can distinguish loss of its read grant from an unavailable stream.
+    Refused(FetchRefusal),
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]

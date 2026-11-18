@@ -1,5 +1,5 @@
 use super::*;
-use sinex_protocol::{ConfirmedConsumer, ConfirmedConsumerReply};
+use sinex_protocol::{ConfirmedConsumer, ConfirmedConsumerReply, FetchRefusal, FetchRefusalKind};
 
 async fn provision(
     h: &Harness,
@@ -98,8 +98,25 @@ async fn confirmed_consumers_filter_metadata_and_replay_a_restored_index(
     .unwrap();
     let denied = provision(&h, "unconfigured", 0, None).await;
     assert!(
-        matches!(denied, ConfirmedConsumerReply::Refused { .. }),
+        matches!(
+            denied,
+            ConfirmedConsumerReply::Refused(FetchRefusal {
+                kind: FetchRefusalKind::Denied,
+                ..
+            })
+        ),
         "{denied:?}"
+    );
+    let invalid = provision(&h, "replica", -1, None).await;
+    assert!(
+        matches!(
+            invalid,
+            ConfirmedConsumerReply::Refused(FetchRefusal {
+                kind: FetchRefusalKind::Invalid,
+                ..
+            })
+        ),
+        "{invalid:?}"
     );
     let ConfirmedConsumerReply::Provisioned {
         stream: declared_stream,
@@ -218,5 +235,17 @@ async fn confirmed_consumers_filter_metadata_and_replay_a_restored_index(
     assert!(
         matches!(reply, ConfirmedConsumerReply::Gap { .. }),
         "{reply:?}"
+    );
+    js.delete_stream(&declared_stream).await.unwrap();
+    let unavailable = provision(&h, "replica", 0, None).await;
+    assert!(
+        matches!(
+            unavailable,
+            ConfirmedConsumerReply::Refused(FetchRefusal {
+                kind: FetchRefusalKind::Unavailable,
+                ..
+            })
+        ),
+        "{unavailable:?}"
     );
 }
