@@ -47,7 +47,7 @@ pub fn declarations() -> &'static Arc<OperationDeclarations> {
             "A selection and its ordered steps are one question",
         );
         rows.latency = LatencyClass::Search;
-        rows.access = command_surface::Access::Act;
+        rows.access = command_surface::Access::Permanent;
         rows.http_route = Some("/v1/rows".into());
         rows.arguments = vec![ArgumentSpec::new(
             "selection",
@@ -68,7 +68,7 @@ pub fn declarations() -> &'static Arc<OperationDeclarations> {
             "Health describes the system rather than selected evidence rows",
         );
         status.latency = LatencyClass::Status;
-        status.access = command_surface::Access::Act;
+        status.access = command_surface::Access::Permanent;
         table
             .declare::<Status, serde_json::Value>(status, render_status)
             .expect("status request matches its declaration");

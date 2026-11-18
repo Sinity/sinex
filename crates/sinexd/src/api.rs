@@ -234,7 +234,7 @@ fn surface_access(access: Access) -> command_surface::Access {
     match access {
         Access::Read => command_surface::Access::Read,
         Access::Agent => command_surface::Access::Write,
-        Access::Operator => command_surface::Access::Act,
+        Access::Operator => command_surface::Access::Permanent,
     }
 }
 
