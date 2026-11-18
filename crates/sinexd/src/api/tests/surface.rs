@@ -379,9 +379,11 @@ async fn accepted_mutable_groups_keep_keys_when_values_change_and_new_groups_app
     assert_eq!(archived["outcome"], "ok", "{archived}");
     let (_, retry) = rows_as(&w, OPERATOR, request).await;
     assert_eq!(retry["outcome"], "ok", "{retry}");
+    // The archive line adds an accepted request to the existing request group;
+    // the new archive group is outside the original accepted group keys.
     assert_eq!(
         retry["value"]["population"]["rows"],
-        json!([{"id":"request","count":3}])
+        json!([{"id":"request","count":4}])
     );
     assert_eq!(retry["value"]["population"]["total"], 1);
     assert_eq!(retry["value"]["steps"][1], first["value"]["steps"][1]);

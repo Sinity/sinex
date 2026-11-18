@@ -120,7 +120,11 @@ pub enum Step {
         /// Stored bytes to punch once the transaction commits.
         remove: Vec<String>,
     },
-    Refused(Vec<Refusal>),
+    Refused {
+        /// The committed prefix, even when the caller last saw an older one.
+        progress: Progress,
+        refusals: Vec<Refusal>,
+    },
 }
 
 /// The kind of a recorded operation (`archive`, `replay`, …), if it exists.
@@ -130,6 +134,57 @@ pub async fn operation_kind(conn: &mut PgConnection, id: OperationId) -> Result<
             .fetch_optional(conn)
             .await?,
     )
+}
+
+/// Committed progress and whether it ended successfully, read at the writer
+/// boundary before a caller's previously prepared batch is applied.
+pub async fn saved_progress(
+    conn: &mut PgConnection,
+    id: OperationId,
+) -> Result<Option<(Progress, bool)>> {
+    let row = sqlx::query!(
+        r#"SELECT progress,COALESCE(result='ok',false) AS "done!" FROM core.operations WHERE id=$1"#,
+        id.0
+    ).fetch_optional(conn).await?;
+    row.map(|row| -> Result<_> {
+        let progress = serde_json::from_value(row.progress)
+            .map_err(|error| Error::Invalid(format!("lifecycle progress: {error}")))?;
+        Ok((progress, row.done))
+    })
+    .transpose()
+}
+
+/// One recorded lifecycle result, including every batch of an interrupted
+/// operation. Read together so a receipt cannot combine different versions.
+pub struct RecordedOperation {
+    pub progress: Progress,
+    pub result: Option<String>,
+    pub counts: Counts,
+    pub refusals: Vec<Refusal>,
+}
+
+pub async fn recorded(
+    conn: &mut PgConnection,
+    id: OperationId,
+) -> Result<Option<RecordedOperation>> {
+    let row = sqlx::query!(
+        "SELECT result,progress,counts,refusals FROM core.operations WHERE id=$1",
+        id.0
+    )
+    .fetch_optional(conn)
+    .await?;
+    row.map(|row| -> Result<_> {
+        Ok(RecordedOperation {
+            progress: serde_json::from_value(row.progress)
+                .map_err(|error| Error::Invalid(format!("lifecycle progress: {error}")))?,
+            result: row.result,
+            counts: serde_json::from_value(row.counts)
+                .map_err(|error| Error::Invalid(format!("lifecycle counts: {error}")))?,
+            refusals: serde_json::from_value(row.refusals)
+                .map_err(|error| Error::Invalid(format!("lifecycle refusals: {error}")))?,
+        })
+    })
+    .transpose()
 }
 
 /// Start an operation: its start position is the newest commit now.
@@ -301,10 +356,14 @@ pub async fn step(
     roots: Roots,
     keys: &dyn DirtyKeys,
 ) -> Result<Step> {
+    let committed = progress;
     if progress.batches == 0 && progress.phase == 0 && progress.after.is_none() {
         let refusals = select::whole_request(conn, op).await?;
         if !refusals.is_empty() {
-            return Ok(Step::Refused(refusals));
+            return Ok(Step::Refused {
+                progress: committed,
+                refusals,
+            });
         }
     }
     let seq = position(conn).await?;
@@ -348,7 +407,10 @@ pub async fn step(
             if !found.is_empty() {
                 let planned = plan(conn, phase, &found, &HashSet::new()).await?;
                 if !planned.refusals.is_empty() {
-                    return Ok(Step::Refused(planned.refusals));
+                    return Ok(Step::Refused {
+                        progress: committed,
+                        refusals: planned.refusals,
+                    });
                 }
                 let moved = apply(conn, op, phase, &planned, seq, keys).await?;
                 counts.add(&moved.counts);
@@ -388,7 +450,10 @@ pub async fn step(
         }
         let planned = plan(conn, phase, &found, &HashSet::new()).await?;
         if !planned.refusals.is_empty() {
-            return Ok(Step::Refused(planned.refusals));
+            return Ok(Step::Refused {
+                progress: committed,
+                refusals: planned.refusals,
+            });
         }
         let moved = apply(conn, op, phase, &planned, seq, keys).await?;
         counts.add(&moved.counts);
@@ -545,7 +610,7 @@ pub async fn run_on(
                     });
                 }
             }
-            Step::Refused(refusals) => {
+            Step::Refused { progress, refusals } => {
                 tx.rollback().await?;
                 if progress.batches == 0 {
                     return Ok(Ended::Refused(refusals));

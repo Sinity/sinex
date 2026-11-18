@@ -148,7 +148,7 @@ fn each_failure_kind_reaches_cli_and_mcp() {
             mcp_call(
                 &endpoint,
                 "sinex_write",
-                json!({"arguments":{"selection":"events","steps":[{"verb":"archive","all":true}]}}),
+                json!({"format":"json","arguments":{"selection":"events","steps":[{"verb":"archive","all":true}]}}),
             )
         } else {
             mcp_call(

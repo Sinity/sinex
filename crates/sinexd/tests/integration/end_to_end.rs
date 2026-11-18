@@ -130,9 +130,6 @@ impl Target {
         finish(&mut self.sinexd(&all))
     }
 
-    /// A lifecycle command (`archive`, `restore`, `tombstone`, ...) with its
-    /// arguments after the connection options, since a scope given as an
-    /// event reference takes the rest of the line.
     fn typed_lifecycle(&self, selection: &str, verb: &str, preview: bool) -> Command {
         let request = serde_json::json!({
             "operation":"rows", "request_id":sinex_model::OperationId::new(), "deadline":null,
@@ -167,7 +164,6 @@ impl Target {
         c
     }
 
-    /// A lifecycle command that succeeds, and its answer.
     fn typed_lifecycle_done(
         &self,
         selection: &str,

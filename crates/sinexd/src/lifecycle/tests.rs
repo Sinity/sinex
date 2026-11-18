@@ -77,10 +77,13 @@ async fn queued_lifecycle_retry_uses_committed_progress_and_completed_counts(
         Arc::new(sinex_store::NoDerivations),
         None,
     ));
+    let mut readings: Vec<_> = (0..3).map(|key| (key, reading(key, key))).collect();
+    readings.sort_by_key(|(_, event)| event.id);
+    let conflict_key = readings.last().unwrap().0;
     writer
         .submit(
             Priority::Live,
-            batch((0..3).map(|k| reading(k, k)).collect()),
+            batch(readings.into_iter().map(|(_, event)| event).collect()),
         )
         .await
         .unwrap();
@@ -97,7 +100,7 @@ async fn queued_lifecycle_retry_uses_committed_progress_and_completed_counts(
     .await
     .unwrap();
     let first = writer
-        .lifecycle_step(&operation, Progress::default(), lifecycle::Roots::Query(1))
+        .lifecycle_step(&operation, lifecycle::Roots::Query(1))
         .await
         .unwrap();
     let Step::Moved {
@@ -107,9 +110,31 @@ async fn queued_lifecycle_retry_uses_committed_progress_and_completed_counts(
         panic!("first move refused")
     };
     assert_eq!(live(&mut read).await, 2);
+    let stale = writer
+        .lifecycle_step(
+            &operation,
+            lifecycle::Roots::Source {
+                operation: operation.id,
+                ids: vec![first.after.expect("first root committed")],
+                complete: false,
+            },
+        )
+        .await
+        .unwrap();
+    let Step::Moved {
+        progress: unchanged,
+        counts,
+        ..
+    } = stale.step
+    else {
+        panic!("stale source prefix refused")
+    };
+    assert_eq!(unchanged, first);
+    assert_eq!(counts, Counts::default());
+    assert_eq!(live(&mut read).await, 2);
     // The caller prepared this job before seeing the first job's commit.
     let repeated = writer
-        .lifecycle_step(&operation, Progress::default(), lifecycle::Roots::Query(1))
+        .lifecycle_step(&operation, lifecycle::Roots::Query(1))
         .await
         .unwrap();
     let Step::Moved {
@@ -125,8 +150,9 @@ async fn queued_lifecycle_retry_uses_committed_progress_and_completed_counts(
         panic!("retry did not finish")
     };
     assert_eq!(done["cascade"]["archived"]["command.executed"], 3);
+    assert_eq!(live(&mut read).await, 0);
     let repeated = writer
-        .lifecycle_step(&operation, Progress::default(), lifecycle::Roots::Query(1))
+        .lifecycle_step(&operation, lifecycle::Roots::Query(1))
         .await
         .unwrap();
     assert!(matches!(repeated.step, Step::Moved { done: true, .. }));
@@ -134,6 +160,39 @@ async fn queued_lifecycle_retry_uses_committed_progress_and_completed_counts(
         panic!("completed operation did not retain its result")
     };
     assert_eq!(again, done);
+    let restore = lifecycle::begin(
+        &mut read,
+        Act::Restore,
+        "agent:fixture",
+        Scope::Operation {
+            operation: operation.id,
+        },
+    )
+    .await
+    .unwrap();
+    let first = writer
+        .lifecycle_step(&restore, lifecycle::Roots::Query(1))
+        .await
+        .unwrap();
+    assert!(matches!(first.step, Step::Moved { done: false, .. }));
+    writer
+        .submit(Priority::Live, batch(vec![reading(conflict_key, 99)]))
+        .await
+        .unwrap();
+    // A restarted reader can still hold the zero from before that first batch.
+    let Answer::StoppedEarly(_, stopped) = drive(&writer, &restore, Progress::default(), None)
+        .await
+        .unwrap()
+    else {
+        panic!("a refusal after a committed batch must report the moved prefix")
+    };
+    assert_eq!(stopped["batches"], 1);
+    let Answer::StoppedEarly(_, recorded) = retry(&mut read, &writer, &restore).await.unwrap()
+    else {
+        panic!("the stopped prefix must remain available to retry")
+    };
+    assert_eq!(recorded["cascade"]["restored"]["command.executed"], 1);
+    assert_eq!(live(&mut read).await, 2);
     drop(writer);
     task.await.unwrap();
 }
@@ -284,7 +343,6 @@ async fn removed_source_archive_resumes_while_read_waits(db: devkit::pg::TestDat
     let first = writer
         .lifecycle_step(
             &op,
-            Progress::default(),
             lifecycle::Roots::Source {
                 operation: op.id,
                 ids: prefix,
@@ -372,7 +430,6 @@ async fn removed_source_archive_resumes_while_read_waits(db: devkit::pg::TestDat
     let part = writer
         .lifecycle_step(
             &op,
-            Progress::default(),
             lifecycle::Roots::Source {
                 operation: op.id,
                 ids: vec![new_id],

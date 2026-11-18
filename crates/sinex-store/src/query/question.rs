@@ -132,6 +132,13 @@ impl Question {
                     materials: ids.into_iter().map(MaterialId).collect(),
                 }
             } else if table == Table::Runs {
+                if let [run] = ids.as_slice() {
+                    let scope = Scope::Run {
+                        run: sinex_model::RunId(*run),
+                    };
+                    tx.commit().await?;
+                    return Ok((scope, count));
+                }
                 let events = sqlx::query_scalar!(
                 "SELECT id FROM core.events WHERE run_id=ANY($1) AND commit_seq<=$2 ORDER BY id",
                 &ids,self.position

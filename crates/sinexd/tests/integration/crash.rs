@@ -237,9 +237,6 @@ impl Target {
         self.sinexd(&args)
     }
 
-    /// A lifecycle command (`archive`, `tombstone`, `resume`, ...) with its
-    /// arguments after the connection options, since a scope given as an
-    /// event reference takes the rest of the line.
     fn typed_lifecycle(&self, selection: &str, verb: &str, preview: bool) -> Command {
         let request = serde_json::json!({
             "operation":"rows", "request_id":sinex_model::OperationId::new(), "deadline":null,

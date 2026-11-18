@@ -129,6 +129,22 @@ async fn typed_lifecycle_requires_all_for_a_query_and_write_credentials(
     assert_eq!(status, StatusCode::FORBIDDEN, "{denied}");
     assert_eq!(denied["error"]["kind"], "refused");
     assert_eq!(live_count(&w).await, 2);
+    let selection = "events where source = terminal.atuin AND when >= 2026-09-14T08:01:00Z AND when < 2026-09-14T08:02:00Z";
+    let (_, bounded) = rows_as(
+        &w,
+        AGENT,
+        move_request("source-time-range", selection, "archive", false, false),
+    )
+    .await;
+    assert_eq!(
+        receipt(&bounded)["cascade"]["archived"]["command.executed"],
+        1
+    );
+    assert_eq!(
+        live_count(&w).await,
+        1,
+        "the earlier reading is outside the selected source/time range"
+    );
 }
 
 #[devkit::test]
@@ -154,7 +170,7 @@ async fn typed_lifecycle_moves_material_status_and_uses_hidden_run_identities(
             .fetch_one(&w.reads)
             .await
             .unwrap();
-    let selection = format!("materials where id = {material} | fields status as id");
+    let selection = format!("materials where id = {material} | fields parser as id");
     let (_, preview) = rows_as(
         &w,
         AGENT,

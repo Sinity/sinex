@@ -123,17 +123,12 @@ pub(crate) async fn retry(
     op: &Operation,
 ) -> Result<Answer> {
     loop {
-        let stored = sqlx::query!(
-            "SELECT result,progress,counts,refusals FROM core.operations WHERE id=$1",
-            op.id.0
-        )
-        .fetch_optional(&mut *read)
-        .await?;
+        let stored = lifecycle::recorded(read, op.id).await?;
         let progress = if let Some(stored) = stored {
-            let progress: Progress = serde_json::from_value(stored.progress)?;
+            let progress = stored.progress;
             if let Some(result) = stored.result {
-                let counts: Counts = serde_json::from_value(stored.counts)?;
-                let refusals: Vec<Refusal> = serde_json::from_value(stored.refusals)?;
+                let counts = stored.counts;
+                let refusals = stored.refusals;
                 let value = report(op, &progress, &counts, &refusals);
                 return Ok(if result == "ok" {
                     Answer::Done(value)
@@ -192,7 +187,7 @@ async fn drive(
         } else {
             lifecycle::Roots::Query(roots)
         };
-        let completed = writer.lifecycle_step(op, progress, selected).await?;
+        let completed = writer.lifecycle_step(op, selected).await?;
         let held = completed.held;
         match completed.step {
             Step::Moved {
@@ -212,7 +207,7 @@ async fn drive(
                     roots /= 2;
                 }
             }
-            Step::Refused(refusals) => {
+            Step::Refused { progress, refusals } => {
                 if progress.batches == 0 {
                     return Ok(Answer::Refused(refusal_line(op, &refusals)));
                 }
