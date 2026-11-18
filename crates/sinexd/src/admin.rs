@@ -76,7 +76,8 @@ pub(crate) enum Admin {
         #[arg(long = "producer")]
         producers: Vec<String>,
     },
-    /// Any command of the command table (`replay`, `archive`, `tombstone`,
+    /// A complete typed request (`request --request JSON`) or a remaining
+    /// command of the command table (`replay`, `tombstone`,
     /// `recompute`, `library-add`, `crawl`, …), run locally against the
     /// database and content store without the daemon, with the operator's
     /// access: `sinexd admin <command> [arguments] --database URL --store DIR`.
@@ -233,21 +234,36 @@ async fn admin_table(
     library_cache: std::path::PathBuf,
 ) -> Result<()> {
     use clap::{Arg, value_parser};
+    enum LocalRequest {
+        Command(sinex_protocol::Request),
+        Typed(command_surface::RunnableRequest),
+    }
     let name = args
         .first()
         .ok_or_else(|| Error::bad_request("admin needs a command"))?;
-    let spec = sinex_protocol::command(name).ok_or_else(|| {
-        let names: Vec<String> = sinex_protocol::COMMANDS
-            .iter()
-            .map(|c| c.name.to_owned())
-            .collect();
-        command_surface::Failure::new(
-            command_surface::FailureKind::BadRequest,
-            format!("no command `{name}`"),
-        )
-        .with_candidates(names)
-    })?;
-    let matches = sinex_protocol::cli::subcommand(spec)
+    let spec = if name == "request" {
+        None
+    } else {
+        Some(sinex_protocol::command(name).ok_or_else(|| {
+            let names: Vec<String> = sinex_protocol::COMMANDS
+                .iter()
+                .map(|c| c.name.to_owned())
+                .collect();
+            command_surface::Failure::new(
+                command_surface::FailureKind::BadRequest,
+                format!("no command `{name}`"),
+            )
+            .with_candidates(names)
+        })?)
+    };
+    let command = if let Some(spec) = spec {
+        sinex_protocol::cli::subcommand(spec)
+    } else {
+        clap::Command::new("request")
+            .about("Run one complete typed request locally without a daemon")
+            .arg(Arg::new("request").long("request").required(true))
+    };
+    let matches = command
         .arg(Arg::new("database").long("database").required(true))
         .arg(
             Arg::new("store")
@@ -275,11 +291,25 @@ async fn admin_table(
         )
         .try_get_matches_from(&args)
         .map_err(Error::bad_request)?;
-    let mut request =
-        sinex_protocol::Request::from_args(name, sinex_protocol::cli::arguments(spec, &matches))?;
+    let mut request = if let Some(spec) = spec {
+        LocalRequest::Command(sinex_protocol::Request::from_args(
+            name,
+            sinex_protocol::cli::arguments(spec, &matches),
+        )?)
+    } else {
+        if matches.contains_id("deadline") {
+            return Err(Error::bad_request(
+                "put the deadline inside the complete typed request",
+            ));
+        }
+        LocalRequest::Typed(serde_json::from_str(
+            matches.get_one::<String>("request").expect("required"),
+        )?)
+    };
     // The process ends with the command, so a local stage runs to its end;
     // its paths are recorded as absolute paths.
-    if let sinex_protocol::Request::Stage { path, follow, .. } = &mut request {
+    if let LocalRequest::Command(sinex_protocol::Request::Stage { path, follow, .. }) = &mut request
+    {
         *follow = Some(true);
         for given in path.iter_mut() {
             *given = std::path::absolute(&*given)
@@ -305,13 +335,16 @@ async fn admin_table(
     let identity = if let Some(path) = matches.get_one::<PathBuf>("identity-file") {
         if !matches!(
             &request,
-            sinex_protocol::Request::Replay {
-                sealed: Some(true),
-                ..
-            } | sinex_protocol::Request::Stage { .. }
+            LocalRequest::Typed(_)
+                | LocalRequest::Command(
+                    sinex_protocol::Request::Replay {
+                        sealed: Some(true),
+                        ..
+                    } | sinex_protocol::Request::Stage { .. }
+                )
         ) {
             return Err(Error::bad_request(
-                "--identity-file requires replay --sealed or stage",
+                "--identity-file requires a typed request, replay --sealed or stage",
             ));
         }
         let identity = std::fs::read_to_string(path).map_err(|e| Error::file(path, e))?;
@@ -375,6 +408,40 @@ async fn admin_table(
         .get_one::<command_surface::Deadline>("deadline")
         .copied()
         .unwrap_or_default();
+    let request = match request {
+        LocalRequest::Typed(request) => {
+            let rows = request.operation == "rows";
+            let caller = local.caller(sinex_protocol::Access::Operator).await;
+            let caller = command_surface::Caller::authenticated("operator", caller)
+                .with_access(command_surface::Access::Permanent);
+            let table = api::operation_table(local.clone());
+            let answer = crate::request_deadline::with_cleanup(table.call_as(
+                request,
+                command_surface::Via::Cli,
+                caller,
+                command_surface::CancellationToken::new(),
+            ))
+            .await;
+            let failure = if rows {
+                answer
+                    .value()
+                    .map(|value| {
+                        serde_json::from_value::<sinex_protocol::rows::RowsReply>(value.clone())
+                    })
+                    .transpose()?
+                    .and_then(|rows| rows.failure().cloned())
+                    .or_else(|| answer.failure().cloned())
+            } else {
+                answer.failure().cloned()
+            };
+            emit(&format!("{}\n", serde_json::to_string_pretty(&answer)?));
+            drop(table);
+            drop(local);
+            ctx.close().await?;
+            return failure.map_or(Ok(()), |failure| Err(failure.into()));
+        }
+        LocalRequest::Command(request) => request,
+    };
     let reply = local
         .call(
             sinex_protocol::Call { request, deadline },

@@ -675,10 +675,10 @@ async fn archived_parent_recall_is_an_explicit_historical_preview(db: devkit::pg
         call_unbounded(&w, Some(READ), json!({"method":"recall","around":"last"})).await;
     assert_eq!(live_recall["outcome"], "ok", "{live_recall}");
     assert!(live_recall["result"]["historical_preview"].is_null());
-    let (_, archived) = call_unbounded(
+    let (_, archived) = surface::rows_as(
         &w,
-        Some(OPERATOR),
-        json!({"method":"archive","target":format!("sinex:ev/{original}")}),
+        OPERATOR,
+        surface::lifecycle_request(format!("sinex:ev/{original}"), "archive"),
     )
     .await;
     assert_eq!(archived["outcome"], "ok", "{archived}");

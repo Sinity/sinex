@@ -35,49 +35,6 @@ impl Api {
                 .await;
         }
         let (act, args, dry_run) = match request {
-            Request::Archive {
-                target,
-                material,
-                run,
-                source,
-                since,
-                until,
-                dry_run,
-            } => (
-                Act::Archive,
-                ScopeArgs {
-                    target,
-                    material,
-                    run,
-                    source,
-                    since,
-                    until,
-                    operation: None,
-                },
-                dry_run,
-            ),
-            Request::Restore {
-                target,
-                material,
-                run,
-                source,
-                since,
-                until,
-                operation,
-                dry_run,
-            } => (
-                Act::Restore,
-                ScopeArgs {
-                    target,
-                    material,
-                    run,
-                    source,
-                    since,
-                    until,
-                    operation,
-                },
-                dry_run,
-            ),
             Request::Tombstone {
                 target,
                 material,

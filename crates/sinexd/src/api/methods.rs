@@ -245,10 +245,9 @@ impl Api {
             | Request::Trace { .. }) => self.query_request(caller, request).await,
             request @ Request::Recall { .. } => self.recall_request(caller, request).await,
             request @ Request::Show { .. } => self.show(caller, request).await,
-            request @ (Request::Archive { .. }
-            | Request::Restore { .. }
-            | Request::Tombstone { .. }
-            | Request::Undo { .. }) => self.lifecycle_request(caller, request).await,
+            request @ (Request::Tombstone { .. } | Request::Undo { .. }) => {
+                self.lifecycle_request(caller, request).await
+            }
             Request::Resume { operation } => self.resume(caller, &operation).await,
             request @ Request::Replay { .. } => self.replay_request(caller, request).await,
             request @ Request::Recompute { .. } => self.recompute_request(caller, request).await,

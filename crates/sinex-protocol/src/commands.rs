@@ -122,35 +122,6 @@ const JUDGED_PAIR: &[Arg] = &[
 
 /// What an archive, restore or tombstone acts on. Exactly one scope; an
 /// omitted scope is an error, never everything.
-const LIFECYCLE_SCOPE: &[Arg] = &[
-    pos_opt(
-        "target",
-        ArgKind::Rest,
-        "an event reference, or a query whose event rows are the scope",
-    ),
-    opt(
-        "material",
-        ArgKind::List,
-        "a whole saved source file (repeatable)",
-    ),
-    opt("run", ArgKind::Text, "every parsed event one run produced"),
-    opt("source", ArgKind::Text, "one source's parsed events"),
-    opt(
-        "since",
-        ArgKind::Text,
-        "with --source: events at or after this time (RFC 3339)",
-    ),
-    opt(
-        "until",
-        ArgKind::Text,
-        "with --source: events before this time (RFC 3339)",
-    ),
-    opt(
-        "dry-run",
-        ArgKind::Bool,
-        "show what would move and what would be refused, changing nothing",
-    ),
-];
 const LIFECYCLE_SCOPE_OR_OPERATION: &[Arg] = &[
     pos_opt(
         "target",
@@ -625,22 +596,6 @@ pub const COMMANDS: &[Command] = &[
         name: "withdraw-decision",
         summary: "Withdraw your ruling on two records; the source's duplicate rules decide the pair again.",
         args: JUDGED_PAIR,
-        access: Access::Agent,
-        mcp: true,
-    },
-    Command {
-        examples: &["sinexctl archive --source terminal.atuin --dry-run"],
-        name: "archive",
-        summary: "Move events and everything computed from them to the trash, reversible with restore or undo. Prints what moved; --dry-run prints what would move and changes nothing.",
-        args: LIFECYCLE_SCOPE,
-        access: Access::Agent,
-        mcp: true,
-    },
-    Command {
-        examples: &["sinexctl restore --source terminal.atuin --dry-run"],
-        name: "restore",
-        summary: "Bring archived events back with everything computed from them. Refused while another parsed event for the same record is live; archive that one first.",
-        args: LIFECYCLE_SCOPE_OR_OPERATION,
         access: Access::Agent,
         mcp: true,
     },

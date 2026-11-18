@@ -5,6 +5,7 @@
 use crate::{Error, Result};
 mod methods;
 
+pub(crate) use methods::surface::table as operation_table;
 pub(crate) use methods::{Api, HISTORY_WINDOW, status_fields};
 
 use axum::extract::{Query as UrlQuery, State};

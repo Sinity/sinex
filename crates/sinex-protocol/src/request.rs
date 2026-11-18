@@ -266,40 +266,6 @@ pub enum Request {
         #[serde(default)]
         pause: Option<u64>,
     },
-    Archive {
-        #[serde(default)]
-        target: Option<String>,
-        #[serde(default)]
-        material: Vec<String>,
-        #[serde(default)]
-        run: Option<String>,
-        #[serde(default)]
-        source: Option<String>,
-        #[serde(default)]
-        since: Option<String>,
-        #[serde(default)]
-        until: Option<String>,
-        #[serde(default)]
-        dry_run: Option<bool>,
-    },
-    Restore {
-        #[serde(default)]
-        target: Option<String>,
-        #[serde(default)]
-        material: Vec<String>,
-        #[serde(default)]
-        run: Option<String>,
-        #[serde(default)]
-        source: Option<String>,
-        #[serde(default)]
-        since: Option<String>,
-        #[serde(default)]
-        until: Option<String>,
-        #[serde(default)]
-        operation: Option<String>,
-        #[serde(default)]
-        dry_run: Option<bool>,
-    },
     Tombstone {
         #[serde(default)]
         target: Option<String>,

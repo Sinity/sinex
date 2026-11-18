@@ -29,23 +29,38 @@ async fn preview(world: &World, mut request: Value) {
 
 async fn archived(world: &World) -> String {
     admit(world, &["synthetic lifecycle target"], 0).await;
-    let (_, body) = call_unbounded(
+    let (_, body) = surface::rows_as(
         world,
-        Some(OPERATOR),
-        json!({"method":"archive","source":"terminal.atuin"}),
+        OPERATOR,
+        surface::lifecycle_request("sources where source = terminal.atuin", "archive"),
     )
     .await;
     assert_eq!(body["outcome"], "ok", "{body}");
-    body["result"]["operation"].as_str().unwrap().to_owned()
+    surface::lifecycle_receipt(&body)["operation"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+async fn preview_rows(world: &World, mut request: Value) {
+    let before = state(world).await;
+    request["arguments"]["steps"][0]["dry_run"] = json!(true);
+    let (_, answer) = surface::rows_as(world, OPERATOR, request).await;
+    assert_eq!(
+        surface::lifecycle_receipt(&answer)["compare_only"],
+        true,
+        "{answer}"
+    );
+    assert_eq!(state(world).await, before, "{answer}");
 }
 
 #[devkit::test]
 async fn archive_dry_run_changes_nothing(db: devkit::pg::TestDatabase) {
     let world = world(db).await;
     admit(&world, &["synthetic lifecycle target"], 0).await;
-    preview(
+    preview_rows(
         &world,
-        json!({"method":"archive","source":"terminal.atuin"}),
+        surface::lifecycle_request("sources where source = terminal.atuin", "archive"),
     )
     .await;
 }
@@ -54,7 +69,11 @@ async fn archive_dry_run_changes_nothing(db: devkit::pg::TestDatabase) {
 async fn restore_dry_run_changes_nothing(db: devkit::pg::TestDatabase) {
     let world = world(db).await;
     let operation = archived(&world).await;
-    preview(&world, json!({"method":"restore","operation":operation})).await;
+    preview_rows(
+        &world,
+        surface::lifecycle_request(format!("op:{operation}"), "restore"),
+    )
+    .await;
 }
 
 #[devkit::test]

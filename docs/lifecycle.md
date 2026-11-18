@@ -1,8 +1,9 @@
 # The lifecycle
 
 **Decided target surface:** examples use `sinex SELECTION VERB`. The current
-build still uses `sinexctl` and its command-first scope flags; generated help is
-authoritative for that build. The state and preservation rules below are unchanged.
+binary is `sinexctl`. Archive and restore already use selection-first lines and
+typed rows requests; replay, tombstone, undo and resume retain their generated
+command forms. Generated help describes that build.
 
 Nothing in Sinex is deleted by default. Readings and materials are **live**, **archived** (the trash, reversible) or **tombstoned** (irreversible, from the archive only), and whole provenance chains move between those states together. This page owns the states, archive and restore, replay and its undo, the whole-chain rule, material status, tombstoning, archive reasons, how the states are stored, as-of reads, and operations with their actors. Records and readings are defined in [events](events.md); the lifecycle verbs on the CLI are in [the CLI](interfaces.md#cli); lifecycle requests on the wire are in [producers](producers.md#lifecycle-requests); the as-of query syntax is in [query](query.md); how derivations recompute after a move is in [derivations](derivations.md#derivations-and-the-lifecycle).
 
@@ -24,6 +25,32 @@ A retry retains the accepted scope, per-step identities, committed outcomes and
 undo lines; it cannot pick newly matching rows after an earlier step changed the
 query. `--all` authorizes a multirow query write. A preview writes nothing,
 including request records, run records and retained derivation trials.
+
+The current archive and restore surface accepts event references, event queries,
+material queries, run queries and source queries. A material query moves the
+materials themselves as well as their readings; a run query moves its readings;
+a source query moves the selected sources' readings. Compiler-owned identities
+define the scope even when a projection renames or removes the public `id` field.
+Display paging never narrows a move. `op:ID restore` restores the chains archived
+by that operation. Each completed move includes its supported undo command.
+For the bare archive table, `sinexctl -- archive read` makes the first word a
+selection rather than the archive verb.
+
+The same steps run through `POST /v1/rows` and `sinex_write`. An interrupted
+step returns `status: stopped_early`, its failure and the committed cascade;
+the CLI exits with code 5 and MCP reports an error while retaining that result.
+A request retry keeps that result. The operation's continuation command resumes
+its progress after the refusal is cleared.
+
+Offline maintenance uses `sinexd admin request --request JSON --database URL
+--store DIR`, with the same complete request envelope and operation table. It
+prints the typed answer and needs no running daemon. For example:
+
+```sh
+sinexctl 'materials where parser = zsh-extended-history' archive --all --dry-run
+sinexctl 'sources where source = terminal.atuin' archive
+sinexctl op:OPERATION_ID restore
+```
 
 `undo` reverses an operation or a request's authored writes, refusing a stale
 revision rather than overwriting a later author. Session undo is an explicit

@@ -55,12 +55,7 @@ fn tool_examples_follow_the_table() {
         sinex_protocol::command("tombstone").unwrap().access,
         sinex_protocol::Access::Operator
     );
-    for name in [
-        "sinex_archive",
-        "sinex_restore",
-        "sinex_undo",
-        "sinex_resume",
-    ] {
+    for name in ["sinex_undo", "sinex_resume"] {
         assert!(
             names.contains(&name),
             "agents archive, restore and undo: {name}"
@@ -127,7 +122,7 @@ fn tool_effects_match_backend_command_access() {
     let tools = tools();
     for (name, read_only) in [
         ("sinex_read", true),
-        ("sinex_archive", false),
+        ("sinex_write", false),
         ("sinex_forecast-issue", false),
         ("sinex_library-curate", false),
     ] {
@@ -194,7 +189,7 @@ fn read_write_and_act_cards_expose_their_actual_step_access() {
     assert_eq!(
         write.input_schema["properties"]["arguments"]["properties"]["steps"]["items"]["properties"]
             ["verb"]["enum"],
-        json!(["read", "save"])
+        json!(["read", "save", "archive", "restore"])
     );
 }
 

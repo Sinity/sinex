@@ -109,12 +109,21 @@ async fn public_continuation_refuses_permanent_removal_instead_of_skipping_the_n
     admit_events(&w, derived).await;
     let page = first(&w, READ, "commands | sort by when").await;
     for method in ["archive", "tombstone"] {
-        let (_, removed) = call_unbounded(
-            &w,
-            Some(OPERATOR),
-            json!({"method":method, "target":removed_id.to_string()}),
-        )
-        .await;
+        let (_, removed) = if method == "archive" {
+            surface::rows_as(
+                &w,
+                OPERATOR,
+                surface::lifecycle_request(removed_id.to_string(), method),
+            )
+            .await
+        } else {
+            call_unbounded(
+                &w,
+                Some(OPERATOR),
+                json!({"method":method, "target":removed_id.to_string()}),
+            )
+            .await
+        };
         assert_eq!(removed["outcome"], "ok", "{removed}");
     }
     let (_, next) = call_unbounded(&w, Some(READ), json!({"method":"query", "query":"commands | sort by when", "page-size":1, "cursor":page["result"]["page"]["cursor"]})).await;

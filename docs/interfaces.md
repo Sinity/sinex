@@ -48,6 +48,12 @@ function are common
 
 ## Transports
 
+Archive and restore are typed steps in the rows operation: selection-first
+`sinexctl` lines, `POST /v1/rows`, and `sinex_write` carry the same arguments.
+Their scope, preview and retry behavior is defined in [the lifecycle](lifecycle.md).
+Offline `sinexd admin request --request JSON --database URL --store DIR` calls
+that same operation table with a complete request, without a daemon.
+
 - `sinexd` serves a Unix socket and an HTTP listener carrying one typed request
   protocol: `POST /v1` with a tagged request, `GET /v1/commands` for the table's
   metadata, SSE for `follow`. There are no dotted method aliases.

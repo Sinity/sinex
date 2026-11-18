@@ -38,7 +38,7 @@ async fn explicit_historical_api_views_survive_repeated_archive_and_restore(
             .await
             .unwrap();
         let (status, body) =
-            call_unbounded(&w, Some(AGENT), json!({"method":method,"target":reference})).await;
+            surface::rows_as(&w, AGENT, surface::lifecycle_request(&reference, method)).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["outcome"], "ok", "{body}");
         let position = sinex_store::query::current_seq(&mut w.reads.acquire().await.unwrap())

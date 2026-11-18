@@ -126,17 +126,29 @@ fn each_failure_kind_reaches_cli_and_mcp() {
 
         let stopped = failure.kind == FailureKind::StoppedEarly;
         let mcp_body = if stopped {
-            body
+            let answer = command_surface::Answer::ok(sinex_protocol::rows::RowsReply {
+                population: None,
+                references: Vec::new(),
+                steps: vec![sinex_protocol::rows::StepReport {
+                    verb: "archive".into(),
+                    outcome: sinex_protocol::rows::StepOutcome::StoppedEarly {
+                        error: failure.clone(),
+                        reply: json!({"batches":1}),
+                    },
+                }],
+            });
+            serde_json::to_string(&answer).unwrap()
         } else {
             serde_json::to_string(&command_surface::Answer::<Value>::error(failure.clone()))
                 .unwrap()
         };
-        let (endpoint, server) = daemon(vec![(status, mcp_body)]);
+        let (endpoint, server) =
+            daemon(vec![(if stopped { 200 } else { status }, mcp_body.clone())]);
         let reply = if stopped {
             mcp_call(
                 &endpoint,
-                "sinex_archive",
-                json!({"target":"sinex:ev/0190a0b0"}),
+                "sinex_write",
+                json!({"arguments":{"selection":"events","steps":[{"verb":"archive","all":true}]}}),
             )
         } else {
             mcp_call(
@@ -148,17 +160,40 @@ fn each_failure_kind_reaches_cli_and_mcp() {
             )
         };
         assert_eq!(reply["result"]["isError"], true, "{reply}");
-        assert_eq!(
-            reply["result"]["structuredContent"]["error"]["kind"],
-            failure.kind.name(),
-            "{reply}"
-        );
+        let structured = &reply["result"]["structuredContent"];
+        let error = if stopped {
+            &structured["value"]["steps"][0]["outcome"]["error"]
+        } else {
+            &structured["error"]
+        };
+        assert_eq!(error["kind"], failure.kind.name(), "{reply}");
         let text = reply["result"]["content"][0]["text"].as_str().unwrap();
         assert!(text.contains(&failure.message), "{text}");
         if stopped {
-            assert_eq!(reply["result"]["structuredContent"]["result"]["batches"], 1);
+            assert_eq!(
+                structured["value"]["steps"][0]["outcome"]["reply"]["batches"],
+                1
+            );
         }
         server.join().unwrap();
+        if stopped {
+            let (endpoint, server) = daemon(vec![(200, mcp_body)]);
+            let output = sinexctl(&endpoint, &["--json", "events", "archive", "--all"]);
+            assert_eq!(output.status.code(), Some(5), "{output:?}");
+            assert!(output.stderr.is_empty(), "{output:?}");
+            let answer: Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(
+                answer["value"]["steps"][0]["outcome"]["status"],
+                "stopped_early"
+            );
+            assert_eq!(
+                answer["value"]["steps"][0]["outcome"]["reply"]["batches"],
+                1
+            );
+            let requests = server.join().unwrap();
+            assert_eq!(requests[0]["arguments"]["steps"][0]["verb"], "archive");
+            assert_eq!(requests[0]["arguments"]["steps"][0]["all"], true);
+        }
     }
 }
 

@@ -56,10 +56,10 @@ async fn moment_notes_are_authored_material_records_recalled_by_number_and_visib
         assert_eq!(answer["outcome"], "ok", "{answer}");
         assert_eq!(answer["result"]["recall"]["mark"]["payload"]["text"], note);
     }
-    let (_, archived) = call_unbounded(
+    let (_, archived) = surface::rows_as(
         &w,
-        Some(OPERATOR),
-        json!({"method":"archive","target":citations[1]}),
+        OPERATOR,
+        surface::lifecycle_request(citations[1].as_str().unwrap(), "archive"),
     )
     .await;
     assert_eq!(archived["outcome"], "ok", "{archived}");

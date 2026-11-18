@@ -43,36 +43,40 @@ async fn forecast_public_workflow_withdraws_archived_and_tombstoned_inputs(
     let (_,duplicate)=call_unbounded(&w,Some(OPERATOR),json!({"method":"forecast-resolve","forecast":issued_ref,"outcome":"false","evidence":[evidence_id]})).await;
     assert_eq!(duplicate["outcome"], "failed");
     let resolution = resolved["result"]["citation"].as_str().unwrap();
-    let (_, archived) = call_unbounded(
+    let (_, archived) = surface::rows_as(
         &w,
-        Some(OPERATOR),
-        json!({"method":"archive","target":resolution}),
+        OPERATOR,
+        surface::lifecycle_request(resolution.to_string(), "archive"),
     )
     .await;
     assert_eq!(archived["outcome"], "ok", "{archived}");
     assert!(score(&w, OPERATOR).await["report"]["brier"].is_null());
-    let (_, restored) = call_unbounded(
+    let (_, restored) = surface::rows_as(
         &w,
-        Some(OPERATOR),
-        json!({"method":"restore","target":resolution}),
+        OPERATOR,
+        surface::lifecycle_request(resolution.to_string(), "restore"),
     )
     .await;
     assert_eq!(restored["outcome"], "ok", "{restored}");
-    let (_, archived_evidence) = call_unbounded(
+    let (_, archived_evidence) = surface::rows_as(
         &w,
-        Some(OPERATOR),
-        json!({"method":"archive","target":evidence_id}),
+        OPERATOR,
+        surface::lifecycle_request(evidence_id.to_string(), "archive"),
     )
     .await;
     assert_eq!(archived_evidence["outcome"], "ok", "{archived_evidence}");
     assert!(score(&w, OPERATOR).await["report"]["brier"].is_null());
     for method in ["archive", "tombstone"] {
-        let (_, removed) = call_unbounded(
-            &w,
-            Some(OPERATOR),
-            json!({"method":method,"target":issued_ref}),
-        )
-        .await;
+        let (_, removed) = if method == "archive" {
+            surface::rows_as(&w, OPERATOR, surface::lifecycle_request(issued_ref, method)).await
+        } else {
+            call_unbounded(
+                &w,
+                Some(OPERATOR),
+                json!({"method":method,"target":issued_ref}),
+            )
+            .await
+        };
         assert_eq!(removed["outcome"], "ok", "{removed}");
         assert_eq!(score(&w, OPERATOR).await["report"]["issued"], 0);
     }
@@ -97,12 +101,21 @@ async fn forecast_new_authoring_continues_after_an_unrelated_forecast_is_tombsto
     let w = world(db).await;
     let first = issue(&w, "0.2").await;
     for method in ["archive", "tombstone"] {
-        let (_, body) = call_unbounded(
-            &w,
-            Some(OPERATOR),
-            json!({"method":method,"target":first["citation"]}),
-        )
-        .await;
+        let (_, body) = if method == "archive" {
+            surface::rows_as(
+                &w,
+                OPERATOR,
+                surface::lifecycle_request(first["citation"].as_str().unwrap(), method),
+            )
+            .await
+        } else {
+            call_unbounded(
+                &w,
+                Some(OPERATOR),
+                json!({"method":method,"target":first["citation"]}),
+            )
+            .await
+        };
         assert_eq!(body["outcome"], "ok", "{body}");
     }
     let second = issue(&w, "0.7").await;

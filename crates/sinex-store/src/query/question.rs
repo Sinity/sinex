@@ -53,7 +53,7 @@ impl Question {
         };
         if !matches!(
             table,
-            Table::Events | Table::Archive | Table::Materials | Table::Runs
+            Table::Events | Table::Archive | Table::Materials | Table::Runs | Table::Sources
         ) || query
             .stages
             .iter()
@@ -88,6 +88,34 @@ impl Question {
             .fetch_all(&mut *tx)
             .await?;
         let count = ids.len() as u64;
+        if self
+            .population
+            .is_some_and(|(_, expected)| expected as u64 != count)
+        {
+            return Err(Error::NotFound(
+                "an accepted subject is no longer available".into(),
+            ));
+        }
+        if table == Table::Sources {
+            let scope = if let [source] = ids.as_slice() {
+                Scope::Source {
+                    source: source.clone(),
+                    after: None,
+                    before: None,
+                }
+            } else {
+                let events = sqlx::query_scalar!(
+                    "SELECT id FROM core.events WHERE source=ANY($1) AND commit_seq<=$2 ORDER BY id",
+                    &ids,self.position
+                ).fetch_all(&mut *tx).await?;
+                Scope::Events {
+                    events: events.into_iter().map(EventId).collect(),
+                    query: Some(self.text.clone()),
+                }
+            };
+            tx.commit().await?;
+            return Ok((scope, count));
+        }
         let ids = ids
             .into_iter()
             .map(|id| {

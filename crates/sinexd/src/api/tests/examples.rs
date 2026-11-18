@@ -86,14 +86,16 @@ async fn help_examples_run_on_fixture(db: devkit::pg::TestDatabase) {
     .unwrap();
     let item = copies[0].item.clone();
     admit(&world, &["synthetic example history"], 0).await;
-    let (_, archived) = call_unbounded(
+    let (_, archived) = surface::rows_as(
         &world,
-        Some(OPERATOR),
-        json!({"method":"archive","source":"terminal.atuin"}),
+        OPERATOR,
+        surface::lifecycle_request("sources where source = terminal.atuin", "archive"),
     )
     .await;
     assert_eq!(archived["outcome"], "ok", "{archived}");
-    let operation = archived["result"]["operation"].as_str().unwrap();
+    let operation = surface::lifecycle_receipt(&archived)["operation"]
+        .as_str()
+        .unwrap();
     let mut failures = Vec::new();
     for command in sinex_protocol::COMMANDS {
         for example in command.examples {

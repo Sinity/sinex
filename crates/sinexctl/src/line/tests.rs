@@ -9,6 +9,9 @@ fn rows(args: &[&str]) -> Line {
 
 #[devkit::test]
 fn lifecycle_flags_belong_to_the_selected_step() {
+    let archive = rows(&["--", "archive", "read"]);
+    assert_eq!(archive.request.arguments["selection"], "archive");
+    assert_eq!(archive.request.arguments["steps"][0]["verb"], "read");
     let line = rows(&[
         "events | fields text as id",
         "archive",

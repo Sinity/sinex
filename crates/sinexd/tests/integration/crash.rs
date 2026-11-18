@@ -240,6 +240,22 @@ impl Target {
     /// A lifecycle command (`archive`, `tombstone`, `resume`, ...) with its
     /// arguments after the connection options, since a scope given as an
     /// event reference takes the rest of the line.
+    fn typed_lifecycle(&self, selection: &str, verb: &str, preview: bool) -> Command {
+        let request = serde_json::json!({
+            "operation":"rows", "request_id":sinex_model::OperationId::new(), "deadline":null,
+            "arguments":{"selection":selection,"steps":[{"verb":verb,"all":true,"dry_run":preview}]},
+        });
+        let mut command = Command::new(env!("CARGO_BIN_EXE_sinexd"));
+        command
+            .args(["admin", "request", "--database", &self.url, "--store"])
+            .arg(&self.store)
+            .arg("--request")
+            .arg(request.to_string())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        command
+    }
+
     fn lifecycle(&self, verb: &str, args: &[&str]) -> Command {
         let mut c = Command::new(env!("CARGO_BIN_EXE_sinexd"));
         c.args([
@@ -980,7 +996,11 @@ async fn tombstone_survives(lock_sql: &str) {
     .await
     .unwrap();
     let material = material.to_string();
-    finish(&mut target.lifecycle("archive", &["--material", &material]));
+    finish(&mut target.typed_lifecycle(
+        &format!("materials where id = {material}"),
+        "archive",
+        false,
+    ));
     let before = state(&mut c).await;
     let neighbours = clipboard_bytes(&target, &mut c, 1).await;
     kill_at(

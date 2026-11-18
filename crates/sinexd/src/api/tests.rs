@@ -304,14 +304,9 @@ async fn tokens_grant_levels(db: devkit::pg::TestDatabase) {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["outcome"], json!("ok"));
     let (status, body) =
-        call_unbounded(&w, Some(READ), json!({"method": "archive", "target": "x"})).await;
+        surface::rows_as(&w, READ, surface::lifecycle_request("x", "archive")).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
-    assert!(
-        body["failure"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("needs agent")
-    );
+    assert!(body["error"]["message"].as_str().unwrap().contains("write"));
     let (status, _) = call_unbounded(
         &w,
         Some(AGENT),
@@ -409,14 +404,18 @@ async fn archive_and_restore_go_through_the_writer(db: devkit::pg::TestDatabase)
         .as_str()
         .unwrap()
         .to_string();
-    let (_, body) = call_unbounded(
+    let (_, body) = surface::rows_as(
         &w,
-        Some(AGENT),
-        json!({"method": "archive", "target": format!("sinex:ev/{id}")}),
+        AGENT,
+        surface::lifecycle_request(format!("sinex:ev/{id}"), "archive"),
     )
     .await;
     assert_eq!(body["outcome"], json!("ok"), "{body}");
-    assert_eq!(body["result"]["actor"], json!("agent"), "{body}");
+    assert_eq!(
+        surface::lifecycle_receipt(&body)["actor"],
+        json!("agent"),
+        "{body}"
+    );
     let (_, body) = call_unbounded(
         &w,
         Some(READ),
@@ -427,8 +426,12 @@ async fn archive_and_restore_go_through_the_writer(db: devkit::pg::TestDatabase)
     let (_, body) =
         call_unbounded(&w, Some(READ), json!({"method": "show", "reference": id})).await;
     assert_eq!(body["result"]["event"]["state"], json!("archived"));
-    let (_, body) =
-        call_unbounded(&w, Some(AGENT), json!({"method": "restore", "target": id})).await;
+    let (_, body) = surface::rows_as(
+        &w,
+        AGENT,
+        surface::lifecycle_request(id.to_string(), "restore"),
+    )
+    .await;
     assert_eq!(body["outcome"], json!("ok"), "{body}");
     let (_, body) = call_unbounded(
         &w,

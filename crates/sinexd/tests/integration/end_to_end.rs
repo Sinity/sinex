@@ -133,6 +133,22 @@ impl Target {
     /// A lifecycle command (`archive`, `restore`, `tombstone`, ...) with its
     /// arguments after the connection options, since a scope given as an
     /// event reference takes the rest of the line.
+    fn typed_lifecycle(&self, selection: &str, verb: &str, preview: bool) -> Command {
+        let request = serde_json::json!({
+            "operation":"rows", "request_id":sinex_model::OperationId::new(), "deadline":null,
+            "arguments":{"selection":selection,"steps":[{"verb":verb,"all":true,"dry_run":preview}]},
+        });
+        let mut command = Command::new(env!("CARGO_BIN_EXE_sinexd"));
+        command
+            .args(["admin", "request", "--database", &self.url, "--store"])
+            .arg(&self.store)
+            .arg("--request")
+            .arg(request.to_string())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        command
+    }
+
     fn lifecycle(&self, verb: &str, args: &[&str]) -> Command {
         let mut c = Command::new(env!("CARGO_BIN_EXE_sinexd"));
         c.args([
@@ -152,6 +168,20 @@ impl Target {
     }
 
     /// A lifecycle command that succeeds, and its answer.
+    fn typed_lifecycle_done(
+        &self,
+        selection: &str,
+        verb: &str,
+        preview: bool,
+    ) -> serde_json::Value {
+        let answer: serde_json::Value =
+            serde_json::from_str(&finish(&mut self.typed_lifecycle(selection, verb, preview)))
+                .unwrap();
+        let outcome = &answer["value"]["steps"][0]["outcome"];
+        assert_eq!(outcome["status"], "done", "{answer}");
+        outcome["reply"]["reply"].clone()
+    }
+
     fn lifecycle_done(&self, verb: &str, args: &[&str]) -> serde_json::Value {
         serde_json::from_str(&finish(&mut self.lifecycle(verb, args))).unwrap()
     }
@@ -724,7 +754,7 @@ async fn archive_is_not_hiding_across_replay_reread_and_independent_copies() {
     let mut c = t.connect().await;
     let id = live_a3(&mut c, &path).await;
     let initial_markers = support::marker_count(&mut c).await;
-    let archived = t.lifecycle_done("archive", &[&id.to_string()]);
+    let archived = t.typed_lifecycle_done(&id.to_string(), "archive", false);
     assert_eq!(
         (&archived["act"], &archived["result"]),
         (&serde_json::json!("archive"), &serde_json::json!("ok")),
@@ -739,7 +769,10 @@ async fn archive_is_not_hiding_across_replay_reread_and_independent_copies() {
     );
     let reread = live_a3(&mut c, &path).await;
     assert_ne!(reread, id);
-    let refused = t.lifecycle("restore", &[&id.to_string()]).output().unwrap();
+    let refused = t
+        .typed_lifecycle(&id.to_string(), "restore", false)
+        .output()
+        .unwrap();
     let said = format!(
         "{}{}",
         String::from_utf8_lossy(&refused.stdout),
@@ -793,8 +826,8 @@ async fn archive_is_not_hiding_across_replay_reread_and_independent_copies() {
         2,
         "the forced reread keeps a second independent root sequence for the same original input"
     );
-    t.lifecycle_done("archive", &[&reread.to_string()]);
-    let restored = t.lifecycle_done("restore", &[&id.to_string()]);
+    t.typed_lifecycle_done(&reread.to_string(), "archive", false);
+    let restored = t.typed_lifecycle_done(&id.to_string(), "restore", false);
     assert_eq!(restored["result"], "ok", "{restored}");
     assert_eq!(
         live_a3(&mut c, &path).await,
@@ -944,7 +977,8 @@ async fn comparisons_change_nothing_and_shared_bytes_survive_a_material_tombston
                         + (SELECT count(*) FROM raw.material_changes)";
     let recorded = scalar(&mut c, changes).await;
 
-    let compared = t.lifecycle_done("archive", &["--material", &material, "--dry-run"]);
+    let compared =
+        t.typed_lifecycle_done(&format!("materials where id = {material}"), "archive", true);
     assert_eq!(compared["compare_only"], true, "{compared}");
     assert_eq!(
         live(&mut c).await,
@@ -956,7 +990,11 @@ async fn comparisons_change_nothing_and_shared_bytes_survive_a_material_tombston
         recorded,
         "a comparison records nothing"
     );
-    let archived = t.lifecycle_done("archive", &["--material", &material]);
+    let archived = t.typed_lifecycle_done(
+        &format!("materials where id = {material}"),
+        "archive",
+        false,
+    );
     assert_eq!(archived["cascade"], compared["cascade"], "{archived}");
     assert_eq!(archived["cascade"]["materials"], 1);
     assert!(
@@ -1052,7 +1090,7 @@ async fn a_tombstoned_shell_history_record_is_read_again_by_replay() {
         0
     );
 
-    t.lifecycle_done("archive", &[&victim.to_string()]);
+    t.typed_lifecycle_done(&victim.to_string(), "archive", false);
     let done = t.lifecycle_done("tombstone", &[&victim.to_string()]);
     assert_eq!(
         done["cascade"]["tombstoned"]["command.imported"], 1,
@@ -1066,7 +1104,7 @@ async fn a_tombstoned_shell_history_record_is_read_again_by_replay() {
             .unwrap();
     assert_eq!(skeleton, 1);
     let refused = t
-        .lifecycle("restore", &[&victim.to_string()])
+        .typed_lifecycle(&victim.to_string(), "restore", false)
         .output()
         .unwrap();
     assert!(!refused.status.success(), "nothing restores a tombstone");

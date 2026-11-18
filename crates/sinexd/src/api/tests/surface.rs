@@ -365,7 +365,17 @@ async fn accepted_mutable_groups_keep_keys_when_values_change_and_new_groups_app
     );
     let (_, later)=rows_as(&w,OPERATOR,json!({"operation":"rows","request_id":"groups-later","arguments":{"selection":"events","steps":[{"verb":"save","name":"later"}]},"deadline":null})).await;
     assert_eq!(later["outcome"], "ok", "{later}");
-    let (_, archived)=call_unbounded(&w,Some(OPERATOR),json!({"method":"archive","target":original["value"]["steps"][0]["outcome"]["reply"]["reply"]["event"]})).await;
+    let (_, archived) = surface::rows_as(
+        &w,
+        OPERATOR,
+        surface::lifecycle_request(
+            original["value"]["steps"][0]["outcome"]["reply"]["reply"]["event"]
+                .as_str()
+                .unwrap(),
+            "archive",
+        ),
+    )
+    .await;
     assert_eq!(archived["outcome"], "ok", "{archived}");
     let (_, retry) = rows_as(&w, OPERATOR, request).await;
     assert_eq!(retry["outcome"], "ok", "{retry}");
