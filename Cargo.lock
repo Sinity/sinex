@@ -4697,6 +4697,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sinex-commands",
+ "sinex-model",
  "sinex-process",
  "sinex-protocol",
  "tempfile",

@@ -3,3 +3,4 @@ mod capture_health;
 mod diagnostics;
 mod failures;
 mod query_views;
+mod selection_lines;

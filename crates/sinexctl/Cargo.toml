@@ -8,6 +8,7 @@ license.workspace = true
 
 [dependencies]
 sinex-commands.workspace = true
+sinex-model.workspace = true
 sinex-process.workspace = true
 command-surface.workspace = true
 sinex-protocol = { workspace = true, features = ["cli"] }

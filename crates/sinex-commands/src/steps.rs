@@ -3,7 +3,7 @@ use command_surface::{ArgumentForm, ArgumentSpec, StepDeclarations};
 use sinex_protocol::rows::{Read, Save};
 use std::sync::LazyLock;
 
-/// Step argument ownership is shared by all parsers. The CLI's eventual
+/// Step argument ownership is shared by all parsers. The CLI's
 /// splitter passes already-separated words to this declaration owner.
 pub fn steps() -> &'static StepDeclarations {
     static STEPS: LazyLock<StepDeclarations> = LazyLock::new(|| {

@@ -1,5 +1,5 @@
-//! `sinexctl`: the CLI and the MCP server, generated from the command table in
-//! `sinex-protocol`, calling the daemon's API. A small offline mode diagnoses a
+//! `sinexctl`: the CLI and MCP server, using the existing command table and
+//! typed selection-step declarations to call the daemon's API. A small offline mode diagnoses a
 //! stopped daemon without writing anything.
 //!
 //! Exit codes come from the shared failure table in `command-surface`: 0
@@ -9,6 +9,7 @@
 //! With `--json` a failure prints `{"error": …}` on standard output and
 //! nothing on standard error.
 mod client;
+mod line;
 mod mcp;
 mod output;
 
@@ -62,10 +63,14 @@ fn cli() -> Command {
         Command::new("sinexctl")
             .about("Query and operate Sinex")
             .after_help(
-                "Options go before a query or words: everything after the text starts is text, \
+                "For command forms, options go before a query or words: everything after the text starts is text, \
                  so `sinexctl search ls -la` searches for `ls -la`.",
             )
             .version(env!("CARGO_PKG_VERSION"))
+            .after_help(format!(
+                "Selection form: sinexctl 'SELECTION' [OPTIONS] [VERBS...]\nCurrent selection verbs: {}.\nUse --request JSON|- to execute an exact typed read continuation.\nSelection replies retain the complete typed JSON answer, including committed receipts and next requests.",
+                sinex_commands::steps().verbs().iter().map(|step|step.verb()).collect::<Vec<_>>().join(", "),
+            ))
             .arg(Arg::new("deadline").long("deadline").global(true)
                 .value_name("MS|none").value_parser(sinex_protocol::deadline)
                 .help("read execution budget in milliseconds; none waits without a deadline"))
@@ -133,16 +138,26 @@ fn arguments(spec: &sinex_protocol::Command, m: &ArgMatches) -> Map<String, Valu
 }
 
 fn client(m: &ArgMatches) -> Result<Client, Failure> {
-    let endpoint = match m
-        .get_one::<String>("endpoint")
-        .cloned()
-        .or_else(|| std::env::var("SINEX_ENDPOINT").ok())
-    {
+    client_options(
+        m.get_one::<String>("endpoint").cloned(),
+        m.get_one::<String>("token-file").cloned(),
+        m.get_one::<command_surface::Deadline>("deadline")
+            .copied()
+            .unwrap_or_default(),
+    )
+}
+
+fn client_options(
+    endpoint: Option<String>,
+    token_file: Option<String>,
+    deadline: command_surface::Deadline,
+) -> Result<Client, Failure> {
+    let endpoint = match endpoint.or_else(|| std::env::var("SINEX_ENDPOINT").ok()) {
         Some(e) => Endpoint::parse(&e)?,
         None => Endpoint::Unix(default_socket()),
     };
-    let path = m
-        .get_one::<String>("token-file")
+    let path = token_file
+        .as_ref()
         .map(PathBuf::from)
         .unwrap_or_else(default_token_file);
     let token = std::fs::read_to_string(&path)
@@ -161,10 +176,7 @@ fn client(m: &ArgMatches) -> Result<Client, Failure> {
     Ok(Client {
         endpoint,
         token,
-        deadline: m
-            .get_one::<command_surface::Deadline>("deadline")
-            .copied()
-            .unwrap_or_default(),
+        deadline,
     })
 }
 
@@ -348,6 +360,17 @@ fn report_exit(report: &Value) -> ExitCode {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
+    if let Ok(words) = std::env::args_os()
+        .skip(1)
+        .map(|word| word.into_string())
+        .collect::<Result<Vec<_>, _>>()
+    {
+        match line::parse(&words) {
+            Ok(Some(line)) => return line::run(line).await,
+            Ok(None) => {}
+            Err(error) => return line::failure(&error, words.iter().any(|word| word == "--json")),
+        }
+    }
     let matches = cli().get_matches();
     let json = matches.get_flag("json");
     let (name, sub) = match matches.subcommand() {

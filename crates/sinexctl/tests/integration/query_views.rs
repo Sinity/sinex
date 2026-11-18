@@ -4,7 +4,7 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::Command;
 
-fn request(stream: &mut TcpStream) -> Value {
+pub(super) fn request(stream: &mut TcpStream) -> (String, Value) {
     stream
         .set_read_timeout(Some(std::time::Duration::from_secs(10)))
         .unwrap();
@@ -31,7 +31,18 @@ fn request(stream: &mut TcpStream) -> Value {
         assert_ne!(count, 0, "request ended before its body");
         bytes.extend_from_slice(&chunk[..count]);
     }
-    serde_json::from_slice(&bytes[end..end + length]).unwrap()
+    let path = String::from_utf8_lossy(&bytes[..end])
+        .lines()
+        .next()
+        .unwrap()
+        .split_whitespace()
+        .nth(1)
+        .unwrap()
+        .to_owned();
+    (
+        path,
+        serde_json::from_slice(&bytes[end..end + length]).unwrap(),
+    )
 }
 
 #[devkit::test]
@@ -50,7 +61,7 @@ fn context_timeline_and_window_citations_page_through_the_same_query_protocol() 
             let mut requests = Vec::new();
             for page in 0..2 {
                 let (mut stream, _) = listener.accept().unwrap();
-                requests.push(request(&mut stream));
+                requests.push(request(&mut stream).1);
                 let result = json!({"outcome":"ok","result":{
                     "table":"events","query":"events","read_as":"synthetic query",
                     "columns":["id"],"rows":[{"id":page+1}],"total":2,
@@ -188,7 +199,7 @@ fn lists_continue_their_own_command() {
             let mut requests = Vec::new();
             for page in 0..2 {
                 let (mut stream, _) = listener.accept().unwrap();
-                requests.push(request(&mut stream));
+                requests.push(request(&mut stream).1);
                 let body = json!({"outcome":"ok","result":{
                     "columns":["id"], "rows":[{"id":page + 1}], "total":2,
                     "page":{"size":1,"cursor":if page == 0 {Some("next")} else {None}}
