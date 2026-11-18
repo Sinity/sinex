@@ -770,6 +770,33 @@ fn one_missing_path_and_several_new_equal_copies_report_ambiguity_across_parts()
     assert_eq!(state.files_hashed(), 3, "each new file was hashed once");
 }
 
+#[devkit::test]
+fn tiny_owned_files_continue_in_a_second_poll() {
+    let root = tempfile::tempdir().unwrap();
+    let limit = super::scan::OWNED_FILES_PER_POLL;
+    for index in 0..=limit {
+        std::fs::write(
+            root.path().join(format!("{index:04}.txt")),
+            index.to_string(),
+        )
+        .unwrap();
+    }
+    let scanner = scan(root.path());
+    let mut state = ScanState::default();
+    let first = scanner.poll(&Value::Null, &mut state).unwrap();
+    let first_files = &first.material.as_ref().unwrap().owned_files;
+    assert_eq!(first_files.len(), limit);
+    let (_, cursor) = stored(&first);
+    let second = scanner.poll(&cursor, &mut state).unwrap();
+    let second_files = &second.material.as_ref().unwrap().owned_files;
+    assert_eq!(second_files.len(), 1);
+    assert!(
+        first_files
+            .iter()
+            .all(|file| file.path != second_files[0].path)
+    );
+}
+
 #[test]
 fn ollama_metadata_options_reject_paths_outside_the_library_root() {
     for path in ["", "/absolute/blobs", "../blobs", "model/../blobs"] {

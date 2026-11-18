@@ -15,6 +15,9 @@ use sinex_source_core::{RecordError, RecordResult, Stateless, StatelessParser};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 
+// Each owned file holds an encoded descriptor until the poll reaches admission.
+pub(super) const OWNED_FILES_PER_POLL: usize = 128;
+
 /// One scanned file as the driver describes it: the stored record.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 struct ScannedFile {
@@ -821,7 +824,9 @@ impl LibraryScan {
             } else {
                 size.max(1)
             };
-            if budget > 0 && budget + charged > self.bytes_per_poll {
+            if owned_files.len() == OWNED_FILES_PER_POLL
+                || (budget > 0 && budget + charged > self.bytes_per_poll)
+            {
                 break;
             }
             state.queue.pop_front();
