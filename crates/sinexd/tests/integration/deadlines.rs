@@ -17,6 +17,7 @@ fn cli(binary: &Path, root: &Path, budget: &str) -> std::process::Command {
             "--deadline",
             budget,
             "--json",
+            "dev",
             "sql",
             "SELECT count(*) AS found FROM core.visible_events",
         ]);

@@ -12,14 +12,34 @@ use std::sync::{
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
-tokio::task_local! { static CURRENT: Arc<Budget>; }
+type Cleanup = Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>;
+tokio::task_local! {
+    static CURRENT: Arc<Budget>;
+    static RESPONSE_CLEANUP: Cleanup;
+}
+
+/// The typed transport owns cleanup even when its operation deadline drops
+/// the database future. A response cannot leave an unreachable reader behind.
+pub(crate) async fn with_cleanup<T>(operation: impl Future<Output = T>) -> T {
+    let cleanup = Cleanup::default();
+    let result = RESPONSE_CLEANUP.scope(cleanup.clone(), operation).await;
+    drain_cleanup(&cleanup).await;
+    result
+}
+
+async fn drain_cleanup(cleanup: &Cleanup) {
+    let tasks = std::mem::take(&mut *cleanup.lock().expect("request cleanup"));
+    for task in tasks {
+        let _ = task.await;
+    }
+}
 
 struct Budget {
     start: Instant,
     duration: Option<Duration>,
     admitted: AtomicBool,
     cancelled: AtomicBool,
-    cleanup: Mutex<Vec<tokio::task::JoinHandle<()>>>,
+    cleanup: Cleanup,
 }
 impl Budget {
     fn remaining(&self) -> Option<Duration> {
@@ -138,12 +158,13 @@ pub(crate) async fn run<T: Send + 'static>(
     duration: Option<Duration>,
     operation: impl Future<Output = Result<T>> + Send + 'static,
 ) -> Result<T> {
+    let response_cleanup = RESPONSE_CLEANUP.try_with(Arc::clone).ok();
     let budget = Arc::new(Budget {
         start: Instant::now(),
         duration,
         admitted: AtomicBool::new(false),
         cancelled: AtomicBool::new(false),
-        cleanup: Mutex::new(Vec::new()),
+        cleanup: response_cleanup.clone().unwrap_or_default(),
     });
     let mut request = InFlight {
         future: Some(Box::pin(CURRENT.scope(budget.clone(), operation))),
@@ -167,9 +188,8 @@ pub(crate) async fn run<T: Send + 'static>(
         }
     };
     drop(request);
-    let cleanup = std::mem::take(&mut *budget.cleanup.lock().expect("request cleanup"));
-    for task in cleanup {
-        let _ = task.await;
+    if response_cleanup.is_none() {
+        drain_cleanup(&budget.cleanup).await;
     }
     result
 }

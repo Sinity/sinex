@@ -262,10 +262,12 @@ async fn surface_call(
         .body(body.to_vec())
         .expect("accepted URI");
     *request.headers_mut() = headers;
-    let response = state
-        .operations
-        .http_as(request, caller, command_surface::CancellationToken::new())
-        .await;
+    let response = crate::request_deadline::with_cleanup(state.operations.http_as(
+        request,
+        caller,
+        command_surface::CancellationToken::new(),
+    ))
+    .await;
     let (parts, body) = response.into_parts();
     Response::from_parts(parts, axum::body::Body::from(body))
 }

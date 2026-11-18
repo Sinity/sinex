@@ -315,6 +315,45 @@ async fn disconnect_cancels_an_unbounded_read_backend(db: devkit::pg::TestDataba
 }
 
 #[devkit::test]
+async fn disconnect_cancels_a_typed_sql_reader(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
+    let mut lock = locked(&w, "ACCESS EXCLUSIVE").await;
+    assert_eq!(active_readers(&mut lock).await, 0);
+    let app = w.app.clone();
+    let read = tokio::spawn(async move {
+        app.oneshot(
+            HttpRequest::post("/v1/sql")
+                .header("authorization", format!("Bearer {READ}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    sql_request(
+                        "SELECT count(*) FROM core.visible_events",
+                        None,
+                        None,
+                        command_surface::Deadline::None,
+                    )
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+    });
+    let limit = std::time::Instant::now() + Duration::from_secs(3);
+    wait_for_reader(&mut lock).await;
+    read.abort();
+    let _ = read.await;
+    while active_readers(&mut lock).await != 0 {
+        assert!(
+            std::time::Instant::now() < limit,
+            "disconnect left its typed SQL backend running"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    sqlx::query("ROLLBACK").execute(&mut lock).await.unwrap();
+}
+
+#[devkit::test]
 async fn a_first_sql_page_timeout_does_not_publish_an_unread_cursor(db: devkit::pg::TestDatabase) {
     use age::secrecy::ExposeSecret;
     let w = world(db).await;
