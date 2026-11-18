@@ -124,3 +124,15 @@ fn explicit_requests_keep_their_original_identity_and_options() {
         "distinct CLI invocations are distinct intentions"
     );
 }
+
+#[devkit::test]
+fn a_literal_json_word_does_not_change_failure_presentation() {
+    let (_, json) = parse(&words(&["events", "save", "--", "--json", "--unknown"]))
+        .err()
+        .unwrap();
+    assert!(!json);
+    let (_, json) = parse(&words(&["--json", "events", "read", "--unknown"]))
+        .err()
+        .unwrap();
+    assert!(json);
+}

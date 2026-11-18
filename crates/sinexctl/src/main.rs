@@ -1,13 +1,13 @@
 //! `sinexctl`: the CLI and MCP server, using the existing command table and
-//! typed selection-step declarations to call the daemon's API. A small offline mode diagnoses a
-//! stopped daemon without writing anything.
+//! typed selection-step declarations to call the daemon's API. A small offline
+//! mode diagnoses a stopped daemon without writing anything.
 //!
 //! Exit codes come from the shared failure table in `command-surface`: 0
 //! done, 1 a read that matched nothing, and for a failure its kind's code (2
 //! a request to fix, 3 refused, 4 not found, a conflict or a broken part, 5
 //! stopped early, 6 the daemon or a part it needs not running, 7 timed out).
-//! With `--json` a failure prints `{"error": …}` on standard output and
-//! nothing on standard error.
+//! With `--json`, existing commands print `{"error": …}` for a failure.
+//! Selection lines retain the shared typed answer envelope. Both use stdout.
 mod client;
 mod line;
 mod mcp;
@@ -368,7 +368,7 @@ async fn main() -> ExitCode {
         match line::parse(&words) {
             Ok(Some(line)) => return line::run(line).await,
             Ok(None) => {}
-            Err(error) => return line::failure(&error, words.iter().any(|word| word == "--json")),
+            Err((error, json)) => return line::failure(&error, json),
         }
     }
     let matches = cli().get_matches();

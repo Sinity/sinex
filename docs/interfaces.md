@@ -131,14 +131,17 @@ is the shared kind for an operation that did not finish.
 
 ### Target line failures
 
-**Decided target, not built.** The common request-level outcomes are `ok`,
+**Typed selection lines** use the common request-level outcomes `ok`,
 `empty`, `degraded` and `error`. A failed step has `status: "failed"` inside the
-line answer; previous step reports and undo lines remain present. Grammar reasons
+line answer; previous step reports and committed receipts remain present. The CLI
+reports that step's failure exit code, including when the enclosing answer retains
+a successful write. The complete target also supplies undo and continue lines.
+Grammar reasons
 such as `needs_all` are product codes under `bad_request`, not new shared kinds.
 The shared failure table determines HTTP status and exit code: 0 success, 1 empty,
 2 invalid input, 3 refusal, 4 not-found/conflict/I/O/internal, 5 stopped-early or
 degraded, 6 not-running, 7 timeout/cancelled. Current wire examples above describe
-the command-first build and do not replace the typed target line contract.
+the existing command-first handlers; selection lines retain the typed envelope.
 
 ## Callers
 
@@ -213,7 +216,7 @@ act or by session undo. Programs that derive continuously use the ingress as
 
 ## CLI
 
-**Decided target (2026-11-18), not built.** The client is `sinex`; the daemon and its
+**Decided target binary (2026-11-18): `sinex`.** The daemon and its
 maintenance commands remain `sinexd` and `sinexd admin`. The current build ships
 `sinexctl`. It accepts selection lines for typed reads and saved questions, alongside
 the existing commands. Typed read and saved-question operations use the `sinex_read`

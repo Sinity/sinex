@@ -147,7 +147,12 @@ fn listing(
 
 /// None selects the existing command parser, with the original argv intact.
 /// Parsing never opens stdin, a token file or a connection.
-pub(crate) fn parse(args: &[String]) -> Result<Option<Line>, Failure> {
+pub(crate) fn parse(args: &[String]) -> Result<Option<Line>, (Failure, bool)> {
+    let mut options = Options::default();
+    parse_input(args, &mut options).map_err(|error| (error, options.json))
+}
+
+fn parse_input(args: &[String], options: &mut Options) -> Result<Option<Line>, Failure> {
     // The original command parser still owns these commands and their flags.
     // In particular its --all means pagination, unlike selection-line --all.
     let mut command = 0;
@@ -175,11 +180,10 @@ pub(crate) fn parse(args: &[String]) -> Result<Option<Line>, Failure> {
         Value::Null,
         sinex_model::OperationId::new().to_string(),
     );
-    let mut options = Options::default();
     let mut rows = Rows::default();
     let mut index = 0;
     while index < args.len() {
-        if !option(args, &mut index, &mut request, &mut options)? {
+        if !option(args, &mut index, &mut request, options)? {
             if !listing(args, &mut index, &mut request, &mut rows)? {
                 break;
             }
@@ -211,7 +215,7 @@ pub(crate) fn parse(args: &[String]) -> Result<Option<Line>, Failure> {
         }
         return Ok(Some(Line {
             request,
-            options,
+            options: std::mem::take(options),
             stdin: if stdin_request {
                 Stdin::Request
             } else {
@@ -253,7 +257,7 @@ pub(crate) fn parse(args: &[String]) -> Result<Option<Line>, Failure> {
         index += 1;
     }
     while index < args.len() {
-        if option(args, &mut index, &mut request, &mut options)? {
+        if option(args, &mut index, &mut request, options)? {
             index += 1;
             continue;
         }
@@ -263,7 +267,7 @@ pub(crate) fn parse(args: &[String]) -> Result<Option<Line>, Failure> {
         }
         let split = sinex_commands::steps()
             .split_step(args, index, |_, args, index| {
-                option(args, index, &mut request, &mut options)
+                option(args, index, &mut request, options)
             })
             .map_err(|error| match error {
                 SplitError::Arguments(error) | SplitError::Local(error) => error,
@@ -288,7 +292,7 @@ pub(crate) fn parse(args: &[String]) -> Result<Option<Line>, Failure> {
     request.arguments = serde_json::to_value(rows).expect("rows serialize");
     Ok(Some(Line {
         request,
-        options,
+        options: std::mem::take(options),
         stdin,
     }))
 }

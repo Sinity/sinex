@@ -30,7 +30,7 @@ pub fn steps() -> &'static StepDeclarations {
                     ArgumentSpec::new("name", ArgumentForm::Positional, "saved question name"),
                     ArgumentSpec::new(
                         "parameter",
-                        ArgumentForm::Named,
+                        ArgumentForm::Repeated,
                         "repeatable typed parameter declaration",
                     ),
                 ],
