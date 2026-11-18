@@ -7,6 +7,7 @@ use sinex_model::{
     Batch, BatchKind, Class, Event, MaterialId, Origin, ReadingOrder, RecordLocation,
     RecordOutcome, RunId, Timestamp, event_types::CommandExecuted,
 };
+use sqlx::Connection;
 use std::sync::Arc;
 
 fn reading(key: u32, content: u32) -> Event {
@@ -59,6 +60,82 @@ async fn live(read: &mut PgConnection) -> i64 {
         .fetch_one(read)
         .await
         .unwrap()
+}
+
+#[devkit::test]
+async fn queued_lifecycle_retry_uses_committed_progress_and_completed_counts(
+    db: devkit::pg::TestDatabase,
+) {
+    let url = db.url(None);
+    let connection = PgConnection::connect(&url).await.unwrap();
+    let mut read = PgConnection::connect(&url).await.unwrap();
+    let (writer, queues) = channels();
+    let task = tokio::spawn(writer_run(
+        url,
+        claim(connection).await.unwrap(),
+        queues,
+        Arc::new(sinex_store::NoDerivations),
+        None,
+    ));
+    writer
+        .submit(
+            Priority::Live,
+            batch((0..3).map(|k| reading(k, k)).collect()),
+        )
+        .await
+        .unwrap();
+    let operation = lifecycle::begin(
+        &mut read,
+        Act::Archive,
+        "agent:fixture",
+        Scope::Source {
+            source: "ops".into(),
+            after: None,
+            before: None,
+        },
+    )
+    .await
+    .unwrap();
+    let first = writer
+        .lifecycle_step(&operation, Progress::default(), lifecycle::Roots::Query(1))
+        .await
+        .unwrap();
+    let Step::Moved {
+        progress: first, ..
+    } = first.step
+    else {
+        panic!("first move refused")
+    };
+    assert_eq!(live(&mut read).await, 2);
+    // The caller prepared this job before seeing the first job's commit.
+    let repeated = writer
+        .lifecycle_step(&operation, Progress::default(), lifecycle::Roots::Query(1))
+        .await
+        .unwrap();
+    let Step::Moved {
+        progress: second, ..
+    } = repeated.step
+    else {
+        panic!("retry refused")
+    };
+    assert_eq!(second.batches, first.batches + 1);
+    assert_ne!(second.after, first.after);
+    assert_eq!(live(&mut read).await, 1);
+    let Answer::Done(done) = retry(&mut read, &writer, &operation).await.unwrap() else {
+        panic!("retry did not finish")
+    };
+    assert_eq!(done["cascade"]["archived"]["command.executed"], 3);
+    let repeated = writer
+        .lifecycle_step(&operation, Progress::default(), lifecycle::Roots::Query(1))
+        .await
+        .unwrap();
+    assert!(matches!(repeated.step, Step::Moved { done: true, .. }));
+    let Answer::Done(again) = retry(&mut read, &writer, &operation).await.unwrap() else {
+        panic!("completed operation did not retain its result")
+    };
+    assert_eq!(again, done);
+    drop(writer);
+    task.await.unwrap();
 }
 
 #[devkit::test]

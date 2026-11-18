@@ -1,6 +1,6 @@
 //! One typed declaration of each verb's CLI fields and wire arguments.
 use command_surface::{ArgumentForm, ArgumentSpec, StepDeclarations};
-use sinex_protocol::rows::{Note, Read, Save, Step};
+use sinex_protocol::rows::{Lifecycle, Note, Read, Save, Step};
 use std::sync::LazyLock;
 
 /// Step argument ownership is shared by all parsers. The CLI's
@@ -8,6 +8,21 @@ use std::sync::LazyLock;
 pub fn steps() -> &'static StepDeclarations {
     static STEPS: LazyLock<StepDeclarations> = LazyLock::new(|| {
         let mut steps = StepDeclarations::default().cli_selection("selection", "references");
+        for verb in ["archive", "restore"] {
+            steps
+                .declare::<Lifecycle>(
+                    verb,
+                    vec![
+                        ArgumentSpec::new("all", ArgumentForm::Flag, "authorize all selected rows"),
+                        ArgumentSpec::new(
+                            "dry_run",
+                            ArgumentForm::Flag,
+                            "show the cascade and refusals without writing",
+                        ),
+                    ],
+                )
+                .expect("lifecycle fields match their declaration");
+        }
         steps
             .declare::<Read>(
                 "read",
@@ -92,6 +107,7 @@ pub fn required_access(steps: &[Step]) -> command_surface::Access {
             Step::Read(_) => command_surface::Access::Read,
             Step::Save(_) => command_surface::Access::Write,
             Step::Note(_) => command_surface::Access::Permanent,
+            Step::Archive(_) | Step::Restore(_) => command_surface::Access::Write,
         })
         .max()
         .unwrap_or(command_surface::Access::Read)

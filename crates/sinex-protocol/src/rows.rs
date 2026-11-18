@@ -97,6 +97,8 @@ pub enum Step {
     Read(Read),
     Save(Save),
     Note(Note),
+    Archive(Lifecycle),
+    Restore(Lifecycle),
 }
 
 impl Step {
@@ -105,8 +107,22 @@ impl Step {
             Self::Read(_) => "read",
             Self::Save(_) => "save",
             Self::Note(_) => "note",
+            Self::Archive(_) => "archive",
+            Self::Restore(_) => "restore",
         }
     }
+}
+
+/// Move the selected readings or materials with their provenance chains.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Lifecycle {
+    /// Authorize every selected row, beyond the displayed page.
+    #[serde(default)]
+    pub all: bool,
+    /// Compute the same cascade and refusals without recording a request or move.
+    #[serde(default)]
+    pub dry_run: bool,
 }
 
 /// A moment note with context explicitly observed by its client.
@@ -184,8 +200,16 @@ pub struct StepReport {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum StepOutcome {
-    Done { reply: StepReply },
-    Failed { error: Failure },
+    Done {
+        reply: StepReply,
+    },
+    Failed {
+        error: Failure,
+    },
+    StoppedEarly {
+        error: Failure,
+        reply: serde_json::Value,
+    },
     NotRun,
 }
 
@@ -201,7 +225,7 @@ impl RowsReply {
     /// A failed step keeps prior results, while clients still report failure.
     pub fn failure(&self) -> Option<&Failure> {
         self.steps.iter().find_map(|step| match &step.outcome {
-            StepOutcome::Failed { error } => Some(error),
+            StepOutcome::Failed { error } | StepOutcome::StoppedEarly { error, .. } => Some(error),
             StepOutcome::Done { .. } | StepOutcome::NotRun => None,
         })
     }

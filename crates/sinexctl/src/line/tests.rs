@@ -8,6 +8,39 @@ fn rows(args: &[&str]) -> Line {
 }
 
 #[devkit::test]
+fn lifecycle_flags_belong_to_the_selected_step() {
+    let line = rows(&[
+        "events | fields text as id",
+        "archive",
+        "--all",
+        "--dry-run",
+        "read",
+    ]);
+    let parsed: Rows = serde_json::from_value(line.request.arguments).unwrap();
+    parsed.validate().unwrap();
+    assert!(matches!(
+        parsed.steps.as_slice(),
+        [
+            Step::Archive(sinex_protocol::rows::Lifecycle {
+                all: true,
+                dry_run: true
+            }),
+            Step::Read(_)
+        ]
+    ));
+    let line = rows(&[
+        "op:00000000-0000-7000-8000-000000000001",
+        "restore",
+        "--request-id",
+        "restore-once",
+    ]);
+    assert_eq!(line.request.request_id, "restore-once");
+    assert_eq!(line.request.arguments["steps"][0]["verb"], "restore");
+    assert_eq!(line.request.arguments["steps"][0]["all"], false);
+    assert!(parse(&words(&["events", "archive", "--material", "x"])).is_err());
+}
+
+#[devkit::test]
 fn existing_commands_keep_precedence_and_their_original_options() {
     for command in sinex_protocol::COMMANDS {
         for prefix in [

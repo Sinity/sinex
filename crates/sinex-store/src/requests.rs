@@ -163,6 +163,40 @@ pub async fn step(
     ).fetch_one(conn).await?)
 }
 
+/// Bind a lifecycle step before its first batch can commit. The operation's
+/// own progress remains the authority after a lost response or daemon restart.
+pub async fn accept_lifecycle(
+    conn: &mut PgConnection,
+    request: OperationId,
+    index: usize,
+    proposed: crate::lifecycle::Operation,
+) -> Result<crate::lifecycle::Operation> {
+    let mut tx = conn.begin().await?;
+    let progress = sqlx::query_scalar!(
+        "SELECT progress FROM core.operations WHERE id=$1 AND kind='request' FOR UPDATE",
+        request.0
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    let key = index.to_string();
+    if let Some(stored) = progress.get("lifecycle").and_then(|plans| plans.get(&key)) {
+        tx.rollback().await?;
+        return serde_json::from_value(stored.clone())
+            .map_err(|error| Error::Invalid(format!("accepted lifecycle: {error}")));
+    }
+    let proposed_json =
+        serde_json::to_value(&proposed).map_err(|error| Error::Invalid(error.to_string()))?;
+    sqlx::query!(
+        r#"UPDATE core.operations SET progress=jsonb_set(
+             progress || jsonb_build_object('lifecycle',COALESCE(progress->'lifecycle','{}'::jsonb)),
+             ARRAY['lifecycle',$2::text],$3)
+           WHERE id=$1 AND kind='request'"#,
+        request.0,key,proposed_json
+    ).execute(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(proposed)
+}
+
 /// Record the exact reply beside a mutation, never after its commit.
 /// An existing outcome is immutable; the caller returns it before applying effects.
 pub async fn save_step(

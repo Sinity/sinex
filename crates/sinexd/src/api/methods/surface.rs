@@ -5,6 +5,8 @@ use command_surface::{Answer as SurfaceAnswer, Operation, OperationFuture, Reque
 use sinex_commands::Status;
 use std::sync::Arc;
 
+mod lifecycle;
+
 pub(crate) fn table(api: Api) -> command_surface::OperationTable {
     let mut table =
         command_surface::OperationTable::new(Arc::clone(sinex_commands::declarations()));
@@ -195,16 +197,26 @@ impl Api {
         request.validate()?;
         let mut context = self.context();
         let mut conn = self.acquire(caller).await?;
-        let writes = request
+        let writes = request.steps.iter().any(|step| match step {
+            Step::Read(_) => false,
+            Step::Archive(options) | Step::Restore(options) => !options.dry_run,
+            Step::Save(_) | Step::Note(_) => true,
+        });
+        let lifecycle = request
             .steps
             .iter()
-            .any(|step| !matches!(step, Step::Read(_)));
+            .any(|step| matches!(step, Step::Archive(_) | Step::Restore(_)));
         let reads = request.steps.is_empty()
             || request
                 .steps
                 .iter()
                 .any(|step| matches!(step, Step::Read(_)));
-        if writes && !caller.grants.split(',').any(|grant| grant == "guarded") {
+        if request
+            .steps
+            .iter()
+            .any(|step| matches!(step, Step::Save(_) | Step::Note(_)))
+            && !caller.grants.split(',').any(|grant| grant == "guarded")
+        {
             return Err(Error::refused("query authoring requires the guarded grant"));
         }
         let writer = if writes {
@@ -236,7 +248,11 @@ impl Api {
             None
         };
         let question = if let Some(accepted) = &accepted {
-            if reads {
+            if (reads || lifecycle)
+                && request.selection.as_deref().is_some_and(|text| {
+                    query::parse_reference(text).is_err() && !text.starts_with("op:")
+                })
+            {
                 let question = if let Some(question) = &accepted.question {
                     question.clone()
                 } else {
@@ -362,6 +378,37 @@ impl Api {
         let mut failed = false;
         for (index, step) in request.steps.iter().enumerate() {
             let Step::Read(read) = step else {
+                if matches!(step, Step::Archive(_) | Step::Restore(_)) {
+                    let outcome = if failed {
+                        StepOutcome::NotRun
+                    } else {
+                        match self
+                            .lifecycle_line(
+                                &request,
+                                caller,
+                                &mut conn,
+                                question.as_ref(),
+                                accepted.as_ref(),
+                                index,
+                            )
+                            .await
+                        {
+                            Ok(outcome) => outcome,
+                            Err(error) => StepOutcome::Failed {
+                                error: error.failure(),
+                            },
+                        }
+                    };
+                    failed |= matches!(
+                        outcome,
+                        StepOutcome::Failed { .. } | StepOutcome::StoppedEarly { .. }
+                    );
+                    reports.push(StepReport {
+                        verb: step.verb().into(),
+                        outcome,
+                    });
+                    continue;
+                }
                 let recorded = accepted.as_ref().and_then(|accepted| accepted.step(index));
                 let outcome = if let Some(recorded) = recorded {
                     let recorded: sinex_store::requests::CommittedStep =
@@ -389,7 +436,9 @@ impl Api {
                             self.note_moment(note, caller, operation, index, metadata)
                                 .await
                         }
-                        Step::Read(_) => unreachable!("read step handled separately"),
+                        Step::Read(_) | Step::Archive(_) | Step::Restore(_) => {
+                            unreachable!("step handled separately")
+                        }
                     };
                     match result {
                         Ok(reply) => {
@@ -560,7 +609,7 @@ impl Api {
             }
             self.unseal_values(values).await?;
         }
-        let mut answer = if shown == 0 && !writes {
+        let mut answer = if shown == 0 && !writes && !lifecycle {
             SurfaceAnswer::empty(reply)
         } else {
             SurfaceAnswer::ok(reply)
@@ -576,8 +625,10 @@ impl Api {
             answer.envelope.notes.push("Selected subjects and their order are retained; mutable unit values are read from their current state.".into());
         }
         answer.envelope.read_as = read_as;
-        answer.envelope.count = Some(command_surface::Count::exact(count));
-        answer.envelope.shown = Some(shown);
+        if reads || !lifecycle {
+            answer.envelope.count = Some(command_surface::Count::exact(count));
+            answer.envelope.shown = Some(shown);
+        }
         answer.envelope.next = next
             .into_iter()
             .map(|request| command_surface::Next {
@@ -610,12 +661,16 @@ fn retained_write_reply(
                 },
             ),
             Step::Read(_) => ("read", StepOutcome::NotRun),
-            Step::Save(_) | Step::Note(_) => {
+            Step::Save(_) | Step::Note(_) | Step::Archive(_) | Step::Restore(_) => {
                 let outcome = if let Some(recorded) = accepted.step(index) {
                     let recorded: sinex_store::requests::CommittedStep =
                         serde_json::from_value(recorded.clone())?;
-                    StepOutcome::Done {
-                        reply: StepReply::Written(recorded.reply),
+                    if matches!(step, Step::Archive(_) | Step::Restore(_)) {
+                        lifecycle::lifecycle_outcome(recorded.reply)
+                    } else {
+                        StepOutcome::Done {
+                            reply: StepReply::Written(recorded.reply),
+                        }
                     }
                 } else {
                     StepOutcome::NotRun

@@ -1533,13 +1533,37 @@ async fn stage_write(
 async fn lifecycle_step(
     connection: &mut AdmissionContext,
     operation: &lifecycle::Operation,
-    progress: Progress,
+    mut progress: Progress,
     roots: lifecycle::Roots,
     keys: &dyn DirtyKeys,
     store: Option<&Blobs>,
 ) -> Result<LifecycleStep, WriteError> {
     let started = Instant::now();
     let mut tx = connection.begin().await?;
+    // A cancelled caller can leave its already-queued batch to commit. The
+    // next attempt must observe that commit here, after reaching the writer.
+    if let Some(stored) = sqlx::query!(
+        "SELECT progress,result FROM core.operations WHERE id=$1",
+        operation.id.0
+    )
+    .fetch_optional(tx.connection())
+    .await?
+    {
+        progress = serde_json::from_value(stored.progress)
+            .map_err(|error| sinex_store::Error::Invalid(format!("lifecycle progress: {error}")))?;
+        if stored.result.as_deref() == Some("ok") {
+            tx.rollback().await?;
+            return Ok(LifecycleStep {
+                step: Step::Moved {
+                    progress,
+                    counts: Default::default(),
+                    done: true,
+                    remove: Vec::new(),
+                },
+                held: started.elapsed(),
+            });
+        }
+    }
     let since = sinex_store::query::current_seq(&mut tx).await?;
     let step = match lifecycle::step(&mut tx, operation, progress, roots, keys).await {
         Ok(step) => step,

@@ -57,16 +57,7 @@ pub(crate) async fn run(
 ) -> Result<Answer> {
     let op = lifecycle::begin(read, act, actor, scope).await?;
     if compare {
-        let Comparison { counts, refusals } =
-            lifecycle::compare(read, &op, FIRST_ROOTS * 16).await?;
-        return Ok(Answer::Done(json!({
-            "compare_only": true,
-            "act": act.as_db(),
-            "scope": op.scope,
-            "cascade": counts,
-            "refusals": refusals,
-            "would_refuse": !refusals.is_empty(),
-        })));
+        return preview(read, &op).await;
     }
     crate::request_deadline::handoff_read(read).await?;
     let source = if matches!(op.scope, Scope::Source { .. }) {
@@ -75,6 +66,18 @@ pub(crate) async fn run(
         None
     };
     drive(writer, &op, Progress::default(), source).await
+}
+
+pub(crate) async fn preview(read: &mut PgConnection, op: &Operation) -> Result<Answer> {
+    let Comparison { counts, refusals } = lifecycle::compare(read, op, FIRST_ROOTS * 16).await?;
+    Ok(Answer::Done(json!({
+        "compare_only": true,
+        "act": op.act.as_db(),
+        "scope": op.scope,
+        "cascade": counts,
+        "refusals": refusals,
+        "would_refuse": !refusals.is_empty(),
+    })))
 }
 
 /// Archiving a removed producer's outputs continues its existing source operation after restart.
@@ -110,6 +113,52 @@ pub(crate) async fn resume(
         None
     };
     drive(writer, &op, progress, source).await
+}
+
+/// A typed request owns one operation identity, including the interval after
+/// its final batch commits and before the client receives its receipt.
+pub(crate) async fn retry(
+    read: &mut PgConnection,
+    writer: &WriterHandle,
+    op: &Operation,
+) -> Result<Answer> {
+    loop {
+        let stored = sqlx::query!(
+            "SELECT result,progress,counts,refusals FROM core.operations WHERE id=$1",
+            op.id.0
+        )
+        .fetch_optional(&mut *read)
+        .await?;
+        let progress = if let Some(stored) = stored {
+            let progress: Progress = serde_json::from_value(stored.progress)?;
+            if let Some(result) = stored.result {
+                let counts: Counts = serde_json::from_value(stored.counts)?;
+                let refusals: Vec<Refusal> = serde_json::from_value(stored.refusals)?;
+                let value = report(op, &progress, &counts, &refusals);
+                return Ok(if result == "ok" {
+                    Answer::Done(value)
+                } else {
+                    Answer::StoppedEarly(refusal_line(op, &refusals), value)
+                });
+            }
+            progress
+        } else {
+            Progress::default()
+        };
+        crate::request_deadline::handoff_read(read).await?;
+        let source = if matches!(op.scope, Scope::Source { .. }) && progress.phase == 0 {
+            Some(lifecycle::source_roots(read, op, progress.after)?)
+        } else {
+            None
+        };
+        let result = drive(writer, op, progress, source).await?;
+        if matches!(result, Answer::Refused(_)) {
+            return Ok(result);
+        }
+        // The operation owns cumulative counts, including batches from an earlier
+        // attempt. Read those after the driver finishes rather than reconstructing
+        // the receipt from only this attempt's batches.
+    }
 }
 
 async fn drive(
@@ -193,6 +242,7 @@ fn report(op: &Operation, progress: &Progress, moved: &Counts, refusals: &[Refus
         "cascade": moved,
         "refusals": refusals,
         "result": if refusals.is_empty() { "ok" } else { "stopped_early" },
+        "undo": format!("sinexctl undo {}", op.id),
     })
 }
 

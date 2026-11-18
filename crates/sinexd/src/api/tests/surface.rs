@@ -2,6 +2,22 @@
 use super::*;
 use sqlx::Connection;
 
+mod lifecycle;
+
+pub(super) fn lifecycle_request(selection: impl Into<String>, verb: &str) -> Value {
+    json!({
+        "operation":"rows", "request_id":sinex_model::OperationId::new(), "deadline":null,
+        "arguments":{"selection":selection.into(),"steps":[{"verb":verb,"all":true}]},
+    })
+}
+
+pub(super) fn lifecycle_receipt(answer: &Value) -> &Value {
+    assert_eq!(answer["outcome"], "ok", "{answer}");
+    let outcome = &answer["value"]["steps"][0]["outcome"];
+    assert_eq!(outcome["status"], "done", "{answer}");
+    &outcome["reply"]["reply"]
+}
+
 async fn status_call(w: &World, token: Option<&str>, arguments: Value) -> (StatusCode, Value) {
     let mut request = HttpRequest::post("/v1/status").header("content-type", "application/json");
     if let Some(token) = token {

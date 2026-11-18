@@ -43,7 +43,7 @@ mod select;
 pub use bytes::remove_unreferenced;
 
 /// An operation as the engine runs it.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Operation {
     pub id: OperationId,
     pub act: Act,

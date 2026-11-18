@@ -16,6 +16,112 @@ pub struct Question {
 }
 
 impl Question {
+    /// Resolve lifecycle subjects through the compiler's hidden identities.
+    /// Projection names and the display page cannot change the write scope.
+    pub async fn lifecycle_scope(
+        &self,
+        conn: &mut PgConnection,
+    ) -> Result<(sinex_model::lifecycle::Scope, u64)> {
+        use sinex_model::{EventId, MaterialId, lifecycle::Scope};
+        let mut context = self.context()?;
+        let refs: Vec<_> = self
+            .declarations
+            .iter()
+            .map(|(kind, _)| kind.clone())
+            .collect();
+        let declarations = sinex_schema::kinds::load(conn, &refs).await?;
+        if self.declarations.iter().any(|(kind, hash)| {
+            declarations
+                .get(kind)
+                .is_none_or(|declaration| declaration.definition_hash() != *hash)
+        }) {
+            return Err(Error::Invalid(
+                "accepted query declaration snapshot is unavailable".into(),
+            ));
+        }
+        context.catalog = Some(sinex_query::QueryCatalog::new(declarations.into_values()));
+        let mut query = sinex_query::template::bind(&self.template, &context)?;
+        context
+            .catalog
+            .as_ref()
+            .expect("declaration snapshot")
+            .bind(&mut query, &context)?;
+        let Source::Table { table, .. } = query.source else {
+            return Err(Error::Invalid(
+                "archive and restore need event, material or run rows".into(),
+            ));
+        };
+        if !matches!(
+            table,
+            Table::Events | Table::Archive | Table::Materials | Table::Runs
+        ) || query
+            .stages
+            .iter()
+            .any(|stage| matches!(stage, Stage::Group(_)))
+        {
+            return Err(Error::Invalid(
+                "archive and restore need individual event, material or run rows".into(),
+            ));
+        }
+        initialize_calendar(conn).await?;
+        let mut tx = conn.begin().await?;
+        read_one_snapshot(&mut tx).await?;
+        sqlx::query_scalar!("SELECT set_config('TimeZone',$1,true)", self.zone)
+            .fetch_one(&mut *tx)
+            .await?;
+        if self.population.is_some() {
+            query = accepted_subjects(&query);
+        }
+        let mut compiled = compile_query(&mut tx, &context, self.position, &query).await?;
+        if let Some((operation, _)) = self.population {
+            compiled = compiled.accepted_population(operation);
+        }
+        let field = if table.is_events() {
+            "_event_id"
+        } else {
+            "_row_identity"
+        };
+        let mut selection = SqlFragment::text(format!("SELECT q.\"{field}\"::text FROM ("));
+        selection.append(compiled.answer).push(") q");
+        let (sql, values) = selection.render();
+        let ids: Vec<String> = sql::bind_scalar(sqlx::query_scalar(&sql), values)
+            .fetch_all(&mut *tx)
+            .await?;
+        let count = ids.len() as u64;
+        let ids = ids
+            .into_iter()
+            .map(|id| {
+                id.parse::<uuid::Uuid>().map_err(|_| {
+                    Error::Invalid(
+                        "lifecycle selection contains a row without a subject identity".into(),
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let scope =
+            if table == Table::Materials {
+                Scope::Materials {
+                    materials: ids.into_iter().map(MaterialId).collect(),
+                }
+            } else if table == Table::Runs {
+                let events = sqlx::query_scalar!(
+                "SELECT id FROM core.events WHERE run_id=ANY($1) AND commit_seq<=$2 ORDER BY id",
+                &ids,self.position
+            ).fetch_all(&mut *tx).await?;
+                Scope::Events {
+                    events: events.into_iter().map(EventId).collect(),
+                    query: Some(self.text.clone()),
+                }
+            } else {
+                Scope::Events {
+                    events: ids.into_iter().map(EventId).collect(),
+                    query: Some(self.text.clone()),
+                }
+            };
+        tx.commit().await?;
+        Ok((scope, count))
+    }
+
     pub async fn accept(conn: &mut PgConnection, text: &str, context: &Context) -> Result<Self> {
         let mut tx = conn.begin().await?;
         read_one_snapshot(&mut tx).await?;

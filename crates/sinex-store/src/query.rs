@@ -223,6 +223,20 @@ pub struct QueryRead {
     pub event_ids: Vec<Option<uuid::Uuid>>,
 }
 
+/// Once identities are accepted, mutable predicates and display limits no
+/// longer choose membership. Values retain the ordinary visibility boundary.
+fn accepted_subjects(query: &Query) -> Query {
+    let mut subjects = query.clone();
+    subjects.filter = None;
+    subjects.stages.retain(|stage| {
+        !matches!(
+            stage,
+            Stage::Where(_) | Stage::Limit(_) | Stage::GroupFirst { .. }
+        )
+    });
+    subjects
+}
+
 pub async fn read_page(
     conn: &mut PgConnection,
     text: &str,
@@ -564,14 +578,7 @@ async fn run_inner(
         Source::Table { .. } => {
             read.check_availability()?;
             let compiled = if let Some((operation, _)) = population {
-                let mut subjects = query.clone();
-                subjects.filter = None;
-                subjects.stages.retain(|stage| {
-                    !matches!(
-                        stage,
-                        Stage::Where(_) | Stage::Limit(_) | Stage::GroupFirst { .. }
-                    )
-                });
+                let subjects = accepted_subjects(query);
                 compile_query(&mut tx, &read.ctx, read.seq, &subjects)
                     .await?
                     .accepted_population(operation)

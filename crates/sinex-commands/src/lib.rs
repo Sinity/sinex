@@ -76,6 +76,7 @@ pub fn declarations() -> &'static Arc<OperationDeclarations> {
             FailureKind::StaleCursor,
             FailureKind::NotFound,
             FailureKind::Refused,
+            FailureKind::StoppedEarly,
             FailureKind::NotConfigured,
             FailureKind::NotRunning,
             FailureKind::Internal,
