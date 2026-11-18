@@ -429,3 +429,5 @@ async fn maintenance_byte_budget_accepts_oversized_first_event_and_commit_gaps(
     consumer.handle(&gap.events, 3, &mut conn).await.unwrap();
     assert_eq!(consumer.position(&mut conn).await.unwrap(), 3);
 }
+
+mod search_memory;

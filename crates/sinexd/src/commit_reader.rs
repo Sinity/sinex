@@ -193,6 +193,15 @@ impl ReadModel for SearchText {
         tx: &'a mut PgConnection,
     ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
+            // Foreground GIN pending-list cleanup uses work_mem. Give this
+            // search transaction the maintenance budget, capped at 512 MiB per
+            // cleanup, and let commit or rollback restore the session value.
+            sqlx::query(
+                "SELECT set_config('work_mem',
+                 LEAST(pg_size_bytes(current_setting('maintenance_work_mem')),536870912)::text || 'B',true)",
+            )
+            .execute(&mut *tx)
+            .await?;
             sinex_store::read_models::apply_search_text(tx, events)
                 .await
                 .map_err(Error::from)

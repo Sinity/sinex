@@ -38,6 +38,12 @@ field descriptions and definition hashes are prepared once and reused. Queries
 with a supplied declaration snapshot use that snapshot, including later changes
 to registered kinds, without copying or replacing it with the bundled catalog.
 
+The search worker maintains the word and trigram indexes and its checkpoint in
+one transaction. Its foreground GIN cleanup uses the session's maintenance
+memory budget, capped at 512 MiB per cleanup. This setting lasts only for the
+search transaction; commit or rollback restores the connection's ordinary
+query budget. Other consumers and query connections retain their settings.
+
 ## Selections
 
 A selection is one argument: a query, time, path, URL, reference, terminal row
