@@ -230,7 +230,8 @@ operation failure. Confirmatory status and role remain visible to agents.
 
 The three MCP tools use the same [typed requests](interfaces.md#mcp):
 `sinex_read` for queries, measures and packs, `sinex_write` for authored evidence,
-and `sinex_act` for experiment actions. Credential restrictions still apply.
+and `sinex_act` when an action reaches outside Sinex. Each declaration owns its
+required tool access; experiment operator restrictions apply independently.
 The evidence units and web designs remain part of the domain contract:
 
 | Unit | Rows | Notable fields |
