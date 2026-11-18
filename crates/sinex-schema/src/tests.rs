@@ -107,10 +107,7 @@ async fn a_forward_step_runs_from_its_version_and_records_the_next(db: devkit::p
 }
 
 async fn requests_before_outcomes(conn: &mut PgConnection) {
-    sqlx::query("ALTER TABLE derivation.positions DROP COLUMN reading_order")
-        .execute(&mut *conn)
-        .await
-        .unwrap();
+    reading_orders::positions_without_reading_orders(conn).await;
     sqlx::query("DROP TABLE core.operation_rows")
         .execute(&mut *conn)
         .await

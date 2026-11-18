@@ -72,13 +72,14 @@ async fn output_order_and_position_commit_and_roll_back_together(db: devkit::pg:
     assert_eq!(progress(&mut tx).await, (20, high));
     tx.rollback().await.unwrap();
     assert_eq!(progress(&mut conn).await, (10, 7));
-    admit_one(&mut conn, &derived(&parent, vec![], 20)).await;
-    assert_eq!(progress(&mut conn).await, (20, 7));
     // An offered repeat with a larger order is not a stored interpretation.
     let mut repeated = first;
     repeated.reading_order = ReadingOrder(high * 2);
-    let result = admit_one(&mut conn, &derived(&parent, vec![repeated], 30)).await;
+    let result = admit_one(&mut conn, &derived(&parent, vec![repeated], 20)).await;
     assert_eq!(result.repeats, 1);
+    assert_eq!(progress(&mut conn).await, (20, 7));
+    // A complete empty result archives the prior output, retaining its order.
+    admit_one(&mut conn, &derived(&parent, vec![], 30)).await;
     assert_eq!(progress(&mut conn).await, (30, 7));
     admit_one(
         &mut conn,
