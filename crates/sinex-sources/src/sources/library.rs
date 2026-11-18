@@ -3,7 +3,7 @@
 //! **Scan** (`library.scan`): a walk of a library root. By default changed files
 //! are hashed, sniffed, streamed into the content store unless the root is
 //! indexed by reference, and described by one JSON line (`library.copy`).
-//! Explicitly selected Ollama blobs instead retain file facts and locations
+//! Explicitly selected Ollama blobs and downloaded files instead retain file facts and locations
 //! without reading contents (`document.captured`). The material is those lines. A completion line closes
 //! each changed scan once, without another copy event. A file that left its
 //! path and whose bytes turned up at a new path is a move (`moved_from`);
@@ -16,11 +16,30 @@
 //! own JSON lines and read back by the request parser. The parser takes the
 //! author, channel and time from the material's manifest, which the daemon
 //! fills from the authenticated caller, never from the lines.
-use serde_json::json;
+use serde_json::{Value, json};
 use sinex_source_core::discovery::{DiscoverySpec, Location};
 use sinex_source_core::drivers::export_archive::{Framing, frame_lines};
 use sinex_source_core::registry::{Expectation, Origin, Shape, SourceSpec};
 use sinex_source_core::{Framer, binding};
+use std::path::{Component, PathBuf};
+
+fn metadata_paths(options: &Value, name: &str) -> Result<Vec<PathBuf>, String> {
+    let paths: Vec<PathBuf> = options
+        .get(name)
+        .map(|value| serde_json::from_value(value.clone()))
+        .transpose()
+        .map_err(|error| format!("{name}: {error}"))?
+        .unwrap_or_default();
+    if paths.iter().any(|path| {
+        path.as_os_str().is_empty()
+            || path
+                .components()
+                .any(|part| !matches!(part, Component::Normal(_)))
+    }) {
+        return Err(format!("{name} must contain nonempty root-relative paths"));
+    }
+    Ok(paths)
+}
 
 mod files;
 mod requests;
@@ -95,14 +114,6 @@ super::input_format! {
         if b.source != SCAN.name {
             return Err("library requests are supplied by the API".into());
         }
-        let metadata: Vec<std::path::PathBuf> = b.settings.options.get("ollama_blobs_metadata")
-            .map(|value| serde_json::from_value(value.clone()))
-            .transpose().map_err(|error| format!("ollama_blobs_metadata: {error}"))?
-            .unwrap_or_default();
-        if metadata.iter().any(|path| path.as_os_str().is_empty()
-            || path.components().any(|part| !matches!(part, std::path::Component::Normal(_)))) {
-            return Err("ollama_blobs_metadata must contain nonempty root-relative paths".into());
-        }
         Ok(binding::polled(LibraryReader::new(LibraryScan {
             root: b.input.clone(),
             host: b.settings.host.clone(),
@@ -110,7 +121,8 @@ super::input_format! {
             probe: true,
             bytes_per_poll: 1 << 30,
             only: b.settings.option("only").map(str::to_owned),
-            ollama_blobs_metadata: metadata,
+            ollama_blobs_metadata: metadata_paths(&b.settings.options, "ollama_blobs_metadata")?,
+            metadata_only_roots: metadata_paths(&b.settings.options, "metadata_only_roots")?,
         })))
     },
 } }

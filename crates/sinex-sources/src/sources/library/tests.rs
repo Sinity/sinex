@@ -74,6 +74,7 @@ pub(super) fn scan(root: &Path) -> LibraryScan {
         bytes_per_poll: 1 << 30,
         only: None,
         ollama_blobs_metadata: Vec::new(),
+        metadata_only_roots: Vec::new(),
     }
 }
 
@@ -798,16 +799,61 @@ fn tiny_owned_files_continue_in_a_second_poll() {
 }
 
 #[test]
-fn ollama_metadata_options_reject_paths_outside_the_library_root() {
-    for path in ["", "/absolute/blobs", "../blobs", "model/../blobs"] {
-        let mut settings = sinex_source_core::Settings::new("example-host");
-        settings.options = json!({"ollama_blobs_metadata": [path]});
-        let binding =
-            sinex_source_core::Binding::of(&SCAN, Path::new("/synthetic/library"), settings);
-        assert!((FORMAT.reader.unwrap())(&binding).is_err(), "{path}");
+fn metadata_options_reject_paths_outside_the_library_root() {
+    for option in ["ollama_blobs_metadata", "metadata_only_roots"] {
+        for path in ["", "/absolute/blobs", "../blobs", "model/../blobs"] {
+            let mut settings = sinex_source_core::Settings::new("example-host");
+            settings.options = json!({(option): [path]});
+            let binding =
+                sinex_source_core::Binding::of(&SCAN, Path::new("/synthetic/library"), settings);
+            assert!(
+                (FORMAT.reader.unwrap())(&binding).is_err(),
+                "{option}: {path}"
+            );
+        }
     }
     let mut settings = sinex_source_core::Settings::new("example-host");
     settings.options = json!({"ollama_blobs_metadata": ["model/ollama/blobs"]});
     let binding = sinex_source_core::Binding::of(&SCAN, Path::new("/synthetic/library"), settings);
     assert!((FORMAT.reader.unwrap())(&binding).is_ok());
+}
+
+#[devkit::test]
+fn selected_downloads_keep_locations_and_neighboring_files_keep_bytes() {
+    let root = tempfile::tempdir().unwrap();
+    let downloaded = "steamapps/common/game/data.bin";
+    let retained = [
+        "steamapps/compatdata/game/save.bin",
+        "steamapps/common-notes/config",
+    ];
+    for path in std::iter::once(downloaded).chain(retained) {
+        let path = root.path().join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, b"synthetic contents").unwrap();
+    }
+    let mut scanner = scan(root.path());
+    scanner.metadata_only_roots = vec!["steamapps/common".into()];
+    let mut state = ScanState::default();
+    let acquired = scanner.poll(&Value::Null, &mut state).unwrap();
+    let material = acquired.material.as_ref().unwrap();
+    assert_eq!(state.files_hashed(), retained.len());
+    let owned: std::collections::BTreeSet<_> = material
+        .owned_files
+        .iter()
+        .map(|file| file.path.clone())
+        .collect();
+    assert_eq!(
+        owned,
+        std::collections::BTreeSet::from(retained.map(|path| root.path().join(path)))
+    );
+    let events = read_events(&acquired, &sinex_source_core::Stateless(ScanParser));
+    let locations: Vec<_> = events
+        .iter()
+        .filter(|event| event.event_type == "document.captured")
+        .collect();
+    assert_eq!(locations.len(), 1);
+    assert_eq!(locations[0].payload["path"], downloaded);
+    assert_eq!(locations[0].payload["size"], 18);
+    assert_eq!(locations[0].payload["located"], true);
+    assert!(locations[0].payload["content"].is_null());
 }

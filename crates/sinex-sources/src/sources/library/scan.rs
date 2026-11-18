@@ -248,6 +248,8 @@ pub struct LibraryScan {
     /// Root-relative Ollama blob directories whose recognized direct leaves
     /// keep filesystem observations without reading or storing their contents.
     pub ollama_blobs_metadata: Vec<PathBuf>,
+    /// Downloaded trees recorded by file facts without retaining file bytes.
+    pub metadata_only_roots: Vec<PathBuf>,
 }
 
 /// What a scan knows about a file it already observed.
@@ -536,22 +538,25 @@ impl LibraryScan {
     // The filename selects the policy only; it never supplies a content digest.
     fn metadata_only(&self, relative: &str) -> bool {
         let path = Path::new(relative);
-        self.ollama_blobs_metadata.iter().any(|root| {
-            let Ok(leaf) = path.strip_prefix(root) else {
-                return false;
-            };
-            if leaf.components().count() != 1 {
-                return false;
-            }
-            leaf.to_str()
-                .and_then(|name| name.strip_prefix("sha256-"))
-                .is_some_and(|name| {
-                    name.len() == 64
-                        && name
-                            .bytes()
-                            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-                })
-        })
+        self.metadata_only_roots
+            .iter()
+            .any(|root| path.starts_with(root))
+            || self.ollama_blobs_metadata.iter().any(|root| {
+                let Ok(leaf) = path.strip_prefix(root) else {
+                    return false;
+                };
+                if leaf.components().count() != 1 {
+                    return false;
+                }
+                leaf.to_str()
+                    .and_then(|name| name.strip_prefix("sha256-"))
+                    .is_some_and(|name| {
+                        name.len() == 64
+                            && name
+                                .bytes()
+                                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                    })
+            })
     }
 
     fn prepare(&self, path: &Path) -> std::io::Result<Prepared> {
@@ -1133,13 +1138,19 @@ impl LibraryScan {
         } else {
             0
         };
-        let manifest = sinex_model::Manifest::from_json(json!({
+        let mut manifest = sinex_model::Manifest::from_json(json!({
             "path": root, "host": self.host,
             "media_type": "application/x-sinex-library-scan", "keep_bytes": self.keep_bytes,
             "ollama_blobs_metadata": self.ollama_blobs_metadata,
             "walk_complete": walk_done, "only": self.only, "read_at_ns": read_at,
             "scan": id.to_string(), "part_index": part_index,
         }));
+        if !self.metadata_only_roots.is_empty() {
+            manifest.details.insert(
+                "metadata_only_roots".into(),
+                json!(self.metadata_only_roots),
+            );
+        }
         let changed = previous
             .changed_since_memory
             .saturating_add(files_described);
