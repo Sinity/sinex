@@ -232,7 +232,7 @@ async fn call(
 async fn surface_call(
     State(state): State<AppState>,
     headers: HeaderMap,
-    axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
+    uri: axum::http::Uri,
     body: axum::body::Bytes,
 ) -> Response {
     let granted = match credential(&state, &headers, Access::Read) {
