@@ -65,8 +65,8 @@ async fn reading_order_upgrade_keeps_old_maxima_and_positions(db: devkit::pg::Te
         assert_eq!(
             progress,
             vec![
-                ("synthetic.orders.0".into(), 123),
-                ("synthetic.legacy".into(), 456)
+                ("synthetic.legacy".into(), 456),
+                ("synthetic.orders.0".into(), 123)
             ]
         );
     }
