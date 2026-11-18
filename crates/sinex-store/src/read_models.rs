@@ -35,6 +35,20 @@ pub async fn set_search_position(conn: &mut PgConnection, commit_seq: i64) -> Re
     Ok(())
 }
 
+/// Give the search worker's open transaction the session maintenance budget,
+/// capped at 512 MiB per foreground GIN cleanup. Commit or rollback restores the
+/// original work_mem. Call only inside the search consumer's transaction.
+pub async fn set_search_memory_budget(conn: &mut PgConnection) -> Result<()> {
+    // Foreground pending-list cleanup uses work_mem, not maintenance_work_mem.
+    sqlx::query!(
+        "SELECT set_config('work_mem',
+         LEAST(pg_size_bytes(current_setting('maintenance_work_mem')),536870912)::text || 'B',true)"
+    )
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
 /// Index committed events' payload text in `core.search_text`, inside the
 /// caller's transaction. The commit-log reader calls this with the events of
 /// one maintenance batch and saves its position in the same transaction.
