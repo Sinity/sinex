@@ -3,7 +3,7 @@
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sinex_model::OperationId;
+use sinex_model::{DbCheck, OperationId};
 use sqlx::PgConnection;
 
 /// The authenticated retry namespace and original normalized request.
