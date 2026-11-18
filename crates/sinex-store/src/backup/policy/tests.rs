@@ -136,8 +136,10 @@ async fn copy_waits_for_an_already_running_policy_before_exporting(db: devkit::p
     ] {
         sqlx::query(statement).execute(&mut *owner).await.unwrap();
     }
+    // Only the manual run starts this policy. A scheduler run could select
+    // the same chunk while the deliberately blocked worker waits for its lock.
     let job: i32 = sqlx::query_scalar(
-        "SELECT add_compression_policy('core.synthetic_backup_policy',interval '7 days')",
+        "SELECT add_compression_policy('core.synthetic_backup_policy',interval '7 days',initial_start=>now()+interval '1 day')",
     )
     .fetch_one(&mut *owner)
     .await
