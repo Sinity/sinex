@@ -114,6 +114,7 @@ pub(super) async fn apply_derived(
     scope: &Value,
     batch: &Batch,
     resolved: &[Option<Uuid>],
+    admitted_reading_order: Option<i64>,
     keys: &dyn DirtyKeys,
 ) -> Result<usize> {
     let scope: DerivedScope = serde_json::from_value(scope.clone())
@@ -219,10 +220,13 @@ pub(super) async fn apply_derived(
                 dirty
             };
             sqlx::query!(
-                r#"INSERT INTO derivation.positions (derivation, commit_seq) VALUES ($1, $2)
-                   ON CONFLICT (derivation) DO UPDATE SET commit_seq = greatest(derivation.positions.commit_seq, EXCLUDED.commit_seq)"#,
+                r#"INSERT INTO derivation.positions (derivation,commit_seq,reading_order) VALUES ($1,$2,coalesce($3::bigint,0))
+                   ON CONFLICT (derivation) DO UPDATE SET
+                   commit_seq=greatest(derivation.positions.commit_seq,EXCLUDED.commit_seq),
+                   reading_order=greatest(derivation.positions.reading_order,$3)"#,
                 derivation,
                 position,
+                admitted_reading_order,
             )
             .execute(&mut *conn)
             .await?;

@@ -322,3 +322,11 @@ Targets are stated as hardware-independent figures (rows read per key, invalidat
 | Documents | 4 MiB-plus and 100 MiB inputs are complete with range equality; extraction and chunking measured apart; a resource failure is explicit and retryable, never a successful prefix |
 | Long history | full, incremental, reversed and late worlds agree beyond 10,000 windows, 1,024 units, 64 refresh neighbours and a closer a month late; unrelated keys are not recomputed |
 | Disabled providers | zero provider setup, probes and calls on every path |
+
+Per-event derivations keep their committed input position and largest admitted
+output reading order together. A restart reads those producer rows, rather than
+scanning event history. Empty or suppressed output batches advance input progress
+without inventing an output order; a rolled-back batch advances neither. A version
+replay resets only the input position, keeping the previous output order so its
+new interpretations can supersede older readings. The schema upgrade seeds old
+maxima once, including archived and replaced outputs.

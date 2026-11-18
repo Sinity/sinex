@@ -31,6 +31,10 @@ pub(crate) const STEPS: &[Step] = &[
         name: "request_outcomes",
         statements: request_outcomes,
     },
+    Step {
+        name: "derivation_reading_orders",
+        statements: derivation_reading_orders,
+    },
 ];
 
 fn source_exclusions() -> Vec<String> {
@@ -79,4 +83,34 @@ fn request_outcomes() -> Vec<String> {
         crate::tables::OPERATION_REQUESTS.into(),
         crate::tables::OPERATION_ROWS.into(),
     ]
+}
+
+fn derivation_reading_orders() -> Vec<String> {
+    // The step compares its own two table shapes, even after later upgrades.
+    let mut after = crate::description::Description::current();
+    after.tables = vec![crate::tables::POSITIONS_WITH_READING_ORDERS.into()];
+    let mut before = crate::description::Description::current();
+    before.tables = vec!["CREATE TABLE derivation.positions (derivation text PRIMARY KEY, commit_seq bigint NOT NULL)".into()];
+    let mut statements = after.changes_from(&before);
+    // Seed once from every stored reading, including archived/replaced ones.
+    // Version selection can have reset a producer before this upgrade.
+    statements.push(
+        r#"WITH producers AS MATERIALIZED (
+        SELECT derivation AS name FROM derivation.positions
+        UNION SELECT name FROM registry.derivations WHERE kind='per_event'
+    ), selected_runs AS MATERIALIZED (
+        SELECT r.id,r.name FROM core.runs r JOIN producers p ON p.name=r.name WHERE r.events>0
+    ), maxima AS MATERIALIZED (
+        SELECT r.name,max(e.reading_order) AS reading_order
+        FROM core.events e JOIN selected_runs r ON r.id=e.run_id
+        WHERE EXISTS (SELECT 1 FROM selected_runs) GROUP BY r.name
+    )
+    INSERT INTO derivation.positions(derivation,commit_seq,reading_order)
+    SELECT p.name,coalesce(old.commit_seq,0),coalesce(m.reading_order,0)
+    FROM producers p LEFT JOIN derivation.positions old ON old.derivation=p.name
+    LEFT JOIN maxima m ON m.name=p.name
+    ON CONFLICT(derivation) DO UPDATE SET reading_order=EXCLUDED.reading_order"#
+            .into(),
+    );
+    statements
 }

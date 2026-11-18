@@ -573,7 +573,7 @@ impl DerivationRunner {
                 .map(|derivation| derivation.name().to_owned())
                 .collect::<Vec<_>>();
             self.previous_orders =
-                Some(derivations::latest_reading_orders(&mut self.read, &producers).await?);
+                Some(derivations::reading_orders(&mut self.read, &producers).await?);
         }
         Ok(())
     }

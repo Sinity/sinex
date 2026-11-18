@@ -107,6 +107,10 @@ async fn a_forward_step_runs_from_its_version_and_records_the_next(db: devkit::p
 }
 
 async fn requests_before_outcomes(conn: &mut PgConnection) {
+    sqlx::query("ALTER TABLE derivation.positions DROP COLUMN reading_order")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
     sqlx::query("DROP TABLE core.operation_rows")
         .execute(&mut *conn)
         .await
@@ -330,3 +334,5 @@ async fn request_outcomes_upgrade_preserves_operations(db: devkit::pg::TestDatab
             .unwrap();
     assert_eq!(progress, serde_json::json!({"accepted":true}));
 }
+
+mod reading_orders;

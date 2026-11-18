@@ -55,10 +55,6 @@ impl Description {
     /// their constraints are checked in one scan of its rows. A changed or
     /// removed column or constraint is a data transformation, which an
     /// upgrade step declares itself; asking for one here is a defect.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the next structural upgrade step calls it")
-    )]
     pub(crate) fn changes_from(&self, before: &Self) -> Vec<String> {
         let before_tables: BTreeMap<_, _> = before
             .tables
@@ -120,10 +116,6 @@ impl Description {
 
 /// The table language is our own CREATE TABLE declarations. Quoted strings
 /// and nested expressions are kept intact when separating its columns.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the next structural upgrade step calls it")
-)]
 struct Table {
     name: String,
     columns: BTreeMap<String, String>,
@@ -168,10 +160,6 @@ impl Table {
 
 /// The comma-separated entries of a table body, ignoring commas inside
 /// quotes, parentheses and brackets.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the next structural upgrade step calls it")
-)]
 fn entries(body: &str) -> Vec<&str> {
     let mut entries = Vec::new();
     let mut start = 0;

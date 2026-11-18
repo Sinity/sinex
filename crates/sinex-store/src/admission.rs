@@ -253,6 +253,7 @@ pub(crate) async fn admit(
     // The live reading each offered event ends as: itself when admitted, the
     // reading it repeats when suppressed. A derived batch's keys own these.
     let mut resolved: Vec<Option<Uuid>> = Vec::new();
+    let mut admitted_reading_order = None;
 
     if let BatchKind::Ingress(frame) = &batch.kind
         && frame
@@ -360,13 +361,32 @@ pub(crate) async fn admit(
             )
             .await?;
         }
+        if matches!(&batch.kind, BatchKind::Derived { .. }) {
+            admitted_reading_order = classified
+                .admit
+                .iter()
+                .map(|ord| {
+                    events[usize::try_from(*ord).expect("ord is an index")]
+                        .reading_order
+                        .0
+                })
+                .max();
+        }
         resolved = classified.resolved;
     }
 
     let started = std::time::Instant::now();
     if let BatchKind::Derived { derivation, scope } = &batch.kind {
-        outcome.dirty_keys +=
-            derived::apply_derived(conn, derivation, scope, batch, &resolved, keys).await?;
+        outcome.dirty_keys += derived::apply_derived(
+            conn,
+            derivation,
+            scope,
+            batch,
+            &resolved,
+            admitted_reading_order,
+            keys,
+        )
+        .await?;
     }
     outcome.timings.insert("derived", started.elapsed());
     let started = std::time::Instant::now();

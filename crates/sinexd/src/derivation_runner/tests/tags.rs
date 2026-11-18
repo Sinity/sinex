@@ -152,16 +152,69 @@ async fn changed_rules_replace_even_a_large_previous_reading_order(db: devkit::p
         .await
         .unwrap();
     assert_eq!(w.live::<TagApplied>().await[0].rules, ["previous rule"]);
+    let stored =
+        sinex_store::derivations::reading_orders(&mut previous.read, &[TagApplier::NAME.into()])
+            .await
+            .unwrap();
+    assert_eq!(stored[TagApplier::NAME], 1_i64 << 40);
     previous.end_runs().await.unwrap();
     let changed = TagApplier::new(serde_json::from_value(json!([
         {"tag": "sys.source.terminal", "event_type": "command.imported", "when": [{"field": "/command", "is": "make"}]}
     ])).unwrap()).unwrap();
     let mut current = w.driver_with(vec![], vec![Box::new(changed)]).await;
+    // This startup connection can read positions, but not event history.
+    let role = format!("synthetic_orders_{}", uuid::Uuid::now_v7().simple());
+    sqlx::query(&format!("CREATE ROLE {role}"))
+        .execute(&mut current.read)
+        .await
+        .unwrap();
+    sqlx::query(&format!("GRANT USAGE ON SCHEMA derivation TO {role}"))
+        .execute(&mut current.read)
+        .await
+        .unwrap();
+    sqlx::query(&format!("GRANT SELECT ON derivation.positions TO {role}"))
+        .execute(&mut current.read)
+        .await
+        .unwrap();
+    sqlx::query(&format!("SET ROLE {role}"))
+        .execute(&mut current.read)
+        .await
+        .unwrap();
+    let seeded = current.seed_reading_orders().await;
+    sqlx::query("RESET ROLE")
+        .execute(&mut current.read)
+        .await
+        .unwrap();
+    sqlx::query(&format!("DROP OWNED BY {role}"))
+        .execute(&mut current.read)
+        .await
+        .unwrap();
+    sqlx::query(&format!("DROP ROLE {role}"))
+        .execute(&mut current.read)
+        .await
+        .unwrap();
+    seeded.unwrap();
+    assert_eq!(
+        current.previous_orders.as_ref().unwrap()[TagApplier::NAME],
+        1_i64 << 40
+    );
     let compared = current.compare("tag.applier", None, 5).await.unwrap();
     current
         .switch("tag.applier", compared.id.unwrap(), "test")
         .await
         .unwrap();
+    assert_eq!(
+        sinex_store::derivations::position(&mut current.read, TagApplier::NAME)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        sinex_store::derivations::reading_orders(&mut current.read, &[TagApplier::NAME.into()])
+            .await
+            .unwrap()[TagApplier::NAME],
+        1_i64 << 40
+    );
     current.catch_up().await.unwrap();
     let live = w.live::<TagApplied>().await;
     assert_eq!(live.len(), 1);

@@ -530,7 +530,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   held_by uuid,
   PRIMARY KEY (derivation, key)
 )".into(),
-        "CREATE TABLE derivation.positions (derivation text PRIMARY KEY, commit_seq bigint NOT NULL)".into(),
+        POSITIONS_WITH_READING_ORDERS.into(),
         // Each key's current outputs, so a recompute replaces the key's
         // outputs as a set: outputs no longer produced are archived.
         "CREATE TABLE derivation.outputs (
@@ -835,3 +835,6 @@ const PRODUCER_ORDERS: &str = "CREATE TABLE core.producer_orders (
   reading_order bigint NOT NULL,
   PRIMARY KEY (source, event_type, key_hash)
 )";
+
+/// Per-event progress and the largest admitted output order survive restarts.
+pub(crate) const POSITIONS_WITH_READING_ORDERS: &str = "CREATE TABLE derivation.positions (derivation text PRIMARY KEY, commit_seq bigint NOT NULL, reading_order bigint NOT NULL DEFAULT 0)";

@@ -845,18 +845,16 @@ pub(crate) async fn live_at(
     Ok(out)
 }
 
-/// Historical reading-order maxima for the requested producers, before new runs.
-pub async fn latest_reading_orders(
+/// Stored output-order maxima for the requested producers, without reading history.
+pub async fn reading_orders(
     conn: &mut PgConnection,
     producers: &[String],
 ) -> Result<BTreeMap<String, i64>> {
     if producers.is_empty() {
         return Ok(BTreeMap::new());
     }
-    // Admission and tombstoning keep runs.events equal to stored event rows.
-    // Empty runs need no history; archived/replaced readings still own maxima.
     Ok(
-        sqlx::query_file!("src/derivations/latest_reading_orders.sql", producers)
+        sqlx::query_file!("src/derivations/reading_orders.sql", producers)
             .fetch_all(conn)
             .await?
             .into_iter()
@@ -1010,7 +1008,7 @@ pub async fn position(conn: &mut PgConnection, derivation: &str) -> Result<i64> 
 /// Reset a per-event producer only as part of an explicit version switch.
 pub async fn reset_position(conn: &mut PgConnection, derivation: &str) -> Result<()> {
     sqlx::query!(
-        "DELETE FROM derivation.positions WHERE derivation = $1",
+        "UPDATE derivation.positions SET commit_seq=0 WHERE derivation=$1",
         derivation
     )
     .execute(&mut *conn)
