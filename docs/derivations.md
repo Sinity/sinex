@@ -236,21 +236,28 @@ One `state.interval` derivation, with declared rules for adjacent transitions, o
 - A presence span with an observed end after the computation time ends at that current time. Its key stays waiting and schedules a refresh at the observed end, so the final span reaches its recorded end even without another input.
 - Repairs of malformed source records (ActivityWatch heartbeats, for example) belong to the source's parser, not to this derivation.
 
-Adjacent-transition range reads first find the day's touched scopes, then stream
-narrow observation metadata once in time order. Only one boundary state per
-touched scope is kept. Scope count does not multiply history scans; an empty
-day returns before history is streamed. The reader and fold share the same Rust
-scope, subject and stable record-key interpretation. Scope takes the first
-string `scope` or `bucket`, including an empty string, then the captured record
-identity. Focus uses a nonempty window ID or `class:` plus the class; workspace
-uses `workspace:` plus the first non-null ID or name, preserving literal strings
-and serialized non-string JSON. Missing subjects never count as same-state refreshes.
-Interruptions participate in this same range. Each interruption retains its
-declared matching field: AFK matches a scope, and suspend matches a host across
-that host's captured scopes. The reader and fold apply the same matching rule. Every refresh through the first real
-closer remains in reach, including stored evidence whose clock is later than
-the runner's clock. All observations at the closing microsecond reach the fold,
-which applies recorded sequence and stable record ordering to their parents.
+Adjacent-transition reads first find the day's touched scopes. Indexed reverse
+pages select their prior state and matching interruptions. Those boundary records
+are loaded by identity alongside the day's inputs; a long-lived prior state does
+not widen the input window over the intervening history. Forward pages end once
+every touched scope has its first real closer, including all records at that
+time. An empty day returns before boundary reads. Transfer pages bound memory,
+not the number of scopes, refreshes or days a real interval spans.
+
+The reader and fold share the same Rust scope, subject and stable record-key
+interpretation. Scope takes the first string `scope` or `bucket`, including an
+empty string, then the captured record identity. Focus uses a nonempty window ID
+or `class:` plus the class; workspace uses `workspace:` plus the first non-null
+ID or name, preserving literal strings and serialized non-string JSON. Missing
+subjects never count as same-state refreshes. SQL boundary candidates may be a
+superset; the shared interpretation decides which records belong to a scope.
+
+AFK matches a scope, and suspend matches a host across that host's captured
+scopes. Every refresh through the first real closer remains in reach, including
+stored evidence whose clock is later than the runner's clock. Original start
+records, changed attributes and the closing records remain interval parents;
+replay and the lifecycle use those same records. No additional state archive or
+daily producer is required for these bounded reads.
 
 ## Documents and tags
 
