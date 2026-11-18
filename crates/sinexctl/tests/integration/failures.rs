@@ -168,7 +168,11 @@ fn each_failure_kind_reaches_cli_and_mcp() {
         };
         assert_eq!(error["kind"], failure.kind.name(), "{reply}");
         let text = reply["result"]["content"][0]["text"].as_str().unwrap();
-        assert!(text.contains(&failure.message), "{text}");
+        if stopped {
+            assert_eq!(error["message"], failure.message, "{reply}");
+        } else {
+            assert!(text.contains(&failure.message), "{text}");
+        }
         if stopped {
             assert_eq!(
                 structured["value"]["steps"][0]["outcome"]["reply"]["batches"],
@@ -177,6 +181,23 @@ fn each_failure_kind_reaches_cli_and_mcp() {
         }
         server.join().unwrap();
         if stopped {
+            let (endpoint, server) = daemon(vec![(200, mcp_body.clone())]);
+            let text_reply = mcp_call(
+                &endpoint,
+                "sinex_write",
+                json!({
+                    "format":"text","arguments":{"selection":"events","steps":[{"verb":"archive","all":true}]},
+                }),
+            );
+            assert_eq!(text_reply["result"]["isError"], true, "{text_reply}");
+            assert_eq!(
+                text_reply["result"]["structuredContent"]["value_in_text"], true,
+                "{text_reply}"
+            );
+            let text = text_reply["result"]["content"][0]["text"].as_str().unwrap();
+            assert!(text.contains(&failure.message), "{text}");
+            assert!(text.contains("\"batches\": 1"), "{text}");
+            server.join().unwrap();
             let (endpoint, server) = daemon(vec![(200, mcp_body)]);
             let output = sinexctl(&endpoint, &["--json", "events", "archive", "--all"]);
             assert_eq!(output.status.code(), Some(5), "{output:?}");

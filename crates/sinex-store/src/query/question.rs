@@ -18,6 +18,7 @@ pub struct Question {
 impl Question {
     /// Resolve lifecycle subjects through the compiler's hidden identities.
     /// Projection names and the display page cannot change the write scope.
+    /// The original question stays private; public scope names its subjects.
     pub async fn lifecycle_scope(
         &self,
         conn: &mut PgConnection,
@@ -110,7 +111,7 @@ impl Question {
                 ).fetch_all(&mut *tx).await?;
                 Scope::Events {
                     events: events.into_iter().map(EventId).collect(),
-                    query: Some(self.text.clone()),
+                    query: None,
                 }
             };
             tx.commit().await?;
@@ -145,12 +146,12 @@ impl Question {
             ).fetch_all(&mut *tx).await?;
                 Scope::Events {
                     events: events.into_iter().map(EventId).collect(),
-                    query: Some(self.text.clone()),
+                    query: None,
                 }
             } else {
                 Scope::Events {
                     events: ids.into_iter().map(EventId).collect(),
-                    query: Some(self.text.clone()),
+                    query: None,
                 }
             };
         tx.commit().await?;

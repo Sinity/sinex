@@ -471,6 +471,24 @@ async fn request_intent_is_private_while_public_operation_scope_stays_readable(
         Some(question),
         "accepted intent is preserved privately"
     );
+    let mut archive = lifecycle_request(question, "archive");
+    archive["request_id"] = json!("private-archive-question");
+    let (_, archived) = rows_as(&w, OPERATOR, archive).await;
+    assert_eq!(lifecycle_receipt(&archived)["scope"]["by"], "events");
+    let (_,listed) = rows_as(&w,READ,json!({
+        "operation":"rows","arguments":{"selection":"operations | fields id, scope"},"deadline":null,
+    })).await;
+    assert_eq!(listed["outcome"], "ok", "{listed}");
+    assert!(
+        !listed.to_string().contains("synthetic-guarded-question"),
+        "private lifecycle intent is not public scope: {listed}"
+    );
+    let input:Option<String>=sqlx::query_scalar("SELECT input->'arguments'->>'selection' FROM core.operation_requests WHERE request_id='private-archive-question'").fetch_one(&w.reads).await.unwrap();
+    assert_eq!(
+        input.as_deref(),
+        Some(question),
+        "lifecycle intent is preserved by its private request owner"
+    );
 }
 
 #[devkit::test]
