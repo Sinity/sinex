@@ -857,12 +857,27 @@ async fn producers_are_limited_to_their_own_subjects() {
     let subjects = Subjects::new("sx");
     // The server holds only the passwords' hashes.
     let hash = |password: &str| crate::admin::password_hash(password).unwrap();
+    let daemon_hash = hash("dpw");
+    let kitty_hash = hash("kpw");
+    let phone_hash = hash("ppw");
     let config = subjects.authorization(
-        ("daemon", &hash("dpw")),
-        &[("kitty", &hash("kpw")), ("phone", &hash("ppw"))],
+        ("daemon", &daemon_hash),
+        &[("kitty", &kitty_hash), ("phone", &phone_hash)],
         &[("kitty", "kitty-scope".into())],
     );
-    assert!(!config.contains("dpw") && !config.contains("kpw"));
+    // Random hash text may contain short substrings. Compare password values.
+    let passwords: Vec<String> = config
+        .split("password:")
+        .skip(1)
+        .map(|value| {
+            serde_json::Deserializer::from_str(value.trim_start())
+                .into_iter::<String>()
+                .next()
+                .unwrap()
+                .unwrap()
+        })
+        .collect();
+    assert_eq!(passwords, [daemon_hash, kitty_hash, phone_hash]);
     let api_subjects = [
         "$JS.API.CONSUMER.CREATE.SX_CONFIRMED.other",
         "$JS.API.CONSUMER.DELETE.SX_CONFIRMED.sinex-kitty-scope",
