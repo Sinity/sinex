@@ -56,7 +56,8 @@ pub async fn standing_query(
             _ => {}
         }
     }
-    if seq < 0 || seq > current_seq(conn).await? {
+    let head = current_seq(conn).await?;
+    if seq < 0 || seq > head {
         return Err(Error::Invalid(
             "signal query position is outside the archive".into(),
         ));
@@ -163,7 +164,7 @@ pub async fn standing_query(
         .any(|stage| matches!(stage, Stage::Group(_)));
     let event_rows = bound.source.table().is_events() && !grouped;
     let values: Vec<Json> = match &bound.source {
-        Source::Walk { walk, reference } => walk::walk(conn, *walk, reference)
+        Source::Walk { walk, reference } => walk::walk_at(conn, *walk, reference, seq, head)
             .await?
             .into_iter()
             .map(|row| serde_json::json!({"identity":row["id"],"row":row}))
