@@ -389,3 +389,44 @@ async fn missing_accepted_subject_reports_failure_and_keeps_committed_write(
     .unwrap();
     assert_eq!(result.as_deref(), Some("ok"));
 }
+
+#[devkit::test]
+async fn request_intent_is_private_while_public_operation_scope_stays_readable(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
+    let question = "events where source = synthetic-guarded-question";
+    let (_, saved)=rows_as(&w,OPERATOR,json!({"operation":"rows","request_id":"private-question","arguments":{"selection":question,"steps":[{"verb":"read"},{"verb":"save","name":"synthetic-private"}]},"deadline":null})).await;
+    assert_eq!(saved["outcome"], "ok", "{saved}");
+    let (_, listed) = rows_as(
+        &w,
+        READ,
+        json!({"operation":"rows","arguments":{"selection":"operations"},"deadline":null}),
+    )
+    .await;
+    assert_eq!(listed["outcome"], "ok", "{listed}");
+    assert!(
+        !listed.to_string().contains("synthetic-guarded-question"),
+        "guarded input is not public metadata: {listed}"
+    );
+    assert!(
+        !listed.to_string().contains("synthetic-private"),
+        "guarded saved name is not public metadata: {listed}"
+    );
+    let operation = listed["value"]["population"]["rows"][0]["id"].clone();
+    assert!(operation.is_string());
+    let (_, refused)=rows_as(&w,READ,json!({"operation":"rows","arguments":{"selection":question,"accepted":operation},"deadline":null})).await;
+    assert_eq!(refused["error"]["kind"], "not_found", "{refused}");
+    let (_, continued)=rows_as(&w,OPERATOR,json!({"operation":"rows","arguments":{"selection":question,"accepted":operation},"deadline":null})).await;
+    assert_eq!(
+        continued["value"]["population"]["rows"],
+        json!([]),
+        "{continued}"
+    );
+    let input:Option<String>=sqlx::query_scalar("SELECT request->'input'->'arguments'->>'selection' FROM core.operations WHERE request_id='private-question'").fetch_one(&w.reads).await.unwrap();
+    assert_eq!(
+        input.as_deref(),
+        Some(question),
+        "accepted intent is preserved privately"
+    );
+}

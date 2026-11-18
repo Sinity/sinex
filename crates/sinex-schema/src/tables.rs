@@ -83,6 +83,7 @@ fn operations(c: &Checks) -> String {
   actor text NOT NULL,
   request_scope text,
   request_id text,
+  request jsonb,
   scope jsonb NOT NULL,
   at timestamptz NOT NULL DEFAULT now(),
   start_seq bigint,
@@ -92,7 +93,7 @@ fn operations(c: &Checks) -> String {
   progress jsonb NOT NULL DEFAULT '{{}}'::jsonb,
   refusals jsonb NOT NULL DEFAULT '[]'::jsonb,
   UNIQUE (request_scope, request_id),
-  CHECK ((request_scope IS NULL) = (request_id IS NULL))
+  CHECK ((request_scope IS NULL) = (request_id IS NULL) AND (request_scope IS NULL) = (request IS NULL))
 )",
         result = c.operation_result
     )

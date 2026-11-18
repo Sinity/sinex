@@ -111,7 +111,7 @@ async fn requests_before_outcomes(conn: &mut PgConnection) {
         .execute(&mut *conn)
         .await
         .unwrap();
-    sqlx::query("ALTER TABLE core.operations DROP COLUMN request_scope CASCADE, DROP COLUMN request_id CASCADE")
+    sqlx::query("ALTER TABLE core.operations DROP COLUMN request_scope CASCADE, DROP COLUMN request_id CASCADE, DROP COLUMN request CASCADE")
         .execute(conn).await.unwrap();
 }
 

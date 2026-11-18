@@ -19,6 +19,7 @@ pub struct Request<'a> {
 pub struct Accepted {
     pub operation: OperationId,
     pub progress: Value,
+    pub question: Option<crate::query::Question>,
 }
 
 impl Accepted {
@@ -34,22 +35,31 @@ pub async fn begin(conn: &mut PgConnection, request: &Request<'_>) -> Result<Acc
         return Ok(accepted);
     }
     let id = OperationId::new();
+    let verbs: Vec<_> = request.arguments["arguments"]["steps"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|step| step["verb"].as_str())
+        .collect();
+    let scope = serde_json::json!({"operation":request.arguments["operation"],"steps":verbs});
+    let private = serde_json::json!({"input":request.arguments});
     sqlx::query!(
-        r#"INSERT INTO core.operations (id, kind, actor, request_scope, request_id, scope, start_seq)
-           VALUES ($1, 'request', $2, $3, $4, $5,
+        r#"INSERT INTO core.operations (id, kind, actor, request_scope, request_id, request, scope, start_seq)
+           VALUES ($1, 'request', $2, $3, $4, $5, $6,
                    (SELECT value FROM core.counters WHERE name='commit_seq'))"#,
-        id.0, request.actor, request.caller, request.id, request.arguments,
+        id.0, request.actor, request.caller, request.id, private, scope,
     ).execute(conn).await?;
     Ok(Accepted {
         operation: id,
         progress: serde_json::json!({}),
+        question: None,
     })
 }
 
 /// A repeat can return its committed outcome before preparing source material.
 pub async fn lookup(conn: &mut PgConnection, request: &Request<'_>) -> Result<Option<Accepted>> {
     let row = sqlx::query!(
-        r#"SELECT id, actor, scope, progress FROM core.operations
+        r#"SELECT id, actor, request, progress FROM core.operations
            WHERE request_scope=$1 AND request_id=$2 AND kind='request'"#,
         request.caller,
         request.id,
@@ -59,12 +69,22 @@ pub async fn lookup(conn: &mut PgConnection, request: &Request<'_>) -> Result<Op
     let Some(row) = row else {
         return Ok(None);
     };
-    if row.actor != request.actor || row.scope != *request.arguments {
+    let private = row
+        .request
+        .ok_or_else(|| Error::Invalid("accepted request has no private input".into()))?;
+    if row.actor != request.actor || private["input"] != *request.arguments {
         return Err(Error::RequestConflict);
     }
+    let question = private
+        .get("question")
+        .cloned()
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(|error| Error::Invalid(format!("accepted question: {error}")))?;
     Ok(Some(Accepted {
         operation: OperationId(row.id),
         progress: row.progress,
+        question,
     }))
 }
 
@@ -79,8 +99,8 @@ pub async fn accept_question(
     let stored =
         serde_json::to_value(&question).map_err(|error| Error::Invalid(error.to_string()))?;
     let updated = sqlx::query!(
-        r#"UPDATE core.operations SET progress=jsonb_set(progress, '{question}', $2)
-           WHERE id=$1 AND kind='request' AND NOT (progress ? 'question')"#,
+        r#"UPDATE core.operations SET request=jsonb_set(request, '{question}', $2)
+           WHERE id=$1 AND kind='request' AND NOT (request ? 'question')"#,
         operation.0,
         stored,
     )
@@ -101,7 +121,7 @@ pub async fn question(
     caller: &str,
 ) -> Result<crate::query::Question> {
     let question = sqlx::query_scalar!(
-        r#"SELECT progress->'question' AS "question?" FROM core.operations
+        r#"SELECT request->'question' AS "question?" FROM core.operations
            WHERE id=$1 AND kind='request' AND request_scope=$2"#,
         operation.0,
         caller,

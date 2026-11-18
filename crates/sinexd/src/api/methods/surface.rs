@@ -182,8 +182,8 @@ impl Api {
         };
         let question = if let Some(accepted) = &accepted {
             if reads {
-                let question = if let Some(question) = accepted.progress.get("question") {
-                    serde_json::from_value::<sinex_store::query::Question>(question.clone())?
+                let question = if let Some(question) = &accepted.question {
+                    question.clone()
                 } else {
                     let question = sinex_store::query::Question::accept(
                         &mut conn,
