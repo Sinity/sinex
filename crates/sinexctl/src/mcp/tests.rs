@@ -56,14 +56,6 @@ fn tool_examples_follow_the_table() {
         sinex_protocol::Access::Operator
     );
     assert!(names.contains(&"sinex_resume"));
-    let write = tools.iter().find(|t| t.name == "sinex_write").unwrap();
-    assert!(
-        write.input_schema["properties"]["arguments"]["properties"]["steps"]["items"]["properties"]
-            ["verb"]["enum"]
-            .as_array()
-            .unwrap()
-            .contains(&json!("undo"))
-    );
     let undo: sinex_protocol::rows::Step = serde_json::from_value(json!({"verb":"undo"})).unwrap();
     assert_eq!(
         sinex_commands::required_access(&[undo]),
@@ -197,7 +189,7 @@ fn read_write_and_act_cards_expose_their_actual_step_access() {
     assert_eq!(
         write.input_schema["properties"]["arguments"]["properties"]["steps"]["items"]["properties"]
             ["verb"]["enum"],
-        json!(["read", "save", "archive", "restore"])
+        json!(["read", "save", "archive", "restore", "undo"])
     );
 }
 
