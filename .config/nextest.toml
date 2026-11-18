@@ -19,3 +19,9 @@ test-group = "crash"
 [profile.fuzz]
 default-filter = "package(sinex-fuzz) & test(/^tests::(generated_queries|changed_seed_queries|arbitrary_text)_keeps?_the_query_properties$/)"
 slow-timeout = { period = "60s" }
+
+# This ignored measurement includes mature seed creation, database copies and
+# both fully drained arms. Ordinary behavior controls retain their own bound.
+[[profile.default.overrides]]
+filter = "test(=query::tests::search::workload::words_pending_64_and_256_mib)"
+slow-timeout = { period = "60s", terminate-after = 10 }

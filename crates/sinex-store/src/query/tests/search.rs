@@ -286,3 +286,5 @@ async fn matching_compressed_search_rows_page_with_grants_and_snippets(
     assert_eq!(ask(&mut conn, "matchingreuse").await.total, 128);
     set_grants(&mut conn, "").await.unwrap();
 }
+
+mod workload;
