@@ -134,7 +134,18 @@ pub async fn selected_page(
     } else {
         Some(sinex_query::template::parse(text, ctx)?)
     };
-    let selected = run_inner(conn, text, None, ctx, page, true, None, template.as_ref()).await?;
+    let selected = run_inner(
+        conn,
+        text,
+        None,
+        ctx,
+        page,
+        true,
+        None,
+        template.as_ref(),
+        None,
+    )
+    .await?;
     let signature = selected
         .selection
         .as_ref()

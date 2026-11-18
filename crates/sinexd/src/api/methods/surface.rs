@@ -193,9 +193,14 @@ impl Api {
                     .await?;
                     writer
                         .expect("write request")
-                        .accept_question(accepted.operation, question.clone())
-                        .await?;
-                    question
+                        .accept_question(crate::writer::PreparedQuestion {
+                            operation: accepted.operation,
+                            question,
+                            grants: caller.grants.clone(),
+                            check: crate::request_deadline::preparation_check(),
+                            deadline: metadata.read_deadline(),
+                        })
+                        .await?
                 };
                 context = question.context()?;
                 Some(question)
@@ -481,6 +486,12 @@ impl Api {
             .envelope
             .notes
             .push(sinex_protocol::DATA_NOTICE.into());
+        if question
+            .as_ref()
+            .is_some_and(sinex_store::query::Question::reads_current_metadata)
+        {
+            answer.envelope.notes.push("Selected subjects and their order are retained; mutable unit values are read from their current state.".into());
+        }
         answer.envelope.read_as = read_as;
         answer.envelope.count = Some(command_surface::Count::exact(count));
         answer.envelope.shown = Some(shown);

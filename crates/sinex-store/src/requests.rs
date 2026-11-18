@@ -72,15 +72,17 @@ pub async fn lookup(conn: &mut PgConnection, request: &Request<'_>) -> Result<Op
 pub async fn accept_question(
     conn: &mut PgConnection,
     operation: OperationId,
-    question: &crate::query::Question,
-) -> Result<()> {
-    let question =
-        serde_json::to_value(question).map_err(|error| Error::Invalid(error.to_string()))?;
+    mut question: crate::query::Question,
+    grants: &str,
+) -> Result<crate::query::Question> {
+    question.accept_population(conn, operation, grants).await?;
+    let stored =
+        serde_json::to_value(&question).map_err(|error| Error::Invalid(error.to_string()))?;
     let updated = sqlx::query!(
         r#"UPDATE core.operations SET progress=jsonb_set(progress, '{question}', $2)
            WHERE id=$1 AND kind='request' AND NOT (progress ? 'question')"#,
         operation.0,
-        question,
+        stored,
     )
     .execute(conn)
     .await?;
@@ -89,7 +91,7 @@ pub async fn accept_question(
             "request question is missing or already accepted".into(),
         ));
     }
-    Ok(())
+    Ok(question)
 }
 
 /// A continuation may read only the question accepted for its authenticated owner.

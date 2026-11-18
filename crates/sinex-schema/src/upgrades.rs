@@ -76,6 +76,7 @@ fn plain_names() -> Vec<String> {
 /// Request identities and their results belong to the operation that writes them.
 fn request_outcomes() -> Vec<String> {
     vec![
+        crate::tables::OPERATION_ROWS.into(),
         "ALTER TABLE core.operations ADD COLUMN request_scope text".into(),
         "ALTER TABLE core.operations ADD COLUMN request_id text".into(),
         "ALTER TABLE core.operations ADD UNIQUE (request_scope, request_id)".into(),

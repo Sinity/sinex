@@ -104,7 +104,7 @@ enum WriterJob {
         reply: Reply<sinex_store::requests::Accepted>,
     },
     Request(Batch, RequestStep, AdmissionCheck, Reply<RequestAdmission>),
-    AcceptQuestion(OperationId, sinex_store::query::Question, Reply<()>),
+    AcceptQuestion(Box<PreparedQuestion>, Reply<sinex_store::query::Question>),
     Signals(
         Option<Batch>,
         Box<sinex_store::signals::Commit>,
@@ -175,6 +175,14 @@ enum Saved<'a> {
     Stage(&'a StageCheckpoint),
     Curation,
     Request(&'a RequestStep),
+}
+
+pub(crate) struct PreparedQuestion {
+    pub operation: OperationId,
+    pub question: sinex_store::query::Question,
+    pub grants: String,
+    pub check: AdmissionCheck,
+    pub deadline: Option<tokio::time::Instant>,
 }
 
 /// The committed answer is computed from admission's actual outcome.
@@ -317,11 +325,10 @@ impl WriterHandle {
 
     pub(crate) async fn accept_question(
         &self,
-        operation: OperationId,
-        question: sinex_store::query::Question,
-    ) -> Result<(), WriteError> {
+        prepared: PreparedQuestion,
+    ) -> Result<sinex_store::query::Question, WriteError> {
         self.ask(Priority::Live, |reply| {
-            WriterJob::AcceptQuestion(operation, question, reply)
+            WriterJob::AcceptQuestion(Box::new(prepared), reply)
         })
         .await
     }
@@ -681,13 +688,33 @@ pub(crate) async fn run_notifying(
             }};
         }
         match job.work {
-            WriterJob::AcceptQuestion(operation, question, reply) => {
+            WriterJob::AcceptQuestion(prepared, reply) => {
                 let result: Result<_, WriteError> = async {
+                    (prepared.check)().map_err(|_| WriteError::ReadDeadline)?;
                     let mut tx = connection.begin().await?;
-                    sinex_store::requests::accept_question(tx.connection(), operation, &question)
-                        .await?;
+                    if let Some(deadline) = prepared.deadline {
+                        let milliseconds = deadline
+                            .saturating_duration_since(tokio::time::Instant::now())
+                            .as_millis()
+                            .max(1);
+                        if milliseconds <= i32::MAX as u128 {
+                            sqlx::query(&format!(
+                                "SET LOCAL statement_timeout = '{milliseconds}ms'"
+                            ))
+                            .execute(&mut *tx)
+                            .await?;
+                        }
+                    }
+                    let question = sinex_store::requests::accept_question(
+                        tx.connection(),
+                        prepared.operation,
+                        prepared.question,
+                        &prepared.grants,
+                    )
+                    .await?;
+                    (prepared.check)().map_err(|_| WriteError::ReadDeadline)?;
                     tx.commit().await?;
-                    Ok(())
+                    Ok(question)
                 }
                 .await;
                 answer!(reply, result);

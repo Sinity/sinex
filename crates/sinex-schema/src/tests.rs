@@ -107,6 +107,10 @@ async fn a_forward_step_runs_from_its_version_and_records_the_next(db: devkit::p
 }
 
 async fn requests_before_outcomes(conn: &mut PgConnection) {
+    sqlx::query("DROP TABLE core.operation_rows")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
     sqlx::query("ALTER TABLE core.operations DROP COLUMN request_scope CASCADE, DROP COLUMN request_id CASCADE")
         .execute(conn).await.unwrap();
 }

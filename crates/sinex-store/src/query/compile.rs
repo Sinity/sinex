@@ -56,6 +56,36 @@ impl Compiled {
             .join(", ")
     }
 
+    /// Membership and order come from accepted subject identities, not a new
+    /// evaluation of the original predicate. Values still pass the normal reader.
+    pub(crate) fn accepted_population(mut self, operation: sinex_model::OperationId) -> Self {
+        let mut columns: Vec<_> = self
+            .columns
+            .iter()
+            .enumerate()
+            .map(|(index, _)| format!("q.\"_value{index}\""))
+            .collect();
+        columns.extend(["q.\"_event_id\"".into(), "q.\"_parents\"".into()]);
+        if !self.withheld_columns.is_empty() {
+            columns.push("q.\"_withheld\"".into());
+        }
+        let mut answer = SqlFragment::text(format!(
+            "SELECT {}, s.identity AS \"_row_identity\", s.ordinal AS \"_accepted_order\", '[\"bigint\"]'::jsonb AS \"_key_types\" FROM core.operation_rows s JOIN (",
+            columns.join(", ")
+        ));
+        answer
+            .append(self.answer)
+            .push(") q ON q.\"_row_identity\"=s.identity WHERE s.operation_id=")
+            .param(operation.0)
+            .push(" ORDER BY s.ordinal");
+        let mut count = SqlFragment::text("SELECT count(*) FROM (");
+        count.append(answer.clone()).push(") accepted");
+        self.answer = answer;
+        self.count = count;
+        self.keys = vec![("_accepted_order".into(), false)];
+        self
+    }
+
     /// SQL identifier of an output value in the private answer relation.
     pub(crate) fn output_column(&self, output: &str) -> Result<String> {
         self.columns

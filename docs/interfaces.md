@@ -417,7 +417,12 @@ also saves a question through the typed `save` step, preserving its parameters a
 existing credential requirement. Saving a question does not execute it. Its request
 identity, admitted event identity and reply are kept in the operations log, with the
 reply committed in the transaction that admits the authored source record. A retry
-returns that receipt before creating another source material or run. Each
+returns that receipt before creating another source material or run. A mixed read
+keeps its expanded question, declaration identities, clock and event cut. Mutable
+units keep an ordered population of subject identities in the same operation,
+without copying result text; their fields are read from current state. A missing
+accepted subject is reported explicitly. Continuations retain that question and
+contain only reads. Each
 remaining domain command moves when its replacement owns the behavior.
 `sinex-commands` owns those runtime declarations; `sinex-protocol` carries the
 wire data independently of the runtime and performs no I/O.

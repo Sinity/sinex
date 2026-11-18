@@ -98,6 +98,13 @@ fn operations(c: &Checks) -> String {
     )
 }
 
+pub(crate) const OPERATION_ROWS: &str = "CREATE TABLE core.operation_rows (
+  operation_id uuid NOT NULL REFERENCES core.operations(id),
+  ordinal bigint NOT NULL,
+  identity text NOT NULL,
+  PRIMARY KEY (operation_id, ordinal)
+)";
+
 /// Live keys keep all digest bits and distinguish their prefixed string forms.
 const ENCODE_EQUIVALENCE_KEY: &str = r#"CREATE FUNCTION core.encode_equivalence_key(key text)
 RETURNS bytea LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
@@ -494,6 +501,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   events bigint NOT NULL DEFAULT 0
 )".into(),
         operations(c),
+        OPERATION_ROWS.into(),
         KIND_PREFIXES.into(),
         kind_declarations(),
         REPLAY_REFUSALS.into(),

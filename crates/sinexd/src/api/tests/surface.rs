@@ -263,3 +263,26 @@ async fn save_keeps_parameterized_future_question_without_executing_it(
     assert_eq!(query["outcome"], "ok", "{query}");
     assert_eq!(query["result"]["rows"], json!([]));
 }
+
+#[devkit::test]
+async fn retry_keeps_accepted_mutable_unit_population(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
+    let first_write = json!({"operation":"rows","request_id":"metadata-first","arguments":{"selection":"events","steps":[{"verb":"save","name":"first"}]},"deadline":null});
+    let (_, first) = rows_as(&w, OPERATOR, first_write).await;
+    assert_eq!(first["outcome"], "ok", "{first}");
+    let request = json!({"operation":"rows","request_id":"metadata-selection","arguments":{"selection":"operations where actor = operator","page_size":1,"steps":[{"verb":"read"},{"verb":"save","name":"operations"}]},"deadline":null});
+    let (_, first) = rows_as(&w, OPERATOR, request.clone()).await;
+    assert_eq!(first["outcome"], "ok", "{first}");
+    let (_, another) = rows_as(&w, OPERATOR, json!({"operation":"rows","request_id":"metadata-later","arguments":{"selection":"events","steps":[{"verb":"save","name":"later"}]},"deadline":null})).await;
+    assert_eq!(another["outcome"], "ok", "{another}");
+    let (_, retry) = rows_as(&w, OPERATOR, request).await;
+    assert_eq!(
+        retry["value"]["population"]["rows"], first["value"]["population"]["rows"],
+        "a later matching operation must not retarget the accepted page: {retry}"
+    );
+    assert_eq!(
+        retry["value"]["population"]["total"],
+        first["value"]["population"]["total"]
+    );
+    assert_eq!(retry["value"]["steps"][1], first["value"]["steps"][1]);
+}
