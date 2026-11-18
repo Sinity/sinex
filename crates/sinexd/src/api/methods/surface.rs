@@ -173,7 +173,7 @@ impl Api {
                         metadata.caller().scope().into(),
                         metadata.request_id.clone(),
                         caller.actor.into(),
-                        serde_json::to_value(metadata.request())?,
+                        json!({"operation":metadata.request().operation,"arguments":metadata.request().arguments}),
                     )
                     .await?,
             )
@@ -283,7 +283,20 @@ impl Api {
             .map_err(|error| match error {
                 sinex_store::Error::Query(error) => Error::from(error).in_query(text),
                 error => Error::from(error),
-            })?;
+            });
+            let selected = match selected {
+                Ok(selected) => selected,
+                Err(error) => {
+                    if let Some(accepted) = &accepted {
+                        writer
+                            .expect("write request")
+                            .finish_request(accepted.operation, true)
+                            .await?;
+                        return retained_write_reply(&request, accepted, error.failure());
+                    }
+                    return Err(error);
+                }
+            };
             let page = selected.answer;
             position = page.resolved.commit_seq;
             context.now = page.resolved.now.parse()?;
@@ -305,7 +318,14 @@ impl Api {
                 let Step::Save(save) = step else {
                     unreachable!("declared step")
                 };
-                let outcome = if failed {
+                let recorded = accepted.as_ref().and_then(|accepted| accepted.step(index));
+                let outcome = if let Some(recorded) = recorded {
+                    let recorded: sinex_store::requests::CommittedStep =
+                        serde_json::from_value(recorded.clone())?;
+                    StepOutcome::Done {
+                        reply: StepReply::Written(recorded.reply),
+                    }
+                } else if failed {
                     StepOutcome::NotRun
                 } else {
                     let operation = accepted.as_ref().expect("write request accepted").operation;
@@ -431,6 +451,12 @@ impl Api {
                 outcome,
             });
         }
+        if let Some(accepted) = &accepted {
+            writer
+                .expect("write request")
+                .finish_request(accepted.operation, failed)
+                .await?;
+        }
         if let Some(cursor) = population
             .as_ref()
             .and_then(|page| page.page.cursor.as_ref())
@@ -504,6 +530,57 @@ impl Api {
             .collect();
         Ok(answer)
     }
+}
+
+/// A failed read on retry still reports every write that already committed.
+fn retained_write_reply(
+    request: &sinex_protocol::rows::Rows,
+    accepted: &sinex_store::requests::Accepted,
+    error: command_surface::Failure,
+) -> Result<SurfaceAnswer<sinex_protocol::rows::RowsReply>> {
+    use sinex_protocol::rows::{RowsReply, Step, StepOutcome, StepReply, StepReport};
+    let first_read = request
+        .steps
+        .iter()
+        .position(|step| matches!(step, Step::Read(_)));
+    let mut reports = Vec::with_capacity(request.steps.len());
+    for (index, step) in request.steps.iter().enumerate() {
+        let (verb, outcome) = match step {
+            Step::Read(_) if Some(index) == first_read => (
+                "read",
+                StepOutcome::Failed {
+                    error: error.clone(),
+                },
+            ),
+            Step::Read(_) => ("read", StepOutcome::NotRun),
+            Step::Save(_) => {
+                let outcome = if let Some(recorded) = accepted.step(index) {
+                    let recorded: sinex_store::requests::CommittedStep =
+                        serde_json::from_value(recorded.clone())?;
+                    StepOutcome::Done {
+                        reply: StepReply::Written(recorded.reply),
+                    }
+                } else {
+                    StepOutcome::NotRun
+                };
+                ("save", outcome)
+            }
+        };
+        reports.push(StepReport {
+            verb: verb.into(),
+            outcome,
+        });
+    }
+    let mut answer = SurfaceAnswer::ok(RowsReply {
+        population: None,
+        references: Vec::new(),
+        steps: reports,
+    });
+    answer
+        .envelope
+        .notes
+        .push(sinex_protocol::DATA_NOTICE.into());
+    Ok(answer)
 }
 
 fn read_continuation(

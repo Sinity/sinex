@@ -101,7 +101,7 @@ async fn failed_request_response_rolls_back_effect_and_receipt(db: devkit::pg::T
             Arc::new(|| Ok(())),
         )
         .await;
-    assert!(matches!(result, Err(WriteError::Refused(_))));
+    assert!(matches!(result, Err(WriteError::Internal(_))));
     drop(handle);
     writer.await.unwrap();
     let mut conn = sqlx::PgConnection::connect(&url).await.unwrap();

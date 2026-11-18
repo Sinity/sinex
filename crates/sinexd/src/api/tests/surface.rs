@@ -218,6 +218,15 @@ async fn retry_keeps_expanded_question_and_committed_save_after_predicate_change
         before, after,
         "retry writes no event, material or request run"
     );
+    let mut presentation = request.clone();
+    presentation["deadline"] = json!(1000);
+    presentation["budget_tokens"] = json!(600);
+    presentation["format"] = json!("json");
+    let (_, presentation_retry) = rows_as(&w, OPERATOR, presentation).await;
+    assert_eq!(
+        presentation_retry["value"]["steps"][1]["outcome"], written,
+        "read metadata does not change mutation identity: {presentation_retry}"
+    );
     let next = first["next"][0]["request"].clone();
     assert!(next["arguments"]["accepted"].is_string(), "{first}");
     assert_eq!(
@@ -276,6 +285,30 @@ async fn retry_keeps_accepted_mutable_unit_population(db: devkit::pg::TestDataba
     let (_, another) = rows_as(&w, OPERATOR, json!({"operation":"rows","request_id":"metadata-later","arguments":{"selection":"events","steps":[{"verb":"save","name":"later"}]},"deadline":null})).await;
     assert_eq!(another["outcome"], "ok", "{another}");
     let (_, retry) = rows_as(&w, OPERATOR, request).await;
+    let next = first["next"][0]["request"].clone();
+    assert!(next["arguments"]["accepted"].is_string(), "{first}");
+    assert!(
+        next["arguments"]["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|step| step["verb"] == "read")
+    );
+    let (_, continued) = rows_as(&w, OPERATOR, next).await;
+    assert_eq!(continued["outcome"], "ok", "{continued}");
+    assert_eq!(
+        continued["value"]["population"]["total"],
+        first["value"]["population"]["total"]
+    );
+    assert_ne!(
+        continued["value"]["population"]["rows"],
+        first["value"]["population"]["rows"]
+    );
+    assert!(
+        continued["next"]
+            .as_array()
+            .is_none_or(|next| next.is_empty())
+    );
     assert_eq!(
         retry["value"]["population"]["rows"], first["value"]["population"]["rows"],
         "a later matching operation must not retarget the accepted page: {retry}"
@@ -285,4 +318,74 @@ async fn retry_keeps_accepted_mutable_unit_population(db: devkit::pg::TestDataba
         first["value"]["population"]["total"]
     );
     assert_eq!(retry["value"]["steps"][1], first["value"]["steps"][1]);
+}
+
+#[devkit::test]
+async fn accepted_mutable_groups_keep_keys_when_values_change_and_new_groups_appear(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
+    admit(&w, &["synthetic archived later"], 0).await;
+    let (_, original)=rows_as(&w,OPERATOR,json!({"operation":"rows","request_id":"groups-first","arguments":{"selection":"events","steps":[{"verb":"save","name":"first"}]},"deadline":null})).await;
+    assert_eq!(original["outcome"], "ok", "{original}");
+    let request = json!({"operation":"rows","request_id":"groups-selected","arguments":{"selection":"operations | group by kind | count | fields kind as id, count","steps":[{"verb":"read"},{"verb":"save","name":"grouped"}]},"deadline":null});
+    let (_, first) = rows_as(&w, OPERATOR, request.clone()).await;
+    assert_eq!(first["outcome"], "ok", "{first}");
+    assert_eq!(
+        first["value"]["population"]["rows"],
+        json!([{"id":"request","count":2}])
+    );
+    let (_, later)=rows_as(&w,OPERATOR,json!({"operation":"rows","request_id":"groups-later","arguments":{"selection":"events","steps":[{"verb":"save","name":"later"}]},"deadline":null})).await;
+    assert_eq!(later["outcome"], "ok", "{later}");
+    let (_, archived)=call_unbounded(&w,Some(OPERATOR),json!({"method":"archive","target":original["value"]["steps"][0]["outcome"]["reply"]["reply"]["event"]})).await;
+    assert_eq!(archived["outcome"], "ok", "{archived}");
+    let (_, retry) = rows_as(&w, OPERATOR, request).await;
+    assert_eq!(retry["outcome"], "ok", "{retry}");
+    assert_eq!(
+        retry["value"]["population"]["rows"],
+        json!([{"id":"request","count":3}])
+    );
+    assert_eq!(retry["value"]["population"]["total"], 1);
+    assert_eq!(retry["value"]["steps"][1], first["value"]["steps"][1]);
+    assert!(retry["notes"].as_array().unwrap().iter().any(|note| {
+        note.as_str()
+            .is_some_and(|note| note.contains("current state"))
+    }));
+}
+
+#[devkit::test]
+async fn missing_accepted_subject_reports_failure_and_keeps_committed_write(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
+    let (_, first_write)=rows_as(&w,OPERATOR,json!({"operation":"rows","request_id":"missing-first","arguments":{"selection":"events","steps":[{"verb":"save","name":"first"}]},"deadline":null})).await;
+    assert_eq!(first_write["outcome"], "ok", "{first_write}");
+    let request = json!({"operation":"rows","request_id":"missing-selected","arguments":{"selection":"operations where actor = operator","steps":[{"verb":"read"},{"verb":"save","name":"selected"}]},"deadline":null});
+    let (_, first) = rows_as(&w, OPERATOR, request.clone()).await;
+    assert_eq!(first["outcome"], "ok", "{first}");
+    // Remove one source subject in this fixture, retaining its authored source
+    // material. The request's accepted identity must not become another row.
+    sqlx::query(
+        "DELETE FROM core.operations WHERE request_scope='operator' AND request_id='missing-first'",
+    )
+    .execute(&w.reads)
+    .await
+    .unwrap();
+    let (_, retry) = rows_as(&w, OPERATOR, request).await;
+    assert_eq!(
+        retry["value"]["steps"][0]["outcome"]["status"], "failed",
+        "{retry}"
+    );
+    assert_eq!(
+        retry["value"]["steps"][0]["outcome"]["error"]["kind"], "not_found",
+        "{retry}"
+    );
+    assert_eq!(retry["value"]["steps"][1], first["value"]["steps"][1]);
+    let result: Option<String> = sqlx::query_scalar(
+        "SELECT result FROM core.operations WHERE request_id='missing-selected'",
+    )
+    .fetch_one(&w.reads)
+    .await
+    .unwrap();
+    assert_eq!(result.as_deref(), Some("ok"));
 }

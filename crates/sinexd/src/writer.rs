@@ -42,6 +42,8 @@ pub(crate) enum WriteError {
     Unavailable(String),
     #[error("the writer has stopped")]
     Stopped,
+    #[error("{0}")]
+    Internal(String),
     #[error("request identity was already used with different arguments")]
     RequestConflict,
     /// The inputs this write was computed from changed before it committed;
@@ -66,6 +68,7 @@ impl From<WriteError> for command_surface::Failure {
             WriteError::Stopped => {
                 Failure::new(FailureKind::NotRunning, message).with_code("writer_stopped")
             }
+            WriteError::Internal(_) => Failure::new(FailureKind::Internal, message),
             WriteError::RequestConflict => {
                 Failure::new(FailureKind::Conflict, message).with_code("request_conflict")
             }
@@ -104,6 +107,7 @@ enum WriterJob {
         reply: Reply<sinex_store::requests::Accepted>,
     },
     Request(Batch, RequestStep, AdmissionCheck, Reply<RequestAdmission>),
+    FinishRequest(OperationId, bool, Reply<()>),
     AcceptQuestion(Box<PreparedQuestion>, Reply<sinex_store::query::Question>),
     Signals(
         Option<Batch>,
@@ -329,6 +333,17 @@ impl WriterHandle {
     ) -> Result<sinex_store::query::Question, WriteError> {
         self.ask(Priority::Live, |reply| {
             WriterJob::AcceptQuestion(Box::new(prepared), reply)
+        })
+        .await
+    }
+
+    pub(crate) async fn finish_request(
+        &self,
+        operation: OperationId,
+        failed: bool,
+    ) -> Result<(), WriteError> {
+        self.ask(Priority::Live, |reply| {
+            WriterJob::FinishRequest(operation, failed, reply)
         })
         .await
     }
@@ -688,6 +703,16 @@ pub(crate) async fn run_notifying(
             }};
         }
         match job.work {
+            WriterJob::FinishRequest(operation, failed, reply) => {
+                let result: Result<_, WriteError> = async {
+                    let mut tx = connection.begin().await?;
+                    sinex_store::requests::finish(tx.connection(), operation, failed).await?;
+                    tx.commit().await?;
+                    Ok(())
+                }
+                .await;
+                answer!(reply, result);
+            }
             WriterJob::AcceptQuestion(prepared, reply) => {
                 let result: Result<_, WriteError> = async {
                     (prepared.check)().map_err(|_| WriteError::ReadDeadline)?;
@@ -757,7 +782,7 @@ pub(crate) async fn run_notifying(
                 .await
                 .and_then(|admitted| {
                     let reply = admitted.request_reply.ok_or_else(|| {
-                        WriteError::Refused("request admission omitted its reply".into())
+                        WriteError::Internal("request admission omitted its reply".into())
                     })?;
                     Ok(RequestAdmission {
                         outcome: admitted.outcome,
@@ -1081,7 +1106,7 @@ async fn admit_with_checkpoint(
             sinex_store::requests::step(tx.connection(), step.operation, step.index).await?
     {
         let recorded: sinex_store::requests::CommittedStep = serde_json::from_value(recorded)
-            .map_err(|error| WriteError::Refused(format!("committed request outcome: {error}")))?;
+            .map_err(|error| WriteError::Internal(format!("committed request outcome: {error}")))?;
         tx.rollback().await?;
         return Ok(Admission {
             outcome: recorded.outcome(),
@@ -1121,11 +1146,11 @@ async fn admit_with_checkpoint(
             }
             let request_reply = if let Some(step) = request {
                 let reply = (step.response)(&outcome)
-                    .map_err(|error| WriteError::Refused(error.to_string()))?;
+                    .map_err(|error| WriteError::Internal(error.to_string()))?;
                 sinex_store::runs::end(tx.connection(), batch.run).await?;
                 let recorded = sinex_store::requests::CommittedStep::new(reply.clone(), &outcome);
                 let recorded = serde_json::to_value(recorded)
-                    .map_err(|error| WriteError::Refused(error.to_string()))?;
+                    .map_err(|error| WriteError::Internal(error.to_string()))?;
                 sinex_store::requests::save_step(
                     tx.connection(),
                     step.operation,

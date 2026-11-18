@@ -156,6 +156,27 @@ pub async fn save_step(
     Ok(())
 }
 
+/// Finish the attempt after its ordered steps. A completed request remains
+/// complete when a later read retry finds a subject unavailable.
+pub async fn finish(conn: &mut PgConnection, operation: OperationId, failed: bool) -> Result<()> {
+    let current = sqlx::query_scalar!(
+        "SELECT result FROM core.operations WHERE id=$1 AND kind='request'",
+        operation.0
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+    let result = if failed {
+        sinex_model::lifecycle::OperationResult::StoppedEarly
+    } else {
+        sinex_model::lifecycle::OperationResult::Ok
+    };
+    if current.as_deref() == Some("ok") || current.as_deref() == Some(result.as_db()) {
+        return Ok(());
+    }
+    sqlx::query!("UPDATE core.operations SET result=$2,end_seq=(SELECT value FROM core.counters WHERE name='commit_seq') WHERE id=$1 AND kind='request'",operation.0,result.as_db()).execute(conn).await?;
+    Ok(())
+}
+
 /// The exact outcome persisted with a step's effects.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CommittedStep {
