@@ -27,6 +27,15 @@ Every computation from admitted evidence upward runs as a derivation: a declared
 - Matching existing output ranges loads each event by its selected output ID; unrelated event history is outside that lookup. Start and end boundaries remain inclusive, and a missing end or declared open interval retains its overlap meaning.
 - Recomputing a derivation is idempotent: the same live inputs give the same outputs by key and payload.
 
+Per-event derivations keep their committed input position and largest admitted
+output reading order together. A restart reads those producer rows, rather than
+scanning event history; an absent producer starts at zero. Empty or suppressed output batches advance input progress
+without inventing an output order; a rolled-back batch advances neither. A version
+replay resets only the input position, keeping the previous output order so its
+new interpretations can supersede older readings. The schema upgrade seeds old
+maxima once, including archived and replaced outputs.
+
+
 ### When a key recomputes
 
 - A dirty key recomputes at most once per writer group, however many inputs in the group dirtied it.
@@ -90,7 +99,7 @@ Every event records the producer version of the parser or derivation that made i
 - **Nothing recomputes at daemon start.** A build carrying a new version computes only new and dirty keys with it, and answers spanning both versions disclose the mix. History is recomputed, for `recompute` derivations, only by the switch, after its compare. Status shows each derivation's pending switch and its compare result.
 - **A changed setting is a new version.** A change to anything a derivation reads as configuration (a profile parameter, the logical-day boundary, a fusion rule file) is a version change of that derivation and follows the same rules.
 
-`recompute DERIVATION --compare` stores a comparison ID tied to the installed build, its logical-day settings, and the input and lifecycle positions used throughout the comparison. Its initial per-kind input fingerprint and commit/change range boundaries come from one statement snapshot. The after-check and switch inspect only newer events and visibility changes of the input kinds, plus the existing tombstone counter. Unrelated captures do not invalidate the comparison. Per-event comparisons match prior unarchived outputs by exact parent membership; an output citing several inputs participates in each input's comparison. The initial fingerprint streams matching-kind metadata once through the existing kind indexes; it does not search unrelated newer history through the global commit feed. Validation does not repeat that history scan. A comparison that covered only a time range cannot select a version. `recompute DERIVATION --switch ID` consumes a full comparison of that same declaration and build; changed inputs refuse the switch and require another comparison. The writer records the caller and comparison in `producer_switch`, selects the version and, for `recompute`, archives its live output chains before scheduling the complete new output set. A `keep_history` declaration preserves those chains and its read position. Startup records available producers and leaves stored keys and positions unchanged. It loads historical reading-order maxima for its per-event producers together from stored run/event history, including archived and replaced readings; empty or absent producers start at zero. `status` lists selected and available versions. Runs record the full source commit and dirty flag; a build lacking that identity refuses producer execution.
+`recompute DERIVATION --compare` stores a comparison ID tied to the installed build, its logical-day settings, and the input and lifecycle positions used throughout the comparison. Its initial per-kind input fingerprint and commit/change range boundaries come from one statement snapshot. The after-check and switch inspect only newer events and visibility changes of the input kinds, plus the existing tombstone counter. Unrelated captures do not invalidate the comparison. Per-event comparisons match prior unarchived outputs by exact parent membership; an output citing several inputs participates in each input's comparison. The initial fingerprint streams matching-kind metadata once through the existing kind indexes; it does not search unrelated newer history through the global commit feed. Validation does not repeat that history scan. A comparison that covered only a time range cannot select a version. `recompute DERIVATION --switch ID` consumes a full comparison of that same declaration and build; changed inputs refuse the switch and require another comparison. The writer records the caller and comparison in `producer_switch`, selects the version and, for `recompute`, archives its live output chains before scheduling the complete new output set. A `keep_history` declaration preserves those chains and its read position. Startup records available producers and leaves stored keys and positions unchanged. `status` lists selected and available versions. Runs record the full source commit and dirty flag; a build lacking that identity refuses producer execution.
 
 Stored products disclose the producers that made their selected inputs and ancestors,
 grouped by source, run manifest and build, and material parser version. A shared
@@ -199,7 +208,7 @@ Ambiguity is never silently resolved; the operator decides what a rule cannot.
 - **The operator's decisions govern.** Agents' decisions are recorded with their evidence and shown in `duplicates`; they govern only for families whose declaration admits agent decisions, and only when they agree. The configuration is the same for every caller, and every caller can record a decision ([callers](interfaces.md#callers)).
 - Status reports ambiguity per family: undecided pairs, decided pairs, and fused records with `ambiguous > 1`.
 - **Outputs of removed derivations are archived.** When the daemon starts, every registered derivation the build no longer has, such as the fusion derivations removed with the families that had no written definition (focus, visits, plays, clipboard, notifications, rest, posts, conversations), has its readings archived by one lifecycle operation (actor `sinex`), and its registration then ends. The derivation runner archives them before computing new outputs. This happens once: `undo` reverses the archive, and a later start leaves it reversed. A derivation turned off by configuration is still in the build and keeps its readings. Nothing is deleted.
-- **Per-event reading order is seeded on the worker.** The derivation worker reads the previous maximum for each per-event producer before its first pass. Capture and serving can start while that read runs.
+- **Per-event reading order is seeded on the worker.** The derivation worker reads each per-event producer’s saved order row before its first pass. Capture and serving can start while that read runs.
 
 ### The fused kinds
 
@@ -322,11 +331,3 @@ Targets are stated as hardware-independent figures (rows read per key, invalidat
 | Documents | 4 MiB-plus and 100 MiB inputs are complete with range equality; extraction and chunking measured apart; a resource failure is explicit and retryable, never a successful prefix |
 | Long history | full, incremental, reversed and late worlds agree beyond 10,000 windows, 1,024 units, 64 refresh neighbours and a closer a month late; unrelated keys are not recomputed |
 | Disabled providers | zero provider setup, probes and calls on every path |
-
-Per-event derivations keep their committed input position and largest admitted
-output reading order together. A restart reads those producer rows, rather than
-scanning event history. Empty or suppressed output batches advance input progress
-without inventing an output order; a rolled-back batch advances neither. A version
-replay resets only the input position, keeping the previous output order so its
-new interpretations can supersede older readings. The schema upgrade seeds old
-maxima once, including archived and replaced outputs.
