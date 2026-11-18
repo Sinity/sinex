@@ -27,6 +27,10 @@ pub(crate) const STEPS: &[Step] = &[
         name: "source_exclusions",
         statements: source_exclusions,
     },
+    Step {
+        name: "request_outcomes",
+        statements: request_outcomes,
+    },
 ];
 
 fn source_exclusions() -> Vec<String> {
@@ -67,4 +71,15 @@ fn plain_names() -> Vec<String> {
     statements.push(keep_definition.replacen("CREATE FUNCTION", "CREATE OR REPLACE FUNCTION", 1));
     statements.push(crate::sparse_indexes::configuration());
     statements
+}
+
+/// Request identities and their results belong to the operation that writes them.
+fn request_outcomes() -> Vec<String> {
+    vec![
+        "ALTER TABLE core.operations ADD COLUMN request_scope text".into(),
+        "ALTER TABLE core.operations ADD COLUMN request_id text".into(),
+        "ALTER TABLE core.operations ADD UNIQUE (request_scope, request_id)".into(),
+        "ALTER TABLE core.operations ADD CHECK ((request_scope IS NULL) = (request_id IS NULL))"
+            .into(),
+    ]
 }

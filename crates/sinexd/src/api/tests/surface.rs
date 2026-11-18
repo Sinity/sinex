@@ -55,13 +55,17 @@ async fn declared_status_keeps_real_progress_and_strict_arguments(db: devkit::pg
 }
 
 async fn rows_call(w: &World, body: Value) -> (StatusCode, Value) {
+    rows_as(w, READ, body).await
+}
+
+async fn rows_as(w: &World, token: &str, body: Value) -> (StatusCode, Value) {
     let response = w
         .app
         .clone()
         .oneshot(
             HttpRequest::post("/v1/rows")
                 .header("content-type", "application/json")
-                .header("authorization", format!("Bearer {READ}"))
+                .header("authorization", format!("Bearer {token}"))
                 .body(Body::from(body.to_string()))
                 .unwrap(),
         )
@@ -171,4 +175,91 @@ async fn declared_rows_keep_time_window_selection_and_explicit_empty_references_
         empty["value"]["steps"][0]["outcome"]["reply"]["reply"],
         json!([])
     );
+}
+
+#[devkit::test]
+async fn retry_keeps_expanded_question_and_committed_save_after_predicate_changes(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
+    admit(&w, &["synthetic first", "synthetic second"], 0).await;
+    let (_, saved) = call_unbounded(&w, Some(OPERATOR), json!({"method":"save","name":"original","query":"events where event_type = command.executed"})).await;
+    assert_eq!(saved["outcome"], "ok", "{saved}");
+    let request = json!({"operation":"rows", "request_id":"keep-accepted", "arguments":{
+        "selection":"query:original", "page_size":1, "steps":[{"verb":"read"},{"verb":"save","name":"copy"}]
+    }, "deadline":null});
+    let (status, first) = rows_as(&w, OPERATOR, request.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_eq!(
+        first["value"]["steps"][1]["outcome"]["status"], "done",
+        "{first}"
+    );
+    let written = first["value"]["steps"][1]["outcome"].clone();
+    assert_eq!(written["reply"]["kind"], "written");
+    assert!(written["reply"]["reply"]["event"].is_string());
+    let (_, changed) = call_unbounded(
+        &w,
+        Some(OPERATOR),
+        json!({"method":"save","name":"original","query":"events where source = absent"}),
+    )
+    .await;
+    assert_eq!(changed["outcome"], "ok", "{changed}");
+    admit(&w, &["synthetic newly matching"], 2).await;
+    let mut conn = w.reads.acquire().await.unwrap();
+    let before: (i64,i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM core.events),(SELECT count(*) FROM raw.materials),(SELECT count(*) FROM core.runs)").fetch_one(&mut *conn).await.unwrap();
+    let (_, retry) = rows_as(&w, OPERATOR, request.clone()).await;
+    assert_eq!(
+        retry["value"]["population"], first["value"]["population"],
+        "{retry}"
+    );
+    assert_eq!(retry["value"]["steps"][1]["outcome"], written);
+    let after: (i64,i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM core.events),(SELECT count(*) FROM raw.materials),(SELECT count(*) FROM core.runs)").fetch_one(&mut *conn).await.unwrap();
+    assert_eq!(
+        before, after,
+        "retry writes no event, material or request run"
+    );
+    let next = first["next"][0]["request"].clone();
+    assert!(next["arguments"]["accepted"].is_string(), "{first}");
+    assert_eq!(
+        next["arguments"]["steps"],
+        json!([{"verb":"read","view":"full"}])
+    );
+    let (_, continued) = rows_as(&w, OPERATOR, next.clone()).await;
+    assert_eq!(continued["outcome"], "ok", "{continued}");
+    assert_eq!(continued["value"]["population"]["total"], 2);
+    assert_ne!(
+        continued["value"]["references"],
+        first["value"]["references"]
+    );
+    let (_, wrong_caller) = rows_as(&w, READ, next).await;
+    assert_eq!(wrong_caller["error"]["kind"], "not_found", "{wrong_caller}");
+    let mut changed_request = request;
+    changed_request["arguments"]["steps"][1]["name"] = json!("different");
+    let (_, conflict) = rows_as(&w, OPERATOR, changed_request).await;
+    assert_eq!(conflict["error"]["kind"], "conflict", "{conflict}");
+}
+
+#[devkit::test]
+async fn save_keeps_parameterized_future_question_without_executing_it(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
+    let request = json!({"operation":"rows", "request_id":"save-question", "arguments":{
+        "selection":"events where source = $source", "steps":[{"verb":"save","name":"future","parameter":["source:text"]}]
+    }, "deadline":null});
+    for token in [READ, AGENT] {
+        let (_, denied) = rows_as(&w, token, request.clone()).await;
+        assert_eq!(denied["error"]["kind"], "refused", "{denied}");
+    }
+    let (_, answer) = rows_as(&w, OPERATOR, request).await;
+    assert_eq!(answer["outcome"], "ok", "{answer}");
+    assert!(answer["value"]["population"].is_null());
+    let (_, query) = call_unbounded(
+        &w,
+        Some(OPERATOR),
+        json!({"method":"query","query":"query:future(source=absent)"}),
+    )
+    .await;
+    assert_eq!(query["outcome"], "ok", "{query}");
+    assert_eq!(query["result"]["rows"], json!([]));
 }

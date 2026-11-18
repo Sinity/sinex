@@ -132,10 +132,38 @@ impl Api {
     }
 
     pub(super) async fn query_record(&self, request: Request, caller: &Caller) -> Result<Value> {
+        self.query_record_using(request, caller, None, None).await
+    }
+
+    pub(super) async fn query_record_step(
+        &self,
+        request: Request,
+        caller: &Caller,
+        operation: sinex_model::OperationId,
+        index: usize,
+        metadata: &command_surface::RequestContext,
+    ) -> Result<Value> {
+        self.query_record_using(request, caller, Some((operation, index)), Some(metadata))
+            .await
+    }
+
+    async fn query_record_using(
+        &self,
+        request: Request,
+        caller: &Caller,
+        step: Option<(sinex_model::OperationId, usize)>,
+        metadata: Option<&command_surface::RequestContext>,
+    ) -> Result<Value> {
         if !caller.grants.split(',').any(|g| g == "guarded") {
             return Err(Error::refused("query authoring requires the guarded grant"));
         }
         let mut conn = self.acquire(caller).await?;
+        if let Some((operation, index)) = step
+            && let Some(saved) = sinex_store::requests::step(&mut conn, operation, index).await?
+        {
+            let saved: sinex_store::requests::CommittedStep = serde_json::from_value(saved)?;
+            return Ok(saved.reply);
+        }
         let now = Timestamp::now();
         let record = match request {
             Request::Mark {
@@ -200,35 +228,48 @@ impl Api {
         let writer = self.writer.as_ref().ok_or_else(Error::no_writer)?;
         let acquired =
             sinex_sources::sources::query::request_material(record, caller.actor, &self.host, now);
-        let done = crate::submit::request(
-            &mut conn,
-            writer,
-            &self.blobs,
-            std::sync::Arc::new(sinex_sources::sources::query::request_source()),
-            &format!("query.request:{}@{}", caller.actor, self.host),
-            &self.host,
-            acquired,
-        )
-        .await?;
-        if done.outcome.admitted != 1 || done.outcome.failures != 0 {
-            return Err(Error::internal(
-                "query request was not admitted as one event",
-            ));
-        }
-        let material = done
+        let material = acquired
             .material
-            .ok_or_else(|| Error::internal("query admission has no material"))?;
-        let id = sinex_store::live::at(
-            &mut conn,
-            sinex_model::RecordLocation {
-                material,
-                record_offset: 0,
-            },
-            0,
-        )
-        .await?
-        .ok_or_else(|| Error::conflict("query record was withdrawn before its response"))?;
-        Ok(json!({"event":id,"citation":format!("sinex:record/{material}/0"),"material":material}))
+            .as_ref()
+            .map(|material| material.id)
+            .ok_or_else(|| Error::internal("query acquisition has no material"))?;
+        let source = std::sync::Arc::new(sinex_sources::sources::query::request_source());
+        let binding = format!("query.request:{}@{}", caller.actor, self.host);
+        if let Some(metadata) = metadata {
+            metadata.finish_read_phase()?;
+        }
+        let done = if let Some((operation, index)) = step {
+            crate::submit::request_step(
+                &mut conn,
+                writer,
+                &self.blobs,
+                source,
+                &binding,
+                &self.host,
+                acquired,
+                crate::writer::RequestStep {
+                    operation,
+                    index,
+                    response: std::sync::Arc::new(move |outcome| authored_reply(material, outcome)),
+                },
+            )
+            .await?
+        } else {
+            crate::submit::request(
+                &mut conn,
+                writer,
+                &self.blobs,
+                source,
+                &binding,
+                &self.host,
+                acquired,
+            )
+            .await?
+        };
+        if let Some(reply) = done.reply {
+            return Ok(reply);
+        }
+        authored_reply(material, &done.outcome)
     }
 
     pub(super) async fn context_view(
@@ -266,4 +307,22 @@ impl Api {
         )
         .await
     }
+}
+
+/// Admission supplies the exact identity even if a later write archives it.
+fn authored_reply(
+    material: sinex_model::MaterialId,
+    outcome: &sinex_store::Outcome,
+) -> Result<Value> {
+    if outcome.admitted != 1 || outcome.failures != 0 {
+        return Err(Error::internal(
+            "query request was not admitted as one event",
+        ));
+    }
+    let [id] = outcome.admitted_ids.as_slice() else {
+        return Err(Error::internal(
+            "query admission did not return its one event identity",
+        ));
+    };
+    Ok(json!({"event":id,"citation":format!("sinex:record/{material}/0"),"material":material}))
 }

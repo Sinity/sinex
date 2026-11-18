@@ -501,7 +501,7 @@ pub const COMMANDS: &[Command] = &[
             ),
         ],
         access: Access::Agent,
-        mcp: true,
+        mcp: false,
     },
     Command {
         examples: &["sinexctl query-list"],

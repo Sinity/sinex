@@ -215,8 +215,9 @@ act or by session undo. Programs that derive continuously use the ingress as
 
 **Decided target (2026-11-18), not built.** The client is `sinex`; the daemon and its
 maintenance commands remain `sinexd` and `sinexd admin`. The current build still
-ships `sinexctl` with command-first parsing and one MCP tool per exposed command.
-Use `sinexctl --help`, `sinexctl COMMAND --help`, the generated tool list and
+ships `sinexctl` with command-first parsing. Typed read and saved-question operations
+use the `sinex_read` and `sinex_write` tools; remaining domain commands retain their
+individual tools. Use `sinexctl --help`, `sinexctl COMMAND --help`, the generated tool list and
 `GET /v1/commands` for that build. The examples in this section specify the target;
 they do not claim that the binary rename or command port has shipped. The rename
 moves callers, packaging and integrations together and leaves one client name.
@@ -411,7 +412,12 @@ prerequisites.
 
 **Complete target.** Three nested tools replace the command-specific tools.
 The current build's tool schemas enumerate its implemented operations. Read
-operations use the same typed declarations and ready requests as HTTP; each
+operations use the same typed declarations and ready requests as HTTP. `sinex_write`
+also saves a question through the typed `save` step, preserving its parameters and
+existing credential requirement. Saving a question does not execute it. Its request
+identity, admitted event identity and reply are kept in the operations log, with the
+reply committed in the transaction that admits the authored source record. A retry
+returns that receipt before creating another source material or run. Each
 remaining domain command moves when its replacement owns the behavior.
 `sinex-commands` owns those runtime declarations; `sinex-protocol` carries the
 wire data independently of the runtime and performs no I/O.

@@ -81,6 +81,8 @@ fn operations(c: &Checks) -> String {
   id uuid PRIMARY KEY,
   kind text NOT NULL,
   actor text NOT NULL,
+  request_scope text,
+  request_id text,
   scope jsonb NOT NULL,
   at timestamptz NOT NULL DEFAULT now(),
   start_seq bigint,
@@ -88,7 +90,9 @@ fn operations(c: &Checks) -> String {
   result text {result},
   counts jsonb NOT NULL DEFAULT '{{}}'::jsonb,
   progress jsonb NOT NULL DEFAULT '{{}}'::jsonb,
-  refusals jsonb NOT NULL DEFAULT '[]'::jsonb
+  refusals jsonb NOT NULL DEFAULT '[]'::jsonb,
+  UNIQUE (request_scope, request_id),
+  CHECK ((request_scope IS NULL) = (request_id IS NULL))
 )",
         result = c.operation_result
     )

@@ -20,6 +20,7 @@ fn tool_examples_follow_the_table() {
     }
     let names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
     assert!(names.contains(&"sinex_read"));
+    assert!(names.contains(&"sinex_write"));
     assert!(names.contains(&"sinex_recall"));
     for name in ["sinex_same", "sinex_distinct"] {
         assert!(names.contains(&name), "agents decide duplicates: {name}");
@@ -41,7 +42,6 @@ fn tool_examples_follow_the_table() {
     for name in [
         "sinex_context",
         "sinex_timeline",
-        "sinex_save",
         "sinex_query-list",
         "sinex_query-complete",
     ] {
@@ -173,5 +173,25 @@ fn array_results_keep_their_text_without_invalid_structured_content() {
     assert_eq!(
         text.strip_prefix(DATA_NOTICE).unwrap().trim(),
         serde_json::to_string_pretty(&data).unwrap()
+    );
+}
+
+#[test]
+fn read_and_write_cards_expose_their_actual_step_access() {
+    let tools = tools();
+    let read = tools.iter().find(|tool| tool.name == "sinex_read").unwrap();
+    let write = tools
+        .iter()
+        .find(|tool| tool.name == "sinex_write")
+        .unwrap();
+    assert_eq!(
+        read.input_schema["properties"]["arguments"]["properties"]["steps"]["items"]["properties"]
+            ["verb"]["enum"],
+        json!(["read"])
+    );
+    assert_eq!(
+        write.input_schema["properties"]["arguments"]["properties"]["steps"]["items"]["properties"]
+            ["verb"]["enum"],
+        json!(["read", "save"])
     );
 }

@@ -1,6 +1,6 @@
 //! One typed declaration of each verb's CLI fields and wire arguments.
 use command_surface::{ArgumentForm, ArgumentSpec, StepDeclarations};
-use sinex_protocol::rows::Read;
+use sinex_protocol::rows::{Read, Save};
 use std::sync::LazyLock;
 
 /// Step argument ownership is shared by all parsers. The CLI's eventual
@@ -23,6 +23,19 @@ pub fn steps() -> &'static StepDeclarations {
                 ],
             )
             .expect("read step fields match their typed declaration");
+        steps
+            .declare::<Save>(
+                "save",
+                vec![
+                    ArgumentSpec::new("name", ArgumentForm::Positional, "saved question name"),
+                    ArgumentSpec::new(
+                        "parameter",
+                        ArgumentForm::Named,
+                        "repeatable typed parameter declaration",
+                    ),
+                ],
+            )
+            .expect("save fields match their declaration");
         steps
     });
     &STEPS

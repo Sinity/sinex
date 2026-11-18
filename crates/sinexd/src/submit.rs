@@ -15,6 +15,7 @@ use std::time::Instant;
 pub(crate) struct Submission {
     pub outcome: Outcome,
     pub material: Option<MaterialId>,
+    pub reply: Option<Value>,
 }
 
 pub(crate) struct Submitter<'a> {
@@ -51,7 +52,7 @@ impl Submitter<'_> {
                     .submit_source(self.priority, batch, check, stage)
                     .await
             };
-            result.map_err(Error::from)
+            result.map(|outcome| (outcome, None)).map_err(Error::from)
         })
         .await
     }
@@ -78,6 +79,7 @@ impl Submitter<'_> {
                         .writer
                         .submit_signals(turn, Some(batch), checkpoint)
                         .await?)
+                    .map(|outcome| (outcome, None))
                 }
             },
         )
@@ -98,7 +100,31 @@ impl Submitter<'_> {
                 self.writer
                     .submit_curation(turn, self.priority, batch, check)
                     .await
+                    .map(|outcome| (outcome, None))
                     .map_err(Error::from)
+            },
+        )
+        .await
+    }
+
+    async fn submit_request(
+        &self,
+        acquired: drivers::Acquired,
+        step: crate::writer::RequestStep,
+    ) -> Result<Submission> {
+        self.submit_using(
+            acquired,
+            Value::Null,
+            &mut Totals::default(),
+            |batch, check, _| {
+                let step = step.clone();
+                async move {
+                    let admitted = self
+                        .writer
+                        .submit_request(self.priority, batch, step, check)
+                        .await?;
+                    Ok((admitted.outcome, Some(admitted.reply)))
+                }
             },
         )
         .await
@@ -113,7 +139,7 @@ impl Submitter<'_> {
     ) -> Result<Submission>
     where
         F: FnMut(sinex_model::Batch, AdmissionCheck, Option<StageCheckpoint>) -> A,
-        A: std::future::Future<Output = Result<Outcome>>,
+        A: std::future::Future<Output = Result<(Outcome, Option<Value>)>>,
     {
         let check = self.material.admission_check(self.check.clone());
         check()?;
@@ -138,6 +164,7 @@ impl Submitter<'_> {
             check()
         });
         let mut outcome = Outcome::default();
+        let mut reply = None;
         // The material's framed records, and how many of them are committed.
         let mut material_framed = None;
         let mut committed_records = 0u64;
@@ -187,7 +214,8 @@ impl Submitter<'_> {
                         .get_or_insert_with(Instant::now);
                     admission_check()
                 });
-                let admitted = admit(batch, writer_check, stage.clone()).await?;
+                let (admitted, committed_reply) = admit(batch, writer_check, stage.clone()).await?;
+                reply = committed_reply.or(reply);
                 let elapsed = started.elapsed();
                 let queue = service_started
                     .lock()
@@ -214,7 +242,11 @@ impl Submitter<'_> {
                 committed.accounting.framed =
                     committed.accounting.framed - committed_records + framed;
             }
-            Ok::<_, Error>(Submission { outcome, material })
+            Ok::<_, Error>(Submission {
+                outcome,
+                material,
+                reply,
+            })
         }
         .await;
         batches.finish().await?;
@@ -270,11 +302,36 @@ pub(crate) async fn request_curation(
     .await
 }
 
+/// A request's authored records and its response commit together.
+pub(crate) async fn request_step(
+    conn: &mut PgConnection,
+    writer: &WriterHandle,
+    blobs: &Blobs,
+    source: Arc<dyn Source>,
+    binding: &str,
+    host: &str,
+    acquired: drivers::Acquired,
+    step: crate::writer::RequestStep,
+) -> Result<Submission> {
+    request_inner(
+        conn,
+        writer,
+        blobs,
+        source,
+        binding,
+        host,
+        acquired,
+        Admission::Request(step),
+    )
+    .await
+}
+
 /// What a request's admission must also hold.
 enum Admission<'a> {
     Plain,
     Signals(&'a SignalTurn, sinex_store::signals::Commit),
     Curation(&'a CurationTurn),
+    Request(crate::writer::RequestStep),
 }
 
 pub(crate) async fn request_checkpoint(
@@ -312,6 +369,7 @@ async fn request_inner(
     admission: Admission<'_>,
 ) -> Result<Submission> {
     crate::request_deadline::finish_read(conn).await?;
+    let durable = matches!(&admission, Admission::Request(_));
     let spec = source.spec();
     let version = spec.parser_version.to_string();
     let run = sinex_store::runs::start(
@@ -377,12 +435,16 @@ async fn request_inner(
                     .await
             }
             Admission::Curation(turn) => Ok(submitter.submit_curation(acquired, turn).await?),
+            Admission::Request(step) => submitter.submit_request(acquired, step).await,
             Admission::Plain => Ok(submitter
                 .submit(acquired, Value::Null, &mut Totals::default())
                 .await?),
         }
     }
     .await;
+    if durable && result.is_ok() {
+        return result;
+    }
     let ended = sinex_store::runs::end(conn, run)
         .await
         .map_err(|error| Error::from(error).within(format!("ending request run {run}")));

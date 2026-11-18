@@ -23,6 +23,15 @@ impl Operation for StatusOperation {
     type Request = Status;
     type Response = Value;
 
+    fn required_access(
+        &self,
+        _: &Status,
+        _: command_surface::Access,
+        _: &command_surface::Caller,
+    ) -> command_surface::Access {
+        command_surface::Access::Read
+    }
+
     fn execute(
         &self,
         _: Status,
@@ -69,6 +78,27 @@ impl Operation for RowsOperation {
     type Request = sinex_protocol::rows::Rows;
     type Response = sinex_protocol::rows::RowsReply;
 
+    fn required_access(
+        &self,
+        request: &Self::Request,
+        _: command_surface::Access,
+        _: &command_surface::Caller,
+    ) -> command_surface::Access {
+        if request
+            .steps
+            .iter()
+            .any(|step| matches!(step, sinex_protocol::rows::Step::Save(_)))
+        {
+            crate::api::surface_access(
+                sinex_protocol::command("save")
+                    .expect("save declared")
+                    .access,
+            )
+        } else {
+            command_surface::Access::Read
+        }
+    }
+
     fn execute(
         &self,
         request: Self::Request,
@@ -105,11 +135,87 @@ impl Api {
         metadata: &RequestContext,
     ) -> Result<SurfaceAnswer<sinex_protocol::rows::RowsReply>> {
         use sinex_protocol::rows::{
-            ReadReply, ReadView, Rows, RowsReply, Step, StepOutcome, StepReport,
+            ReadView, Rows, RowsReply, Step, StepOutcome, StepReply, StepReport,
         };
         request.validate()?;
         let mut context = self.context();
         let mut conn = self.acquire(caller).await?;
+        let writes = request
+            .steps
+            .iter()
+            .any(|step| matches!(step, Step::Save(_)));
+        let reads = request.steps.is_empty()
+            || request
+                .steps
+                .iter()
+                .any(|step| matches!(step, Step::Read(_)));
+        if writes && !caller.grants.split(',').any(|grant| grant == "guarded") {
+            return Err(Error::refused("query authoring requires the guarded grant"));
+        }
+        let writer = if writes {
+            Some(self.writer.as_ref().ok_or_else(Error::no_writer)?)
+        } else {
+            None
+        };
+        let _turn = if let Some(writer) = writer {
+            Some(
+                writer
+                    .lock_request(metadata.caller().scope(), &metadata.request_id)
+                    .await,
+            )
+        } else {
+            None
+        };
+        let accepted = if let Some(writer) = writer {
+            Some(
+                writer
+                    .begin_request(
+                        metadata.caller().scope().into(),
+                        metadata.request_id.clone(),
+                        caller.actor.into(),
+                        serde_json::to_value(metadata.request())?,
+                    )
+                    .await?,
+            )
+        } else {
+            None
+        };
+        let question = if let Some(accepted) = &accepted {
+            if reads {
+                let question = if let Some(question) = accepted.progress.get("question") {
+                    serde_json::from_value::<sinex_store::query::Question>(question.clone())?
+                } else {
+                    let question = sinex_store::query::Question::accept(
+                        &mut conn,
+                        request.selection.as_deref().expect("save has a question"),
+                        &context,
+                    )
+                    .await?;
+                    writer
+                        .expect("write request")
+                        .accept_question(accepted.operation, question.clone())
+                        .await?;
+                    question
+                };
+                context = question.context()?;
+                Some(question)
+            } else {
+                None
+            }
+        } else if let Some(operation) = request.accepted {
+            let question =
+                sinex_store::requests::question(&mut conn, operation, metadata.caller().scope())
+                    .await?;
+            if request.selection.as_deref() != Some(question.text.as_str()) {
+                return Err(Error::bad_request(
+                    "accepted continuation belongs to another question",
+                ));
+            }
+            context = question.context()?;
+            Some(question)
+        } else {
+            None
+        };
         let selected_reference = request
             .selection
             .as_deref()
@@ -131,7 +237,11 @@ impl Api {
         let mut references = Vec::new();
         let population;
         let position;
-        if let Some(named) = named {
+        if !reads {
+            records = Vec::new();
+            population = None;
+            position = sinex_store::query::current_seq(&mut conn).await?;
+        } else if let Some(named) = named {
             use sqlx::Connection;
             let mut snapshot = conn.begin().await?;
             sinex_store::query::read_one_snapshot(&mut snapshot).await?;
@@ -156,16 +266,15 @@ impl Api {
             } else {
                 text
             };
-            let selected = sinex_store::query::read_page(
-                &mut conn,
-                text,
-                &context,
-                &Page {
-                    size: request.page_size,
-                    cursor: metadata.cursor().map(str::to_owned),
-                },
-            )
-            .await
+            let page = Page {
+                size: request.page_size,
+                cursor: metadata.cursor().map(str::to_owned),
+            };
+            let selected = if let Some(question) = &question {
+                question.read(&mut conn, &page).await
+            } else {
+                sinex_store::query::read_page(&mut conn, text, &context, &page).await
+            }
             .map_err(|error| match error {
                 sinex_store::Error::Query(error) => Error::from(error).in_query(text),
                 error => Error::from(error),
@@ -186,12 +295,50 @@ impl Api {
         let mut reports = Vec::new();
         let mut next = Vec::new();
         let mut failed = false;
-        for step in &request.steps {
-            let Step::Read(read) = step;
+        for (index, step) in request.steps.iter().enumerate() {
+            let Step::Read(read) = step else {
+                let Step::Save(save) = step else {
+                    unreachable!("declared step")
+                };
+                let outcome = if failed {
+                    StepOutcome::NotRun
+                } else {
+                    let operation = accepted.as_ref().expect("write request accepted").operation;
+                    match self
+                        .query_record_step(
+                            Request::Save {
+                                name: save.name.clone(),
+                                query: request.selection.clone().expect("save has a question"),
+                                parameter: save.parameter.clone(),
+                            },
+                            caller,
+                            operation,
+                            index,
+                            metadata,
+                        )
+                        .await
+                    {
+                        Ok(reply) => StepOutcome::Done {
+                            reply: StepReply::Written(reply),
+                        },
+                        Err(error) => {
+                            failed = true;
+                            StepOutcome::Failed {
+                                error: error.failure(),
+                            }
+                        }
+                    }
+                };
+                reports.push(StepReport {
+                    verb: "save".into(),
+                    outcome,
+                });
+                continue;
+            };
             let outcome = if failed {
                 StepOutcome::NotRun
             } else {
-                let result: Result<ReadReply> = async {
+                let result: Result<StepReply> = async {
                     let at = read
                         .at
                         .as_ref()
@@ -218,12 +365,12 @@ impl Api {
                                             .map_err(|error| Error::internal(error.to_string()))
                                     })
                                     .collect::<Result<Vec<_>>>()?;
-                                Ok(ReadReply::Records(
+                                Ok(StepReply::Records(
                                     sinex_store::query::read_events(&mut conn, &ids, Some(at))
                                         .await?,
                                 ))
                             } else {
-                                Ok(ReadReply::Records(records.clone()))
+                                Ok(StepReply::Records(records.clone()))
                             }
                         }
                         ReadView::Trace => {
@@ -259,7 +406,7 @@ impl Api {
                                 }
                                 pages.push(page);
                             }
-                            Ok(ReadReply::Trace(pages))
+                            Ok(StepReply::Trace(pages))
                         }
                     }
                 }
@@ -285,6 +432,12 @@ impl Api {
         {
             let mut call = request.clone();
             // A page continues only the read, never an earlier write in the line.
+            if question.is_some() {
+                call.accepted = accepted
+                    .as_ref()
+                    .map(|accepted| accepted.operation)
+                    .or(request.accepted);
+            }
             call.steps = request
                 .steps
                 .iter()
@@ -307,8 +460,9 @@ impl Api {
             for report in &mut reply.steps {
                 if let StepOutcome::Done { reply } = &mut report.outcome {
                     match reply {
-                        ReadReply::Records(records) => values.extend(records.iter_mut()),
-                        ReadReply::Trace(pages) => {
+                        StepReply::Records(records) => values.extend(records.iter_mut()),
+                        StepReply::Written(_) => {}
+                        StepReply::Trace(pages) => {
                             for page in pages {
                                 values.extend(page.rows.iter_mut());
                             }
@@ -318,7 +472,7 @@ impl Api {
             }
             self.unseal_values(values).await?;
         }
-        let mut answer = if shown == 0 {
+        let mut answer = if shown == 0 && !writes {
             SurfaceAnswer::empty(reply)
         } else {
             SurfaceAnswer::ok(reply)

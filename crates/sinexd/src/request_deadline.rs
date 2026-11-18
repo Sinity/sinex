@@ -51,6 +51,11 @@ pub(crate) fn timeout() -> Error {
     failure.into()
 }
 
+/// Preparation may persist accepted intent while its source reads remain cancellable.
+pub(crate) fn check_read() -> Result<()> {
+    current().map_or(Ok(()), |budget| budget.check())
+}
+
 /// Queue reservation is still read work. Once the writer takes the job, the
 /// caller waits for its result even if the read budget then expires.
 pub(crate) fn admit() -> Result<()> {

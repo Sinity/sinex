@@ -230,6 +230,14 @@ async fn call(
     }
 }
 
+fn surface_access(access: Access) -> command_surface::Access {
+    match access {
+        Access::Read => command_surface::Access::Read,
+        Access::Agent => command_surface::Access::Write,
+        Access::Operator => command_surface::Access::Act,
+    }
+}
+
 async fn surface_call(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -247,7 +255,8 @@ async fn surface_call(
         }
     };
     let caller = state.api.caller(granted).await;
-    let caller = command_surface::Caller::authenticated(actor(granted), caller);
+    let access = surface_access(granted);
+    let caller = command_surface::Caller::authenticated(actor(granted), caller).with_access(access);
     let mut request = axum::http::Request::post(uri)
         .body(body.to_vec())
         .expect("accepted URI");

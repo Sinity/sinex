@@ -106,7 +106,13 @@ async fn a_forward_step_runs_from_its_version_and_records_the_next(db: devkit::p
         .unwrap();
 }
 
+async fn requests_before_outcomes(conn: &mut PgConnection) {
+    sqlx::query("ALTER TABLE core.operations DROP COLUMN request_scope CASCADE, DROP COLUMN request_id CASCADE")
+        .execute(conn).await.unwrap();
+}
+
 async fn sources_before_exclusions(conn: &mut PgConnection) {
+    requests_before_outcomes(conn).await;
     sqlx::query("DROP TABLE registry.sources")
         .execute(&mut *conn)
         .await
@@ -284,4 +290,37 @@ async fn non_ascii_text_round_trips(db: devkit::pg::TestDatabase) {
     assert_eq!(stored, text);
     assert_eq!(characters, 8);
     assert_eq!(constructed, "é 漢 🦀");
+}
+
+#[devkit::test]
+async fn request_outcomes_upgrade_preserves_operations(db: devkit::pg::TestDatabase) {
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let fresh = catalog(&mut conn).await.unwrap();
+    requests_before_outcomes(&mut conn).await;
+    let id = sinex_model::OperationId::new();
+    sqlx::query("INSERT INTO core.operations (id,kind,actor,scope,progress) VALUES ($1,'stage','fixture','{}','{\"accepted\":true}')")
+        .bind(id.0).execute(&mut conn).await.unwrap();
+    sqlx::query("DELETE FROM sinex_schema.applied")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO sinex_schema.applied(version) VALUES (42)")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    assert!(matches!(
+        apply(&mut conn).await.unwrap(),
+        Applied::Upgraded {
+            from: 42,
+            to: VERSION
+        }
+    ));
+    assert_eq!(catalog(&mut conn).await.unwrap(), fresh);
+    let progress: serde_json::Value =
+        sqlx::query_scalar("SELECT progress FROM core.operations WHERE id=$1")
+            .bind(id.0)
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(progress, serde_json::json!({"accepted":true}));
 }

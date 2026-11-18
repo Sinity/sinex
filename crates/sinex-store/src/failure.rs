@@ -61,6 +61,9 @@ impl From<Error> for Failure {
             Error::Blob(error) => blob_failure(&error),
             Error::Invalid(message) => Failure::new(FailureKind::BadValue, message),
             Error::NotFound(message) => Failure::new(FailureKind::NotFound, message),
+            Error::RequestConflict => {
+                Failure::new(FailureKind::Conflict, error.to_string()).with_code("request_conflict")
+            }
             Error::StaleCursor => Failure::new(FailureKind::StaleCursor, error.to_string()),
             Error::StaleCheckpoint => {
                 let mut failure = Failure::new(FailureKind::Conflict, error.to_string())

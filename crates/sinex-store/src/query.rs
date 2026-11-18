@@ -9,6 +9,8 @@ mod cursor;
 mod fields;
 mod follow;
 mod products;
+mod question;
+pub use question::Question;
 mod recall;
 mod saved;
 mod selected;
@@ -312,11 +314,9 @@ async fn run_inner(
             }
             Some(declarations)
         }
-        // The question identity already used this transaction's current
-        // declarations. Only a supplied catalog or historical cursor needs
-        // another snapshot here.
-        None if current_catalog_loaded => None,
-        None => Some(sinex_schema::kinds::all(&mut tx).await?),
+        // A supplied context already owns its immutable declaration snapshot.
+        // A new context loaded this transaction's catalog above.
+        None => None,
     };
     if let Some(declarations) = declarations {
         ctx.catalog = Some(sinex_query::QueryCatalog::new(declarations.into_values()));

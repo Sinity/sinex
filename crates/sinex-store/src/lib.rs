@@ -30,6 +30,7 @@ pub mod query;
 pub mod read_models;
 pub mod registry;
 pub mod replay;
+pub mod requests;
 pub mod runs;
 pub mod sealed;
 pub mod signals;
@@ -91,6 +92,8 @@ pub enum Error {
     /// or is not visible to the caller.
     #[error("{0}")]
     NotFound(String),
+    #[error("request identity was already used with different arguments")]
+    RequestConflict,
     #[error("query result changed; start the query again")]
     StaleCursor,
     /// The signal checkpoint moved since it was read.

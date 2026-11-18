@@ -17,6 +17,9 @@ pub struct Rows {
     pub steps: Vec<Step>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page_size: Option<u64>,
+    /// Continue a read from an accepted write request's original question.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accepted: Option<sinex_model::OperationId>,
 }
 
 impl Rows {
@@ -51,8 +54,20 @@ impl Rows {
                 "read needs a selection or references",
             ));
         }
+        if self.accepted.is_some() && self.steps.iter().any(|step| !matches!(step, Step::Read(_))) {
+            return Err(Failure::new(
+                FailureKind::BadRequest,
+                "an accepted read continuation contains only reads",
+            ));
+        }
+        if self.steps.iter().any(|step| matches!(step, Step::Save(_))) && self.selection.is_none() {
+            return Err(Failure::new(
+                FailureKind::BadRequest,
+                "save needs a question in selection",
+            ));
+        }
         for step in &self.steps {
-            let Step::Read(read) = step;
+            let Step::Read(read) = step else { continue };
             if read.view == ReadView::Full && (read.page_size.is_some() || read.cursor.is_some()) {
                 return Err(Failure::new(
                     FailureKind::BadRequest,
@@ -68,6 +83,16 @@ impl Rows {
 #[serde(tag = "verb", rename_all = "snake_case")]
 pub enum Step {
     Read(Read),
+    Save(Save),
+}
+
+/// Store the selected question without requiring its current data to exist.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Save {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parameter: Vec<String>,
 }
 
 /// Views with an existing reader. Future domain views join this type with
@@ -115,16 +140,17 @@ pub struct StepReport {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum StepOutcome {
-    Done { reply: ReadReply },
+    Done { reply: StepReply },
     Failed { error: Failure },
     NotRun,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", content = "reply", rename_all = "snake_case")]
-pub enum ReadReply {
+pub enum StepReply {
     Records(Vec<serde_json::Value>),
     Trace(Vec<sinex_model::query_reply::QueryPage>),
+    Written(serde_json::Value),
 }
 
 impl RowsReply {
