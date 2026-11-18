@@ -397,7 +397,9 @@ impl Ingest {
                     error @ (WriteError::Unavailable(_)
                     | WriteError::StorageRefused(_)
                     | WriteError::Stopped
-                    | WriteError::ReadDeadline),
+                    | WriteError::ReadDeadline
+                    | WriteError::Internal(_)
+                    | WriteError::RequestConflict),
                 ) => {
                     return Err(error.into());
                 }

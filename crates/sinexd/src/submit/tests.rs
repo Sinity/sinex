@@ -186,6 +186,7 @@ async fn submission_checks_again_inside_the_writer(db: devkit::pg::TestDatabase)
                 writer
                     .submit_checked(Priority::Bulk, batch, check)
                     .await
+                    .map(|outcome| (outcome, None))
                     .map_err(crate::Error::from)
             }
         },
@@ -345,10 +346,13 @@ async fn overlap(fail_first: bool) {
                         }
                     }
                     check()?;
-                    Ok(Outcome {
-                        admitted: batch.event_count(),
-                        ..Outcome::default()
-                    })
+                    Ok((
+                        Outcome {
+                            admitted: batch.event_count(),
+                            ..Outcome::default()
+                        },
+                        None,
+                    ))
                 }
             },
         )
@@ -532,7 +536,10 @@ async fn queued_submission(db: devkit::pg::TestDatabase, cancel: bool, source_pu
                             ));
                             queued.notify_one();
                         }
-                        answer.await.map_err(crate::Error::from)
+                        answer
+                            .await
+                            .map(|outcome| (outcome, None))
+                            .map_err(crate::Error::from)
                     }
                 },
             )

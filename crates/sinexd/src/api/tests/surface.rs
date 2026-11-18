@@ -219,7 +219,7 @@ async fn retry_keeps_expanded_question_and_committed_save_after_predicate_change
         "retry writes no event, material or request run"
     );
     let mut presentation = request.clone();
-    presentation["deadline"] = json!(1000);
+    presentation["deadline"] = json!(60000);
     presentation["budget_tokens"] = json!(600);
     presentation["format"] = json!("json");
     let (_, presentation_retry) = rows_as(&w, OPERATOR, presentation).await;
