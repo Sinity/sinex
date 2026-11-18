@@ -103,12 +103,22 @@ impl Api {
         request.validate()?;
         let mut context = self.context();
         let mut conn = self.acquire(caller).await?;
+        let selected_reference = request
+            .selection
+            .as_deref()
+            .and_then(|text| query::parse_reference(text).ok());
         let named = request.references.clone().or_else(|| {
-            request.selection.as_ref().and_then(|text| {
-                query::parse_reference(text)
-                    .ok()
-                    .map(|_| vec![text.clone()])
-            })
+            selected_reference
+                .as_ref()
+                .filter(|reference| !matches!(reference, query::Reference::Window { .. }))
+                .map(|_| {
+                    vec![
+                        request
+                            .selection
+                            .clone()
+                            .expect("parsed selection reference"),
+                    ]
+                })
         });
         let records;
         let mut references = Vec::new();
@@ -132,6 +142,13 @@ impl Api {
             population = None;
         } else {
             let text = request.selection.as_deref().expect("validated selection");
+            let window_query;
+            let text = if matches!(selected_reference, Some(query::Reference::Window { .. })) {
+                window_query = format!("recall {text}");
+                window_query.as_str()
+            } else {
+                text
+            };
             let selected = sinex_store::query::read_page(
                 &mut conn,
                 text,

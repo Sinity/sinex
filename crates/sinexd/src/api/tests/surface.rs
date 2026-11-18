@@ -132,3 +132,37 @@ async fn declared_rows_followup_keeps_options_and_advances_the_actual_page(
     assert_eq!(seen.len(), 3);
     assert_eq!(identities.len(), 2);
 }
+
+#[devkit::test]
+async fn declared_rows_keep_time_window_selection_and_explicit_empty_references_distinct(
+    db: devkit::pg::TestDatabase,
+) {
+    let w = world(db).await;
+    admit(&w, &["within-window", "also-within-window"], 1).await;
+    let (status, answer) = rows_call(
+        &w,
+        json!({
+            "operation":"rows", "deadline":null,
+            "arguments":{"selection":"sinex:window/2026-09-14T08:00:00Z/2026-09-14T08:03:00Z"},
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(answer["value"]["population"]["total"], 2, "{answer}");
+    assert_eq!(answer["value"]["references"].as_array().unwrap().len(), 2);
+    let (status, empty) = rows_call(
+        &w,
+        json!({
+            "operation":"rows", "deadline":null,
+            "arguments":{"references":[], "steps":[{"verb":"read"}]},
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{empty}");
+    assert_eq!(empty["outcome"], "empty", "{empty}");
+    assert_eq!(empty["value"]["references"], json!([]));
+    assert_eq!(
+        empty["value"]["steps"][0]["outcome"]["reply"]["reply"],
+        json!([])
+    );
+}
