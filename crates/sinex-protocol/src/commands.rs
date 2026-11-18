@@ -200,7 +200,7 @@ pub const COMMANDS: &[Command] = &[
         summary: "How Sinex is running: saved write position, source states and consumer progress.",
         args: &[],
         access: Access::Read,
-        mcp: true,
+        mcp: false,
     },
     Command {
         examples: &[
@@ -211,7 +211,7 @@ pub const COMMANDS: &[Command] = &[
         summary: "Run a query in the Sinex query language; returns one page and a cursor.",
         args: &[pos("query", ArgKind::Rest, "the query text"), PAGE, CURSOR],
         access: Access::Read,
-        mcp: true,
+        mcp: false,
     },
     Command {
         examples: &["sinexctl recall last", "sinexctl recall yesterday"],
@@ -307,7 +307,7 @@ pub const COMMANDS: &[Command] = &[
         summary: "One parsed event, whether it is live, where it came from, and its fields.",
         args: &[pos("reference", ArgKind::Reference, "the event")],
         access: Access::Read,
-        mcp: true,
+        mcp: false,
     },
     Command {
         examples: &["sinexctl trace sinex:ev/00000000-0000-7000-8000-000000000001"],
@@ -319,7 +319,7 @@ pub const COMMANDS: &[Command] = &[
             CURSOR,
         ],
         access: Access::Read,
-        mcp: true,
+        mcp: false,
     },
     Command {
         examples: &["sinexctl watch list"],

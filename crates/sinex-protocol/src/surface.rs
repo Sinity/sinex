@@ -26,7 +26,13 @@ pub fn declarations() -> &'static Arc<OperationDeclarations> {
         table
             .declare_tool(ToolFamily {
                 name: "read".into(),
-                description: "Read stored evidence, its provenance and capture status.".into(),
+                description: concat!(
+                    "Read stored evidence, its provenance and capture status. Follow returned ready requests.\n",
+                    "Examples:\n",
+                    "{\"arguments\":{\"selection\":\"events\"}}\n",
+                    "{\"arguments\":{\"selection\":\"events\",\"steps\":[{\"verb\":\"read\"}]}}\n",
+                    "{\"operation\":\"status\",\"arguments\":{}}",
+                ).into(),
                 open_world: false,
                 idempotent: true,
             })

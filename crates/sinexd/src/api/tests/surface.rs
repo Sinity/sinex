@@ -45,6 +45,12 @@ async fn declared_status_keeps_real_progress_and_strict_arguments(db: devkit::pg
     assert!(answer["value"]["source_states"].is_object());
     assert!(answer["value"]["consumers"].is_array());
     assert_eq!(answer["value"]["verdict"]["state"], "unknown");
+    assert!(
+        answer["notes"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(sinex_protocol::DATA_NOTICE))
+    );
     assert!(answer["value"]["commit_seq"].is_i64());
 }
 

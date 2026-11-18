@@ -19,7 +19,7 @@ fn tool_examples_follow_the_table() {
         }
     }
     let names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
-    assert!(names.contains(&"sinex_query"));
+    assert!(names.contains(&"sinex_read"));
     assert!(names.contains(&"sinex_recall"));
     for name in ["sinex_same", "sinex_distinct"] {
         assert!(names.contains(&name), "agents decide duplicates: {name}");
@@ -63,8 +63,21 @@ fn tool_examples_follow_the_table() {
             "agents archive, restore and undo: {name}"
         );
     }
-    let query = tools.iter().find(|t| t.name == "sinex_query").unwrap();
-    assert_eq!(query.input_schema["required"], json!(["query"]));
+    let read = tools.iter().find(|t| t.name == "sinex_read").unwrap();
+    assert_eq!(
+        read.input_schema["properties"]["operation"]["enum"],
+        json!(["rows", "status"])
+    );
+    let request = sinex_protocol::surface::declarations().parse_mcp_call("sinex_read", json!({
+        "arguments":{"selection":"events", "page_size":3}, "cursor":"saved", "deadline":null,
+    })).unwrap();
+    assert_eq!(request.operation, "rows");
+    assert_eq!(
+        request.arguments,
+        json!({"selection":"events", "page_size":3})
+    );
+    assert_eq!(request.cursor.as_deref(), Some("saved"));
+    assert_eq!(request.deadline, command_surface::Deadline::None);
     let recall = tools.iter().find(|t| t.name == "sinex_recall").unwrap();
     assert_eq!(recall.input_schema["properties"]["cwd"]["type"], "string");
     let request = Request::from_args(
@@ -110,8 +123,7 @@ fn declaration_discovery_exposes_the_same_paginated_requests() {
 fn tool_effects_match_backend_command_access() {
     let tools = tools();
     for (name, read_only) in [
-        ("sinex_status", true),
-        ("sinex_query", true),
+        ("sinex_read", true),
         ("sinex_sql", true),
         ("sinex_archive", false),
         ("sinex_forecast-issue", false),

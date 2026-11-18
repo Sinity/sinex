@@ -4682,6 +4682,7 @@ dependencies = [
  "hyper-util",
  "jiff",
  "rmcp",
+ "serde",
  "serde_json",
  "sinex-process",
  "sinex-protocol",

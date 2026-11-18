@@ -62,7 +62,15 @@ async fn dropping_an_unbounded_call_closes_its_http_driver() {
         token: "synthetic".into(),
         deadline: command_surface::Deadline::None,
     };
-    let call = tokio::spawn(async move { client.call(&Request::Status).await });
+    let call = tokio::spawn(async move {
+        let mut request = command_surface::RunnableRequest::new(
+            "status",
+            serde_json::json!({}),
+            "cancelled-read",
+        );
+        request.deadline = command_surface::Deadline::None;
+        client.surface::<serde_json::Value>(&request).await
+    });
     waiting.await.unwrap();
     call.abort();
     let _ = call.await;

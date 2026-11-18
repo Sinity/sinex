@@ -55,6 +55,15 @@ impl Rows {
                 "read needs a selection or references",
             ));
         }
+        for step in &self.steps {
+            let Step::Read(read) = step;
+            if read.view == ReadView::Full && (read.page_size.is_some() || read.cursor.is_some()) {
+                return Err(Failure::new(
+                    FailureKind::BadRequest,
+                    "read page_size and cursor belong to the trace view; a full read continues its population page",
+                ));
+            }
+        }
         Ok(())
     }
 }
@@ -80,7 +89,7 @@ pub enum ReadView {
 pub struct Read {
     #[serde(default)]
     pub view: ReadView,
-    /// Number of rows in this read page; the continuation reaches the rest.
+    /// Number of rows in a trace page; its continuation reaches the rest.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page_size: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -105,8 +114,8 @@ pub fn steps() -> &'static StepDeclarations {
                         ArgumentForm::Named,
                         "full content or provenance trace",
                     ),
-                    ArgumentSpec::new("page_size", ArgumentForm::Named, "rows in this page"),
-                    ArgumentSpec::new("cursor", ArgumentForm::Named, "continue this read"),
+                    ArgumentSpec::new("page_size", ArgumentForm::Named, "rows in a trace page"),
+                    ArgumentSpec::new("cursor", ArgumentForm::Named, "continue a trace page"),
                     ArgumentSpec::new("at", ArgumentForm::Named, "exact accepted commit position"),
                 ],
             )
@@ -146,4 +155,14 @@ pub enum StepOutcome {
 pub enum ReadReply {
     Records(Vec<serde_json::Value>),
     Trace(Vec<sinex_model::query_reply::QueryPage>),
+}
+
+impl RowsReply {
+    /// A failed step keeps prior results, while clients still report failure.
+    pub fn failure(&self) -> Option<&Failure> {
+        self.steps.iter().find_map(|step| match &step.outcome {
+            StepOutcome::Failed { error } => Some(error),
+            StepOutcome::Done { .. } | StepOutcome::NotRun => None,
+        })
+    }
 }

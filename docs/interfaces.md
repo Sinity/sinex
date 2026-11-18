@@ -409,7 +409,10 @@ prerequisites.
 
 ## MCP
 
-**Decided target, not built.** Three nested tools replace the flat current list:
+**Complete target.** Three nested tools replace the command-specific tools.
+The current build's tool schemas enumerate its implemented operations. Read
+operations use the same typed declarations and ready requests as HTTP; each
+remaining domain command moves when its replacement owns the behavior.
 
 | Tool | Access |
 |---|---|

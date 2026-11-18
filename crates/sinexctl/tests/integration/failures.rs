@@ -124,12 +124,29 @@ fn each_failure_kind_reaches_cli_and_mcp() {
         assert_eq!(printed["error"]["kind"], failure.kind.name(), "{printed}");
         server.join().unwrap();
 
-        let (endpoint, server) = daemon(vec![(status, body)]);
-        let reply = mcp_call(
-            &endpoint,
-            "sinex_show",
-            json!({"reference": "sinex:ev/0190a0b0"}),
-        );
+        let stopped = failure.kind == FailureKind::StoppedEarly;
+        let mcp_body = if stopped {
+            body
+        } else {
+            serde_json::to_string(&command_surface::Answer::<Value>::error(failure.clone()))
+                .unwrap()
+        };
+        let (endpoint, server) = daemon(vec![(status, mcp_body)]);
+        let reply = if stopped {
+            mcp_call(
+                &endpoint,
+                "sinex_archive",
+                json!({"target":"sinex:ev/0190a0b0"}),
+            )
+        } else {
+            mcp_call(
+                &endpoint,
+                "sinex_read",
+                json!({
+                    "arguments":{"references":["sinex:ev/0190a0b0"], "steps":[{"verb":"read"}]},
+                }),
+            )
+        };
         assert_eq!(reply["result"]["isError"], true, "{reply}");
         assert_eq!(
             reply["result"]["structuredContent"]["error"]["kind"],
@@ -138,6 +155,9 @@ fn each_failure_kind_reaches_cli_and_mcp() {
         );
         let text = reply["result"]["content"][0]["text"].as_str().unwrap();
         assert!(text.contains(&failure.message), "{text}");
+        if stopped {
+            assert_eq!(reply["result"]["structuredContent"]["result"]["batches"], 1);
+        }
         server.join().unwrap();
     }
 }
@@ -391,29 +411,85 @@ fn closed_stdout_exits_141_without_panic() {
 
 #[devkit::test]
 fn mcp_page_keeps_its_continuation() {
-    let result = json!({
-        "query":"events", "rows":[{"id":1}], "columns":["id"], "total":2,
-        "page":{"size":1,"cursor":"next-page"}, "resolved":{"zone":"UTC"}
+    let continued = json!({
+        "operation":"rows", "arguments":{"selection":"events", "page_size":1},
+        "cursor":"next-page", "request_id":"next-read", "deadline":null,
+        "budget_tokens":400, "format":"json",
     });
-    let body = json!({"outcome":"ok", "result":result}).to_string();
+    let body = json!({"outcome":"ok", "value":{
+        "population":{
+            "table":"events", "query":"events", "read_as":"events", "rows":[{"id":"first"}],
+            "columns":["id"], "total":2,
+            "resolved":{"now":"2026-09-15T00:00:00Z", "zone":"UTC", "day_start":"00:00", "commit_seq":42},
+            "page":{"size":1,"cursor":"next-page"},
+        },
+        "references":[], "steps":[],
+    }, "notes":[sinex_protocol::DATA_NOTICE], "next":[{"label":"next", "request":continued} ]});
+    let mut last = body.clone();
+    last["value"]["population"]["rows"] = json!([{"id":"second"}]);
+    last["value"]["population"]["page"]["cursor"] = Value::Null;
+    last.as_object_mut().unwrap().remove("next");
+    let (endpoint, server) = daemon(vec![(200, body.to_string()), (200, last.to_string())]);
+    let reply = mcp_call(
+        &endpoint,
+        "sinex_read",
+        json!({
+            "arguments":{"selection":"events", "page_size":1}, "format":"json", "deadline":null,
+        }),
+    );
+    let next = reply["result"]["structuredContent"]["next"][0]["request"].clone();
+    let followed = mcp_call(&endpoint, "sinex_read", next);
+    let requests = server.join().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[1], continued);
+    assert_eq!(
+        followed["result"]["structuredContent"]["value"]["population"]["rows"],
+        json!([{"id":"second"}])
+    );
+    assert_eq!(requests[0]["operation"], "rows");
+    assert_eq!(
+        requests[0]["arguments"],
+        json!({"selection":"events", "page_size":1})
+    );
+    assert_eq!(reply["result"]["isError"], false, "{reply}");
+    let answer = &reply["result"]["structuredContent"];
+    assert_eq!(answer["value"]["population"]["page"]["cursor"], "next-page");
+    assert_eq!(answer["next"][0]["request"], continued);
+    assert!(
+        reply["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains(sinex_protocol::DATA_NOTICE)
+    );
+}
+
+#[devkit::test]
+fn mcp_failed_step_keeps_prior_output_and_reports_failure() {
+    let failure = Failure::new(
+        FailureKind::BadRequest,
+        "trace needs event references, not grouped rows",
+    );
+    let body = json!({"outcome":"ok", "value":{
+        "population":null, "references":[], "steps":[
+            {"verb":"read", "outcome":{"status":"done", "reply":{"kind":"records", "reply":[{"text":"prior result"}]}}},
+            {"verb":"read", "outcome":{"status":"failed", "error":failure}},
+        ],
+    }}).to_string();
     let (endpoint, server) = daemon(vec![(200, body)]);
     let reply = mcp_call(
         &endpoint,
-        "sinex_query",
-        json!({"query":"events","page-size":1}),
+        "sinex_read",
+        json!({
+            "arguments":{"selection":"events | group by source", "steps":[{"verb":"read"}, {"verb":"read", "view":"trace"}]},
+            "format":"json", "deadline":null,
+        }),
     );
     server.join().unwrap();
-    assert_eq!(reply["result"]["isError"], false, "{reply}");
+    assert_eq!(reply["result"]["isError"], true, "{reply}");
+    let steps = &reply["result"]["structuredContent"]["value"]["steps"];
     assert_eq!(
-        reply["result"]["structuredContent"]["page"]["cursor"],
-        "next-page"
+        steps[0]["outcome"]["reply"]["reply"][0]["text"],
+        "prior result"
     );
-    let text = reply["result"]["content"][0]["text"].as_str().unwrap();
-    let value: Value = serde_json::from_str(
-        text.strip_prefix(sinex_protocol::DATA_NOTICE)
-            .unwrap()
-            .trim(),
-    )
-    .unwrap();
-    assert_eq!(value["page"]["cursor"], "next-page");
+    assert_eq!(steps[1]["outcome"]["error"]["kind"], "bad_request");
 }

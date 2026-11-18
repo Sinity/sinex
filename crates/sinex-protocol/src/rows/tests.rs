@@ -28,3 +28,14 @@ fn read_arguments_have_one_strict_typed_owner() {
     assert!(serde_json::from_value::<Step>(json!({"verb":"read", "veiw":"trace"})).is_err());
     assert!(steps().parse_step("read", &["unexpected".into()]).is_err());
 }
+
+#[test]
+fn full_reads_do_not_silently_ignore_trace_paging_options() {
+    let full: Rows = serde_json::from_value(
+        json!({"selection":"events", "steps":[{"verb":"read", "cursor":"page"}]}),
+    )
+    .unwrap();
+    assert_eq!(full.validate().unwrap_err().kind, FailureKind::BadRequest);
+    let trace: Rows = serde_json::from_value(json!({"selection":"events", "steps":[{"verb":"read", "view":"trace", "cursor":"page", "page_size":2}]})).unwrap();
+    trace.validate().unwrap();
+}

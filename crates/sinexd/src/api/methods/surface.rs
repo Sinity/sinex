@@ -46,7 +46,14 @@ impl Operation for StatusOperation {
                 crate::request_deadline::run(remaining, async move { api.status(&caller).await })
                     .await;
             match reply {
-                Ok(Reply::Ok { result }) => SurfaceAnswer::ok(result),
+                Ok(Reply::Ok { result }) => {
+                    let mut answer = SurfaceAnswer::ok(result);
+                    answer
+                        .envelope
+                        .notes
+                        .push(sinex_protocol::DATA_NOTICE.into());
+                    answer
+                }
                 Ok(Reply::Failed { failure } | Reply::StoppedEarly { failure, .. }) => {
                     SurfaceAnswer::error(failure)
                 }

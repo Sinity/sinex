@@ -209,31 +209,14 @@ impl Client {
         let default = sinex_protocol::command(request.method())
             .expect("declared command")
             .default_deadline();
-        let mut sender = self
-            .connect_before(self.deadline.connection_timeout(Some(default)))
-            .await?;
         let body = serde_json::to_vec(&sinex_protocol::Call {
             request: request.clone(),
             deadline: self.deadline,
         })
         .map_err(|e| ClientError::Protocol(e.to_string()))?;
-        let req = HttpRequest::post("/v1")
-            .header("host", self.endpoint.host())
-            .header("content-type", "application/json")
-            .header("authorization", format!("Bearer {}", self.token))
-            .body(Full::new(Bytes::from(body)))
-            .map_err(|e| ClientError::Protocol(e.to_string()))?;
-        let resp = sender
-            .send_request(req)
-            .await
-            .map_err(|error| self.unreachable(error))?;
-        let status = resp.status();
-        let bytes = resp
-            .into_body()
-            .collect()
-            .await
-            .map_err(|e| ClientError::Protocol(e.to_string()))?
-            .to_bytes();
+        let (status, bytes) = self
+            .exchange("/v1", body, self.deadline.connection_timeout(Some(default)))
+            .await?;
         let reply: Reply = serde_json::from_slice(&bytes).map_err(|e| {
             ClientError::Protocol(format!(
                 "{status}: {e}: {}",
@@ -241,6 +224,59 @@ impl Client {
             ))
         })?;
         Ok((status, reply))
+    }
+
+    /// A typed declared request keeps its operation, options and ready calls
+    /// intact across the HTTP boundary.
+    pub(crate) async fn surface<T: serde::de::DeserializeOwned>(
+        &self,
+        request: &command_surface::RunnableRequest,
+    ) -> Result<command_surface::Answer<T>, ClientError> {
+        let declarations = sinex_protocol::surface::declarations();
+        let spec = declarations.spec_named(&request.operation).ok_or_else(|| {
+            ClientError::Protocol(format!("unknown operation {}", request.operation))
+        })?;
+        let route = spec.http_route.as_deref().ok_or_else(|| {
+            ClientError::Protocol(format!("{} has no HTTP route", request.operation))
+        })?;
+        let body = serde_json::to_vec(request)
+            .map_err(|error| ClientError::Protocol(error.to_string()))?;
+        let (status, bytes) = self
+            .exchange(route, body, declarations.connection_timeout(request))
+            .await?;
+        serde_json::from_slice(&bytes).map_err(|error| {
+            ClientError::Protocol(format!(
+                "{status}: {error}: {}",
+                String::from_utf8_lossy(&bytes)
+            ))
+        })
+    }
+
+    async fn exchange(
+        &self,
+        route: &str,
+        body: Vec<u8>,
+        connection_timeout: Option<std::time::Duration>,
+    ) -> Result<(StatusCode, Bytes), ClientError> {
+        let mut sender = self.connect_before(connection_timeout).await?;
+        let request = HttpRequest::post(route)
+            .header("host", self.endpoint.host())
+            .header("content-type", "application/json")
+            .header("authorization", format!("Bearer {}", self.token))
+            .body(Full::new(Bytes::from(body)))
+            .map_err(|error| ClientError::Protocol(error.to_string()))?;
+        let response = sender
+            .send_request(request)
+            .await
+            .map_err(|error| self.unreachable(error))?;
+        let status = response.status();
+        let bytes = response
+            .into_body()
+            .collect()
+            .await
+            .map_err(|error| ClientError::Protocol(error.to_string()))?
+            .to_bytes();
+        Ok((status, bytes))
     }
 
     /// Stream `follow`: call `on_event(event, data)` for each server-sent
