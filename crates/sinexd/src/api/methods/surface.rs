@@ -110,7 +110,7 @@ impl Api {
                     .map(|_| vec![text.clone()])
             })
         });
-        let mut records = Vec::new();
+        let records;
         let mut references = Vec::new();
         let population;
         let position;
