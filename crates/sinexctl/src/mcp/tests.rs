@@ -200,7 +200,7 @@ fn read_write_and_act_cards_expose_their_actual_step_access() {
 }
 
 #[test]
-fn act_card_exposes_the_moment_note_arguments() {
+fn act_card_and_note_declaration_expose_the_supported_arguments() {
     let tools = tools();
     let act = tools.iter().find(|tool| tool.name == "sinex_act").unwrap();
     let step = &act.input_schema["properties"]["arguments"]["properties"]["steps"]["items"];
@@ -210,6 +210,12 @@ fn act_card_exposes_the_moment_note_arguments() {
             .unwrap()
             .contains(&json!("note"))
     );
+    let note = sinex_commands::steps()
+        .verbs()
+        .iter()
+        .find(|step| step.verb() == "note")
+        .unwrap()
+        .input_schema();
     for field in [
         "text",
         "at",
@@ -220,6 +226,7 @@ fn act_card_exposes_the_moment_note_arguments() {
         "command_record",
         "focus_record",
     ] {
-        assert!(step["properties"].get(field).is_some(), "{field}: {step}");
+        assert!(note["properties"].get(field).is_some(), "{field}: {note}");
     }
+    assert_eq!(note["required"], json!(["text"]));
 }
