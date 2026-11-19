@@ -105,7 +105,9 @@ impl Event {
         if !value.is_object() {
             return Err(BuildError::NotAnObject(P::EVENT_TYPE.into()));
         }
-        check_payload(&value, &mut String::new())?;
+        if let Some(pointer) = unstorable_character(&value) {
+            return Err(BuildError::UnstorableCharacter { pointer });
+        }
         let equivalence_key = match payload.key_kind() {
             KeyKind::Location => None,
             KeyKind::Fields(fields) => EquivalenceKey::of(P::EVENT_TYPE, fields, &value),
@@ -192,39 +194,26 @@ impl Event {
 }
 
 /// Validate strings before any native parser or derivation stages its event.
-/// Only the field pointer is diagnosed, never the field's value. Debug quoting
+/// Valid payloads allocate no diagnostic paths. Only the field pointer is
+/// diagnosed, never the field's value. Debug quoting
 /// in BuildError also makes a NUL in an object key safe to record as a reason.
-fn check_payload(value: &Value, pointer: &mut String) -> Result<(), BuildError> {
+fn unstorable_character(value: &Value) -> Option<String> {
     match value {
-        Value::String(text) if text.contains('\0') => {
-            return Err(BuildError::UnstorableCharacter {
-                pointer: pointer.clone(),
-            });
-        }
-        Value::Array(items) => {
-            for (index, item) in items.iter().enumerate() {
-                let end = pointer.len();
-                pointer.push('/');
-                pointer.push_str(&index.to_string());
-                check_payload(item, pointer)?;
-                pointer.truncate(end);
-            }
-        }
-        Value::Object(fields) => {
-            for (key, item) in fields {
-                let end = pointer.len();
-                pointer.push('/');
-                pointer.push_str(&key.replace('~', "~0").replace('/', "~1"));
-                if key.contains('\0') {
-                    return Err(BuildError::UnstorableCharacter {
-                        pointer: pointer.clone(),
-                    });
-                }
-                check_payload(item, pointer)?;
-                pointer.truncate(end);
-            }
-        }
-        _ => {}
+        Value::String(text) if text.contains('\0') => Some(String::new()),
+        Value::Array(items) => items.iter().enumerate().find_map(|(index, item)| {
+            unstorable_character(item).map(|path| format!("/{index}{path}"))
+        }),
+        Value::Object(fields) => fields.iter().find_map(|(key, item)| {
+            let path = if key.contains('\0') {
+                Some(String::new())
+            } else {
+                unstorable_character(item)
+            }?;
+            Some(format!(
+                "/{}{path}",
+                key.replace('~', "~0").replace('/', "~1")
+            ))
+        }),
+        _ => None,
     }
-    Ok(())
 }

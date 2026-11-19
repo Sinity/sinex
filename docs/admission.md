@@ -45,7 +45,7 @@ the admitted population or changing class inheritance.
 - **A record a parser cannot read** becomes a record failure tied to its stored bytes (material, record offset, reason, parser version, run), written in the transaction that moves the cursor past it; the rest of the material continues. Retrying it is a [replay](lifecycle.md#replay) of those bytes.
 - **Unstorable text is diagnosed before staging.** The native event builder refuses a payload string or object key containing NUL with `unstorable_character` and an escaped JSON field pointer; the diagnostic never contains the field value. Parser drains record this as the record failure and continue with the following record. Document text extraction drops NUL from interpreted text and titles; the source material retains its exact bytes.
 - **Cursors commit with what they cover** and never move past data that was neither admitted nor recorded as failed.
-- **A database or transport failure** is retryable with committed progress unchanged; it is never reported as a parse failure or as an empty success.
+- **A transient database or transport failure** is retryable with committed progress unchanged; it is never reported as a parse failure or as an empty success.
 - **An all-suppressed or empty poll** still saves its legitimate progress.
 - Refusals of frames from outside producers become record failures on their material and never stall capture; see [producers.md](producers.md).
 
