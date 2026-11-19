@@ -356,10 +356,14 @@ async fn traces_name_masked_archived_missing_and_tombstoned_links(db: devkit::pg
 }
 
 #[devkit::test]
-async fn trace_reads_selected_events_in_unrelated_history(db: devkit::pg::TestDatabase) {
+async fn trace_and_show_read_selected_events_in_compressed_history(db: devkit::pg::TestDatabase) {
     let mut conn = AdmissionContext::connect(&db.url(None)).await.unwrap();
     let root = source(Class::Open);
     let root_id = root.id;
+    let Origin::Record { location, .. } = &root.origin else {
+        unreachable!("source fixture has a material")
+    };
+    let material = location.material;
     insert(&mut conn, root).await;
     let child = derived(&[root_id], "selected child");
     let child_id = child.id;
@@ -389,6 +393,34 @@ async fn trace_reads_selected_events_in_unrelated_history(db: devkit::pg::TestDa
             .unwrap(),
         8196
     );
+    let blob = format!("blake3:{}", "01".repeat(32));
+    sqlx::query("INSERT INTO core.blobs(hash,size,status) VALUES ($1,0,'present')")
+        .bind(&blob)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO raw.materials(id,blob,length,manifest,parser,parser_version)
+         SELECT $1::uuid,$2,0,'{}'::jsonb,'fixture-parser',1
+         UNION ALL
+         SELECT uuidv7(),$2,0,'{}'::jsonb,'fixture-parser',1 FROM generate_series(1,4096)",
+    )
+    .bind(material.0)
+    .bind(&blob)
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    let compressed: i64 =
+        sqlx::query_scalar("SELECT count(compress_chunk(c)) FROM show_chunks('core.events') AS c")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+    assert!(compressed > 0);
+    sqlx::raw_sql("ANALYZE core.events; ANALYZE raw.materials")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+
     let rows = current_walk(&mut conn, Walk::Trace, &Reference::Event(leaf_id.0))
         .await
         .unwrap();
@@ -397,6 +429,55 @@ async fn trace_reads_selected_events_in_unrelated_history(db: devkit::pg::TestDa
         BTreeMap::from([(leaf_id.0, 0), (child_id.0, 1), (root_id.0, 2)])
     );
     assert!(rows.iter().all(|row| row["payload"]["command"].is_string()));
+
+    let shown = show(&mut conn, &Reference::Event(root_id.0)).await.unwrap();
+    assert_eq!(shown["id"], json!(root_id));
+    assert_eq!(shown["state"], "live");
+    assert_eq!(shown["material"], json!(material));
+    assert_eq!(shown["blob"], blob);
+    assert_eq!(shown["parser"], "fixture-parser");
+    assert_eq!(shown["parser_version"], 1);
+    let without_material = show(&mut conn, &Reference::Event(unrelated_id.0))
+        .await
+        .unwrap();
+    assert_eq!(without_material["id"], json!(unrelated_id));
+    assert!(without_material["material"].is_string());
+    assert!(without_material["parser"].is_null());
+    assert!(without_material["blob"].is_null());
+    assert!(matches!(
+        show(&mut conn, &Reference::Event(EventId::new().0)).await,
+        Err(Error::NotFound(_))
+    ));
+
+    // Use the production SQL and count real plan work on this compressed fixture.
+    let sql = include_str!("../read_events.sql");
+    let explain: Json =
+        sqlx::query_scalar(&format!("EXPLAIN (ANALYZE, FORMAT JSON, TIMING OFF) {sql}"))
+            .bind(&[root_id.0][..])
+            .bind(None::<i64>)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+    fn collect_nodes<'a>(node: &'a Json, nodes: &mut Vec<&'a Json>) {
+        nodes.push(node);
+        if let Some(children) = node["Plans"].as_array() {
+            for child in children {
+                collect_nodes(child, nodes);
+            }
+        }
+    }
+    let mut nodes = Vec::new();
+    collect_nodes(&explain[0]["Plan"], &mut nodes);
+    assert!(nodes.iter().any(|node| node["Node Type"] == "Limit"
+        && node["Actual Rows"].as_f64() == Some(1.0)
+        && node["Actual Loops"].as_f64() == Some(1.0)));
+    let material_scan = nodes
+        .into_iter()
+        .find(|node| node["Relation Name"] == "materials")
+        .expect("the record has material metadata");
+    assert_eq!(material_scan["Index Name"], "materials_pkey");
+    assert_eq!(material_scan["Actual Rows"].as_f64(), Some(1.0));
+    assert_eq!(material_scan["Actual Loops"].as_f64(), Some(1.0));
 }
 
 #[devkit::test]
