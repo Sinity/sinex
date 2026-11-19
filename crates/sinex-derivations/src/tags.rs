@@ -239,9 +239,9 @@ impl AnyPerEvent for TagApplier {
                 .or_default()
                 .push(serde_json::to_string(rule).expect("rules serialize"));
         }
-        Ok(assignments
+        assignments
             .into_iter()
-            .map(|(tag, rules)| {
+            .map(|(tag, rules)| -> Result<_, crate::ComputationError> {
                 let mut output = derived(
                     &TagApplied {
                         tag: tag.to_owned(),
@@ -257,11 +257,11 @@ impl AnyPerEvent for TagApplier {
                     },
                     Self::NAME,
                     [event],
-                );
+                )?;
                 output.ts_orig = event.ts_orig;
-                output
+                Ok(output)
             })
-            .collect())
+            .collect()
     }
 }
 

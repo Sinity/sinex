@@ -106,7 +106,7 @@ impl Keyed for ShellSessions {
             groups.last_mut().expect("pushed above").push((e, c));
         }
 
-        let outputs = groups
+        let outputs: Vec<_> = groups
             .iter()
             .map(|g| {
                 let started_at = g[0].1.started_at;
@@ -146,11 +146,7 @@ impl Keyed for ShellSessions {
                 derived(&payload, Self::NAME, g.iter().map(|(e, _)| *e))
             })
             .collect();
-        Computed {
-            error: None,
-            outputs,
-            waiting: false,
-        }
+        Computed::from_outputs(outputs, false)
     }
 
     fn key_state(&self, key: &Self::Key, env: &Env) -> KeyState {

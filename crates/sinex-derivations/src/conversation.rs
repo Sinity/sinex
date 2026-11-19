@@ -156,7 +156,7 @@ impl Keyed for ConversationDays {
                     .push((e, sender, at));
             }
         }
-        let outputs = days
+        let outputs: Vec<_> = days
             .into_iter()
             .map(|((channel, conversation), mut messages)| {
                 messages.sort_by_key(|(e, _, at)| {
@@ -188,11 +188,7 @@ impl Keyed for ConversationDays {
                 derived(&payload, Self::NAME, messages.iter().map(|(e, _, _)| *e))
             })
             .collect();
-        Computed {
-            error: None,
-            outputs,
-            waiting: false,
-        }
+        Computed::from_outputs(outputs, false)
     }
 
     fn key_state(&self, key: &Self::Key, env: &Env) -> KeyState {

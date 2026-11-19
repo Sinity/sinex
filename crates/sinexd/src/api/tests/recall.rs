@@ -48,7 +48,8 @@ fn facts(host: &str, rows: &[(i64, &str, Option<i64>)], class: Class) -> Vec<Eve
             },
             "shell.fusion",
             [&raw],
-        );
+        )
+        .unwrap();
         events.push(raw);
         fused.push(command);
     }
@@ -764,7 +765,8 @@ async fn a_stored_work_resume_card_is_shared_by_brief_and_machine_without_recomp
         },
         "context.packs",
         [&failed],
-    );
+    )
+    .unwrap();
     let citation = format!("sinex:ev/{}", pack.id);
     admit_events(&w, vec![pack]).await;
     let (_, first) = call_unbounded(&w, Some(READ), json!({"method":"brief","day":citation})).await;

@@ -139,7 +139,7 @@ fn coverage(
     timed: Option<u64>,
     untimed: Option<u64>,
     reasons: BTreeMap<String, u64>,
-) -> Event {
+) -> Result<Event, sinex_model::BuildError> {
     derived(
         &WorkCoverage {
             session: session.into(),
@@ -156,8 +156,8 @@ fn coverage(
     )
 }
 fn unavailable(parent: &Event, session: &str, reducer: Option<u32>, reason: &str) -> Computed {
-    Computed {
-        outputs: vec![coverage(
+    Computed::from_outputs(
+        vec![coverage(
             parent,
             session,
             reducer,
@@ -167,8 +167,8 @@ fn unavailable(parent: &Event, session: &str, reducer: Option<u32>, reason: &str
             None,
             [(reason.into(), 1)].into(),
         )],
-        ..Default::default()
-    }
+        false,
+    )
 }
 
 pub(super) fn compute(session: &str, inputs: &[Event]) -> Computed {
@@ -272,8 +272,8 @@ pub(super) fn compute(session: &str, inputs: &[Event]) -> Computed {
                 "invalid_retired_snapshot",
             );
         }
-        return Computed {
-            outputs: vec![coverage(
+        return Computed::from_outputs(
+            vec![coverage(
                 parent,
                 session,
                 Some(REDUCER_VERSION),
@@ -283,8 +283,8 @@ pub(super) fn compute(session: &str, inputs: &[Event]) -> Computed {
                 Some(0),
                 [("retired".into(), 1)].into(),
             )],
-            ..Default::default()
-        };
+            false,
+        );
     }
     let sparse = snapshot
         .sources
@@ -545,8 +545,5 @@ pub(super) fn compute(session: &str, inputs: &[Event]) -> Computed {
         Some(untimed),
         reasons,
     ));
-    Computed {
-        outputs,
-        ..Default::default()
-    }
+    Computed::from_outputs(outputs, false)
 }

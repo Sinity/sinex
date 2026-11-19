@@ -254,11 +254,7 @@ impl Keyed for Instances {
             let payload = instance(own, series_start, start, own.end, Some(own), None);
             outputs.push(derived(&payload, Self::NAME, [*event]));
         }
-        Computed {
-            outputs,
-            waiting: false,
-            error: None,
-        }
+        Computed::from_outputs(outputs, false)
     }
 }
 

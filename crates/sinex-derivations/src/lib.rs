@@ -272,6 +272,26 @@ pub struct Computed {
     pub waiting: bool,
 }
 
+impl Computed {
+    /// One key publishes its complete output set or its first typed failure.
+    pub fn from_outputs(
+        outputs: impl IntoIterator<Item = Result<Event, sinex_model::BuildError>>,
+        waiting: bool,
+    ) -> Self {
+        match outputs.into_iter().collect::<Result<Vec<_>, _>>() {
+            Ok(outputs) => Self {
+                outputs,
+                waiting,
+                error: None,
+            },
+            Err(error) => Self {
+                error: Some(error),
+                ..Self::default()
+            },
+        }
+    }
+}
+
 pub trait Keyed: Send + Sync {
     type Key: Serialize + DeserializeOwned + Send + Sync;
     const HISTORY: sinex_model::DerivationHistory = sinex_model::DerivationHistory::Recompute;

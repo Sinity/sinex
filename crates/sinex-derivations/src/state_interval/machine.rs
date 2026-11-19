@@ -125,7 +125,12 @@ fn same_invocation(start: &Event, stop: &Event) -> bool {
             _ => false,
         }
 }
-fn interval(start: &Event, end: Option<&Event>, fence: Option<&Event>, state: &str) -> Event {
+fn interval(
+    start: &Event,
+    end: Option<&Event>,
+    fence: Option<&Event>,
+    state: &str,
+) -> (Timestamp, Result<Event, sinex_model::BuildError>) {
     let mut attributes = BTreeMap::new();
     for field in [
         "host",
@@ -156,23 +161,28 @@ fn interval(start: &Event, end: Option<&Event>, fence: Option<&Event>, state: &s
     } else {
         Some("suspended".into())
     };
-    derived(
-        &StateInterval {
-            interval_id: format!("{state}:{}", stable(start)),
-            state_kind: state.into(),
-            subject_id: subject,
-            label,
-            started_at: start.ts_orig.at.unwrap(),
-            ended_at: end.and_then(|event| event.ts_orig.at),
-            fenced_at: fence.and_then(|event| event.ts_orig.at),
-            start_event_type: start.event_type.clone(),
-            end_event_type: end.or(fence).map(|event| event.event_type.clone()),
-            attributes,
-        },
-        StateIntervals::NAME,
-        [start].into_iter().chain(end).chain(fence),
+    let at = start.ts_orig.at.unwrap();
+    (
+        at,
+        derived(
+            &StateInterval {
+                interval_id: format!("{state}:{}", stable(start)),
+                state_kind: state.into(),
+                subject_id: subject,
+                label,
+                started_at: at,
+                ended_at: end.and_then(|event| event.ts_orig.at),
+                fenced_at: fence.and_then(|event| event.ts_orig.at),
+                start_event_type: start.event_type.clone(),
+                end_event_type: end.or(fence).map(|event| event.event_type.clone()),
+                attributes,
+            },
+            StateIntervals::NAME,
+            [start].into_iter().chain(end).chain(fence),
+        ),
     )
 }
+
 pub(super) fn compute(key: &MachineKey, inputs: &[Event], env: &Env) -> Computed {
     let state = key.state.as_str();
     let day = key.day;
@@ -294,14 +304,13 @@ pub(super) fn compute(key: &MachineKey, inputs: &[Event], env: &Env) -> Computed
         }
         outputs.extend(open.map(|start| interval(start, None, None, state)));
     }
-    outputs.retain(|event| event.ts_orig.at.is_some_and(|at| at >= from && at < until));
-    let waiting = outputs.iter().any(|event| {
+    // Neighbour intervals outside this key do not participate in its result,
+    // including a build failure for one of those discarded intervals.
+    outputs.retain(|(at, _)| *at >= from && *at < until);
+    let mut computed = Computed::from_outputs(outputs.into_iter().map(|(_, event)| event), false);
+    computed.waiting = computed.outputs.iter().any(|event| {
         event.payload["ended_at"].is_null()
             && event.payload.get("fenced_at").is_none_or(Value::is_null)
     });
-    Computed {
-        error: None,
-        outputs,
-        waiting,
-    }
+    computed
 }

@@ -7,17 +7,18 @@ use serde_json::Value;
 use sinex_model::{BuildError, Class, Event, EventId, EventPayload, Origin, ReadingOrder};
 
 /// A derived event from `payload` with `inputs` as parents. The reading order
-/// is set by the driver when it submits the key's outputs.
+/// is set by the driver when it submits the key's outputs. Invalid payloads
+/// and missing provenance return the model's typed build error.
 pub fn derived<'a, P: EventPayload>(
     payload: &P,
     derivation: &str,
     inputs: impl IntoIterator<Item = &'a Event>,
-) -> Event {
-    let value = serde_json::to_value(payload).expect("payloads serialize");
+) -> Result<Event, BuildError> {
+    let value =
+        serde_json::to_value(payload).map_err(|_| BuildError::NotAnObject(P::EVENT_TYPE.into()))?;
     build(&value, inputs, |origin, hash, class| {
         Event::build(payload, derivation, origin, ReadingOrder(0), hash, class)
     })
-    .expect("derived payloads are keyed objects with at least one parent")
 }
 
 /// A declared JSON output; bundled declarations also supply their Rust
@@ -29,6 +30,7 @@ pub fn derived_json<'a>(
     derivation: &str,
     inputs: impl IntoIterator<Item = &'a Event>,
 ) -> Result<Event, BuildError> {
+    Event::check_payload(payload)?;
     build(payload, inputs, |origin, hash, class| {
         if declaration.normalization == sinex_model::kinds::Normalization::Rust {
             let validator =
@@ -92,3 +94,6 @@ pub fn payload_hash(payload: &Value, parents: &[EventId]) -> [u8; 32] {
     }
     *hasher.finalize().as_bytes()
 }
+
+#[cfg(test)]
+mod tests;

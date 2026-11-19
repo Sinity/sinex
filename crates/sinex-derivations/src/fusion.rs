@@ -1303,17 +1303,7 @@ impl AnyKeyed for Fusion {
                 vec![seen[c.a].event, seen[c.b].event],
             ));
         }
-        match outputs.into_iter().collect::<Result<Vec<_>, _>>() {
-            Ok(outputs) => Computed {
-                error: None,
-                outputs,
-                waiting: false,
-            },
-            Err(error) => Computed {
-                error: Some(error),
-                ..Computed::default()
-            },
-        }
+        Computed::from_outputs(outputs, false)
     }
 
     fn key_state(&self, key: &Value, env: &Env) -> KeyState {

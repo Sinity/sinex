@@ -387,10 +387,6 @@ impl Keyed for ActivitySessions {
                 ));
             }
         }
-        Computed {
-            error: None,
-            outputs,
-            waiting,
-        }
+        Computed::from_outputs(outputs, waiting)
     }
 }

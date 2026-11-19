@@ -240,10 +240,6 @@ impl Keyed for InputWorkloads {
             Self::NAME,
             parents,
         ));
-        Computed {
-            error: None,
-            outputs,
-            waiting: end > env.now,
-        }
+        Computed::from_outputs(outputs, end > env.now)
     }
 }

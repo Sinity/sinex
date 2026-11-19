@@ -142,6 +142,10 @@ impl Keyed for StoredProducts {
                 outputs,
                 ..Default::default()
             },
+            Err(Error::Build(error)) => Computed {
+                error: Some(error),
+                ..Default::default()
+            },
             Err(error) => Computed {
                 error: Some(sinex_model::BuildError::Payload(
                     "analysis.request".into(),
@@ -388,7 +392,7 @@ fn compute(request: &AnalysisRequest, inputs: &[Event], env: &Env) -> Result<Vec
         },
         StoredProducts::NAME,
         parents.iter().copied(),
-    )];
+    )?];
     if let Some(recipe) = &request.recipe {
         let definition = Recipe::parse(recipe)?;
         let mut result = recipes::evaluate(
@@ -424,7 +428,7 @@ fn compute(request: &AnalysisRequest, inputs: &[Event], env: &Env) -> Result<Vec
             },
             StoredProducts::NAME,
             parents.iter().copied(),
-        ));
+        )?);
         for (index, finding) in result.findings.into_iter().enumerate() {
             outputs.push(derived(
                 &Finding {
@@ -437,7 +441,7 @@ fn compute(request: &AnalysisRequest, inputs: &[Event], env: &Env) -> Result<Vec
                 },
                 StoredProducts::NAME,
                 parents.iter().copied(),
-            ));
+            )?);
         }
     }
     if request.operation == "brief" {
@@ -468,14 +472,14 @@ fn compute(request: &AnalysisRequest, inputs: &[Event], env: &Env) -> Result<Vec
                 },
                 StoredProducts::NAME,
                 parents.iter().copied(),
-            ));
+            )?);
         }
         outputs.push(derived(&ContextPack { evaluated_at: Some(env.now), day_setting: Some(settings.label.clone()), producer_versions: None, read_as: None,
             analysis: Some(json!({"request": request.request, "day": request.to, "sections": sections, "panel": {"cells": today.cells, "coverage": today.coverage}, "coverage_evidence": coverage_evidence})),
             pack: format!("query:{}", request.request), episode: String::new(), at: request.started_at,
             stated_goal: None, trail: vec![], last_edit: None, last_edit_path: None, open_failures: vec![],
             coverage: parents.iter().filter(|e| e.event_type == "source.coverage").map(|e| format!("sinex:ev/{}", e.id)).collect::<std::collections::BTreeSet<_>>().into_iter().collect(), profile: "analysis/v1".into(),
-        }, StoredProducts::NAME, parents.iter().copied()));
+        }, StoredProducts::NAME, parents.iter().copied())?);
     }
     Ok(outputs)
 }

@@ -252,7 +252,7 @@ fn interval_id(state_kind: &str, open: &Open<'_>) -> String {
     }
 }
 
-fn to_event(rule: &IntervalRule, l: PendingInterval<'_>) -> Event {
+fn to_event(rule: &IntervalRule, l: PendingInterval<'_>) -> Result<Event, sinex_model::BuildError> {
     let payload = StateInterval {
         interval_id: interval_id(rule.state_kind, &l.open),
         state_kind: rule.state_kind.to_owned(),
@@ -529,7 +529,7 @@ impl Keyed for StateIntervals {
         let mut events: Vec<&Event> = inputs.iter().filter(|e| e.ts_orig.at.is_some()).collect();
         events.sort_by_key(|e| e.ts_orig.at);
         let mut waiting = false;
-        let outputs = fold(r, &events)
+        let outputs: Vec<_> = fold(r, &events)
             .into_iter()
             .filter(|l| l.open.at >= start && l.open.at < end)
             .map(|mut interval| {
@@ -543,11 +543,7 @@ impl Keyed for StateIntervals {
                 to_event(r, interval)
             })
             .collect();
-        Computed {
-            error: None,
-            outputs,
-            waiting,
-        }
+        Computed::from_outputs(outputs, waiting)
     }
 
     fn refresh_at(&self, inputs: &[Event], outputs: &[Event], env: &Env) -> Option<Timestamp> {

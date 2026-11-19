@@ -178,10 +178,6 @@ impl Keyed for RhythmDeviations {
                 rows.iter().map(|(event, _)| *event),
             ));
         }
-        Computed {
-            error: None,
-            outputs,
-            waiting: false,
-        }
+        Computed::from_outputs(outputs, false)
     }
 }

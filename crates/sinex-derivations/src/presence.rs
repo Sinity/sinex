@@ -42,9 +42,8 @@ impl Keyed for Presence {
         }
     }
     fn compute(&self, _: &Self::Key, inputs: &[Event], _: &Env) -> Computed {
-        Computed {
-            error: None,
-            outputs: inputs
+        Computed::from_outputs(
+            inputs
                 .iter()
                 .filter_map(|event| {
                     let span = event.payload_as::<ActivitySpan>()?;
@@ -74,9 +73,9 @@ impl Keyed for Presence {
                         [event],
                     ))
                 })
-                .collect(),
-            waiting: false,
-        }
+                .collect::<Vec<_>>(),
+            false,
+        )
     }
 }
 

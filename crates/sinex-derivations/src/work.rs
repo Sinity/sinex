@@ -386,11 +386,10 @@ impl Keyed for WorkEpisodes {
             Self::NAME,
             parents,
         ));
-        Computed {
-            error: None,
+        Computed::from_outputs(
             outputs,
-            waiting: env.now.unix_ns() - last_activity.unix_ns() < 14 * 86_400 * SECOND,
-        }
+            env.now.unix_ns() - last_activity.unix_ns() < 14 * 86_400 * SECOND,
+        )
     }
 }
 
@@ -436,9 +435,8 @@ impl Keyed for ContextPacks {
             .iter()
             .rev()
             .find(|(_, act)| matches!(act.action.as_str(), "file_edit" | "file_write"));
-        Computed {
-            error: None,
-            outputs: vec![derived(
+        Computed::from_outputs(
+            vec![derived(
                 &ContextPack {
                     evaluated_at: Some(env.now),
                     day_setting: Some(env.time_settings.label()),
@@ -489,8 +487,8 @@ impl Keyed for ContextPacks {
                     .into_iter()
                     .chain(acts.iter().map(|(event, _)| *event)),
             )],
-            waiting: false,
-        }
+            false,
+        )
     }
 }
 
@@ -678,11 +676,7 @@ impl Keyed for ActivityDays {
             ));
         }
         let waiting = !outputs.is_empty() && !wakes.iter().any(|(at, _)| *at > start_key);
-        Computed {
-            error: None,
-            outputs,
-            waiting,
-        }
+        Computed::from_outputs(outputs, waiting)
     }
 }
 

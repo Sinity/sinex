@@ -31,7 +31,7 @@ impl PerEvent for Embeddings {
             },
             Self::NAME,
             [input.event],
-        )])
+        )?])
     }
 }
 #[cfg(test)]

@@ -208,10 +208,6 @@ impl Keyed for ActivityWindows {
                 outputs.push(derived(&window, Self::NAME, parents));
             }
         }
-        Computed {
-            error: None,
-            outputs,
-            waiting,
-        }
+        Computed::from_outputs(outputs, waiting)
     }
 }

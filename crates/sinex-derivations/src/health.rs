@@ -156,18 +156,14 @@ impl Keyed for HourlyFigures {
             }
         }
         let day = day.to_string();
-        let outputs = series
+        let outputs: Vec<_> = series
             .into_iter()
             .map(|(name, summed)| {
                 let payload = figure("hour", (hour, end), &day, name, &summed);
                 derived(&payload, Self::NAME, summed.parents)
             })
             .collect();
-        Computed {
-            error: None,
-            outputs,
-            waiting: false,
-        }
+        Computed::from_outputs(outputs, false)
     }
 
     fn key_state(&self, key: &Self::Key, env: &Env) -> KeyState {
@@ -231,18 +227,14 @@ impl Keyed for DailyFigures {
             }
         }
         let day = day.to_string();
-        let outputs = series
+        let outputs: Vec<_> = series
             .into_iter()
             .map(|(name, summed)| {
                 let payload = figure("day", (start, end), &day, name, &summed);
                 derived(&payload, Self::NAME, summed.parents)
             })
             .collect();
-        Computed {
-            error: None,
-            outputs,
-            waiting: false,
-        }
+        Computed::from_outputs(outputs, false)
     }
 
     fn key_state(&self, key: &Self::Key, env: &Env) -> KeyState {

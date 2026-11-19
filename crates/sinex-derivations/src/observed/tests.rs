@@ -25,7 +25,7 @@ pub(crate) fn hyprland(class: &str, title: &str, from: f64, to: Option<f64>) -> 
             .map(|(k, v)| (k.to_owned(), v.to_owned()))
             .collect(),
     };
-    crate::derived_event::derived(&payload, "state.intervals", &[zsh("parent", from)])
+    crate::derived_event::derived(&payload, "state.intervals", &[zsh("parent", from)]).unwrap()
 }
 
 pub(crate) fn activitywatch(app: &str, title: &str, from: f64, to: f64) -> Event {

@@ -641,11 +641,7 @@ impl Keyed for HourlyMetrics {
             }
             hour = next;
         }
-        Computed {
-            error: None,
-            outputs,
-            waiting: false,
-        }
+        Computed::from_outputs(outputs, false)
     }
 
     fn key_state(&self, key: &Self::Key, env: &Env) -> KeyState {
@@ -733,18 +729,14 @@ impl Keyed for DailyMetrics {
             }
         }
         let label = day.to_string();
-        let outputs = sums
+        let outputs: Vec<_> = sums
             .iter()
             .map(|((dimension, value), sum)| {
                 let payload = sum.figure(m, "day", (start, end), &label, (dimension, value));
                 derived(&payload, Self::NAME, sum.parents.iter().copied())
             })
             .collect();
-        Computed {
-            error: None,
-            outputs,
-            waiting: false,
-        }
+        Computed::from_outputs(outputs, false)
     }
 
     fn key_state(&self, key: &Self::Key, env: &Env) -> KeyState {

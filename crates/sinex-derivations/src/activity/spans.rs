@@ -238,10 +238,6 @@ impl Keyed for ActivitySpans {
                 outputs.push(derived(&span, Self::NAME, parents));
             }
         }
-        Computed {
-            error: None,
-            outputs,
-            waiting: false,
-        }
+        Computed::from_outputs(outputs, false)
     }
 }

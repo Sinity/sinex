@@ -79,7 +79,12 @@ fn lift(state: &str, events: &[Event]) -> Vec<StateInterval> {
     sorted.sort_by_key(|e| e.ts_orig.at);
     let mut out: Vec<StateInterval> = fold(r, &sorted)
         .into_iter()
-        .map(|l| to_event(r, l).payload_as::<StateInterval>().unwrap())
+        .map(|l| {
+            to_event(r, l)
+                .unwrap()
+                .payload_as::<StateInterval>()
+                .unwrap()
+        })
         .collect();
     out.sort_by(|a, b| {
         a.started_at

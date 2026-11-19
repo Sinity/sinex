@@ -122,11 +122,7 @@ impl Keyed for LibraryItems {
             Self::NAME,
             copies.iter().map(|(event, _)| *event),
         ));
-        Computed {
-            outputs,
-            waiting: false,
-            error: None,
-        }
+        Computed::from_outputs(outputs, false)
     }
 }
 
@@ -183,7 +179,7 @@ impl PerEvent for Hints {
             &payload,
             Self::NAME,
             [event],
-        )])
+        )?])
     }
 }
 fn nonempty(s: &str) -> Option<String> {

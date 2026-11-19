@@ -90,10 +90,6 @@ impl Keyed for InputCoverage {
                 _ => {}
             }
         }
-        Computed {
-            error: None,
-            outputs,
-            waiting: false,
-        }
+        Computed::from_outputs(outputs, false)
     }
 }

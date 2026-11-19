@@ -456,7 +456,8 @@ fn activity_seconds_use_supported_presence_and_keep_afk_claims_as_inputs_only() 
         },
         "presence.intervals",
         [&parent],
-    );
+    )
+    .unwrap();
     let report = Event::build(
         &PresenceSpan {
             scope: None,
