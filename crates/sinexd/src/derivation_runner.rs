@@ -1464,8 +1464,18 @@ impl KeyComputation<'_> {
     /// request for an exclusive chunk lock (compression) queues behind them,
     /// and the writer's own chunk locks then queue behind that request, a
     /// wait cycle PostgreSQL cannot see because one edge is inside the daemon.
-    async fn compute(&mut self, work: Vec<KeyWork>, env: &Env) -> Result<()> {
+    async fn compute(&mut self, mut work: Vec<KeyWork>, env: &Env) -> Result<()> {
         let _lock = self.writer.lock_derivations().await;
+        // A command or background pass may have selected work before waiting
+        // here. Another computation can diagnose it while this one is queued.
+        let keys: Vec<_> = work.iter().map(|(key, _)| key.clone()).collect();
+        let refused = derivations::refused_keys(self.read, self.derivation.name(), &keys).await?;
+        let blocked: HashSet<_> = refused.iter().map(|row| row.key.to_string()).collect();
+        self.counts.failed += blocked.len();
+        work.retain(|(key, _)| !blocked.contains(&key.to_string()));
+        if work.is_empty() {
+            return Ok(());
+        }
         sinex_store::query::initialize_calendar(self.read).await?;
         let mut remaining: Vec<usize> = (0..work.len()).collect();
         while !remaining.is_empty() {

@@ -183,7 +183,12 @@ async fn recent_samples_keep_history_within_the_window(db: devkit::pg::TestDatab
         .unwrap();
     assert_eq!(
         keyed.measures,
-        [("dirty_keys".into(), 0.0), ("waiting_keys".into(), 0.0)].into()
+        [
+            ("dirty_keys".into(), 0.0),
+            ("waiting_keys".into(), 0.0),
+            ("refused_work".into(), 0.0)
+        ]
+        .into()
     );
 }
 

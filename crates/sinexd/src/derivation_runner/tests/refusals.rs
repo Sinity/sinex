@@ -597,3 +597,64 @@ async fn keep_history_switch_preserves_refusals_until_explicit_recompute(
     assert!(diagnosis(&world).await.is_empty());
     assert_eq!(products(&world).await, ["bad=1"]);
 }
+
+#[devkit::test]
+async fn queued_computation_rechecks_refusal_after_acquiring_the_lock(
+    db: devkit::pg::TestDatabase,
+) {
+    let mode = Arc::new(AtomicUsize::new(0));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let world = World::with_keys(db, vec![producer::<1, false>(&mode, &calls)]).await;
+    world
+        .admit(vec![zsh("bad", 0, 0), zsh("good", 1, 10)])
+        .await;
+    let runner = world
+        .driver_with(vec![producer::<1, false>(&mode, &calls)], vec![])
+        .await;
+    let run = runner.run_of("test.refusing").unwrap();
+    let derivation = producer::<1, false>(&mode, &calls);
+    let mut conn = PgConnection::connect(&world.url).await.unwrap();
+    let read = ReadMark::now(&mut conn).await.unwrap();
+    let head = derivations::head(&mut conn).await.unwrap();
+    let mut counts = Counts::default();
+    let mut computation = KeyComputation {
+        read: &mut conn,
+        writer: &world.handle,
+        derivation: derivation.as_ref(),
+        time_settings: runner.time_settings.clone(),
+        run,
+        counts: &mut counts,
+    };
+    let lock = world.handle.lock_derivations().await;
+    let env = runner.env();
+    let mut queued =
+        Box::pin(computation.compute(vec![(json!("bad"), head), (json!("good"), head)], &env));
+    assert!(futures::poll!(&mut queued).is_pending());
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    // This is the preceding computation's actual admitted diagnosis, not a
+    // changed input or a later command requesting a retry.
+    admit_refusals(
+        &world.handle,
+        "test.refusing",
+        run,
+        vec![RefusedWork {
+            input: RefusedInput::Key(json!("bad")),
+            input_seq: head,
+            reason: "synthetic invalid key".into(),
+        }],
+        None,
+        read,
+    )
+    .await
+    .unwrap();
+    drop(lock);
+    queued.await.unwrap();
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "only the still-eligible good key computes"
+    );
+    assert_eq!(counts.failed, 1);
+    assert_eq!(products(&world).await, ["good=1"]);
+    assert_eq!(diagnosis(&world).await[0].failed, 1);
+}

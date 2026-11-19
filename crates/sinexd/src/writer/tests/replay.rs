@@ -76,7 +76,7 @@ async fn a_later_prepared_batch_refusal_rolls_back_the_entire_replay(db: devkit:
     let operation = request.operation;
     assert!(matches!(
         handle.replay(request).await,
-        Err(WriteError::Refused(_))
+        Err(WriteError::InvalidData(code)) if code == "22P05"
     ));
     let mut connection = <PgConnection as Connection>::connect(&url).await.unwrap();
     assert_eq!(

@@ -97,7 +97,7 @@ async fn a_refused_batch_does_not_stop_the_writer(db: devkit::pg::TestDatabase) 
     }
     assert!(matches!(
         handle.submit(Priority::Live, bad).await,
-        Err(WriteError::Refused(_))
+        Err(WriteError::InvalidData(code)) if code == "22P05"
     ));
     assert_eq!(
         handle
