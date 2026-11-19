@@ -109,6 +109,17 @@ pub async fn release_library_copy(
     Ok(operation)
 }
 
+/// The native extent removal is complete. A pending punch is not a release
+/// receipt for physical storage.
+pub async fn library_copy_bytes_removed(conn: &mut PgConnection, content: &str) -> Result<bool> {
+    Ok(sqlx::query_scalar!(
+        r#"SELECT status = 'removed' AS "removed!" FROM core.blobs WHERE hash = $1"#,
+        content,
+    )
+    .fetch_one(conn)
+    .await?)
+}
+
 /// Replaying a released record still yields the same payload, but cannot
 /// claim that digest again. A different record remains free to own the bytes.
 pub(crate) async fn respect_released_copies(

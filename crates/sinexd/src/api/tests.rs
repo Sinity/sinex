@@ -314,6 +314,14 @@ async fn tokens_grant_levels(db: devkit::pg::TestDatabase) {
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _) = call_unbounded(
+        &w,
+        Some(AGENT),
+        json!({"method": "library-release-copy", "event": uuid::Uuid::nil(),
+               "content": format!("blake3:{}", "0".repeat(64))}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
 }
 
 #[devkit::test]

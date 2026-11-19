@@ -1580,15 +1580,11 @@ async fn release_library_copy(
     }
     tx.commit().await?;
     lifecycle::remove_unreferenced(connection, store).await?;
-    let status = sqlx::query_scalar!(
-        "SELECT status FROM core.blobs WHERE hash = $1",
-        verified.reading.content,
-    )
-    .fetch_one(&mut **connection)
-    .await?;
+    let bytes_removed =
+        lifecycle::library_copy_bytes_removed(connection, &verified.reading.content).await?;
     Ok(ReleasedLibraryCopy {
         operation,
-        bytes_removed: status == "removed",
+        bytes_removed,
     })
 }
 

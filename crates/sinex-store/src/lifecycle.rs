@@ -42,8 +42,8 @@ mod library_copies;
 mod materials;
 mod select;
 pub use bytes::remove_unreferenced;
-pub use library_copies::release_library_copy;
 pub(crate) use library_copies::respect_released_copies;
+pub use library_copies::{library_copy_bytes_removed, release_library_copy};
 
 /// An operation as the engine runs it.
 #[derive(Clone, Debug, Serialize, Deserialize)]

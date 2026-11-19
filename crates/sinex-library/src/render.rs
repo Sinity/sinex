@@ -109,7 +109,7 @@ impl VerifiedFile {
     }
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 struct FileIdentity {
     device: u64,
     inode: u64,
