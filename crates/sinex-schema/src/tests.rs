@@ -332,4 +332,92 @@ async fn request_outcomes_upgrade_preserves_operations(db: devkit::pg::TestDatab
     assert_eq!(progress, serde_json::json!({"accepted":true}));
 }
 
+#[devkit::test]
+async fn copy_fields_upgrade_indexes_only_copy_payloads_including_archived_readings(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let fresh = catalog(&mut conn).await.unwrap();
+    conn.execute(
+        "DROP TABLE core.library_copy_fields; DELETE FROM sinex_schema.applied;
+        INSERT INTO sinex_schema.applied(version) VALUES (45)",
+    )
+    .await
+    .unwrap();
+
+    let live = uuid::Uuid::now_v7();
+    let archived = uuid::Uuid::now_v7();
+    let unrelated = uuid::Uuid::now_v7();
+    let long_path = format!("/fixture/{}", "é".repeat(1600));
+    for (sequence, (event, kind, payload)) in [
+        (
+            live,
+            COPY_FIELDS_EVENT_TYPE,
+            serde_json::json!({"content":"live", "path":long_path}),
+        ),
+        (
+            archived,
+            COPY_FIELDS_EVENT_TYPE,
+            serde_json::json!({"content":"older", "path":null}),
+        ),
+        (
+            unrelated,
+            "test.unrelated",
+            serde_json::json!({"content":"ignore", "path":"/fixture/unrelated"}),
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        sqlx::query("INSERT INTO core.events (id,event_type,source,run_id,material_id,record_offset,ts_quality,commit_seq,payload,reading_order,record_hash)
+            VALUES ($1,$2,'fixture',$1,$1,0,'unknown',$3,$4,1,decode(repeat('01',32),'hex'))")
+            .bind(event).bind(kind).bind(sequence as i64 + 1).bind(payload)
+            .execute(&mut conn).await.unwrap();
+    }
+    sqlx::query("INSERT INTO audit.archived(event_id,archived_seq,reason) VALUES($1,4,'archive')")
+        .bind(archived)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    conn.execute("SELECT compress_chunk(chunk) FROM show_chunks('core.events') chunk")
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        apply(&mut conn).await.unwrap(),
+        Applied::Upgraded {
+            from: 45,
+            to: VERSION
+        }
+    ));
+    assert_eq!(catalog(&mut conn).await.unwrap(), fresh);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM core.library_copy_fields")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap(),
+        2
+    );
+    let matching: bool = sqlx::query_scalar("SELECT f.content_hash=sha256(convert_to('live','UTF8'))
+        AND f.path_hash=sha256(convert_to($2,'UTF8')) FROM core.library_copy_fields f WHERE event_id=$1")
+        .bind(live).bind(long_path).fetch_one(&mut conn).await.unwrap();
+    let archived_matching: bool = sqlx::query_scalar(
+        "SELECT f.content_hash=sha256(convert_to('older','UTF8'))
+        AND f.path_hash IS NULL FROM core.library_copy_fields f WHERE event_id=$1",
+    )
+    .bind(archived)
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    assert!(matching && archived_matching);
+    assert!(
+        !sqlx::query_scalar::<_, bool>(
+            "SELECT has_table_privilege('sinex_reader','core.library_copy_fields','SELECT')"
+        )
+        .fetch_one(&mut conn)
+        .await
+        .unwrap()
+    );
+}
+
 mod reading_orders;

@@ -2,6 +2,9 @@
 //! events and reads it back (the media library). The caller names the event
 //! type and the payload path; this module knows neither. "Live" is the live
 //! reading of each keyed record (`core.live_equivalence`).
+#[cfg(test)]
+mod tests;
+
 use crate::Result;
 use serde_json::Value;
 use sqlx::PgConnection;
@@ -13,6 +16,32 @@ pub enum RecordStates {
     Present,
     /// Present or removed.
     Any,
+}
+
+/// The fields indexed for copy lookup.
+pub enum CopyField {
+    Content,
+    Path,
+}
+
+/// Live copy payloads matching a content name or path, in commit order.
+pub async fn live_copies(
+    conn: &mut PgConnection,
+    field: CopyField,
+    values: &[String],
+) -> Result<Vec<Value>> {
+    let field = match field {
+        CopyField::Content => "content",
+        CopyField::Path => "path",
+    };
+    Ok(sqlx::query_file_scalar!(
+        "src/payloads/live_copies.sql",
+        field,
+        values,
+        sinex_schema::COPY_FIELDS_EVENT_TYPE,
+    )
+    .fetch_all(&mut *conn)
+    .await?)
 }
 
 impl RecordStates {

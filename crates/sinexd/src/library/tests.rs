@@ -1145,6 +1145,11 @@ async fn archiving_the_latest_change_falls_back_to_the_previous_copy(db: devkit:
         let view = w.ok(Request::LibraryItem { item: item.clone() }).await;
         assert_eq!(view["content"], expected);
         assert_eq!(view["revision"], expected);
+        let copies = sinex_library::reads::copies_of(&mut w.conn, &expected)
+            .await
+            .unwrap();
+        assert_eq!(copies.len(), 1);
+        assert_eq!(copies[0].path, file.to_str().unwrap());
     }
     std::fs::remove_dir_all(w.root.parent().unwrap()).unwrap();
 }

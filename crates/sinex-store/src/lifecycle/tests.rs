@@ -1463,13 +1463,14 @@ async fn replay_archives_replaced_readings_of_a_material(db: devkit::pg::TestDat
     assert_state_order(&mut conn).await;
 }
 
-/// How many word rows, trigram rows, embeddings and keyed outputs hold `events`.
-async fn copies(conn: &mut PgConnection, events: &[uuid::Uuid]) -> (i64, i64, i64, i64) {
+/// How many index, embedding and keyed output rows hold `events`.
+async fn copies(conn: &mut PgConnection, events: &[uuid::Uuid]) -> (i64, i64, i64, i64, i64) {
     sqlx::query_as(
         "SELECT (SELECT count(*) FROM core.search_text WHERE event_id = ANY($1)),
                 (SELECT count(*) FROM core.search_trigram WHERE event_id = ANY($1)),
                 (SELECT count(*) FROM core.embedding_vectors WHERE target_id = ANY($1)),
-                (SELECT count(*) FROM derivation.outputs WHERE event_id = ANY($1))",
+                (SELECT count(*) FROM derivation.outputs WHERE event_id = ANY($1)),
+                (SELECT count(*) FROM core.library_copy_fields WHERE event_id = ANY($1))",
     )
     .bind(events)
     .fetch_one(&mut *conn)
@@ -1502,14 +1503,19 @@ async fn tombstone_clears_copies(db: devkit::pg::TestDatabase) {
         .await
         .unwrap();
     }
-    assert_eq!(copies(&mut conn, &ids).await, (2, 2, 2, 1));
+    sqlx::query("INSERT INTO core.library_copy_fields (event_id) VALUES ($1)")
+        .bind(e.id.0)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    assert_eq!(copies(&mut conn, &ids).await, (2, 2, 2, 1, 1));
 
     operation(&operate(&mut conn, Act::Archive, events(&[&e]), 16).await);
     operation(&operate(&mut conn, Act::Tombstone, events(&[&e]), 16).await);
     for event in [&e, &summary] {
         assert_eq!(state(&mut conn, event).await, "tombstoned");
     }
-    assert_eq!(copies(&mut conn, &ids).await, (0, 0, 0, 0));
+    assert_eq!(copies(&mut conn, &ids).await, (0, 0, 0, 0, 0));
 }
 
 #[devkit::test]

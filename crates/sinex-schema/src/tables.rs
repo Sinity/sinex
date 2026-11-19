@@ -662,6 +662,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
     }
     tables.push(crate::source_declarations::TABLE.into());
     tables.extend(crate::library_curation::tables());
+    tables.push(crate::library_copy_fields::TABLE.into());
     tables.extend(crate::backups::tables());
     tables.extend(crate::blob_chunks::tables());
     tables.extend(crate::vectors::tables());
@@ -674,6 +675,11 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
 /// `ts_orig` can be unknown and historical imports put old times in new chunks.
 pub(crate) fn after_tables() -> Vec<String> {
     let mut out = vec![archive_history_function().into(), event_guard().into()];
+    out.extend(
+        crate::library_copy_fields::INDEXES
+            .iter()
+            .map(|sql| (*sql).into()),
+    );
     out.extend(crate::query_cursors::triggers());
     out.extend(crate::source_declarations::hooks());
     out.extend(crate::backups::hooks());

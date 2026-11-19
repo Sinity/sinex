@@ -9,7 +9,7 @@ use serde::de::DeserializeOwned;
 use sinex_model::EventPayload;
 use sinex_model::event_types::library::{FileCopy, Item, Rendition, View};
 use sinex_store::Connection as Conn;
-use sinex_store::payloads::{self, RecordStates};
+use sinex_store::payloads::{self, CopyField, RecordStates};
 use sinex_store::privacy;
 
 #[derive(Debug, thiserror::Error)]
@@ -69,7 +69,7 @@ pub async fn copies_at(conn: &mut Conn, keys: &[String]) -> Result<Vec<FileCopy>
         .iter()
         .filter_map(|k| k.split_once(':').map(|(_, p)| p.to_owned()))
         .collect();
-    let rows = payloads::live_where(conn, COPY, &["path"], &paths, RecordStates::Any).await?;
+    let rows = payloads::live_copies(conn, CopyField::Path, &paths).await?;
     Ok(latest_copies(rows)?
         .into_iter()
         .filter(|a| keys.contains(&format!("{}:{}", a.host, a.path)))
@@ -78,14 +78,7 @@ pub async fn copies_at(conn: &mut Conn, keys: &[String]) -> Result<Vec<FileCopy>
 
 /// Live copies of these bytes anywhere, present ones first.
 pub async fn copies_of(conn: &mut Conn, content: &str) -> Result<Vec<FileCopy>> {
-    let rows = payloads::live_where(
-        conn,
-        COPY,
-        &["content"],
-        &[content.to_owned()],
-        RecordStates::Any,
-    )
-    .await?;
+    let rows = payloads::live_copies(conn, CopyField::Content, &[content.to_owned()]).await?;
     let keys: Vec<_> = decode::<FileCopy>(COPY, rows)?
         .into_iter()
         .map(|copy| format!("{}:{}", copy.host, copy.path))

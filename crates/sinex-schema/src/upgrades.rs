@@ -39,6 +39,10 @@ pub(crate) const STEPS: &[Step] = &[
         name: "owned_blob_releases",
         statements: || vec![crate::tables::OWNED_BLOB_RELEASES.into()],
     },
+    Step {
+        name: "library_copy_fields",
+        statements: crate::library_copy_fields::upgrade,
+    },
 ];
 
 fn source_exclusions() -> Vec<String> {

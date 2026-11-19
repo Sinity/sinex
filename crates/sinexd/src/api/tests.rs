@@ -3,6 +3,7 @@ use crate::Result;
 mod backups;
 mod deadlines;
 mod exact_payloads;
+mod library;
 mod sql_boundary;
 mod surface;
 mod versions;

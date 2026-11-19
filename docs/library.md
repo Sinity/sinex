@@ -182,6 +182,12 @@ claiming the bytes again. A separate acquisition can still hold equal bytes.
 Opening the item verifies its on-disk copy as usual. The result reports
 whether the stored extent was removed.
 
+Copy lookup uses an index of the content and path fields on admitted copy
+readings. The event remains the source of the field values and whether a
+reading is live. Archived readings keep their index entries so restoring them
+can restore their availability. Tombstoning removes the entries. Existing
+databases build this index from copy readings during the schema upgrade.
+
 ## Adding items
 
 A file, directory, archive member or outside-producer acquisition goes through the existing reader, material store and writer ([materials](materials.md), [sources](sources.md)); the library has no path of its own for adding items.

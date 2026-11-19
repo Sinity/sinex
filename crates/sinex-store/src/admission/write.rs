@@ -63,6 +63,21 @@ pub(super) async fn insert_admitted(
     .await?;
     outcome.timings.insert("events", started.elapsed());
 
+    let copy_kind = sinex_schema::COPY_FIELDS_EVENT_TYPE;
+    if admit_ords.iter().any(|&ord| {
+        events[usize::try_from(ord).expect("ord is an event index")].event_type == copy_kind
+    }) {
+        sqlx::query!(
+            "INSERT INTO core.library_copy_fields (event_id, content_hash, path_hash)
+             SELECT id, sha256(convert_to(payload->>'content', 'UTF8')),
+                        sha256(convert_to(payload->>'path', 'UTF8'))
+             FROM admission_stage WHERE event_type = $1",
+            copy_kind,
+        )
+        .execute(&mut *conn)
+        .await?;
+    }
+
     let started = std::time::Instant::now();
     sqlx::query!(
         r#"INSERT INTO core.event_children (parent, child)
