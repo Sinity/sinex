@@ -6,10 +6,11 @@
 //! generic payload reads (`sinex_store::payloads`); this module names the
 //! library's event types and fields.
 use serde::de::DeserializeOwned;
+use sinex_model::EventPayload;
 use sinex_model::event_types::library::{FileCopy, Item, Rendition, View};
-use sinex_model::{EquivalenceKey, EventPayload, KeyKind};
 use sinex_store::Connection as Conn;
 use sinex_store::payloads::{self, RecordStates};
+use sinex_store::privacy;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -99,17 +100,20 @@ pub async fn copies_of(conn: &mut Conn, content: &str) -> Result<Vec<FileCopy>> 
 
 /// The current revision of an item, withdrawn or not.
 pub async fn item(conn: &mut Conn, item: &str) -> Result<Option<Item>> {
-    let KeyKind::Fields(fields) = Item::KEY else {
-        unreachable!("library items have a record key")
+    let rows = if privacy::is_transformed_text(item) {
+        // A rule may rewrite the item ID itself. The returned value then
+        // cannot identify the original derivation key.
+        payloads::live_where(conn, ITEM, &["item"], &[item.to_owned()], RecordStates::Any).await?
+    } else {
+        let mut rows =
+            payloads::live_derived(conn, Item::DERIVATION, &serde_json::Value::from(item), ITEM)
+                .await?;
+        rows.retain(|payload| {
+            payload.get("item").and_then(serde_json::Value::as_str) == Some(item)
+        });
+        rows
     };
-    let key = EquivalenceKey::of(ITEM, fields, &serde_json::json!({"item": item}))
-        .expect("the item supplies its declared key field");
-    payloads::live_keyed(conn, Item::DERIVATION, ITEM, &key)
-        .await?
-        .map(|payload| {
-            serde_json::from_value(payload).map_err(|error| Error::Decode(ITEM, error.to_string()))
-        })
-        .transpose()
+    Ok(decode(ITEM, rows)?.into_iter().next())
 }
 
 /// Live, present items holding these bytes.

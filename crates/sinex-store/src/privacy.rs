@@ -59,6 +59,15 @@ pub enum Action {
 }
 
 pub const MASK: &str = "[masked]";
+const HASH_PREFIX: &str = "hash:";
+
+/// A value that could have been masked or hashed by an admission rule.
+pub fn is_transformed_text(value: &str) -> bool {
+    value.contains(MASK)
+        || value
+            .strip_prefix(HASH_PREFIX)
+            .is_some_and(|hash| blake3::Hash::from_hex(hash).is_ok())
+}
 
 /// The rules in force for some sources, with their position in the rule
 /// history.
@@ -288,7 +297,7 @@ impl RuleSet {
 
     fn keyed(&self, value: &str) -> String {
         format!(
-            "hash:{}",
+            "{HASH_PREFIX}{}",
             blake3::keyed_hash(&self.hash_key, value.as_bytes()).to_hex()
         )
     }
