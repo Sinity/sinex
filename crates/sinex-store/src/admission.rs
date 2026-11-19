@@ -33,7 +33,7 @@ mod register;
 mod write;
 
 pub(crate) use archive::{archive_at, position, remove_live, restore_at};
-pub use derived::{ComputedKey, DerivedScope, ReadMark};
+pub use derived::{ComputedKey, DerivedScope, ReadMark, RefusedInput, RefusedWork};
 pub(crate) use derived::{mark_archived_dirty, mark_dirty, mark_inputs_dirty, mark_selected_dirty};
 pub(crate) use register::observed;
 

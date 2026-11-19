@@ -38,7 +38,11 @@ impl PerEvent for NoTags {
     const VERSION: u32 = 2;
     const INPUTS: &'static [&'static str] = &["command.imported"];
     const OUTPUTS: &'static [&'static str] = &["tag.applied"];
-    fn derive(&self, _: sinex_derivations::Input<'_>, _: &Env) -> Result<Vec<Event>, String> {
+    fn derive(
+        &self,
+        _: sinex_derivations::Input<'_>,
+        _: &Env,
+    ) -> Result<Vec<Event>, sinex_derivations::ComputationError> {
         Ok(vec![])
     }
 }

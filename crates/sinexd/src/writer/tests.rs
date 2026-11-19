@@ -567,7 +567,7 @@ async fn temporary_database_errors_remain_retryable(db: devkit::pg::TestDatabase
         .unwrap_err();
     assert!(matches!(
         WriteError::from(sinex_store::Error::from(invalid)),
-        WriteError::Refused(_)
+        WriteError::InvalidData(_)
     ));
     let outcome = admit_checked(
         &mut conn,

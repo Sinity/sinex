@@ -702,7 +702,8 @@ impl Keyed for ChangedHourlyMetrics {
                 &payload,
                 Self::NAME,
                 inputs.iter().filter(|input| parents.contains(&input.id)),
-            );
+            )
+            .unwrap();
         }
         computed
     }

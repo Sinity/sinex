@@ -25,6 +25,13 @@ pub enum DerivedScope {
         position: i64,
         read: ReadMark,
     },
+    /// A deterministic refusal of complete keys or inputs. Previous outputs
+    /// stay live; an optional per-event position covers these diagnosed inputs.
+    Refused {
+        inputs: Vec<RefusedWork>,
+        position: Option<i64>,
+        read: ReadMark,
+    },
     /// Recompute these keys (a version change, `sinexctl recompute`). Carries
     /// no events; the keys are marked dirty like admission marks them.
     Recompute { keys: Vec<Value> },
@@ -34,6 +41,25 @@ pub enum DerivedScope {
         keys: Vec<Value>,
     },
 }
+
+/// One native work identity, distinct even when a keyed value is a UUID.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RefusedInput {
+    Key(Value),
+    Input(Uuid),
+}
+
+/// An input failure at the exact snapshot that computed it. Newer dirt wins.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct RefusedWork {
+    pub input: RefusedInput,
+    pub input_seq: i64,
+    /// A public cause/field pointer or SQLSTATE, never payload values.
+    pub reason: String,
+}
+
+mod refusals;
 
 /// How far archiving and tombstoning had gone when a derivation read its
 /// inputs: if neither has moved since, every input it read is still live and
@@ -120,6 +146,20 @@ pub(super) async fn apply_derived(
     let scope: DerivedScope = serde_json::from_value(scope.clone())
         .map_err(|e| Error::Invalid(format!("derived batch scope: {e}")))?;
     match scope {
+        DerivedScope::Refused {
+            inputs,
+            position,
+            read,
+        } => {
+            if batch.event_count() != 0 {
+                return Err(Error::Invalid("refused work cannot admit outputs".into()));
+            }
+            refusals::record(conn, derivation, &inputs, batch.run, read).await?;
+            if let Some(position) = position {
+                refusals::position(conn, derivation, position, admitted_reading_order).await?;
+            }
+            Ok(0)
+        }
         DerivedScope::Select {
             selection,
             keys: marked,
@@ -137,6 +177,9 @@ pub(super) async fn apply_derived(
             } else {
                 vec![]
             };
+            if selection.history == sinex_model::DerivationHistory::Recompute {
+                refusals::clear_all(conn, derivation).await?;
+            }
             let seq = super::archive::position(conn).await?;
             let by = (
                 sinex_model::ArchiveReason::VersionChange,
@@ -167,6 +210,7 @@ pub(super) async fn apply_derived(
                 .await?)
         }
         DerivedScope::Recompute { keys: marked } => {
+            refusals::clear_keys(conn, derivation, &marked).await?;
             let seq =
                 sqlx::query_scalar!("SELECT value FROM core.counters WHERE name = 'commit_seq'")
                     .fetch_one(&mut *conn)
@@ -182,6 +226,7 @@ pub(super) async fn apply_derived(
         DerivedScope::Position {
             inputs, position, ..
         } => {
+            refusals::clear_inputs(conn, derivation, &inputs).await?;
             let produced: Vec<Uuid> = resolved.iter().flatten().copied().collect();
             let gone = sqlx::query_scalar!(
                 r#"SELECT e.id FROM core.events e
@@ -219,17 +264,7 @@ pub(super) async fn apply_derived(
                 remove_live(conn, &gone).await?;
                 dirty
             };
-            sqlx::query!(
-                r#"INSERT INTO derivation.positions (derivation,commit_seq,reading_order) VALUES ($1,$2,coalesce($3::bigint,0))
-                   ON CONFLICT (derivation) DO UPDATE SET
-                   commit_seq=greatest(derivation.positions.commit_seq,EXCLUDED.commit_seq),
-                   reading_order=greatest(derivation.positions.reading_order,$3)"#,
-                derivation,
-                position,
-                admitted_reading_order,
-            )
-            .execute(&mut *conn)
-            .await?;
+            refusals::position(conn, derivation, position, admitted_reading_order).await?;
             Ok(dirty)
         }
         DerivedScope::Keys { keys: scoped, .. } => {
@@ -256,6 +291,7 @@ pub(super) async fn apply_derived(
                 at += n;
             }
             let all_keys: Vec<Value> = scoped.iter().map(|s| s.key.clone()).collect();
+            refusals::clear_keys(conn, derivation, &all_keys).await?;
             // Previous outputs not produced again and still live go to the archive.
             let gone = sqlx::query_scalar!(
                 r#"SELECT o.event_id AS "event_id!" FROM derivation.outputs o
@@ -360,7 +396,9 @@ pub(super) async fn without_superseded_inputs(
         .map_err(|e| Error::Invalid(format!("derived batch scope: {e}")))?;
     let read = match &scope {
         DerivedScope::Keys { read, .. } | DerivedScope::Position { read, .. } => *read,
-        DerivedScope::Recompute { .. } | DerivedScope::Select { .. } => return Ok(None),
+        DerivedScope::Recompute { .. }
+        | DerivedScope::Select { .. }
+        | DerivedScope::Refused { .. } => return Ok(None),
     };
     // Nothing archived or tombstoned since the inputs were read: all still live.
     let now = ReadMark::now(conn).await?;
@@ -456,7 +494,9 @@ pub(super) async fn without_superseded_inputs(
                 }
             }
         }
-        DerivedScope::Recompute { .. } | DerivedScope::Select { .. } => return Ok(None),
+        DerivedScope::Recompute { .. }
+        | DerivedScope::Select { .. }
+        | DerivedScope::Refused { .. } => return Ok(None),
     }
     Ok(Some((kept, dropped)))
 }

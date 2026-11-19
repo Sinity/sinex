@@ -44,7 +44,8 @@ pub mod vectors;
 pub mod writer_lock;
 
 pub use admission::{
-    AffectedRange, ComputedKey, DerivedScope, DirtyKeys, KeyInput, NoDerivations, Outcome, ReadMark,
+    AffectedRange, ComputedKey, DerivedScope, DirtyKeys, KeyInput, NoDerivations, Outcome,
+    ReadMark, RefusedInput, RefusedWork,
 };
 pub use blobs::Blobs;
 pub use blobs::Verified;

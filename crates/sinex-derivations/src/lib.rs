@@ -340,6 +340,41 @@ pub enum Reads {
     Blob(&'static str),
 }
 
+/// Why one input could not produce outputs. Native build failures keep their
+/// typed field diagnosis instead of being flattened into arbitrary text.
+#[derive(Debug, thiserror::Error)]
+pub enum ComputationError {
+    #[error(transparent)]
+    Build(#[from] sinex_model::BuildError),
+    #[error("{0}")]
+    Input(String),
+    /// A failed read or local resource can be retried; it is not bad input.
+    #[error("{0}")]
+    Unavailable(String),
+}
+
+impl From<String> for ComputationError {
+    fn from(reason: String) -> Self {
+        Self::Input(reason)
+    }
+}
+impl From<&str> for ComputationError {
+    fn from(reason: &str) -> Self {
+        Self::Input(reason.into())
+    }
+}
+impl ComputationError {
+    /// Unknown reader error text can contain input data. Keep only its class
+    /// in stored diagnostics; native build failures have a safe field pointer.
+    pub fn failure_reason(&self) -> String {
+        match self {
+            Self::Build(error) => error.failure_reason(),
+            Self::Input(_) => "input_unreadable".into(),
+            Self::Unavailable(_) => "input_unavailable".into(),
+        }
+    }
+}
+
 pub trait PerEvent: Send + Sync {
     const HISTORY: sinex_model::DerivationHistory = sinex_model::DerivationHistory::Recompute;
     const NAME: &'static str;
@@ -360,7 +395,7 @@ pub trait PerEvent: Send + Sync {
 
     /// The input's outputs. An error fails this input alone; the driver counts
     /// it and moves on.
-    fn derive(&self, input: Input<'_>, env: &Env) -> Result<Vec<Event>, String>;
+    fn derive(&self, input: Input<'_>, env: &Env) -> Result<Vec<Event>, ComputationError>;
 }
 
 /// The declared behaviour of a derivation.
@@ -499,7 +534,7 @@ pub trait AnyPerEvent: Send + Sync {
         self.spec().outputs
     }
     fn reads(&self, event: &Event) -> Reads;
-    fn derive(&self, input: Input<'_>, env: &Env) -> Result<Vec<Event>, String>;
+    fn derive(&self, input: Input<'_>, env: &Env) -> Result<Vec<Event>, ComputationError>;
 }
 
 impl<P: PerEvent> AnyPerEvent for P {
@@ -517,7 +552,7 @@ impl<P: PerEvent> AnyPerEvent for P {
     fn reads(&self, event: &Event) -> Reads {
         PerEvent::reads_for(self, event)
     }
-    fn derive(&self, input: Input<'_>, env: &Env) -> Result<Vec<Event>, String> {
+    fn derive(&self, input: Input<'_>, env: &Env) -> Result<Vec<Event>, ComputationError> {
         PerEvent::derive(self, input, env)
     }
 }

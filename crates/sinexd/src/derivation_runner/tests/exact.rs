@@ -32,26 +32,29 @@ impl Keyed for ExactTargets {
         Computed {
             error: None,
             waiting: false,
-            outputs: vec![sinex_derivations::derived_event::derived(
-                &CommandFused {
-                    record: "exact targets".into(),
-                    command: labels.join("/"),
-                    host: "fixture".into(),
-                    started_at: at(0),
-                    cwd: None,
-                    session: None,
-                    duration_ns: None,
-                    exit_code: None,
-                    execution: None,
-                    members: vec![],
-                    basis: sinex_model::event_types::fused::Basis::Rule,
-                    ambiguous: 1,
-                    competitors: vec![],
-                    rule_version: 1,
-                },
-                Self::NAME,
-                inputs,
-            )],
+            outputs: vec![
+                sinex_derivations::derived_event::derived(
+                    &CommandFused {
+                        record: "exact targets".into(),
+                        command: labels.join("/"),
+                        host: "fixture".into(),
+                        started_at: at(0),
+                        cwd: None,
+                        session: None,
+                        duration_ns: None,
+                        exit_code: None,
+                        execution: None,
+                        members: vec![],
+                        basis: sinex_model::event_types::fused::Basis::Rule,
+                        ambiguous: 1,
+                        competitors: vec![],
+                        rule_version: 1,
+                    },
+                    Self::NAME,
+                    inputs,
+                )
+                .unwrap(),
+            ],
         }
     }
 }

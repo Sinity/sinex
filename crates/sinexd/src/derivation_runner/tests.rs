@@ -379,11 +379,10 @@ impl Keyed for Waiting {
         };
         Computed {
             error: None,
-            outputs: vec![sinex_derivations::derived_event::derived(
-                &payload,
-                "test.waiting",
-                inputs,
-            )],
+            outputs: vec![
+                sinex_derivations::derived_event::derived(&payload, "test.waiting", inputs)
+                    .unwrap(),
+            ],
             waiting: true,
         }
     }
@@ -522,9 +521,9 @@ fn counted(derivation: &str, command: String, inputs: &[Event]) -> Computed {
     };
     Computed {
         error: None,
-        outputs: vec![sinex_derivations::derived_event::derived(
-            &payload, derivation, inputs,
-        )],
+        outputs: vec![
+            sinex_derivations::derived_event::derived(&payload, derivation, inputs).unwrap(),
+        ],
         waiting: false,
     }
 }
@@ -681,7 +680,11 @@ impl sinex_derivations::PerEvent for Echo {
     const INPUTS: &'static [&'static str] = &["command.imported"];
     const OUTPUTS: &'static [&'static str] = &["command.fused"];
 
-    fn derive(&self, input: sinex_derivations::Input<'_>, _: &Env) -> Result<Vec<Event>, String> {
+    fn derive(
+        &self,
+        input: sinex_derivations::Input<'_>,
+        _: &Env,
+    ) -> Result<Vec<Event>, sinex_derivations::ComputationError> {
         let input = input.event;
         let c: CommandImported = input.payload_as().unwrap();
         Ok(vec![sinex_derivations::derived_event::derived(
@@ -703,7 +706,7 @@ impl sinex_derivations::PerEvent for Echo {
             },
             "test.echo",
             [input],
-        )])
+        )?])
     }
 }
 
@@ -1000,3 +1003,5 @@ mod embedding;
 mod exact;
 
 mod document_formats;
+
+mod refusals;

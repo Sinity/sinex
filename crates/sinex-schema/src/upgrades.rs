@@ -43,6 +43,10 @@ pub(crate) const STEPS: &[Step] = &[
         name: "library_copy_fields",
         statements: crate::library_copy_fields::upgrade,
     },
+    Step {
+        name: "derivation_refusals",
+        statements: derivation_refusals,
+    },
 ];
 
 fn source_exclusions() -> Vec<String> {
@@ -121,4 +125,15 @@ fn derivation_reading_orders() -> Vec<String> {
             .into(),
     );
     statements
+}
+
+fn derivation_refusals() -> Vec<String> {
+    let mut after = crate::description::Description::current();
+    after.tables = vec![
+        crate::tables::DERIVATION_REFUSALS.into(),
+        crate::tables::DERIVATION_REFUSALS_LATEST.into(),
+    ];
+    let mut before = crate::description::Description::current();
+    before.tables.clear();
+    after.changes_from(&before)
 }

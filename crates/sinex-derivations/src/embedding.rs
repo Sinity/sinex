@@ -11,7 +11,7 @@ impl PerEvent for Embeddings {
     const VERSION: u32 = 1;
     const INPUTS: &'static [&'static str] = &["embedding.supplied"];
     const OUTPUTS: &'static [&'static str] = &["text.embedding"];
-    fn derive(&self, input: Input<'_>, _: &Env) -> Result<Vec<Event>, String> {
+    fn derive(&self, input: Input<'_>, _: &Env) -> Result<Vec<Event>, crate::ComputationError> {
         let supplied: SuppliedEmbedding = serde_json::from_value(input.event.payload.clone())
             .map_err(|error| format!("invalid supplied embedding: {error}"))?;
         supplied.validate()?;

@@ -64,6 +64,21 @@ pub enum BuildError {
     Key(String),
 }
 
+impl BuildError {
+    /// A stored diagnostic names the problem, never a rejected field value.
+    pub fn failure_reason(&self) -> String {
+        match self {
+            Self::UnstorableCharacter { .. }
+            | Self::NoParents
+            | Self::NotAnObject(_)
+            | Self::DerivedWithoutKey(_) => self.to_string(),
+            Self::Payload(kind, _) => format!("invalid_payload: {kind}"),
+            Self::Declaration(_) => "invalid_declaration".into(),
+            Self::Key(_) => "invalid_derivation_key".into(),
+        }
+    }
+}
+
 /// An event ready for admission.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Event {
@@ -105,9 +120,7 @@ impl Event {
         if !value.is_object() {
             return Err(BuildError::NotAnObject(P::EVENT_TYPE.into()));
         }
-        if let Some(pointer) = unstorable_character(&value) {
-            return Err(BuildError::UnstorableCharacter { pointer });
-        }
+        Self::check_payload(&value)?;
         let equivalence_key = match payload.key_kind() {
             KeyKind::Location => None,
             KeyKind::Fields(fields) => EquivalenceKey::of(P::EVENT_TYPE, fields, &value),
@@ -137,6 +150,15 @@ impl Event {
             class,
             owned_blobs: payload.owned_blobs(),
         })
+    }
+
+    /// Reject strings PostgreSQL cannot store, naming only their field path.
+    /// Declared JSON derivations use the same boundary as typed builders.
+    pub fn check_payload(value: &Value) -> Result<(), BuildError> {
+        match unstorable_character(value) {
+            Some(pointer) => Err(BuildError::UnstorableCharacter { pointer }),
+            None => Ok(()),
+        }
     }
 
     /// An outside reading awaiting the writer's declaration checks.

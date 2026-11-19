@@ -51,7 +51,11 @@ impl PerEvent for PreviousDocumentText {
     const INPUTS: &'static [&'static str] = &[FileCopy::EVENT_TYPE];
     const OUTPUTS: &'static [&'static str] = &[DocumentText::EVENT_TYPE];
     const READS: Reads = Reads::Nothing;
-    fn derive(&self, input: Input<'_>, _: &Env) -> Result<Vec<Event>, String> {
+    fn derive(
+        &self,
+        input: Input<'_>,
+        _: &Env,
+    ) -> Result<Vec<Event>, sinex_derivations::ComputationError> {
         let copy: FileCopy = input.event.payload_as().unwrap();
         let payload = DocumentText {
             record: serde_json::to_string(&(

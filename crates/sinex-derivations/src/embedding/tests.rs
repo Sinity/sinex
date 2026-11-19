@@ -102,6 +102,7 @@ fn vector_validation_checks_supplied_identity_and_count_without_calling_a_provid
                 &env()
             )
             .unwrap_err()
+            .to_string()
             .contains("dimension")
     );
     event.payload["space"]["dimensions"] = 2.into();
@@ -116,6 +117,7 @@ fn vector_validation_checks_supplied_identity_and_count_without_calling_a_provid
                 &env()
             )
             .unwrap_err()
+            .to_string()
             .contains("BLAKE3")
     );
     assert_eq!(SuppliedEmbedding::VERSION, 2);

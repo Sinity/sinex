@@ -9,7 +9,8 @@ async fn stored_product_versions_follow_output_parents(db: devkit::pg::TestDatab
     world.admit(vec![selected.clone(), unused.clone()]).await;
     let payload: CommandImported = serde_json::from_value(selected.payload.clone()).unwrap();
     let output =
-        sinex_derivations::derived_event::derived(&payload, "analysis.products", [&selected]);
+        sinex_derivations::derived_event::derived(&payload, "analysis.products", [&selected])
+            .unwrap();
     let mut computed = Computed {
         outputs: vec![output],
         ..Computed::default()

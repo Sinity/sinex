@@ -4394,6 +4394,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sinex-model",
+ "thiserror",
  "time",
 ]
 

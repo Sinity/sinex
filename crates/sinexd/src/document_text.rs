@@ -135,8 +135,12 @@ impl PerEvent for DocumentText {
         }
     }
 
-    fn derive(&self, input: Input<'_>, _: &Env) -> std::result::Result<Vec<Event>, String> {
-        self.read_events(input).map_err(|error| error.to_string())
+    fn derive(
+        &self,
+        input: Input<'_>,
+        _: &Env,
+    ) -> std::result::Result<Vec<Event>, sinex_derivations::ComputationError> {
+        self.read_events(input).map_err(Into::into)
     }
 }
 

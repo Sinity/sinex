@@ -316,7 +316,8 @@ impl Ingest {
             }
             // Only signal steps compute from inputs that can move under them.
             Err(error @ WriteError::Stale(_)) => return Err(error.into()),
-            Err(WriteError::Refused(reason)) => {
+            Err(error @ (WriteError::Refused(_) | WriteError::InvalidData(_))) => {
+                let reason = error.content_refusal().expect("matched a content refusal");
                 // Handled meanwhile by a redelivery: answer from the record.
                 if let Some(stored) = self.stored(producer, &name).await? {
                     self.discard_recorded(producer, &stored, decoded.as_ref().ok());

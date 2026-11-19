@@ -893,8 +893,11 @@ pub async fn dirty(
 ) -> Result<Vec<DirtyKey>> {
     let rows = sqlx::query_as!(
         DirtyKey,
-        r#"SELECT derivation, key, last_dirty_seq FROM derivation.dirty
+        r#"SELECT derivation, key, last_dirty_seq FROM derivation.dirty d
            WHERE derivation = ANY($1) AND held_by IS NULL
+             AND NOT EXISTS (SELECT 1 FROM derivation.refusals f
+               WHERE f.derivation=d.derivation AND f.input=jsonb_build_object('key',d.key)
+                 AND f.input_seq>=d.last_dirty_seq)
            ORDER BY first_dirty_seq, derivation LIMIT $2"#,
         derivations,
         limit,
@@ -912,7 +915,7 @@ pub async fn waiting(
     due: Option<time::OffsetDateTime>,
 ) -> Result<Vec<(Value, Timestamp)>> {
     Ok(sqlx::query!(
-        "SELECT key, since FROM derivation.waiting WHERE derivation = $1 AND ($2::timestamptz IS NULL OR refresh_at <= $2) ORDER BY since",
+        "SELECT key, since FROM derivation.waiting WHERE derivation = $1 AND ($2::timestamptz IS NULL OR refresh_at <= $2) AND NOT EXISTS (SELECT 1 FROM derivation.refusals f WHERE f.derivation=$1 AND f.input=jsonb_build_object('key',derivation.waiting.key)) ORDER BY since",
         derivation, due,
     )
     .fetch_all(&mut *conn)
@@ -927,7 +930,8 @@ pub async fn waiting(
 /// keys its windows differently).
 pub async fn output_keys(conn: &mut PgConnection, derivation: &str) -> Result<Vec<Value>> {
     Ok(sqlx::query_scalar!(
-        r#"SELECT DISTINCT key AS "key!" FROM derivation.outputs WHERE derivation = $1"#,
+        r#"SELECT DISTINCT key AS "key!" FROM derivation.outputs WHERE derivation = $1
+        UNION SELECT input->'key' AS "key!" FROM derivation.refusals WHERE derivation=$1 AND input ? 'key' "#,
         derivation
     )
     .fetch_all(&mut *conn)
@@ -1116,3 +1120,14 @@ mod tests;
 
 mod listed;
 pub use listed::ListedInputs;
+
+/// Inputs already diagnosed for this selected producer. The position may lag
+/// after an interrupted later write; retrying it must not rerun failed inputs.
+pub async fn refused_inputs(
+    conn: &mut PgConnection,
+    derivation: &str,
+    inputs: &[Uuid],
+) -> Result<HashSet<Uuid>> {
+    Ok(sqlx::query_scalar!(r#"SELECT (input->>'input')::uuid AS "id!" FROM derivation.refusals WHERE derivation=$1 AND input ? 'input' AND (input->>'input')::uuid=ANY($2)"#,derivation,inputs)
+        .fetch_all(conn).await?.into_iter().collect())
+}

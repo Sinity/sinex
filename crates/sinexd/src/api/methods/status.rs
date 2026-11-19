@@ -181,6 +181,7 @@ impl Api {
                 .await?;
         let refusals = sinex_store::diagnostics::ingress_refusals(&mut conn).await?;
         let producer_errors = sinex_store::diagnostics::producer_errors(&mut conn).await?;
+        let derivation_refusals = sinex_store::diagnostics::derivation_refusals(&mut conn).await?;
         let selected = sinex_store::registry::selected_derivations(&mut conn).await?;
         let time_settings =
             sinex_model::time_settings::TimeSettings::from_parts(self.zone.clone(), self.day_start);
@@ -268,6 +269,7 @@ impl Api {
            "read_failures": read_failures,
            "ingress_refusals_24h": refusals,
            "producer_errors": producer_errors,
+           "derivation_refusals": derivation_refusals,
            "writer": self.writer.is_some(),
            "backup_holds": { "open":open_backup_holds.0,"oldest":open_backup_holds.1 },
            "zone": self.context().zone_name(),

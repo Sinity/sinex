@@ -76,13 +76,18 @@ pub async fn read(conn: &mut PgConnection) -> Result<Vec<Reading>> {
         r#"SELECT d.name AS "name!", d.kind,
              (SELECT count(*) FROM derivation.dirty k WHERE k.derivation = d.name) AS "dirty!",
              (SELECT count(*) FROM derivation.waiting w WHERE w.derivation = d.name) AS "waiting!",
+             (SELECT count(*) FROM derivation.refusals f WHERE f.derivation = d.name) AS "refused!",
              (SELECT p.commit_seq FROM derivation.positions p WHERE p.derivation = d.name) AS position
            FROM registry.derivations d ORDER BY d.name"#,
     )
     .fetch_all(&mut *tx)
     .await?;
     for d in keyed {
-        let mut measures = vec![("dirty_keys", d.dirty), ("waiting_keys", d.waiting)];
+        let mut measures = vec![
+            ("dirty_keys", d.dirty),
+            ("waiting_keys", d.waiting),
+            ("refused_work", d.refused),
+        ];
         if let Some(position) = d.position.or((d.kind == "per_event").then_some(0)) {
             measures.push(("position", position));
             measures.push(("behind", head.commit_seq - position));

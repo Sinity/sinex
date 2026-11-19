@@ -220,7 +220,7 @@ impl AnyPerEvent for TagApplier {
         Reads::Nothing
     }
 
-    fn derive(&self, input: Input<'_>, _: &Env) -> Result<Vec<Event>, String> {
+    fn derive(&self, input: Input<'_>, _: &Env) -> Result<Vec<Event>, crate::ComputationError> {
         let event = input.event;
         let mut assignments: BTreeMap<&str, Vec<String>> = BTreeMap::new();
         for rule in self.rules.iter().filter(|rule| {

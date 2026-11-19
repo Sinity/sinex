@@ -542,6 +542,8 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   PRIMARY KEY (derivation, key)
 )".into(),
         POSITIONS_WITH_READING_ORDERS.into(),
+        DERIVATION_REFUSALS.into(),
+        DERIVATION_REFUSALS_LATEST.into(),
         // Each key's current outputs, so a recompute replaces the key's
         // outputs as a set: outputs no longer produced are archived.
         "CREATE TABLE derivation.outputs (
@@ -855,3 +857,19 @@ const PRODUCER_ORDERS: &str = "CREATE TABLE core.producer_orders (
 
 /// Per-event progress and the largest admitted output order survive restarts.
 pub(crate) const POSITIONS_WITH_READING_ORDERS: &str = "CREATE TABLE derivation.positions (derivation text PRIMARY KEY, commit_seq bigint NOT NULL, reading_order bigint NOT NULL DEFAULT 0)";
+
+/// Current terminal input failures, committed with derivation progress. Native
+/// key values and per-event IDs have distinct tagged input identities.
+pub(crate) const DERIVATION_REFUSALS: &str = "CREATE TABLE derivation.refusals (
+  derivation text NOT NULL,
+  input jsonb NOT NULL,
+  input_seq bigint NOT NULL CHECK (input_seq >= 0),
+  reason text NOT NULL,
+  run_id uuid NOT NULL REFERENCES core.runs(id),
+  refused_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (derivation, input)
+)";
+
+/// A status read seeks one current diagnosis for each producer.
+pub(crate) const DERIVATION_REFUSALS_LATEST: &str =
+    "CREATE INDEX refusals_latest ON derivation.refusals(derivation,refused_at DESC)";

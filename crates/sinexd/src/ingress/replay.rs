@@ -405,7 +405,8 @@ impl Ingest {
                 }
                 // Only signal steps compute from inputs that can move under them.
                 Err(error @ WriteError::Stale(_)) => return Err(error.into()),
-                Err(WriteError::Refused(reason)) => {
+                Err(error @ (WriteError::Refused(_) | WriteError::InvalidData(_))) => {
+                    let reason = error.content_refusal().expect("matched a content refusal");
                     self.writer
                         .submit(
                             Priority::Live,

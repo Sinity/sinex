@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum Error {
+    #[error(transparent)]
+    Build(#[from] sinex_model::BuildError),
     /// A failure classified where it arose: a request to fix, a missing
     /// record, a refusal.
     #[error(transparent)]
@@ -162,7 +164,7 @@ impl From<Error> for Failure {
                     Failure::new(io_kind(error.kind()), message)
                 }
             },
-            Error::Task(_) => Failure::new(FailureKind::Internal, message),
+            Error::Task(_) | Error::Build(_) => Failure::new(FailureKind::Internal, message),
             Error::Nats(_) => Failure::new(FailureKind::NotRunning, message).with_code("nats"),
         }
     }
@@ -179,7 +181,7 @@ macro_rules! from_as {
 from_as!(bad_value: sinex_model::time_settings::TimeSettingsError, jiff::Error,
     time::error::ComponentRange, std::num::TryFromIntError, signals::EvaluationError,
     zip::result::ZipError, sinex_analysis::methods::MethodError, ranking::RankError);
-from_as!(internal: tokio::sync::AcquireError, sinex_model::BuildError);
+from_as!(internal: tokio::sync::AcquireError);
 
 impl<T> From<tokio::sync::mpsc::error::SendError<T>> for Error {
     fn from(_: tokio::sync::mpsc::error::SendError<T>) -> Self {
@@ -236,3 +238,39 @@ impl From<zbus::Error> for Error {
 
 #[cfg(test)]
 mod tests;
+
+impl From<Error> for sinex_derivations::ComputationError {
+    fn from(error: Error) -> Self {
+        match error {
+            Error::Build(error) => Self::Build(error),
+            Error::Database(error) | Error::Store(sinex_store::Error::Database(error)) => {
+                match crate::writer::WriteError::from(sinex_store::Error::Database(error)) {
+                    crate::writer::WriteError::Unavailable(reason) => Self::Unavailable(reason),
+                    other => Self::Input(other.to_string()),
+                }
+            }
+            Error::Io(error) | Error::File { source: error, .. } => {
+                Self::Unavailable(error.to_string())
+            }
+            Error::Blob(error) | Error::Store(sinex_store::Error::Blob(error)) => {
+                Self::Unavailable(error.to_string())
+            }
+            other => Self::Input(other.to_string()),
+        }
+    }
+}
+
+impl From<sinex_derivations::ComputationError> for Error {
+    fn from(error: sinex_derivations::ComputationError) -> Self {
+        match error {
+            sinex_derivations::ComputationError::Build(error) => Self::Build(error),
+            sinex_derivations::ComputationError::Input(reason) => Self::bad_value(reason),
+            sinex_derivations::ComputationError::Unavailable(reason) => {
+                let mut failure =
+                    Failure::new(FailureKind::Io, reason).with_code("derivation_input_unavailable");
+                failure.retryable = true;
+                Self::Failure(failure)
+            }
+        }
+    }
+}

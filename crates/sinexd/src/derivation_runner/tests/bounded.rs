@@ -71,7 +71,11 @@ impl sinex_derivations::PerEvent for Large {
     const INPUTS: &'static [&'static str] = &["command.imported"];
     const OUTPUTS: &'static [&'static str] = &["command.fused"];
 
-    fn derive(&self, input: sinex_derivations::Input<'_>, _: &Env) -> Result<Vec<Event>, String> {
+    fn derive(
+        &self,
+        input: sinex_derivations::Input<'_>,
+        _: &Env,
+    ) -> Result<Vec<Event>, sinex_derivations::ComputationError> {
         let input = input.event;
         let c: CommandImported = input.payload_as().unwrap();
         Ok(vec![sinex_derivations::derived_event::derived(
@@ -93,7 +97,7 @@ impl sinex_derivations::PerEvent for Large {
             },
             Self::NAME,
             [input],
-        )])
+        )?])
     }
 }
 

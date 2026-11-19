@@ -194,3 +194,21 @@ pub async fn located_file_paths(conn: &mut PgConnection) -> Result<Vec<LocatedFi
             .await?,
     )
 }
+
+/// Per-producer refusal totals and the latest public diagnosis. Native scope
+/// keys and payload values stay out of general daemon status.
+#[derive(Debug, serde::Serialize)]
+pub struct DerivationRefusal {
+    pub derivation: String,
+    pub failed: i64,
+    pub reason: String,
+}
+
+pub async fn derivation_refusals(conn: &mut PgConnection) -> Result<Vec<DerivationRefusal>> {
+    Ok(sqlx::query_as!(DerivationRefusal,
+        r#"SELECT n.derivation AS "derivation!",n.failed AS "failed!",latest.reason AS "reason!" FROM
+           (SELECT derivation,count(*) AS failed FROM derivation.refusals GROUP BY derivation) n
+           CROSS JOIN LATERAL (SELECT reason FROM derivation.refusals r WHERE r.derivation=n.derivation ORDER BY refused_at DESC LIMIT 1) latest
+           ORDER BY n.derivation"#
+    ).fetch_all(conn).await?)
+}

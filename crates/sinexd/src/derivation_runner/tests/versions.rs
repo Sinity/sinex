@@ -84,11 +84,9 @@ impl<const V: u32> Keyed for Days<V> {
             rule_version: 1,
         };
         Computed {
-            outputs: vec![sinex_derivations::derived_event::derived(
-                &payload,
-                "test.days",
-                inputs,
-            )],
+            outputs: vec![
+                sinex_derivations::derived_event::derived(&payload, "test.days", inputs).unwrap(),
+            ],
             waiting: false,
             error: None,
         }
