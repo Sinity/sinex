@@ -217,10 +217,18 @@ impl KindDeclaration {
         blake3::hash(&canonical).to_hex().to_string()
     }
 
-    pub fn evaluate(&self, payload: &Value, class: Class) -> Result<Evaluated, String> {
+    pub fn evaluate(&self, payload: &Value, class: Class) -> Result<Evaluated, crate::BuildError> {
         if !payload.is_object() {
-            return Err("payload must be an object".into());
+            return Err(crate::BuildError::Declaration(
+                "payload must be an object".into(),
+            ));
         }
+        crate::Event::check_payload(payload)?;
+        self.evaluate_fields(payload, class)
+            .map_err(crate::BuildError::Declaration)
+    }
+
+    fn evaluate_fields(&self, payload: &Value, class: Class) -> Result<Evaluated, String> {
         let present = |field: &str| payload.get(field).filter(|v| !v.is_null());
         let fields = self
             .key_rule

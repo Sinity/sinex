@@ -593,6 +593,7 @@ async fn only_transient_sqlstates_are_retryable(db: devkit::pg::TestDatabase) {
         ("57014", true),
         ("58030", true),
         ("22021", false),
+        ("22P05", false),
         ("23505", false),
         ("54000", false),
         ("42601", false),
@@ -601,14 +602,25 @@ async fn only_transient_sqlstates_are_retryable(db: devkit::pg::TestDatabase) {
             "DO $$ BEGIN RAISE EXCEPTION USING ERRCODE = '{code}', MESSAGE = 'synthetic admission failure'; END $$"
         );
         let error = sqlx::query(&query).execute(&mut conn).await.unwrap_err();
+        let error = WriteError::from(sinex_store::Error::from(error));
         assert_eq!(
-            matches!(
-                WriteError::from(sinex_store::Error::from(error)),
-                WriteError::Unavailable(_)
-            ),
+            matches!(error, WriteError::Unavailable(_)),
             temporary,
             "{code}"
         );
+        assert_eq!(
+            matches!(error, WriteError::InvalidData(_)),
+            code.starts_with("22"),
+            "{code}"
+        );
+        if temporary || code.starts_with("22") {
+            assert!(
+                !error.to_string().contains("synthetic admission failure"),
+                "database details must stay private"
+            );
+        }
+        let failure = command_surface::Failure::from(error);
+        assert_eq!(failure.retryable, temporary, "{code}");
     }
     for error in [
         sqlx::Error::Io(std::io::Error::other("synthetic")),

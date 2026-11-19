@@ -1128,6 +1128,39 @@ pub async fn refused_inputs(
     derivation: &str,
     inputs: &[Uuid],
 ) -> Result<HashSet<Uuid>> {
-    Ok(sqlx::query_scalar!(r#"SELECT (input->>'input')::uuid AS "id!" FROM derivation.refusals WHERE derivation=$1 AND input ? 'input' AND (input->>'input')::uuid=ANY($2)"#,derivation,inputs)
+    let inputs: Vec<Value> = inputs
+        .iter()
+        .map(|id| {
+            serde_json::to_value(crate::RefusedInput::Input(*id))
+                .expect("work identities serialize")
+        })
+        .collect();
+    Ok(sqlx::query_scalar!(r#"SELECT (input->>'input')::uuid AS "id!" FROM derivation.refusals WHERE derivation=$1 AND input=ANY($2)"#,derivation,&inputs)
         .fetch_all(conn).await?.into_iter().collect())
+}
+
+/// An unchanged failed key among a requested population. Callers can finish
+/// the other keys while refusing an automatic retry of these inputs.
+#[derive(Debug)]
+pub struct RefusedKey {
+    pub key: Value,
+    pub reason: String,
+}
+pub async fn refused_keys(
+    conn: &mut PgConnection,
+    derivation: &str,
+    keys: &[Value],
+) -> Result<Vec<RefusedKey>> {
+    let inputs: Vec<Value> = keys
+        .iter()
+        .map(|key| {
+            serde_json::to_value(crate::RefusedInput::Key(key.clone()))
+                .expect("work identities serialize")
+        })
+        .collect();
+    Ok(sqlx::query_as!(RefusedKey,
+        r#"SELECT f.input->'key' AS "key!",f.reason FROM derivation.refusals f
+           WHERE f.derivation=$1 AND f.input=ANY($2)
+             AND NOT EXISTS (SELECT 1 FROM derivation.dirty d WHERE d.derivation=$1 AND d.key=f.input->'key' AND d.last_dirty_seq>f.input_seq)
+           ORDER BY f.input"#,derivation,&inputs).fetch_all(conn).await?)
 }

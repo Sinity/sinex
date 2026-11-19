@@ -80,7 +80,10 @@ impl From<WriteError> for command_surface::Failure {
                 Failure::new(FailureKind::Refused, message).with_code("storage_refused")
             }
             WriteError::Unavailable(_) => {
-                Failure::new(FailureKind::NotRunning, message).with_code("database_unavailable")
+                let mut failure = Failure::new(FailureKind::NotRunning, message)
+                    .with_code("database_unavailable");
+                failure.retryable = true;
+                failure
             }
             WriteError::Stopped => {
                 Failure::new(FailureKind::NotRunning, message).with_code("writer_stopped")
@@ -1358,7 +1361,15 @@ impl From<sinex_store::Error> for WriteError {
             _ => false,
         };
         if temporary {
-            WriteError::Unavailable(error.to_string())
+            match &error {
+                sinex_store::Error::Database(sqlx::Error::Database(database)) => {
+                    WriteError::Unavailable(format!(
+                        "database reported {}",
+                        database.code().as_deref().unwrap_or("unknown SQLSTATE")
+                    ))
+                }
+                _ => WriteError::Unavailable(error.to_string()),
+            }
         } else if let sinex_store::Error::Database(database) = &error {
             match database.as_database_error().and_then(|error| error.code()) {
                 Some(code) if code.starts_with("22") => WriteError::InvalidData(code.into_owned()),

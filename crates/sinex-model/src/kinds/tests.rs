@@ -365,3 +365,25 @@ fn submitted_payload_missing_key_field_uses_location() {
         crate::EquivalenceKey::of("test.optional_key", &["id"], &json!({"id": "record-1"}))
     );
 }
+
+#[test]
+fn declared_payload_uses_the_shared_unstorable_character_check() {
+    let declaration = KindDeclaration::schemaless(
+        KindRef {
+            name: "test.value".into(),
+            version: 1,
+        },
+        "test".into(),
+    );
+    assert!(
+        matches!(declaration.evaluate(&json!({"nested":["plain","private\u{0}value"]}),Class::Open),Err(crate::BuildError::UnstorableCharacter{pointer}) if pointer=="/nested/1")
+    );
+    let error = declaration
+        .evaluate(&json!({"nested":{"x/y~":"private\u{0}value"}}), Class::Open)
+        .unwrap_err();
+    assert_eq!(
+        error.failure_reason(),
+        "unstorable_character: NUL in payload at \"/nested/x~1y~0\""
+    );
+    assert!(!error.failure_reason().contains("private"));
+}

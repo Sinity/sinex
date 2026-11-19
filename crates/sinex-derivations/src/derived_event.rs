@@ -30,7 +30,6 @@ pub fn derived_json<'a>(
     derivation: &str,
     inputs: impl IntoIterator<Item = &'a Event>,
 ) -> Result<Event, BuildError> {
-    Event::check_payload(payload)?;
     build(payload, inputs, |origin, hash, class| {
         if declaration.normalization == sinex_model::kinds::Normalization::Rust {
             let validator =
@@ -41,9 +40,7 @@ pub fn derived_json<'a>(
             }
             return Ok(event);
         }
-        let evaluated = declaration
-            .evaluate(payload, class)
-            .map_err(BuildError::Declaration)?;
+        let evaluated = declaration.evaluate(payload, class)?;
         if evaluated.equivalence_key.is_none() {
             return Err(BuildError::DerivedWithoutKey(declaration.kind.name.clone()));
         }

@@ -722,7 +722,9 @@ impl DerivationRunner {
                         PositionOutcome::Outputs(start..batch.outputs.len())
                     }
                     Err(error @ sinex_derivations::ComputationError::Unavailable(_)) => {
-                        return Err(error.into());
+                        return Err(
+                            Error::from(error).within(format!("{name}: input {}", c.event.id))
+                        );
                     }
                     Err(error) => {
                         failed += 1;
@@ -1809,6 +1811,16 @@ pub(crate) async fn compute_now(
         }
         keys = dirty;
     }
+    let refused = derivations::refused_keys(conn, derivation.name(), &keys).await?;
+    let blocked: HashSet<String> = refused.iter().map(|row| row.key.to_string()).collect();
+    keys.retain(|key| !blocked.contains(&key.to_string()));
+    if keys.is_empty() && !refused.is_empty() {
+        return Err(Error::refused(format!(
+            "{}: {}; change its inputs or request an explicit recompute",
+            derivation.name(),
+            refused[0].reason
+        )));
+    }
     let version = available.version.to_string();
     let manifest = runs::Manifest {
         name: derivation.name(),
@@ -1839,6 +1851,13 @@ pub(crate) async fn compute_now(
     let ended = runs::end(conn, run).await.map_err(Error::from);
     let counts = result?;
     ended?;
+    if counts.failed > 0 || !refused.is_empty() {
+        return Err(Error::refused(format!(
+            "{}: {} selected keys refused; other keys completed; see status",
+            derivation.name(),
+            counts.failed + refused.len()
+        )));
+    }
     Ok(counts)
 }
 

@@ -114,6 +114,22 @@ manifest metadata remains an explicit null entry with its event count.
 - Ties break by stable keys: material digest, record offset, output index or source record key, then genuine source order where the source records one. Never commit order, arrival order or event ID, all of which replay changes.
 - A late first member, bridge, split or merge can change keys. Every affected group is recomputed and its full set replaced. No alias redirects an old group to an arbitrarily chosen new one: a current query may return several replacement groups, and an exact citation of the old reading stays historical.
 
+## Refused inputs
+
+A deterministic payload failure stops that input or complete key, rather than
+stopping the daemon or treating its result as an empty output set. Other inputs
+continue, and a refused key keeps its previous accepted products. Status reports
+the producer, current refusal count and a diagnosis without rejected values.
+Per-event progress advances only after its refusal is durable. Restart does not
+repeat unchanged failed work.
+
+New relevant input re-enables a keyed computation. Explicit recompute retries
+failed keys even at the same input position; selecting a compared recompute
+version also clears refusals and replays its population. A keep-history switch
+preserves them. Archiving a per-event input removes its current diagnosis.
+Temporary reads and database failures remain retryable and do not create terminal
+refusals or advance past an unhandled input.
+
 ## Derivations and the lifecycle
 
 The states, archive, restore, replay and tombstone are defined in [the lifecycle](lifecycle.md); what they mean for derived outputs:

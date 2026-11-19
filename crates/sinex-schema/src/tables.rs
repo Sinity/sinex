@@ -544,6 +544,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
         POSITIONS_WITH_READING_ORDERS.into(),
         DERIVATION_REFUSALS.into(),
         DERIVATION_REFUSALS_LATEST.into(),
+        DERIVATION_REFUSALS_INPUT.into(),
         // Each key's current outputs, so a recompute replaces the key's
         // outputs as a set: outputs no longer produced are archived.
         "CREATE TABLE derivation.outputs (
@@ -872,4 +873,8 @@ pub(crate) const DERIVATION_REFUSALS: &str = "CREATE TABLE derivation.refusals (
 
 /// A status read seeks one current diagnosis for each producer.
 pub(crate) const DERIVATION_REFUSALS_LATEST: &str =
-    "CREATE INDEX refusals_latest ON derivation.refusals(derivation,refused_at DESC)";
+    "CREATE INDEX refusals_latest ON derivation.refusals(derivation,refused_at DESC,input)";
+
+/// Lifecycle changes remove diagnoses for precisely the archived input IDs.
+pub(crate) const DERIVATION_REFUSALS_INPUT: &str =
+    "CREATE INDEX refusals_input ON derivation.refusals((input->>'input')) WHERE input ? 'input'";

@@ -132,6 +132,7 @@ fn derivation_refusals() -> Vec<String> {
     after.tables = vec![
         crate::tables::DERIVATION_REFUSALS.into(),
         crate::tables::DERIVATION_REFUSALS_LATEST.into(),
+        crate::tables::DERIVATION_REFUSALS_INPUT.into(),
     ];
     let mut before = crate::description::Description::current();
     before.tables.clear();

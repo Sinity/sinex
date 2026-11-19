@@ -89,7 +89,7 @@ pub(super) async fn prepare(
                 }
                 let evaluated = d
                     .evaluate(&event.payload, event.class)
-                    .map_err(Error::Invalid)?;
+                    .map_err(|error| Error::Invalid(error.to_string()))?;
                 event.equivalence_key = evaluated.equivalence_key;
                 event.ts_orig = evaluated.ts_orig;
                 event.record_state = evaluated.record_state;

@@ -47,7 +47,16 @@ pub(crate) async fn archive_at(
             GROUP BY coalesce(live.source, stored.source)) left_live
       WHERE c.source = left_live.source"#,
       ids,replacements,position,reason.as_db(),operation)
-      .execute(conn).await?;
+      .execute(&mut *conn).await?;
+    // The input is no longer eligible for derivation. Its original reading
+    // remains archived; the current-work diagnosis has no remaining owner.
+    let inputs: Vec<String> = ids.iter().map(Uuid::to_string).collect();
+    sqlx::query!(
+        "DELETE FROM derivation.refusals WHERE input ? 'input' AND input->>'input'=ANY($1)",
+        &inputs
+    )
+    .execute(conn)
+    .await?;
     Ok(())
 }
 

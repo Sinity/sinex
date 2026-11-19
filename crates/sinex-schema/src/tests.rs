@@ -339,7 +339,7 @@ async fn copy_fields_upgrade_indexes_only_copy_payloads_including_archived_readi
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     let fresh = catalog(&mut conn).await.unwrap();
     conn.execute(
-        "DROP TABLE core.library_copy_fields; DELETE FROM sinex_schema.applied;
+        "DROP TABLE derivation.refusals; DROP TABLE core.library_copy_fields; DELETE FROM sinex_schema.applied;
         INSERT INTO sinex_schema.applied(version) VALUES (45)",
     )
     .await
@@ -421,3 +421,42 @@ async fn copy_fields_upgrade_indexes_only_copy_payloads_including_archived_readi
 }
 
 mod reading_orders;
+
+#[devkit::test]
+async fn refusal_upgrade_keeps_existing_derivation_work_and_positions(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    let fresh = catalog(&mut conn).await.unwrap();
+    conn.execute("DROP TABLE derivation.refusals; DELETE FROM sinex_schema.applied; INSERT INTO sinex_schema.applied(version) VALUES(46);
+        INSERT INTO derivation.dirty(derivation,key,first_dirty_seq,last_dirty_seq) VALUES('fixture','{\"day\":\"unknown\"}',7,11);
+        INSERT INTO derivation.waiting(derivation,key,refresh_at) VALUES('fixture','{\"day\":\"unknown\"}','2026-01-01T00:00:00Z');
+        INSERT INTO derivation.positions(derivation,commit_seq,reading_order) VALUES('fixture.events',19,23)")
+        .await.unwrap();
+    async fn retained(conn: &mut PgConnection) -> serde_json::Value {
+        sqlx::query_scalar("SELECT jsonb_build_object('dirty',(SELECT jsonb_agg(to_jsonb(d)) FROM derivation.dirty d),'waiting',(SELECT jsonb_agg(to_jsonb(w)) FROM derivation.waiting w),'positions',(SELECT jsonb_agg(to_jsonb(p)) FROM derivation.positions p),'copies',(SELECT jsonb_agg(to_jsonb(c)) FROM core.library_copy_fields c))")
+            .fetch_one(conn).await.unwrap()
+    }
+    let before = retained(&mut conn).await;
+    assert!(matches!(
+        apply(&mut conn).await.unwrap(),
+        Applied::Upgraded {
+            from: 46,
+            to: VERSION
+        }
+    ));
+    assert_eq!(catalog(&mut conn).await.unwrap(), fresh);
+    assert_eq!(retained(&mut conn).await, before);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM derivation.refusals")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap(),
+        0
+    );
+    assert!(matches!(
+        apply(&mut conn).await.unwrap(),
+        Applied::Current { version: VERSION }
+    ));
+    assert_eq!(retained(&mut conn).await, before);
+}
