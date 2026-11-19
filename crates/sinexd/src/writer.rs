@@ -11,7 +11,8 @@
 use crate::{Error, Result};
 
 use serde_json::Value;
-use sinex_model::{Batch, OperationId};
+use sinex_model::event_types::library::FileCopy;
+use sinex_model::{Batch, EventId, OperationId};
 use sinex_store::lifecycle::{self, Progress, Refusal, Step};
 use sinex_store::replay::{self, Diff};
 use sinex_store::{AdmissionContext, Blobs, DirtyKeys, Outcome};
@@ -132,6 +133,7 @@ enum WriterJob {
         refusals: Vec<Refusal>,
         reply: Reply<()>,
     },
+    ReleaseLibraryCopy(Box<VerifiedLibraryCopy>, Reply<ReleasedLibraryCopy>),
     RecordReplay {
         operation: OperationId,
         actor: String,
@@ -520,6 +522,16 @@ impl WriterHandle {
         .await
     }
 
+    pub(crate) async fn release_library_copy(
+        &self,
+        copy: VerifiedLibraryCopy,
+    ) -> Result<ReleasedLibraryCopy, WriteError> {
+        self.ask(Priority::Derived, |reply| {
+            WriterJob::ReleaseLibraryCopy(Box::new(copy), reply)
+        })
+        .await
+    }
+
     /// End an operation stopped early, recording what refused it.
     pub(crate) async fn lifecycle_stopped(
         &self,
@@ -853,6 +865,12 @@ pub(crate) async fn run_notifying(
                     lifecycle_end(&mut connection, operation, &refusals)
                         .await
                         .map(drop)
+                );
+            }
+            WriterJob::ReleaseLibraryCopy(copy, reply) => {
+                answer!(
+                    reply,
+                    release_library_copy(&mut connection, store, *copy).await
                 );
             }
             WriterJob::BackupPause(reply) => {
@@ -1516,6 +1534,62 @@ async fn stage_write(
         }
     }
     Ok(Outcome::default())
+}
+
+pub(crate) struct VerifiedLibraryCopy {
+    pub actor: String,
+    pub event: EventId,
+    pub reading: FileCopy,
+    pub file: sinex_library::render::VerifiedFile,
+}
+
+pub(crate) struct ReleasedLibraryCopy {
+    pub operation: OperationId,
+    pub bytes_removed: bool,
+}
+
+async fn release_library_copy(
+    connection: &mut AdmissionContext,
+    store: Option<&Blobs>,
+    verified: VerifiedLibraryCopy,
+) -> Result<ReleasedLibraryCopy, WriteError> {
+    let store = store.ok_or_else(|| sinex_store::Error::Invalid("no content store".into()))?;
+    let changed =
+        || sinex_store::Error::Invalid("the verified original changed before release".into());
+    if !verified.file.still_present() {
+        return Err(changed().into());
+    }
+    let mut tx = connection.begin().await?;
+    let operation = match lifecycle::release_library_copy(
+        tx.connection(),
+        &verified.actor,
+        verified.event,
+        &verified.reading,
+    )
+    .await
+    {
+        Ok(operation) => operation,
+        Err(error) => {
+            tx.rollback().await?;
+            return Err(error.into());
+        }
+    };
+    if !verified.file.still_present() {
+        tx.rollback().await?;
+        return Err(changed().into());
+    }
+    tx.commit().await?;
+    lifecycle::remove_unreferenced(connection, store).await?;
+    let status = sqlx::query_scalar!(
+        "SELECT status FROM core.blobs WHERE hash = $1",
+        verified.reading.content,
+    )
+    .fetch_one(&mut **connection)
+    .await?;
+    Ok(ReleasedLibraryCopy {
+        operation,
+        bytes_removed: status == "removed",
+    })
 }
 
 async fn lifecycle_step(

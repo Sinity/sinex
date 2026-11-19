@@ -371,6 +371,10 @@ pub enum Request {
         #[serde(default)]
         reference: Option<bool>,
     },
+    LibraryReleaseCopy {
+        event: String,
+        content: String,
+    },
     LibraryItem {
         item: String,
     },

@@ -38,9 +38,12 @@ use std::collections::{BTreeMap, HashSet};
 use uuid::Uuid;
 
 mod bytes;
+mod library_copies;
 mod materials;
 mod select;
 pub use bytes::remove_unreferenced;
+pub use library_copies::release_library_copy;
+pub(crate) use library_copies::respect_released_copies;
 
 /// An operation as the engine runs it.
 #[derive(Clone, Debug, Serialize, Deserialize)]

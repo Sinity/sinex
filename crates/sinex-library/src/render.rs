@@ -72,20 +72,61 @@ pub fn player_for(media_type: &str, configured: Option<&str>) -> String {
 /// recorded, and hashes to the content name. Each open rechecks, so a moved or
 /// edited file is never opened in place of the requested bytes.
 pub fn verified(path: &Path, size: u64, content: &str) -> bool {
-    let Ok(meta) = std::fs::metadata(path) else {
-        return false;
-    };
-    if meta.len() != size {
-        return false;
+    VerifiedFile::open(path, size, content).is_some()
+}
+
+/// The open file and its unchanged on-disk identity after hashing.
+pub struct VerifiedFile {
+    path: PathBuf,
+    file: std::fs::File,
+    identity: FileIdentity,
+}
+
+impl VerifiedFile {
+    pub fn open(path: &Path, size: u64, content: &str) -> Option<Self> {
+        let expected = identity(std::fs::metadata(path).ok()?)?;
+        if expected.len != size {
+            return None;
+        }
+        let mut file = std::fs::File::open(path).ok()?;
+        if identity(file.metadata().ok()?)? != expected {
+            return None;
+        }
+        let mut hasher = blake3::Hasher::new();
+        std::io::copy(&mut file, &mut hasher).ok()?;
+        let verified = Self {
+            path: path.to_owned(),
+            file,
+            identity: expected,
+        };
+        (format!("blake3:{}", hasher.finalize().to_hex()) == content && verified.still_present())
+            .then_some(verified)
     }
-    let Ok(mut file) = std::fs::File::open(path) else {
-        return false;
-    };
-    let mut hasher = blake3::Hasher::new();
-    if std::io::copy(&mut file, &mut hasher).is_err() {
-        return false;
+
+    pub fn still_present(&self) -> bool {
+        std::fs::metadata(&self.path).ok().and_then(identity) == Some(self.identity)
+            && self.file.metadata().ok().and_then(identity) == Some(self.identity)
     }
-    format!("blake3:{}", hasher.finalize().to_hex()) == content
+}
+
+#[derive(PartialEq, Eq)]
+struct FileIdentity {
+    device: u64,
+    inode: u64,
+    len: u64,
+    modified: (i64, i64),
+    changed: (i64, i64),
+}
+
+fn identity(meta: std::fs::Metadata) -> Option<FileIdentity> {
+    use std::os::unix::fs::MetadataExt;
+    meta.is_file().then(|| FileIdentity {
+        device: meta.dev(),
+        inode: meta.ino(),
+        len: meta.len(),
+        modified: (meta.mtime(), meta.mtime_nsec()),
+        changed: (meta.ctime(), meta.ctime_nsec()),
+    })
 }
 
 /// Where stored bytes are written out for a player when no verified copy

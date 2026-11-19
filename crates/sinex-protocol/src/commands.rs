@@ -901,6 +901,17 @@ pub const COMMANDS: &[Command] = &[
         mcp: false,
     },
     Command {
+        examples: &[],
+        name: "library-release-copy",
+        summary: "Release one stored copy after verifying its original file. Keeps the library reading and its metadata.",
+        args: &[
+            pos("event", ArgKind::Text, "the library.copy reading ID"),
+            pos("content", ArgKind::Text, "the expected blake3 content name"),
+        ],
+        access: Access::Operator,
+        mcp: false,
+    },
+    Command {
         examples: &["sinexctl library-item library:example"],
         name: "library-item",
         summary: "One library item: its versions, converted copies, copies on disk, shown tags and properties, ratings, views and collections.",

@@ -329,6 +329,7 @@ pub(crate) async fn admit(
 
     // This batch owns the offered bytes even when classification suppresses
     // a reading. Kind evaluation, not producer metadata, supplies the names.
+    crate::lifecycle::respect_released_copies(conn, &mut events).await?;
     required_blobs.extend(
         events
             .iter()

@@ -5,8 +5,8 @@ use crate::writer::WriterHandle;
 use crate::{Error, Result};
 use serde_json::{Value, json};
 use sinex_library::reads;
-use sinex_model::Timestamp;
-use sinex_model::event_types::library::{Item, LibraryRecord};
+use sinex_model::event_types::library::{FileCopy, Item, LibraryRecord};
+use sinex_model::{EventId, Timestamp};
 use sinex_protocol::Request;
 use sinex_sources::sources::library as library_source;
 use sinex_store::Blobs;
@@ -48,6 +48,54 @@ struct Stored<'a> {
 }
 
 impl Library<'_> {
+    async fn release_copy(
+        &self,
+        conn: &mut PgConnection,
+        event: &str,
+        content: &str,
+        actor: &str,
+    ) -> R<Value> {
+        let event = EventId(uuid::Uuid::parse_str(event).map_err(Error::bad_value)?);
+        let payload = sinex_store::query::event_payload(conn, "library.copy", event)
+            .await?
+            .ok_or_else(|| Error::not_found(format!("library copy {event}")))?;
+        let reading: FileCopy = serde_json::from_value(payload)?;
+        if reading.host != self.host
+            || reading.content != content
+            || !reading.stored
+            || reading.vanished_at.is_some()
+        {
+            return Err(Error::refused(
+                "the reading does not name that stored local copy",
+            ));
+        }
+        let path = std::path::PathBuf::from(&reading.path);
+        if !path.is_absolute() {
+            return Err(Error::refused(
+                "the library copy has no absolute original location",
+            ));
+        }
+        let hash = reading.content.clone();
+        let size = reading.size;
+        let file = tokio::task::spawn_blocking(move || {
+            sinex_library::render::VerifiedFile::open(&path, size, &hash)
+        })
+        .await?
+        .ok_or_else(|| Error::refused("the original file does not match the recorded bytes"))?;
+        let result = self
+            .writer
+            .release_library_copy(crate::writer::VerifiedLibraryCopy {
+                actor: actor.to_owned(),
+                event,
+                reading,
+                file,
+            })
+            .await?;
+        Ok(
+            json!({"operation":result.operation, "content":content, "bytes_removed":result.bytes_removed}),
+        )
+    }
+
     /// Store and admit one library request. All its records commit together
     /// or none do (one material, admitted in one batch).
     async fn write(
@@ -195,6 +243,9 @@ pub(crate) async fn dispatch(
             .map_err(|_| Error::bad_request(format!("{what} must be a number, not `{s}`")))
     };
     match request {
+        Request::LibraryReleaseCopy { event, content } => {
+            library.release_copy(conn, &event, &content, actor).await
+        }
         Request::LibraryAdd { path, reference } => {
             library
                 .add(

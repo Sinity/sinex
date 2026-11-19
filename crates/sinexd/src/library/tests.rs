@@ -17,6 +17,7 @@ pub(super) struct World {
     pub(super) writer: writer::WriterHandle,
     pub(super) blobs: Blobs,
     pub(super) root: PathBuf,
+    writer_task: tokio::task::JoinHandle<()>,
 }
 
 /// Archive or restore one reading through the writer, as the operator does.
@@ -46,7 +47,7 @@ pub(super) async fn world(db: devkit::pg::TestDatabase) -> World {
     crate::catalog::install_built_in_sources(&mut connection)
         .await
         .unwrap();
-    tokio::spawn(writer::run(
+    let writer_task = tokio::spawn(writer::run(
         url.clone(),
         connection,
         queues,
@@ -70,6 +71,7 @@ pub(super) async fn world(db: devkit::pg::TestDatabase) -> World {
         writer: handle,
         blobs,
         root,
+        writer_task,
     }
 }
 
@@ -554,6 +556,211 @@ async fn copy(conn: &mut PgConnection, path: &Path) -> (uuid::Uuid, String) {
     .await
     .unwrap();
     row
+}
+
+#[devkit::test]
+async fn released_library_copy_keeps_its_reading_across_reopen_and_replay(
+    db: devkit::pg::TestDatabase,
+) {
+    use std::os::unix::fs::MetadataExt;
+
+    let mut w = world(db).await;
+    let original = w.root.join("original.txt");
+    let neighbour = w.root.join("neighbour.txt");
+    let bytes = b"synthetic stored file for copy release";
+    std::fs::write(&original, bytes).unwrap();
+    std::fs::write(&neighbour, b"independent neighbour").unwrap();
+    w.ok(Request::LibraryAdd {
+        path: w.root.display().to_string(),
+        reference: None,
+    })
+    .await;
+    let (event, content) = copy(&mut w.conn, &original).await;
+    let (_, neighbour_hash) = copy(&mut w.conn, &neighbour).await;
+    let (material, old): (uuid::Uuid, Value) =
+        sqlx::query_as("SELECT material_id, payload FROM core.events WHERE id = $1")
+            .bind(event)
+            .fetch_one(&mut w.conn)
+            .await
+            .unwrap();
+    let item = w.item_at(&original).await;
+    let request = Request::LibraryReleaseCopy {
+        event: event.to_string(),
+        content: content.clone(),
+    };
+    std::fs::write(&original, vec![b'x'; bytes.len()]).unwrap();
+    assert!(
+        w.run(request.clone()).await.is_err(),
+        "same length is not custody"
+    );
+    assert!(has_extent(&mut w.conn, &content).await);
+    std::fs::write(&original, bytes).unwrap();
+    let hold = w.writer.backup_hold("operator").await.unwrap();
+    assert!(
+        w.run(request.clone())
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("backup hold")
+    );
+    assert!(has_extent(&mut w.conn, &content).await);
+    std::fs::write(&original, vec![b'y'; bytes.len()]).unwrap();
+    w.writer.backup_release(hold.id, "operator").await.unwrap();
+    assert!(w.run(request.clone()).await.is_err());
+    assert!(has_extent(&mut w.conn, &content).await);
+    std::fs::write(&original, bytes).unwrap();
+    let released = w.ok(request.clone()).await;
+    assert_eq!(released["bytes_removed"], true);
+    assert_eq!(released["operation"], w.ok(request).await["operation"]);
+    assert!(!has_extent(&mut w.conn, &content).await);
+    let kept =
+        sinex_store::query::event_payload(&mut w.conn, "library.copy", sinex_model::EventId(event))
+            .await
+            .unwrap()
+            .unwrap();
+    assert_eq!(kept, old);
+    let World {
+        _db: db,
+        conn,
+        writer,
+        blobs,
+        root,
+        writer_task,
+    } = w;
+    let store = blobs.root().to_path_buf();
+    drop((conn, writer, blobs));
+    writer_task.await.unwrap();
+    let time = sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).unwrap();
+    let mut reopened =
+        crate::reader_context::ReaderContext::open(&db.url(None), &store, time.clone())
+            .await
+            .unwrap();
+    let before = std::fs::metadata(store.join("segments/current.hb")).unwrap();
+    let replay = Box::pin(crate::replay::run(
+        &mut reopened.read_conn,
+        &reopened.blobs,
+        &reopened.writer,
+        crate::replay::Options {
+            scope: crate::replay::Scope {
+                materials: vec![material],
+                ..Default::default()
+            },
+            compare: false,
+            resume: None,
+            actor: "operator".into(),
+            unlock: None,
+        },
+    ))
+    .await
+    .unwrap();
+    assert!(
+        replay.admitted > 0,
+        "replay must actually admit new readings"
+    );
+    assert_eq!(copy(&mut reopened.read_conn, &original).await.1, content);
+    assert!(!has_extent(&mut reopened.read_conn, &content).await);
+    let after = std::fs::metadata(store.join("segments/current.hb")).unwrap();
+    assert_eq!(
+        (after.len(), after.blocks()),
+        (before.len(), before.blocks())
+    );
+    assert!(has_extent(&mut reopened.read_conn, &neighbour_hash).await);
+    Box::pin(crate::derivation_runner::compute_now(
+        &mut reopened.read_conn,
+        &reopened.writer,
+        &sinex_derivations::library::LibraryItems,
+        vec![json!(item)],
+        "h",
+        time.clone(),
+    ))
+    .await
+    .unwrap();
+    let read = dispatch(
+        &mut reopened.read_conn,
+        Some(&reopened.writer),
+        &reopened.blobs,
+        "h",
+        &[],
+        &root,
+        time.clone(),
+        Request::LibraryOpen {
+            item,
+            rendition: None,
+        },
+        "operator",
+    )
+    .await
+    .unwrap();
+    assert_eq!(read["path"], json!(original));
+    assert_eq!(read["verified_copy_on_disk"], true);
+    let other = root.join("later-original.txt");
+    std::fs::write(&other, bytes).unwrap();
+    dispatch(
+        &mut reopened.read_conn,
+        Some(&reopened.writer),
+        &reopened.blobs,
+        "h",
+        &[],
+        &root,
+        time,
+        Request::LibraryAdd {
+            path: other.display().to_string(),
+            reference: None,
+        },
+        "operator",
+    )
+    .await
+    .unwrap();
+    let (other_event, other_hash) = copy(&mut reopened.read_conn, &other).await;
+    assert_eq!(other_hash, content);
+    let owners: Vec<uuid::Uuid> =
+        sqlx::query_scalar("SELECT event_id FROM core.event_blobs WHERE blob = $1")
+            .bind(&content)
+            .fetch_all(&mut reopened.read_conn)
+            .await
+            .unwrap();
+    assert_eq!(owners, [other_event]);
+    assert!(has_extent(&mut reopened.read_conn, &content).await);
+    reopened.close().await.unwrap();
+    std::fs::remove_dir_all(root.parent().unwrap()).unwrap();
+}
+
+#[devkit::test]
+async fn library_release_refuses_a_digest_with_another_owner(db: devkit::pg::TestDatabase) {
+    let mut w = world(db).await;
+    let first = w.root.join("first.txt");
+    let second = w.root.join("second.txt");
+    for path in [&first, &second] {
+        std::fs::write(path, "synthetic equal bytes at different locations").unwrap();
+    }
+    w.ok(Request::LibraryAdd {
+        path: w.root.display().to_string(),
+        reference: None,
+    })
+    .await;
+    let (event, content) = copy(&mut w.conn, &first).await;
+    assert_eq!(copy(&mut w.conn, &second).await.1, content);
+    let request = Request::LibraryReleaseCopy {
+        event: event.to_string(),
+        content: content.clone(),
+    };
+    assert!(w.run(request).await.is_err());
+    let owners: i64 = sqlx::query_scalar("SELECT count(*) FROM core.event_blobs WHERE blob = $1")
+        .bind(&content)
+        .fetch_one(&mut w.conn)
+        .await
+        .unwrap();
+    assert_eq!(owners, 2);
+    assert!(has_extent(&mut w.conn, &content).await);
+    std::fs::remove_dir_all(w.root.parent().unwrap()).unwrap();
+}
+
+async fn has_extent(conn: &mut PgConnection, content: &str) -> bool {
+    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM core.blob_extents WHERE hash = $1)")
+        .bind(content)
+        .fetch_one(conn)
+        .await
+        .unwrap()
 }
 
 #[devkit::test]

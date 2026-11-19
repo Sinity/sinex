@@ -169,6 +169,19 @@ Decided target (2026-11-01). An item is anything with a **locator**, the address
 - Inaccessible, incomplete, reference-only, stored-but-unreadable and derivative-only are distinct availability states. A disconnected root or an incomplete traversal never claims deletion.
 - Finding matching bytes elsewhere offers a verified location; it never merges separately curated items. A reference-only original is re-found by its content hash.
 
+An operator can release one redundant stored library copy with
+`sinexctl --deadline none library-release-copy EVENT CONTENT`. The command
+hashes the original at its recorded local path and checks that the same file
+is still present when the writer commits. It accepts a directly stored blob
+owned only by that reading. A covering backup hold refuses the release so a
+later attempt checks the original again.
+
+The command preserves the reading and its capture-time `stored` field. The
+recorded release prevents replay of the same source record and digest from
+claiming the bytes again. A separate acquisition can still hold equal bytes.
+Opening the item verifies its on-disk copy as usual. The result reports
+whether the stored extent was removed.
+
 ## Adding items
 
 A file, directory, archive member or outside-producer acquisition goes through the existing reader, material store and writer ([materials](materials.md), [sources](sources.md)); the library has no path of its own for adding items.

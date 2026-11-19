@@ -287,6 +287,7 @@ impl Api {
             | Request::Lock
             | Request::PrivacyVerify) => self.privacy(request, caller).await,
             request @ (Request::LibraryAdd { .. }
+            | Request::LibraryReleaseCopy { .. }
             | Request::LibraryItem { .. }
             | Request::LibraryCurate { .. }
             | Request::LibraryCollection { .. }

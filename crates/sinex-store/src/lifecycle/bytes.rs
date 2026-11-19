@@ -139,7 +139,7 @@ pub(super) async fn mark_removing(conn: &mut PgConnection, blob: &str) -> Result
 }
 
 /// Whether no material that is not tombstoned and no event holds `blob`.
-async fn unreferenced(conn: &mut PgConnection, blob: &str) -> Result<bool> {
+pub(super) async fn unreferenced(conn: &mut PgConnection, blob: &str) -> Result<bool> {
     Ok(sqlx::query_scalar!(
         r#"SELECT NOT EXISTS (SELECT 1 FROM raw.materials WHERE blob = $1 AND status <> 'tombstoned')
              AND NOT EXISTS (SELECT 1 FROM core.event_blobs WHERE blob = $1) AS "gone!""#,

@@ -35,6 +35,10 @@ pub(crate) const STEPS: &[Step] = &[
         name: "derivation_reading_orders",
         statements: derivation_reading_orders,
     },
+    Step {
+        name: "library_copy_releases",
+        statements: || vec![crate::tables::LIBRARY_COPY_RELEASES.into()],
+    },
 ];
 
 fn source_exclusions() -> Vec<String> {
