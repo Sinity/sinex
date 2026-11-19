@@ -10,7 +10,7 @@ pub struct LibraryItems;
 
 impl Keyed for LibraryItems {
     type Key = String;
-    const NAME: &'static str = "library.items";
+    const NAME: &'static str = Item::DERIVATION;
     const VERSION: u32 = 2;
     const INPUTS: &'static [&'static str] = &["library.copy"];
     const OUTPUTS: &'static [&'static str] = &["library.item", "library.rendition"];

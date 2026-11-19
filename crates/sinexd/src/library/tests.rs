@@ -466,6 +466,26 @@ async fn the_library_end_to_end(db: devkit::pg::TestDatabase) {
     );
     let vb = w.ok(Request::LibraryItem { item: ib.clone() }).await;
     assert_eq!(vb["revision"], vb["content"]);
+    let current = w
+        .ok(Request::LibraryOpen {
+            item: ib.clone(),
+            rendition: None,
+        })
+        .await;
+    assert_eq!(current["revision"], vb["revision"]);
+    assert_eq!(current["content"], vb["content"]);
+    let missing = w
+        .run(Request::LibraryOpen {
+            item: "library:missing".into(),
+            rendition: None,
+        })
+        .await
+        .unwrap_err();
+    assert!(
+        missing
+            .to_string()
+            .contains("no library item library:missing")
+    );
     let old = vb["renditions"]
         .as_array()
         .unwrap()

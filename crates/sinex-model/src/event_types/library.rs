@@ -98,6 +98,11 @@ pub struct Item {
     pub at: Timestamp,
 }
 
+impl Item {
+    /// The derivation that records the current item and its revisions.
+    pub const DERIVATION: &'static str = "library.items";
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RenditionRole {

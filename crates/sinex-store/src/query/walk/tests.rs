@@ -367,6 +367,12 @@ async fn trace_and_show_read_selected_events_in_compressed_history(db: devkit::p
     insert(&mut conn, root).await;
     let child = derived(&[root_id], "selected child");
     let child_id = child.id;
+    let child_lookup = (
+        child.source.clone(),
+        child.event_type.clone(),
+        child.equivalence_key.clone().unwrap(),
+        child.payload.clone(),
+    );
     insert(&mut conn, child).await;
     let leaf = derived(&[child_id], "selected leaf");
     let leaf_id = leaf.id;
@@ -374,6 +380,14 @@ async fn trace_and_show_read_selected_events_in_compressed_history(db: devkit::p
     let unrelated_root = source(Class::Open);
     let unrelated_id = unrelated_root.id;
     insert(&mut conn, unrelated_root).await;
+    let (source, kind, key, payload) = &child_lookup;
+    assert_eq!(
+        crate::payloads::live_keyed(&mut conn, source, kind, key)
+            .await
+            .unwrap()
+            .as_ref(),
+        Some(payload)
+    );
     let unrelated: Vec<_> = (0..8192)
         .map(|index| derived(&[unrelated_id], &format!("unrelated-{index}")))
         .collect();
@@ -416,7 +430,7 @@ async fn trace_and_show_read_selected_events_in_compressed_history(db: devkit::p
             .await
             .unwrap();
     assert!(compressed > 0);
-    sqlx::raw_sql("ANALYZE core.events; ANALYZE raw.materials")
+    sqlx::raw_sql("ANALYZE core.events; ANALYZE raw.materials; ANALYZE core.live_equivalence")
         .execute(&mut *conn)
         .await
         .unwrap();
@@ -478,6 +492,44 @@ async fn trace_and_show_read_selected_events_in_compressed_history(db: devkit::p
     assert_eq!(material_scan["Index Name"], "materials_pkey");
     assert_eq!(material_scan["Actual Rows"].as_f64(), Some(1.0));
     assert_eq!(material_scan["Actual Loops"].as_f64(), Some(1.0));
+
+    // All 8,192 new readings share the selected source and kind. Their keys
+    // must not add payload work to one exact-key read in compressed history.
+    assert_eq!(
+        crate::payloads::live_keyed(&mut conn, source, kind, key)
+            .await
+            .unwrap()
+            .as_ref(),
+        Some(payload)
+    );
+    let absent =
+        sinex_model::EquivalenceKey::of(kind, &["record"], &json!({"record": "absent"})).unwrap();
+    assert!(
+        crate::payloads::live_keyed(&mut conn, source, kind, &absent)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let sql = include_str!("../../payloads/live_keyed.sql");
+    let explain: Json =
+        sqlx::query_scalar(&format!("EXPLAIN (ANALYZE, FORMAT JSON, TIMING OFF) {sql}"))
+            .bind(source)
+            .bind(kind)
+            .bind(&key.0)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+    let mut nodes = Vec::new();
+    collect_nodes(&explain[0]["Plan"], &mut nodes);
+    let lookup = nodes
+        .iter()
+        .find(|node| node["Index Name"] == "live_equivalence_pkey")
+        .expect("the lookup uses the complete live key");
+    assert_eq!(lookup["Actual Rows"].as_f64(), Some(1.0));
+    assert_eq!(lookup["Actual Loops"].as_f64(), Some(1.0));
+    assert!(nodes.iter().any(|node| node["Node Type"] == "Limit"
+        && node["Actual Rows"].as_f64() == Some(1.0)
+        && node["Actual Loops"].as_f64() == Some(1.0)));
 }
 
 #[devkit::test]

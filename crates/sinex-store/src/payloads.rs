@@ -4,6 +4,7 @@
 //! reading of each keyed record (`core.live_equivalence`).
 use crate::Result;
 use serde_json::Value;
+use sinex_model::EquivalenceKey;
 use sqlx::PgConnection;
 
 /// Which live readings to read.
@@ -23,6 +24,20 @@ impl RecordStates {
 
 fn path(p: &[&str]) -> Vec<String> {
     p.iter().map(|s| (*s).to_owned()).collect()
+}
+
+/// Read the current payload for the source and kind's exact record key.
+pub async fn live_keyed(
+    conn: &mut PgConnection,
+    source: &str,
+    event_type: &str,
+    key: &EquivalenceKey,
+) -> Result<Option<Value>> {
+    Ok(
+        sqlx::query_file_scalar!("src/payloads/live_keyed.sql", source, event_type, &key.0)
+            .fetch_optional(&mut *conn)
+            .await?,
+    )
 }
 
 /// Live payloads of `event_type` whose text at `field` (a payload path) is
