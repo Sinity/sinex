@@ -34,3 +34,20 @@ fn markup_read_in_pieces_reads_references_tags_and_comments() {
         "Zażółć & gęślą\njaźń A \u{1F34B}\ntail &unknown; & bare"
     );
 }
+
+#[devkit::test]
+fn markup_text_drops_literal_and_decoded_nul_across_pieces() {
+    let markup = "<p>A\0B&#0;C&#x00;D</p>";
+    assert_eq!(markup_text(markup, &["p"], &[]), "ABCD");
+    for split in 0..=markup.len() {
+        let mut reader = MarkupText::new(&["p"], &[]);
+        reader.feed(&markup[..split]);
+        reader.feed(&markup[split..]);
+        assert_eq!(reader.finish(), "ABCD");
+    }
+    assert_eq!(super::decode("A\0B&#0;C&#x00;D"), "ABCD");
+    assert_eq!(
+        super::element_text("<title>A\0B&#0;C</title>", "title").as_deref(),
+        Some("ABC")
+    );
+}

@@ -101,7 +101,8 @@ pub(super) fn text(format: Format, bytes: &[u8]) -> Result<(Option<String>, Stri
     match format {
         Format::Text | Format::Markdown => {
             let text = std::str::from_utf8(bytes)
-                .map_err(|e| Error::bad_value(format!("not UTF-8 text: {e}")))?;
+                .map_err(|e| Error::bad_value(format!("not UTF-8 text: {e}")))?
+                .replace('\0', "");
             let title = (format == Format::Markdown)
                 .then(|| {
                     text.lines()

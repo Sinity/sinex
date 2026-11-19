@@ -161,8 +161,16 @@ fn blank_records_are_skipped_not_failed() {
 
 #[devkit::test]
 fn nul_payloads_become_failures() {
-    let out = run(b"a\0b\n", Value::Null, Limits::default());
-    assert!(matches!(out[0].outcomes[0], RecordOutcome::Failure { .. }));
+    let out = run(b"private\0value\nsafe\n", Value::Null, Limits::default());
+    let RecordOutcome::Failure { reason, location } = &out[0].outcomes[0] else {
+        panic!("invalid record was admitted")
+    };
+    assert_eq!(location.record_offset, 0);
+    assert!(reason.contains("unstorable_character"));
+    assert!(reason.contains("/command"));
+    assert!(!reason.contains("private"));
+    assert_eq!(commands(&out), vec![(14, "safe".into())]);
+    assert_eq!(out.last().unwrap().end, 19);
 }
 
 #[devkit::test]

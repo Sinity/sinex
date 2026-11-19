@@ -176,3 +176,70 @@ fn payload_normalization_needs_no_record_identity_or_reading_order() {
     invalid.as_object_mut().unwrap().remove("command");
     assert!((kind.normalize)(&invalid).is_err());
 }
+
+#[devkit::test]
+fn nul_in_payload_string_is_a_record_failure() {
+    for (extra, pointer) in [
+        (
+            serde_json::json!({"nested": ["private\0value"]}),
+            "/extra/nested/0",
+        ),
+        (
+            serde_json::json!({"a/b~c": "private\0value"}),
+            "/extra/a~1b~0c",
+        ),
+        (
+            serde_json::json!({"field\0name": null}),
+            "/extra/field\0name",
+        ),
+    ] {
+        let mut payload = atuin(false);
+        payload.extra = extra.as_object().unwrap().clone();
+        for origin in [
+            crate::Origin::Record {
+                location: crate::RecordLocation {
+                    material: crate::MaterialId::new(),
+                    record_offset: 0,
+                },
+                output_index: 0,
+            },
+            crate::Origin::Derived {
+                parents: vec![crate::EventId::new()],
+            },
+        ] {
+            let error = crate::Event::build(
+                &payload,
+                "synthetic",
+                origin,
+                crate::ReadingOrder(0),
+                [0; 32],
+                crate::Class::Open,
+            )
+            .unwrap_err();
+            assert_eq!(
+                error,
+                crate::BuildError::UnstorableCharacter {
+                    pointer: pointer.into()
+                }
+            );
+            let reason = error.to_string();
+            assert!(reason.starts_with("unstorable_character:"));
+            assert!(!reason.contains("private"));
+            assert!(!reason.contains('\0'));
+        }
+    }
+    let mut payload = atuin(false);
+    payload.command = r"literal \u0000 spelling".into();
+    let event = crate::Event::build(
+        &payload,
+        "synthetic",
+        crate::Origin::Derived {
+            parents: vec![crate::EventId::new()],
+        },
+        crate::ReadingOrder(0),
+        [0; 32],
+        crate::Class::Open,
+    )
+    .unwrap();
+    assert_eq!(event.payload["command"], payload.command);
+}

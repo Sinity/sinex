@@ -141,7 +141,7 @@ fn a_stored_document_requires_its_bytes_and_a_referenced_copy_gives_no_text() {
         .derive(
             Input {
                 event: &event,
-                bytes: Some(b"<title>T</title><p>Body</p>"),
+                bytes: Some(b"<title>T\0&#0;</title><p>Bo\0dy&#x0;</p>"),
             },
             &env,
         )
@@ -369,4 +369,47 @@ fn structured_formats_are_excluded_before_fetch_even_when_previously_plain_text(
     ] {
         assert!(super::extract::reads_bytes(media, path), "{media}: {path}");
     }
+}
+
+#[devkit::test]
+fn document_text_drops_nul() {
+    let original = b"  A\0B\nC  ";
+    assert_eq!(
+        text(Format::Text, original).unwrap(),
+        (None, "AB\nC".into())
+    );
+    assert_eq!(
+        text(Format::Markdown, b"# A\0B\nC\0D").unwrap(),
+        (Some("AB".into()), "# AB\nCD".into())
+    );
+    let html = b"<title>A\0B&#0;</title><p>C\0D&#x0;</p>";
+    assert_eq!(
+        text(Format::Html, html).unwrap(),
+        (Some("AB".into()), "AB\nCD".into())
+    );
+    let word = zip_of(&[("word/document.xml", "<w:p>A\0B&#0;C</w:p>")]);
+    assert_eq!(text(Format::Docx, &word).unwrap(), (None, "ABC".into()));
+    let odt = zip_of(&[("content.xml", "<text:p>A\0B&#0;C</text:p>")]);
+    assert_eq!(text(Format::Odt, &odt).unwrap(), (None, "ABC".into()));
+}
+
+#[devkit::test]
+fn pdf_text_drops_nul_without_changing_page_boundaries() {
+    let dir = tempfile::tempdir().unwrap();
+    let reader = dir.path().join("synthetic-reader");
+    std::fs::write(
+        &reader,
+        "#!/bin/sh\nprintf 'A\\000B\\fC\\000D\\f' > \"$4\"\n",
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(&reader).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+    std::fs::set_permissions(&reader, permissions).unwrap();
+    let pages = pdf_pages_within(
+        b"%PDF-1.4",
+        std::time::Duration::from_secs(10),
+        reader.to_str().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(pages, ["AB", "CD"]);
 }

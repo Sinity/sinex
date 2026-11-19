@@ -498,13 +498,14 @@ async fn source_content_refusals_keep_material_failures_and_advance_the_cursor(
             .await
             .unwrap();
     assert_eq!(cursor["offset"], 7);
+    // Bypass the native builder deliberately: this exercises PostgreSQL's
+    // final data-refusal boundary for an outside offered payload.
+    let mut nul = source("placeholder", 8, 15);
+    if let RecordOutcome::Events { events, .. } = &mut nul.records[0] {
+        events[0].payload["command"] = serde_json::json!("private\0value");
+    }
     let outcome = handle
-        .submit_source(
-            Priority::Live,
-            source("private\0value", 8, 15),
-            Arc::new(|| Ok(())),
-            None,
-        )
+        .submit_source(Priority::Live, nul, Arc::new(|| Ok(())), None)
         .await
         .unwrap();
     assert_eq!(outcome.failures, 1);

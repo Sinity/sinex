@@ -396,12 +396,6 @@ impl<'a, P: Parser> Drainer<'a, P> {
                         hash,
                         input.class,
                     ) {
-                        Ok(event) if has_nul(&event.payload) => {
-                            failure = Some(
-                                "payload contains a NUL character, which jsonb cannot store".into(),
-                            );
-                            break;
-                        }
                         Ok(event) => events.push(event),
                         Err(e) => {
                             failure = Some(e.to_string());
@@ -605,15 +599,6 @@ fn parse_one<P: Parser>(
 
 fn is_blank(raw: &[u8]) -> bool {
     !raw.is_empty() && raw.iter().all(|b| *b == b' ' || *b == b'\n')
-}
-
-fn has_nul(value: &Value) -> bool {
-    match value {
-        Value::String(s) => s.contains('\0'),
-        Value::Array(items) => items.iter().any(has_nul),
-        Value::Object(map) => map.iter().any(|(k, v)| k.contains('\0') || has_nul(v)),
-        _ => false,
-    }
 }
 
 #[cfg(test)]

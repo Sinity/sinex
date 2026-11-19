@@ -86,8 +86,9 @@ fn pdf_pages_within(bytes: &[u8], limit: std::time::Duration, reader: &str) -> R
     if !status.success() {
         return Err(Error::internal(format!("pdftotext exited with {status}")));
     }
-    let text = String::from_utf8(std::fs::read(&text_file)?)
+    let mut text = String::from_utf8(std::fs::read(&text_file)?)
         .map_err(|_| Error::internal("pdftotext returned text that is not UTF-8"))?;
+    text.retain(|c| c != '\0');
     // Pages end with a form feed, the last one too.
     let mut pages: Vec<String> = text.split('\u{c}').map(|p| p.trim().to_owned()).collect();
     if pages.last().is_some_and(String::is_empty) {

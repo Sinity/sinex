@@ -139,7 +139,7 @@ impl<'a> MarkupText<'a> {
     }
 
     fn text(&mut self, c: char) {
-        if self.skipping.is_none() {
+        if self.skipping.is_none() && c != '\0' {
             self.out.push(c);
         }
     }
@@ -300,6 +300,7 @@ pub fn decode(text: &str) -> String {
         }
     }
     out.push_str(rest);
+    out.retain(|c| c != '\0');
     out
 }
 

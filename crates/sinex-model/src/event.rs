@@ -50,6 +50,8 @@ pub enum Origin {
 pub enum BuildError {
     #[error("payload of {0} did not serialize to a JSON object")]
     NotAnObject(String),
+    #[error("unstorable_character: NUL in payload at {pointer:?}")]
+    UnstorableCharacter { pointer: String },
     #[error("a derived event needs at least one parent")]
     NoParents,
     #[error("a location-keyed type ({0}) cannot be derived; derived events need key fields")]
@@ -103,6 +105,7 @@ impl Event {
         if !value.is_object() {
             return Err(BuildError::NotAnObject(P::EVENT_TYPE.into()));
         }
+        check_payload(&value, &mut String::new())?;
         let equivalence_key = match payload.key_kind() {
             KeyKind::Location => None,
             KeyKind::Fields(fields) => EquivalenceKey::of(P::EVENT_TYPE, fields, &value),
@@ -186,4 +189,42 @@ impl Event {
             .then(|| serde_json::from_value(self.payload.clone()).ok())
             .flatten()
     }
+}
+
+/// Validate strings before any native parser or derivation stages its event.
+/// Only the field pointer is diagnosed, never the field's value. Debug quoting
+/// in BuildError also makes a NUL in an object key safe to record as a reason.
+fn check_payload(value: &Value, pointer: &mut String) -> Result<(), BuildError> {
+    match value {
+        Value::String(text) if text.contains('\0') => {
+            return Err(BuildError::UnstorableCharacter {
+                pointer: pointer.clone(),
+            });
+        }
+        Value::Array(items) => {
+            for (index, item) in items.iter().enumerate() {
+                let end = pointer.len();
+                pointer.push('/');
+                pointer.push_str(&index.to_string());
+                check_payload(item, pointer)?;
+                pointer.truncate(end);
+            }
+        }
+        Value::Object(fields) => {
+            for (key, item) in fields {
+                let end = pointer.len();
+                pointer.push('/');
+                pointer.push_str(&key.replace('~', "~0").replace('/', "~1"));
+                if key.contains('\0') {
+                    return Err(BuildError::UnstorableCharacter {
+                        pointer: pointer.clone(),
+                    });
+                }
+                check_payload(item, pointer)?;
+                pointer.truncate(end);
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
