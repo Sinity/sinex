@@ -345,9 +345,9 @@ async fn copy_fields_upgrade_indexes_only_copy_payloads_including_archived_readi
     .await
     .unwrap();
 
-    let live = uuid::Uuid::now_v7();
-    let archived = uuid::Uuid::now_v7();
-    let unrelated = uuid::Uuid::now_v7();
+    let live = sinex_model::EventId::new().0;
+    let archived = sinex_model::EventId::new().0;
+    let unrelated = sinex_model::EventId::new().0;
     let long_path = format!("/fixture/{}", "é".repeat(1600));
     for (sequence, (event, kind, payload)) in [
         (
