@@ -22,6 +22,9 @@
       };
       toolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
       nextest = pkgs.cargo-nextest;
+      cargoCommand = pkgs.writeShellScriptBin "cargo" ''
+        exec ${pkgs.bash}/bin/bash ${./nix/cargo-command.sh} ${toolchain}/bin/cargo "$@"
+      '';
       llvmTools = "${toolchain}/lib/rustlib/${pkgs.stdenv.hostPlatform.rust.rustcTarget}/bin";
       postgres = import ./nix/postgresql.nix {
         postgresql = pkgs.postgresql_18;
@@ -92,13 +95,8 @@
         # is build time.
         CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS = "-C link-arg=-fuse-ld=mold -C link-arg=-Wl,--compress-debug-sections=zlib";
         shellHook = ''
-          # Optional host placement; an explicit CARGO_TARGET_DIR is left as is.
-          if [ -z "''${CARGO_TARGET_DIR:-}" ] && command -v sinnix-cargo-target >/dev/null 2>&1; then
-            if cargo_target="$(sinnix-cargo-target)"; then
-              export CARGO_TARGET_DIR="$cargo_target"
-            fi
-          fi
-          export CARGO_TARGET_DIR="''${CARGO_TARGET_DIR:-$PWD/target}"
+          export PATH="${cargoCommand}/bin:$PATH"
+          source ${./nix/cargo-environment.sh}
           if [ -d .githooks ] && git rev-parse --is-inside-work-tree >/dev/null 2>&1 \
             && ! git config --get core.hooksPath >/dev/null; then
             git config --local core.hooksPath .githooks

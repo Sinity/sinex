@@ -36,8 +36,16 @@ xtask command owns any services its run needs.
 `direnv allow` loads the same shell through `.envrc`. Its ignored
 `.envrc.local` is the place for personal build-output placement, job counts
 and compiler wrappers. The shell preserves an explicit `CARGO_TARGET_DIR`.
-When it is unset, an available `sinnix-cargo-target` helper may choose the
-output location; otherwise it uses `target/`.
+When it is unset, an available `sinnix-cargo-target` helper selects the
+output location without populating it; otherwise the shell uses `target/`.
+The shell's Cargo entry point asks that same helper to prepare dependency
+artifacts immediately before a build, including aliases and `xtask`. Known
+Cargo metadata, project-location, package/tree inspection, version and help
+commands leave an empty target unpopulated. An explicit environment or
+`--target-dir` override keeps Cargo's ordinary behavior. Other hosts run the
+selected toolchain's Cargo directly through the same entry point. The host
+selector must support `--select-only` and `--cargo`; update it before adopting
+this shell on a host that uses managed targets.
 
 For local shared-crate development, run `cargo xtask link-common PATH`
 explicitly. Run `cargo xtask unlink-common` before committing either
