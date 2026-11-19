@@ -59,7 +59,7 @@ impl Library<'_> {
         let payload = sinex_store::query::event_payload(conn, "library.copy", event)
             .await?
             .ok_or_else(|| Error::not_found(format!("library copy {event}")))?;
-        let reading: FileCopy = serde_json::from_value(payload)?;
+        let reading: FileCopy = serde_json::from_value(payload.clone())?;
         if reading.host != self.host
             || reading.content != content
             || !reading.stored
@@ -87,6 +87,7 @@ impl Library<'_> {
             .release_library_copy(crate::writer::VerifiedLibraryCopy {
                 actor: actor.to_owned(),
                 event,
+                payload,
                 reading,
                 file,
             })

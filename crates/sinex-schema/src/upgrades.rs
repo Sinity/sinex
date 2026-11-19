@@ -36,8 +36,8 @@ pub(crate) const STEPS: &[Step] = &[
         statements: derivation_reading_orders,
     },
     Step {
-        name: "library_copy_releases",
-        statements: || vec![crate::tables::LIBRARY_COPY_RELEASES.into()],
+        name: "owned_blob_releases",
+        statements: || vec![crate::tables::OWNED_BLOB_RELEASES.into()],
     },
 ];
 

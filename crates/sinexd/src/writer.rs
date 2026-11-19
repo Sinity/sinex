@@ -12,7 +12,7 @@ use crate::{Error, Result};
 
 use serde_json::Value;
 use sinex_model::event_types::library::FileCopy;
-use sinex_model::{Batch, EventId, OperationId};
+use sinex_model::{Batch, EventId, EventPayload, OperationId};
 use sinex_store::lifecycle::{self, Progress, Refusal, Step};
 use sinex_store::replay::{self, Diff};
 use sinex_store::{AdmissionContext, Blobs, DirtyKeys, Outcome};
@@ -616,7 +616,7 @@ pub(crate) async fn claim(mut connection: PgConnection) -> Result<AdmissionConte
     sinex_store::query::name_connection(&mut connection, "sinex.writer").await?;
     let mut context = AdmissionContext::claim(connection).await?;
     sinex_schema::kinds::require_bundled(&mut context).await?;
-    Ok(context)
+    Ok(context.with_releasable_blob_kind(FileCopy::EVENT_TYPE))
 }
 
 /// Run the writer until every handle is dropped. A failed batch is rolled back
@@ -1539,6 +1539,7 @@ async fn stage_write(
 pub(crate) struct VerifiedLibraryCopy {
     pub actor: String,
     pub event: EventId,
+    pub payload: Value,
     pub reading: FileCopy,
     pub file: sinex_library::render::VerifiedFile,
 }
@@ -1560,11 +1561,19 @@ async fn release_library_copy(
         return Err(changed().into());
     }
     let mut tx = connection.begin().await?;
-    let operation = match lifecycle::release_library_copy(
+    let scope = serde_json::json!({"event":verified.event,"blob":verified.reading.content,
+                                  "path":verified.reading.path});
+    let operation = match lifecycle::release_owned_blob(
         tx.connection(),
-        &verified.actor,
-        verified.event,
-        &verified.reading,
+        lifecycle::OwnedBlobRelease {
+            event: verified.event,
+            event_type: FileCopy::EVENT_TYPE,
+            payload: &verified.payload,
+            blob: &verified.reading.content,
+            actor: &verified.actor,
+            operation_kind: "library-release-copy",
+            scope: &scope,
+        },
     )
     .await
     {
@@ -1581,7 +1590,7 @@ async fn release_library_copy(
     tx.commit().await?;
     lifecycle::remove_unreferenced(connection, store).await?;
     let bytes_removed =
-        lifecycle::library_copy_bytes_removed(connection, &verified.reading.content).await?;
+        lifecycle::owned_blob_removed(connection, &verified.reading.content).await?;
     Ok(ReleasedLibraryCopy {
         operation,
         bytes_removed,

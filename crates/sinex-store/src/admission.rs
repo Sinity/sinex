@@ -202,6 +202,7 @@ pub(crate) async fn admit(
     cache: &mut privacy::Cache,
     batch: &Batch,
     keys: &dyn DirtyKeys,
+    releasable_blob_kind: Option<&str>,
 ) -> Result<(Outcome, std::collections::BTreeSet<String>)> {
     let mut required_blobs = std::collections::BTreeSet::new();
     if let BatchKind::Ingress(frame) = &batch.kind
@@ -329,7 +330,9 @@ pub(crate) async fn admit(
 
     // This batch owns the offered bytes even when classification suppresses
     // a reading. Kind evaluation, not producer metadata, supplies the names.
-    crate::lifecycle::respect_released_copies(conn, &mut events).await?;
+    if let Some(kind) = releasable_blob_kind {
+        crate::lifecycle::respect_released_blobs(conn, kind, &mut events).await?;
+    }
     required_blobs.extend(
         events
             .iter()

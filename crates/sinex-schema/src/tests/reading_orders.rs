@@ -74,7 +74,8 @@ async fn reading_order_upgrade_keeps_old_maxima_and_positions(db: devkit::pg::Te
 
 /// Recreate the physical old shape: dropping one column leaves its ordinal behind.
 pub(super) async fn positions_without_reading_orders(conn: &mut PgConnection) {
-    conn.execute("CREATE TEMP TABLE positions_before_orders AS SELECT derivation,commit_seq FROM derivation.positions;
+    conn.execute("DROP TABLE raw.owned_blob_releases;
+        CREATE TEMP TABLE positions_before_orders AS SELECT derivation,commit_seq FROM derivation.positions;
         DROP TABLE derivation.positions;
         CREATE TABLE derivation.positions(derivation text PRIMARY KEY,commit_seq bigint NOT NULL);
         INSERT INTO derivation.positions SELECT * FROM positions_before_orders;

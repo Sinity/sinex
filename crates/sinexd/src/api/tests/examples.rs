@@ -85,6 +85,13 @@ async fn help_examples_run_on_fixture(db: devkit::pg::TestDatabase) {
     .await
     .unwrap();
     let item = copies[0].item.clone();
+    let copy_event: uuid::Uuid = sqlx::query_scalar(
+        "SELECT id FROM core.events WHERE event_type = 'library.copy' AND payload->>'path' = $1",
+    )
+    .bind(image.display().to_string())
+    .fetch_one(&world.reads)
+    .await
+    .unwrap();
     let mut failures = Vec::new();
     for command in sinex_protocol::COMMANDS {
         for example in command.examples {
@@ -98,6 +105,16 @@ async fn help_examples_run_on_fixture(db: devkit::pg::TestDatabase) {
                     "/synthetic/library-sidecar.json" => sidecar.display().to_string(),
                     "/synthetic/identity.age" => identity_file.display().to_string(),
                     "library:example" => item.clone(),
+                    "01910000-0000-7000-8000-000000000001"
+                        if command.name == "library-release-copy" =>
+                    {
+                        copy_event.to_string()
+                    }
+                    "blake3:0000000000000000000000000000000000000000000000000000000000000000"
+                        if command.name == "library-release-copy" =>
+                    {
+                        copies[0].content.clone()
+                    }
                     _ => word.clone(),
                 };
             }
@@ -141,6 +158,9 @@ async fn help_examples_run_on_fixture(db: devkit::pg::TestDatabase) {
                     serde_json::to_value(request).unwrap(),
                 )
                 .await;
+                if command.name == "library-release-copy" {
+                    assert_eq!(body["result"]["bytes_removed"], true, "{body}");
+                }
                 let reply: sinex_protocol::Reply = serde_json::from_value(body.clone()).unwrap();
                 if reply
                     .failure()

@@ -901,7 +901,9 @@ pub const COMMANDS: &[Command] = &[
         mcp: false,
     },
     Command {
-        examples: &[],
+        examples: &[
+            "sinexctl library-release-copy 01910000-0000-7000-8000-000000000001 blake3:0000000000000000000000000000000000000000000000000000000000000000",
+        ],
         name: "library-release-copy",
         summary: "Release one stored copy after verifying its original file. Keeps the library reading and its metadata.",
         args: &[

@@ -11,6 +11,7 @@ pub struct AdmissionContext {
     connection: PgConnection,
     privacy: privacy::Cache,
     blobs: Option<crate::Blobs>,
+    releasable_blob_kind: Option<&'static str>,
 }
 
 impl AdmissionContext {
@@ -66,11 +67,18 @@ impl AdmissionContext {
             connection,
             privacy: privacy::Cache::new(key),
             blobs: None,
+            releasable_blob_kind: None,
         })
     }
 
     pub fn with_blobs(mut self, blobs: Option<crate::Blobs>) -> Self {
         self.blobs = blobs;
+        self
+    }
+
+    /// The domain's kind with individually releasable owned bytes.
+    pub fn with_releasable_blob_kind(mut self, kind: &'static str) -> Self {
+        self.releasable_blob_kind = Some(kind);
         self
     }
 
@@ -85,6 +93,7 @@ impl AdmissionContext {
             committed: false,
             privacy: &mut self.privacy,
             blobs: self.blobs.clone(),
+            releasable_blob_kind: self.releasable_blob_kind,
             required_blobs: BTreeSet::new(),
         })
     }
@@ -113,6 +122,7 @@ pub struct AdmissionTransaction<'a> {
     committed: bool,
     privacy: &'a mut privacy::Cache,
     blobs: Option<crate::Blobs>,
+    releasable_blob_kind: Option<&'static str>,
     required_blobs: BTreeSet<String>,
 }
 
@@ -123,6 +133,7 @@ impl AdmissionTransaction<'_> {
             self.privacy,
             batch,
             keys,
+            self.releasable_blob_kind,
         )
         .await?;
         self.required_blobs.extend(required_blobs);

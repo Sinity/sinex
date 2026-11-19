@@ -38,12 +38,12 @@ use std::collections::{BTreeMap, HashSet};
 use uuid::Uuid;
 
 mod bytes;
-mod library_copies;
 mod materials;
+mod owned_blobs;
 mod select;
 pub use bytes::remove_unreferenced;
-pub(crate) use library_copies::respect_released_copies;
-pub use library_copies::{library_copy_bytes_removed, release_library_copy};
+pub(crate) use owned_blobs::respect_released_blobs;
+pub use owned_blobs::{OwnedBlobRelease, owned_blob_removed, release_owned_blob};
 
 /// An operation as the engine runs it.
 #[derive(Clone, Debug, Serialize, Deserialize)]
