@@ -107,6 +107,9 @@ let
     (sessionPlan.discovery.inputs == plan.discovery.inputs)
     (lib.hasInfix "--sources /etc/sinex/session-sources.json" config.systemd.user.services.sinex-session.script)
     (lib.hasInfix "--sources /etc/sinex/sources.json" config.systemd.services.sinexd.script)
+    (builtins.elem config.environment.etc."sinex/sources.json".source
+      config.systemd.services.sinexd.restartTriggers
+    )
     (builtins.attrNames capturePlan == [ "discovery" "exclude" "sources" ])
     (capturePlan.discovery.watch == [ "/watch/capture" ])
     (capturePlan.discovery.spool == "/var/lib/sinex-capture/spool")

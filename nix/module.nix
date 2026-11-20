@@ -644,7 +644,10 @@ in
       };
 
       systemd.services.sinexd = {
-        restartTriggers = [ config.environment.etc."sinex/producer-grants.json".source ];
+        restartTriggers = [
+          config.environment.etc."sinex/producer-grants.json".source
+          config.environment.etc."sinex/sources.json".source
+        ];
         description = "Sinex daemon";
         after = [ "sinex-db-setup.service" "sinex-nats.service" "network.target" ];
         requires = [ "sinex-db-setup.service" "sinex-nats.service" ];
