@@ -163,6 +163,7 @@ struct NeededColumns {
 
 struct SearchColumns<'a> {
     indexed: Option<&'a Words>,
+    order_candidates: bool,
     ranked: bool,
     words: &'a [String],
     similar: Option<uuid::Uuid>,
@@ -383,6 +384,29 @@ impl<'c> Compiler<'c> {
 
     /// Compile a whole query into its numbered answer.
     pub(crate) fn compile(&mut self, q: &Query) -> Result<Compiled> {
+        let order_candidates = q.ranked
+            && matches!(
+                &q.source,
+                Source::Table {
+                    table: Table::Events,
+                    alias: None
+                }
+            )
+            && q.filter
+                .as_ref()
+                .is_some_and(|filter| matches!(filter, Expr::Words(words) if !words.prefix))
+            && q.stages
+                .iter()
+                .all(|stage| matches!(stage, Stage::Fields(_)));
+        let mut compiled = self.compile_relation(q, order_candidates)?;
+        if order_candidates {
+            // A count visits the whole selected relation and needs no rank sort.
+            compiled.count = self.compile_relation(q, false)?.count;
+        }
+        Ok(compiled)
+    }
+
+    fn compile_relation(&mut self, q: &Query, order_candidates: bool) -> Result<Compiled> {
         let (table, alias, similar) = self.check_source(q)?;
         let t = self.alias("t");
         let a = self.alias("a");
@@ -391,6 +415,7 @@ impl<'c> Compiler<'c> {
         let needed = self.needed_columns(q, table, alias);
         let search = SearchColumns {
             indexed: search,
+            order_candidates,
             ranked: q.ranked && table.is_events(),
             words: &words,
             similar,
@@ -579,7 +604,7 @@ impl<'c> Compiler<'c> {
         let ranked = search.ranked;
         let conds = self.base_conditions(base);
         let (select, renamed) = self.base_select(base, table, &needed, search)?;
-        let from = self.base_from(base, table, search.indexed, search.words);
+        let from = self.base_from(base, table, search);
         let mut rel = SqlFragment::text("SELECT ");
         rel.append(SqlFragment::join(select, ", "))
             .push(" FROM ")
@@ -731,34 +756,46 @@ impl<'c> Compiler<'c> {
         Ok(())
     }
 
-    fn base_from(
-        &mut self,
-        base: &Cols,
-        table: Table,
-        search: Option<&Words>,
-        words: &[String],
-    ) -> SqlFragment {
-        let words_for_rank = &words;
+    fn base_from(&mut self, base: &Cols, table: Table, search: &SearchColumns<'_>) -> SqlFragment {
         let mut from = self.positioned(base, fields::from(table));
-        if let Some(words) = search {
+        if let Some(words) = search.indexed {
             let hits = self.alias("words");
             let event = self.alias("event");
-            // This lateral boundary reads the event and authorizes its search
-            // tuple once. OFFSET keeps rank references in later page wrappers
-            // from expanding into repeated history lookups.
-            from = SqlFragment::text(
-                "(SELECT event_id, text, tsv FROM core.search_text WHERE tsv @@ ",
+            let predicate = if words.phrase {
+                "phraseto_tsquery('simple', "
+            } else {
+                "plainto_tsquery('simple', "
+            };
+            let lookup = format!(
+                " FROM core.visible_events {event} WHERE {event}.id={hits}.event_id AND core.class_visible({event}.class) OFFSET 0)"
             );
-            from.push(if words.phrase {
-                    "phraseto_tsquery('simple', "
-                } else {
-                    "plainto_tsquery('simple', "
-                })
-                .param(words.words.join(" "))
-                .push(format!(")) {hits} CROSS JOIN LATERAL (SELECT {event}.*, {hits}.tsv AS _search_tsv, ts_rank({hits}.tsv, plainto_tsquery('simple', "))
-                .param(words_for_rank.join(" "))
-                .push(format!(")) AS _search_rank, {hits}.text AS _search_text FROM core.visible_events {event} WHERE {event}.id={hits}.event_id AND core.class_visible({event}.class) OFFSET 0) "))
-                .push(Self::template(base, "{t}"));
+            if search.order_candidates {
+                let visible = self.alias("visible");
+                // Expose the rank directly from the ordered side of the join
+                // so the final sort can resolve only the equal-rank groups.
+                from = SqlFragment::text(format!(
+                    "(SELECT {visible}.*, {hits}.tsv AS _search_tsv, {hits}.rank AS _search_rank, {hits}.text AS _search_text FROM (SELECT event_id, text, tsv, ts_rank(tsv, plainto_tsquery('simple', "
+                ));
+                from.param(search.words.join(" "))
+                    .push(")) AS rank FROM core.search_text WHERE tsv @@ ")
+                    .push(predicate)
+                    .param(words.words.join(" "))
+                    .push(format!(") ORDER BY rank DESC NULLS LAST OFFSET 0) {hits} CROSS JOIN LATERAL (SELECT {event}.*"))
+                    .push(lookup)
+                    .push(format!(" {visible}) "));
+            } else {
+                from = SqlFragment::text(
+                    "(SELECT event_id, text, tsv FROM core.search_text WHERE tsv @@ ",
+                );
+                from.push(predicate)
+                    .param(words.words.join(" "))
+                    .push(format!(")) {hits} CROSS JOIN LATERAL (SELECT {event}.*, {hits}.tsv AS _search_tsv, ts_rank({hits}.tsv, plainto_tsquery('simple', "))
+                    .param(search.words.join(" "))
+                    .push(format!(")) AS _search_rank, {hits}.text AS _search_text"))
+                    .push(lookup)
+                    .push(" ");
+            }
+            from.push(Self::template(base, "{t}"));
         }
         from
     }
