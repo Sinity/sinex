@@ -47,6 +47,33 @@ async fn indexes_committed_payload_text_once_and_resumes(db: devkit::pg::TestDat
     assert_eq!(n, 4);
 }
 
+#[devkit::test]
+async fn search_updates_can_run_during_vacuum(db: devkit::pg::TestDatabase) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    crate::query::tests::admit_commands(&mut conn, &[("cargo check", "/src/tide")]).await;
+    let page = crate::commit_log::after(&mut conn, 0, 2_000, i64::MAX)
+        .await
+        .unwrap();
+    let mut maintenance = PgConnection::connect(&db.url(None)).await.unwrap();
+    let mut vacuum_lock = maintenance.begin().await.unwrap();
+    // Plain VACUUM holds this relation lock. Hold it deterministically
+    // while the real search writer attempts to index a committed event.
+    sqlx::query("LOCK TABLE core.search_trigram IN SHARE UPDATE EXCLUSIVE MODE")
+        .execute(&mut *vacuum_lock)
+        .await
+        .unwrap();
+    let mut tx = sqlx::Connection::begin(&mut *conn).await.unwrap();
+    sqlx::query("SET LOCAL lock_timeout = '1s'")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    apply_search_text(&mut tx, &page.events).await.unwrap();
+    tx.commit().await.unwrap();
+    vacuum_lock.rollback().await.unwrap();
+}
+
 /// Same text under kinds with and without trigram indexing.
 pub(crate) async fn admit_search_kinds(
     conn: &mut crate::AdmissionContext,

@@ -8,6 +8,18 @@ use sqlx::{Connection, PgConnection};
 /// The search read model's consumer name.
 pub const SEARCH_TEXT: &str = "read.search_text";
 
+/// Serialize search writes and tombstone deletion for the caller's transaction.
+pub(crate) async fn lock_search_updates(conn: &mut PgConnection) -> Result<()> {
+    // Distinct from the database writer's advisory lock. Maintenance does
+    // not need this lock because it cannot reinsert a deleted event.
+    const SEARCH_UPDATE_LOCK: i64 = 0x7369_6e65_7853_5243;
+    sqlx::query("SELECT pg_advisory_xact_lock($1)")
+        .bind(SEARCH_UPDATE_LOCK)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
 /// How far search has indexed. The position lives in `core.search_position`,
 /// beside the search tables a backup leaves out, so a restored copy without
 /// them starts at 0 and rebuilds.
@@ -84,9 +96,7 @@ pub async fn apply_search_text(conn: &mut PgConnection, events: &[Committed]) ->
     // that deletion and check its retained identities so an already-read page
     // cannot put tombstoned text back. The page already holds committed rows;
     // only tombstoning can have removed them since the page was read.
-    sqlx::query!("LOCK TABLE core.search_text, core.search_trigram IN SHARE ROW EXCLUSIVE MODE")
-        .execute(&mut *conn)
-        .await?;
+    lock_search_updates(conn).await?;
     let mut batch = conn.begin().await?;
     match insert_search_rows(&mut batch, &ids, &texts, &trigram).await {
         Ok(()) => batch.commit().await?,

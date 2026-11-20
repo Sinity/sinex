@@ -21,6 +21,7 @@ pub(super) async fn tombstone_events(
     if events.is_empty() {
         return Ok(Vec::new());
     }
+    crate::read_models::lock_search_updates(conn).await?;
     sqlx::query!(
         r#"INSERT INTO core.event_tombstones (event_id, source, event_type, ts_orig, ts_quality, operation_id,
              commit_seq, original_commit_seq, class, reason, material_id, record_offset, output_index, key_hash)

@@ -646,6 +646,16 @@ async fn tombstone_only_archived(db: devkit::pg::TestDatabase) {
     ));
     assert_eq!(state(&mut conn, &e).await, "live");
 
+    let stale_page = crate::commit_log::after(&mut conn, 0, 2_000, i64::MAX)
+        .await
+        .unwrap();
+    let mut search = sqlx::Connection::begin(&mut *conn).await.unwrap();
+    crate::read_models::apply_search_text(&mut search, &stale_page.events)
+        .await
+        .unwrap();
+    search.commit().await.unwrap();
+    assert!(count(&mut conn, "SELECT count(*) FROM core.search_text").await > 0);
+
     operate(&mut conn, Act::Archive, events(&[&e]), 16).await;
     let tombstone = operation(&operate(&mut conn, Act::Tombstone, events(&[&e]), 16).await);
     for event in [&e, &child] {
@@ -686,6 +696,16 @@ async fn tombstone_only_archived(db: devkit::pg::TestDatabase) {
     assert_eq!(
         count(&mut conn, "SELECT count(*) FROM core.search_text").await,
         0
+    );
+    let mut search = sqlx::Connection::begin(&mut *conn).await.unwrap();
+    crate::read_models::apply_search_text(&mut search, &stale_page.events)
+        .await
+        .unwrap();
+    search.commit().await.unwrap();
+    assert_eq!(
+        count(&mut conn, "SELECT count(*) FROM core.search_text").await,
+        0,
+        "a page read before the tombstone cannot reinsert deleted text"
     );
     let refused = operate(&mut conn, Act::Restore, events(&[&e]), 16).await;
     assert!(
