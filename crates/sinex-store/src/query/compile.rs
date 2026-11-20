@@ -757,9 +757,7 @@ impl<'c> Compiler<'c> {
                 .param(words.words.join(" "))
                 .push(format!(")) {hits} CROSS JOIN LATERAL (SELECT {event}.*, {hits}.tsv AS _search_tsv, ts_rank({hits}.tsv, plainto_tsquery('simple', "))
                 .param(words_for_rank.join(" "))
-                .push(format!(")) AS _search_rank, ts_headline('simple', {hits}.text, plainto_tsquery('simple', "))
-                .param(words_for_rank.join(" "))
-                .push(format!("), 'MaxFragments=2, MaxWords=24, MinWords=6, StartSel=[, StopSel=]') AS _search_snippet FROM core.visible_events {event} WHERE {event}.id={hits}.event_id AND core.class_visible({event}.class) OFFSET 0) "))
+                .push(format!(")) AS _search_rank, {hits}.text AS _search_text FROM core.visible_events {event} WHERE {event}.id={hits}.event_id AND core.class_visible({event}.class) OFFSET 0) "))
                 .push(Self::template(base, "{t}"));
         }
         from

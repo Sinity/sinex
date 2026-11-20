@@ -1085,15 +1085,23 @@ impl Compiler<'_> {
     }
 
     pub(super) fn snippet(&self, cols: &Cols, words: &[String]) -> SqlFragment {
-        if self.indexed_words {
-            return SqlFragment::text(Self::template(cols, "{t}._search_snippet"));
-        }
-        let mut f =
-            SqlFragment::text("(SELECT ts_headline('simple', s.text, plainto_tsquery('simple', ");
-        f.param(words.join(" ")).push(Self::template(
-            cols,
-            "), 'MaxFragments=2, MaxWords=24, MinWords=6, StartSel=[, StopSel=]') FROM core.visible_search_text s WHERE s.event_id = {t}.id)",
-        ));
+        // Leave display work outside the lateral event lookup so PostgreSQL
+        // can skip unused snippets or evaluate them after sorting the page.
+        let (start, end) = if self.indexed_words {
+            (
+                "ts_headline('simple', {t}._search_text, plainto_tsquery('simple', ",
+                "",
+            )
+        } else {
+            (
+                "(SELECT ts_headline('simple', s.text, plainto_tsquery('simple', ",
+                " FROM core.visible_search_text s WHERE s.event_id = {t}.id)",
+            )
+        };
+        let mut f = SqlFragment::text(Self::template(cols, start));
+        f.param(words.join(" "))
+            .push("), 'MaxFragments=2, MaxWords=24, MinWords=6, StartSel=[, StopSel=]')")
+            .push(Self::template(cols, end));
         f
     }
 }
