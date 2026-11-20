@@ -123,5 +123,20 @@ pub fn env(server: &Server, databases: &SchemaDatabases) -> Vec<(String, String)
     env
 }
 
+pub fn exec(root: &Path, command: &[String]) -> Result {
+    let (program, args) = command.split_first().ok_or("exec needs a command")?;
+    let (server, databases) = prepare(root)?;
+    let status = Command::new(program)
+        .args(args)
+        .envs(env(&server, &databases))
+        .status()
+        .map_err(|error| format!("{program}: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("{program} exited with {status}"))
+    }
+}
+
 #[cfg(test)]
 mod tests;

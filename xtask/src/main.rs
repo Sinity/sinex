@@ -96,6 +96,9 @@ fn main() -> ExitCode {
                 test(run, &args, threads.as_deref())
             })
         }
+        Cli::Db(devkit::cli::db::Db::Exec { command }) => {
+            exit_code(database::exec(Path::new("."), &command))
+        }
         Cli::Db(command) => {
             let (hash, apply) = match database::schema(Path::new(".")) {
                 Ok(schema) => schema,
