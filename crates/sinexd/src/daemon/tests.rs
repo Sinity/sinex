@@ -165,6 +165,11 @@ async fn interrupted_writer_rolls_back_before_shutdown_and_exact_frame_retry(
     connection.close().await.unwrap();
     let recorded:serde_json::Value=sqlx::query_scalar("SELECT to_jsonb(f) FROM core.ingress_frames f WHERE producer='synthetic-shutdown' AND frame='acknowledged'")
         .fetch_one(&mut observer).await.unwrap();
+    // Watch the fixture's advisory lock directly. The backend's reported
+    // wait event can change while the lock request is still pending.
+    let waits_on_probe = "SELECT EXISTS(SELECT 1 FROM pg_locks
+        WHERE pid=$1 AND locktype='advisory' AND classid=0
+          AND objid=927161 AND objsubid=1 AND NOT granted)";
     for detects_disconnect in [false, true] {
         let mut blocker = connect(&url, "sinex.test").await.unwrap();
         sqlx::query("SELECT pg_advisory_lock(927161)")
@@ -208,14 +213,21 @@ async fn interrupted_writer_rolls_back_before_shutdown_and_exact_frame_retry(
         let submitted = pending.clone();
         let waiting =
             tokio::spawn(async move { handle.submit(writer::Priority::Live, submitted).await });
-        tokio::time::timeout(Duration::from_secs(5),async {
+        tokio::time::timeout(Duration::from_secs(5), async {
             loop {
-                let held:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND wait_event_type='Lock')")
-                    .bind(pid).fetch_one(&mut observer).await.unwrap();
-                if held {break;}
+                let held: bool = sqlx::query_scalar(waits_on_probe)
+                    .bind(pid)
+                    .fetch_one(&mut observer)
+                    .await
+                    .unwrap();
+                if held {
+                    break;
+                }
                 tokio::task::yield_now().await;
             }
-        }).await.expect("actual writer statement reached its held transaction");
+        })
+        .await
+        .expect("actual writer statement reached its held transaction");
         if detects_disconnect {
             finish_tasks(&mut tasks, Duration::ZERO, &url, &blobs, true)
                 .await
@@ -223,8 +235,14 @@ async fn interrupted_writer_rolls_back_before_shutdown_and_exact_frame_retry(
         } else {
             tasks.abort_all();
             while tasks.join_next().await.is_some() {}
-            assert!(sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND wait_event_type='Lock')")
-                .bind(pid).fetch_one(&mut observer).await.unwrap(),"old disconnect left the writer backend alive");
+            assert!(
+                sqlx::query_scalar::<_, bool>(waits_on_probe)
+                    .bind(pid)
+                    .fetch_one(&mut observer)
+                    .await
+                    .unwrap(),
+                "old disconnect left the writer backend alive"
+            );
             assert!(
                 !sinex_store::writer_lock::try_claim(&mut observer)
                     .await
