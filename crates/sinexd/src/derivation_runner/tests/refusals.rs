@@ -235,7 +235,7 @@ async fn native_build_refusal_records_the_field_and_finishes_other_keys(
             .await,
         runs_before
     );
-    let readings = sinex_store::telemetry::read(&mut conn).await.unwrap();
+    let readings = sinex_store::telemetry::read(&mut conn, None).await.unwrap();
     assert_eq!(
         readings
             .iter()

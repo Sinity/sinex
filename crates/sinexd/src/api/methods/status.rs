@@ -23,8 +23,13 @@ pub(crate) fn status_fields(
             sample.component.as_str(),
             "publisher" | "search index" | "derivation"
         ) {
+            let name = if sample.component == "publisher" {
+                ""
+            } else {
+                &sample.name
+            };
             groups
-                .entry((&sample.component, &sample.name))
+                .entry((&sample.component, name))
                 .or_default()
                 .push(sample);
         }
@@ -32,18 +37,29 @@ pub(crate) fn status_fields(
     let mut consumers = Vec::new();
     let mut reasons = Vec::new();
     let mut measured_progress = false;
-    for ((component, name), samples) in groups {
+    for ((component, name), mut samples) in groups {
         let name = if name.is_empty() {
             component.to_owned()
         } else {
             format!("{component} {name}")
         };
-        let mut samples: Vec<_> = samples
-            .into_iter()
-            .filter(|sample| {
-                sample.measures.contains_key("position") && sample.measures.contains_key("behind")
-            })
-            .collect();
+        samples.sort_by_key(|sample| sample.sampled_at);
+        let has_position = |sample: &&Sample| {
+            sample.measures.contains_key("position") && sample.measures.contains_key("behind")
+        };
+        if component == "publisher" {
+            // Only a continuous run of samples for the latest confirmed stream
+            // measures its progress. Older unscoped samples used a retired checkpoint.
+            let active = &samples.last().expect("nonempty group").name;
+            if let Some(end) = samples
+                .iter()
+                .rposition(|s| active.is_empty() || &s.name != active || !has_position(s))
+            {
+                samples.drain(..=end);
+            }
+        } else {
+            samples.retain(has_position);
+        }
         if samples.is_empty() {
             consumers.push(
                 json!({ "name": name, "position": null, "behind": null, "rate": null,
@@ -52,7 +68,6 @@ pub(crate) fn status_fields(
             continue;
         }
         measured_progress = true;
-        samples.sort_by_key(|sample| sample.sampled_at);
         let first = samples[0];
         let last = samples[samples.len() - 1];
         let position = last.measures["position"] as i64;

@@ -106,7 +106,7 @@ use std::collections::BTreeMap;
 pub struct SinexTelemetry {
     /// `writer`, `publisher`, `search index`, `derivation` or `source`.
     pub component: String,
-    /// The derivation or source sampled; empty for the daemon's own parts.
+    /// The publisher checkpoint, derivation or source sampled, when identified.
     pub name: String,
     pub sampled_at: Timestamp,
     pub measures: BTreeMap<String, f64>,

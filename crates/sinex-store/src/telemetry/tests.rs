@@ -25,7 +25,7 @@ async fn a_sample_keeps_one_snapshot_while_admission_commits(db: devkit::pg::Tes
         .execute("LOCK TABLE core.source_counts IN ACCESS EXCLUSIVE MODE")
         .await
         .unwrap();
-    let sample = tokio::spawn(async move { read(&mut reader).await.unwrap() });
+    let sample = tokio::spawn(async move { read(&mut reader, None).await.unwrap() });
 
     // Admission changes the counts after the sample read its commit position.
     tokio::time::timeout(Duration::from_secs(10), async {
@@ -68,7 +68,7 @@ async fn a_sample_keeps_one_snapshot_while_admission_commits(db: devkit::pg::Tes
     };
     assert_eq!(measures(&sample, "writer", "")["commit_seq"], 1.0);
     assert_eq!(measures(&sample, "source", "test.source")["events"], 1.0);
-    let next = read(&mut writer).await.unwrap();
+    let next = read(&mut writer, None).await.unwrap();
     assert_eq!(measures(&next, "writer", "")["commit_seq"], 2.0);
     assert_eq!(measures(&next, "source", "test.source")["events"], 2.0);
 }
@@ -162,15 +162,18 @@ async fn recent_samples_keep_history_within_the_window(db: devkit::pg::TestDatab
         .await
         .unwrap();
     }
-    let readings = read(&mut conn).await.unwrap();
-    for component in ["publisher", "search index"] {
-        let reading = readings
-            .iter()
-            .find(|reading| reading.component == component)
-            .unwrap();
-        assert_eq!(reading.measures["position"], 0.0);
-        assert_eq!(reading.measures["behind"], 3.0);
-    }
+    let readings = read(&mut conn, None).await.unwrap();
+    let search = readings
+        .iter()
+        .find(|reading| reading.component == "search index")
+        .unwrap();
+    assert_eq!(search.measures["position"], 0.0);
+    assert_eq!(search.measures["behind"], 3.0);
+    let publisher = readings
+        .iter()
+        .find(|reading| reading.component == "publisher")
+        .unwrap();
+    assert!(publisher.measures.is_empty());
     let initial = readings
         .iter()
         .find(|reading| reading.name == "example.per_event")

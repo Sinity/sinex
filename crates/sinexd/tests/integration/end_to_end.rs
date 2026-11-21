@@ -1463,7 +1463,12 @@ async fn telemetry_samples_use_admission_replay_and_the_event_queries() {
     let mut spooled = Vec::new();
     let sampled_start = sinex_model::Timestamp::now().unix_ns() - 3_000_000_000;
     for (i, component) in ["writer", "publisher", "search index"].iter().enumerate() {
-        let line = serde_json::json!({"component": component, "name": "", "measures": {"behind": i, "position": i}});
+        let name = if *component == "publisher" {
+            "publisher/TEST_CONFIRMED/1"
+        } else {
+            ""
+        };
+        let line = serde_json::json!({"component": component, "name": name, "measures": {"behind": i, "position": i}});
         let at = sinex_model::Timestamp::from_unix_ns(sampled_start + i as i128 * 1_000_000_000)
             .unwrap();
         spooled.extend(live_stream::frame(at, line.to_string().as_bytes()));

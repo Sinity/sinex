@@ -12,7 +12,7 @@ use std::time::Duration;
 pub struct Reading {
     /// `writer`, `publisher`, `search index`, `derivation` or `source`.
     pub component: &'static str,
-    /// The derivation or source; empty for the daemon's own parts.
+    /// The publisher checkpoint, derivation or source, when identified.
     pub name: String,
     pub measures: BTreeMap<String, f64>,
 }
@@ -30,7 +30,7 @@ fn reading(component: &'static str, name: &str, measures: &[(&str, i64)]) -> Rea
 }
 
 /// Every part's numbers now.
-pub async fn read(conn: &mut PgConnection) -> Result<Vec<Reading>> {
+pub async fn read(conn: &mut PgConnection, publisher: Option<&str>) -> Result<Vec<Reading>> {
     let mut tx = conn.begin().await?;
     sqlx::query!("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *tx)
@@ -38,14 +38,16 @@ pub async fn read(conn: &mut PgConnection) -> Result<Vec<Reading>> {
     let head = sqlx::query!(
         r#"SELECT
              (SELECT value FROM core.counters WHERE name = 'commit_seq') AS "commit_seq!",
-             (SELECT coalesce((SELECT commit_seq FROM core.consumer_positions WHERE consumer = 'publisher'), 0)) AS "published!",
+             (SELECT commit_seq FROM core.consumer_positions WHERE consumer = $1) AS "published?",
              (SELECT count(*) FROM raw.failures WHERE failed_at > now() - interval '1 hour') AS "failures_1h!""#,
+        publisher,
     )
     .fetch_one(&mut *tx)
     .await?;
     let search = crate::diagnostics::positions(&mut tx)
         .await?
         .search_position;
+    let publisher = publisher.unwrap_or_default();
     let mut out = vec![
         reading(
             "writer",
@@ -55,14 +57,17 @@ pub async fn read(conn: &mut PgConnection) -> Result<Vec<Reading>> {
                 ("failed_records_1h", head.failures_1h),
             ],
         ),
-        reading(
-            "publisher",
-            "",
-            &[
-                ("position", head.published),
-                ("behind", head.commit_seq - head.published),
-            ],
-        ),
+        match head.published {
+            Some(position) => reading(
+                "publisher",
+                publisher,
+                &[
+                    ("position", position),
+                    ("behind", head.commit_seq - position),
+                ],
+            ),
+            None => reading("publisher", publisher, &[]),
+        },
         reading(
             "search index",
             "",

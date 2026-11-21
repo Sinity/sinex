@@ -330,6 +330,8 @@ async fn serve(
         )
     });
 
+    let telemetry_js = js.clone();
+    let confirmed = subjects.confirmed_stream();
     let publisher_conn = connect(&o.database, "sinex.publisher").await?;
     let (c, s, sj) = (commits.clone(), stop.clone(), subjects.clone());
     tasks.spawn(async move {
@@ -446,7 +448,14 @@ async fn serve(
     tasks.spawn(async move {
         (
             "telemetry",
-            telemetry::run((sample_conn, sample_database), telemetry_spool, s).await,
+            telemetry::run(
+                (sample_conn, sample_database),
+                telemetry_spool,
+                telemetry_js,
+                confirmed,
+                s,
+            )
+            .await,
         )
     });
 

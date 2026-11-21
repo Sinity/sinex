@@ -3,7 +3,8 @@
 //! source's counts) and spools one line per part. The `sinex.telemetry`
 //! binding reads the spool like any live capture. Samples share event
 //! admission, visibility, replay and the commit log.
-use crate::Result;
+use crate::{Result, publisher};
+use async_nats::jetstream;
 use sinex_model::Timestamp;
 use sinex_source_core::drivers::live_stream::{Rotation, SpoolWriter};
 use sinex_sources::sources::telemetry::Sample;
@@ -33,8 +34,16 @@ pub(crate) enum Error {
 pub(crate) async fn sample(
     conn: &mut PgConnection,
     writer: &mut SpoolWriter,
+    broker: (&jetstream::Context, &str),
 ) -> Result<usize, Error> {
-    let readings = sinex_store::telemetry::read(conn).await?;
+    let publisher = match publisher::current_consumer(conn, broker.0, broker.1).await {
+        Ok(consumer) => Some(consumer),
+        Err(error) => {
+            eprintln!("sinexd: publisher telemetry: {error}");
+            None
+        }
+    };
+    let readings = sinex_store::telemetry::read(conn, publisher.as_deref()).await?;
     let at = Timestamp::now();
     for r in &readings {
         let line = serde_json::to_vec(&Sample {
@@ -54,14 +63,15 @@ async fn sample_reconnecting(
     conn: &mut PgConnection,
     database: &str,
     writer: &mut SpoolWriter,
+    broker: (&jetstream::Context, &str),
 ) -> Result<usize, Error> {
-    match sample(conn, writer).await {
+    match sample(conn, writer, broker).await {
         Err(Error::Read(error)) => {
             eprintln!("sinexd: telemetry read: {error}; reconnecting");
             *conn = PgConnection::connect(database)
                 .await
                 .map_err(sinex_store::Error::from)?;
-            sample(conn, writer).await
+            sample(conn, writer, broker).await
         }
         result => result,
     }
@@ -72,13 +82,17 @@ async fn sample_reconnecting(
 pub(crate) async fn run(
     connection: (PgConnection, String),
     spool: PathBuf,
+    js: jetstream::Context,
+    confirmed: String,
     mut stop: watch::Receiver<bool>,
 ) -> Result<()> {
     let (mut conn, database) = connection;
     let mut writer = SpoolWriter::open(&spool, Rotation::default())
         .map_err(|e| crate::Error::file(&spool, e))?;
     loop {
-        if let Err(error) = sample_reconnecting(&mut conn, &database, &mut writer).await {
+        if let Err(error) =
+            sample_reconnecting(&mut conn, &database, &mut writer, (&js, &confirmed)).await
+        {
             eprintln!("sinexd: telemetry: {error}");
         }
         tokio::select! {

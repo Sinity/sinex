@@ -214,3 +214,57 @@ async fn status_keeps_unmeasured_keyed_consumers_unknown(db: devkit::pg::TestDat
         }])
     );
 }
+
+#[test]
+fn publisher_status_uses_consecutive_samples_from_the_current_stream() {
+    let context = sinex_query::Context::utc(jiff::Timestamp::now());
+    let at = Timestamp::now();
+    let publisher = |seconds, name: &str, position: Option<i64>| SinexTelemetry {
+        component: "publisher".into(),
+        name: name.into(),
+        sampled_at: Timestamp(at.0 + time::Duration::seconds(seconds)),
+        measures: position
+            .map(|p| {
+                [
+                    ("position".into(), p as f64),
+                    ("behind".into(), (100 - p) as f64),
+                ]
+                .into()
+            })
+            .unwrap_or_default(),
+    };
+    let report = |samples: &[SinexTelemetry]| {
+        let status = crate::api::status_fields(samples, &[], &context).unwrap();
+        let rows = status["consumers"].as_array().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["name"], "publisher");
+        rows[0].clone()
+    };
+    let old = "publisher/TEST_CONFIRMED/1";
+    let active = "publisher/TEST_CONFIRMED/2";
+    let legacy = publisher(-600, "", Some(1));
+    assert_eq!(report(std::slice::from_ref(&legacy))["behind"], Value::Null);
+    // The store orders by sample name before time.
+    let mut samples = vec![
+        publisher(-120, active, Some(80)),
+        legacy,
+        publisher(-180, old, Some(90)),
+    ];
+    let first = report(&samples);
+    assert_eq!(first["position"], 80);
+    assert_eq!(first["rate"], Value::Null);
+    samples.push(publisher(-60, active, Some(100)));
+    let current = report(&samples);
+    assert_eq!(current["behind"], 0);
+    assert_eq!(current["state"], "current");
+    for name in [active, ""] {
+        let mut missing = samples.clone();
+        missing.push(publisher(-30, name, None));
+        let unknown = report(&missing);
+        assert_eq!(unknown["state"], "unknown");
+        assert_eq!(unknown["position"], Value::Null);
+        assert_eq!(unknown["behind"], Value::Null);
+        missing.push(publisher(-1, active, Some(100)));
+        assert_eq!(report(&missing)["rate"], Value::Null);
+    }
+}

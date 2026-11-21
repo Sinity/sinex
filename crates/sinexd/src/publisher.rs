@@ -103,6 +103,17 @@ pub(crate) fn consumer_for(instance: &str) -> String {
     format!("{CONSUMER}/{instance}")
 }
 
+/// Look up the checkpoint owner for telemetry without creating a missing stream.
+pub(crate) async fn current_consumer(
+    conn: &mut PgConnection,
+    js: &jetstream::Context,
+    confirmed: &str,
+) -> Result<String> {
+    let stream = js.get_stream(confirmed).await?;
+    read_stream_start(&stream)?.validate(conn).await?;
+    Ok(consumer_for(&stream_instance(&stream)))
+}
+
 /// Counts for one publishing pass, for status and measurement.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Published {
