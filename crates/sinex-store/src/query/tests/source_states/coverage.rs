@@ -69,6 +69,15 @@ async fn rows(conn: &mut PgConnection, template: &str, seq: i64) -> Vec<Json> {
         .unwrap()
 }
 
+fn old_id() -> Uuid {
+    // ts_coided is generated from the reading ID, as in ordinary admission.
+    Uuid::new_v7(uuid::Timestamp::from_unix(
+        uuid::NoContext,
+        1_600_000_000,
+        0,
+    ))
+}
+
 async fn insert_coverage(
     conn: &mut PgConnection,
     source: &str,
@@ -80,9 +89,10 @@ async fn insert_coverage(
     // Direct rows include legacy NULL payload fields that a current typed
     // producer cannot emit. Their query semantics must remain unchanged.
     sqlx::query_scalar(
-        "INSERT INTO core.events(id,event_type,kind_version,source,run_id,material_id,record_offset,ts_quality,ts_coided,commit_seq,payload,reading_order,record_hash,class)
-         VALUES(uuidv7(),'source.coverage',$1,'fixture.coverage',uuidv7(),uuidv7(),0,'unknown','2020-01-01',$2,$3,1,decode(repeat('01',32),'hex'),'open') RETURNING id",
+        "INSERT INTO core.events(id,event_type,kind_version,source,run_id,material_id,record_offset,ts_quality,commit_seq,payload,reading_order,record_hash,class)
+         VALUES($1,'source.coverage',$2,'fixture.coverage',uuidv7(),uuidv7(),0,'unknown',$3,$4,1,decode(repeat('01',32),'hex'),'open') RETURNING id",
     )
+    .bind(old_id())
     .bind(SourceCoverage::VERSION as i64)
     .bind(seq)
     .bind(json!({"observed_source":source,"state":state,"reason":reason,"ended_at":ended_at}))
@@ -174,9 +184,10 @@ async fn grouped_source_coverage_preserves_visibility_history_and_latest_nulls(
     )
     .await;
     // Earlier kind versions and ungranted coverage cannot affect current health.
-    conn.execute("INSERT INTO core.events(id,event_type,kind_version,source,run_id,material_id,record_offset,ts_quality,ts_coided,commit_seq,payload,reading_order,record_hash,class)
-      VALUES(uuidv7(),'source.coverage',2,'fixture.coverage',uuidv7(),uuidv7(),0,'unknown','2020-01-01',10,'{\"observed_source\":\"test.versioned\",\"state\":\"missing\",\"reason\":\"old kind\"}',1,decode(repeat('01',32),'hex'),'open'),
-      (uuidv7(),'source.coverage',3,'fixture.coverage',uuidv7(),uuidv7(),0,'unknown','2020-01-01',10,'{\"observed_source\":\"test.guarded\",\"state\":\"missing\",\"reason\":\"private error\"}',1,decode(repeat('01',32),'hex'),'guarded')").await.unwrap();
+    sqlx::query("INSERT INTO core.events(id,event_type,kind_version,source,run_id,material_id,record_offset,ts_quality,commit_seq,payload,reading_order,record_hash,class)
+      VALUES($1,'source.coverage',$3::bigint-1,'fixture.coverage',uuidv7(),uuidv7(),0,'unknown',10,'{\"observed_source\":\"test.versioned\",\"state\":\"missing\",\"reason\":\"old kind\"}',1,decode(repeat('01',32),'hex'),'open'),
+      ($2,'source.coverage',$3,'fixture.coverage',uuidv7(),uuidv7(),0,'unknown',10,'{\"observed_source\":\"test.guarded\",\"state\":\"missing\",\"reason\":\"private error\"}',1,decode(repeat('01',32),'hex'),'guarded')")
+      .bind(old_id()).bind(old_id()).bind(SourceCoverage::VERSION as i64).execute(&mut *conn).await.unwrap();
     let archived: Uuid = sqlx::query_scalar(
         "SELECT id FROM core.events WHERE payload->>'observed_source'='test.archived'",
     )
@@ -184,9 +195,16 @@ async fn grouped_source_coverage_preserves_visibility_history_and_latest_nulls(
     .await
     .unwrap();
     sqlx::query("INSERT INTO audit.archive_changes(change_seq,event_id,commit_seq,archived,reason) VALUES(1,$1,20,true,'archive'),(2,$1,30,false,'restore')").bind(archived).execute(&mut *conn).await.unwrap();
-    conn.execute("SET ROLE sinex_reader").await.unwrap();
+    conn.execute("UPDATE core.counters SET value=40 WHERE name='commit_seq'")
+        .await
+        .unwrap();
+    // Status uses its configured database connection and caller grants. The
+    // restricted sinex_reader role belongs only to the raw-SQL surface.
     for grants in ["", "guarded"] {
         set_grants(&mut conn, grants).await.unwrap();
+        conn.execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .await
+            .unwrap();
         for seq in [10, 19, 20, 29, 30, 39, 40] {
             let actual = rows(&mut conn, &super::super::super::source_views::SOURCES, seq).await;
             assert_eq!(
@@ -239,6 +257,7 @@ async fn grouped_source_coverage_preserves_visibility_history_and_latest_nulls(
                 assert_eq!(row("test.missing")["last_error"], "old error");
             }
         }
+        conn.execute("COMMIT").await.unwrap();
     }
 }
 
@@ -278,8 +297,12 @@ async fn source_coverage_scans_once_and_filtered_queries_keep_the_source_predica
        'fixture.coverage',uuidv7(),uuidv7(),0,'unknown',n,
        jsonb_build_object('observed_source','test.work-'||lpad((n%16)::text,2,'0'),'state','observed','ended_at','2020-01-01T00:00:00Z'),
        1,decode(repeat('01',32),'hex'),'open' FROM generate_series(1,6144)n;
-       ANALYZE core.events").await.unwrap();
-    conn.execute("SET ROLE sinex_reader").await.unwrap();
+       ANALYZE core.events;
+       UPDATE core.counters SET value=6144 WHERE name='commit_seq'").await.unwrap();
+    set_grants(&mut conn, "").await.unwrap();
+    conn.execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        .await
+        .unwrap();
     assert_eq!(
         rows(&mut conn, &super::super::super::source_views::SOURCES, 6144).await,
         rows(&mut conn, REPEATED_SOURCES, 6144).await
@@ -357,4 +380,5 @@ async fn source_coverage_scans_once_and_filtered_queries_keep_the_source_predica
         filtered_scans(&plan[0]["Plan"]) > 0,
         "source predicate must reach the event scans: {plan}"
     );
+    conn.execute("COMMIT").await.unwrap();
 }
