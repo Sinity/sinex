@@ -1,6 +1,6 @@
 //! Scheduling belongs to the active copy, not to its durable hold.
 use crate::{AdmissionContext, Error, Result};
-use sinex_model::OperationId;
+use sinex_model::{DbCheck, OperationId, lifecycle::OperationResult};
 use sqlx::{Connection, Row};
 
 // Thirteen ASCII bytes plus a simple UUID: PostgreSQL never truncates this tag.
@@ -106,8 +106,8 @@ async fn restore(owner: &mut AdmissionContext, operation: Option<OperationId>) -
             .map_err(|error| Error::Invalid(format!("backup compression jobs: {error}")))?;
         sqlx::query("SELECT alter_job(job_id, scheduled => true) FROM timescaledb_information.jobs WHERE job_id=ANY($1) AND proc_name='policy_compression' AND hypertable_schema='core'")
             .bind(&jobs).execute(&mut *tx).await?;
-        sqlx::query("UPDATE core.operations SET progress=progress-'compression_jobs',result=coalesce(result,'failed') WHERE id=$1")
-            .bind(id).execute(&mut *tx).await?;
+        sqlx::query("UPDATE core.operations SET progress=progress-'compression_jobs',result=coalesce(result,$2) WHERE id=$1")
+            .bind(id).bind(OperationResult::StoppedEarly.as_db()).execute(&mut *tx).await?;
     }
     tx.commit().await?;
     Ok(())

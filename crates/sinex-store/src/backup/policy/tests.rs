@@ -273,6 +273,12 @@ async fn interrupted_copy_restores_only_its_enabled_jobs(db: devkit::pg::TestDat
     recover(&mut reopened).await.unwrap();
     let jobs:Vec<(i32,bool)>=sqlx::query_as("SELECT job_id,scheduled FROM timescaledb_information.jobs WHERE proc_name='policy_compression' AND hypertable_schema='core'")
         .fetch_all(&mut *reopened).await.unwrap();
+    let result: String = sqlx::query_scalar("SELECT result FROM core.operations WHERE id=$1")
+        .bind(id.0)
+        .fetch_one(&mut *reopened)
+        .await
+        .unwrap();
+    assert_eq!(result, OperationResult::StoppedEarly.as_db());
     assert!(jobs.iter().any(|(id, enabled)| *id == job && *enabled));
     assert!(
         jobs.iter()
