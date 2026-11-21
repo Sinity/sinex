@@ -35,6 +35,91 @@ async fn state_closer_after_more_than_sixty_four_refreshes_is_not_lost(
 
 mod bounds;
 
+fn presence_span(start: i64, end: i64, status: &str) -> Event {
+    Event::build(
+        &sinex_model::event_types::desktop::PresenceSpan {
+            scope: Some("synthetic-compositor".into()),
+            host: Some("box".into()),
+            bucket: "synthetic-afk".into(),
+            row: start,
+            started_at: at(start),
+            ended_at: at(end),
+            status: status.into(),
+        },
+        "desktop.activitywatch",
+        location(start.try_into().unwrap()),
+        ReadingOrder(0),
+        *blake3::hash(status.as_bytes()).as_bytes(),
+        Class::Open,
+    )
+    .unwrap()
+}
+
+#[devkit::test]
+async fn only_afk_presence_revisits_an_earlier_focus_day(db: devkit::pg::TestDatabase) {
+    let w = World::with_keys(db, state_keys()).await;
+    w.admit(vec![focus("window-a", 0)]).await;
+    let mut runner = w.driver_with(state_keys(), vec![]).await;
+    runner.clock = Some(at(3 * 86400));
+    runner.catch_up().await.unwrap();
+
+    let present = presence_span(86400, 86430, "not-afk");
+    let afk = presence_span(86450, 86480, "afk");
+    let keys = Keys::new(
+        state_keys(),
+        TimeSettings::new("Europe/Warsaw", 4, 0).unwrap(),
+    );
+    let ranges = |span: &Event| {
+        sinex_store::DirtyKeys::affected_ranges(
+            &keys,
+            &sinex_store::KeyInput {
+                event_type: &span.event_type,
+                ts_orig: span.ts_orig.at.map(|t| t.0),
+                payload: &span.payload,
+            },
+        )
+    };
+    assert!(ranges(&present).is_empty(), "no historical output lookup");
+    assert_eq!(ranges(&afk).len(), 1);
+
+    w.admit(vec![present]).await;
+    let mut conn = PgConnection::connect(&w.url).await.unwrap();
+    let dirty: Vec<Value> =
+        sqlx::query_scalar("SELECT key FROM derivation.dirty WHERE derivation='state.intervals'")
+            .fetch_all(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(
+        dirty,
+        [json!({"state":"desktop.activitywatch.afk","day":"2024-06-16"})]
+    );
+    runner.catch_up().await.unwrap();
+    let intervals = w.live::<StateInterval>().await;
+    assert_eq!(intervals.len(), 2);
+    assert_eq!(intervals[0].ended_at, None);
+    assert_eq!(intervals[1].subject_id.as_deref(), Some("status:not-afk"));
+    assert_eq!(intervals[1].ended_at, Some(at(86430)));
+
+    w.admit(vec![afk.clone()]).await;
+    let previous_day_dirty: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM derivation.dirty WHERE derivation='state.intervals' AND key=$1)",
+    )
+    .bind(json!({"state":"desktop.focus","day":"2024-06-15"}))
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    assert!(previous_day_dirty);
+    runner.catch_up().await.unwrap();
+    let closed = w.live::<StateInterval>().await;
+    assert_eq!(closed[0].ended_at, Some(at(86450)));
+    assert_eq!(closed[0].ended_at_evidence.as_ref().unwrap().parent, afk.id);
+
+    w.moved(Act::Archive, vec![afk.id]).await;
+    runner.catch_up().await.unwrap();
+    assert_eq!(w.live::<StateInterval>().await, intervals);
+    runner.end_runs().await.unwrap();
+}
+
 #[devkit::test]
 async fn interval_boundary_evidence_survives_derivation_admission_and_readback(
     db: devkit::pg::TestDatabase,
@@ -72,23 +157,7 @@ async fn interval_boundary_evidence_survives_derivation_admission_and_readback(
 
     // An intrinsic AFK timestamp closes the captured focus; a same-kind label
     // refresh is a parent but supplies neither boundary.
-    let closing = Event::build(
-        &sinex_model::event_types::desktop::PresenceSpan {
-            scope: Some("synthetic-compositor".into()),
-            host: Some("box".into()),
-            bucket: "synthetic-afk".into(),
-            row: 1,
-            started_at: at(10),
-            ended_at: at(20),
-            status: "afk".into(),
-        },
-        "desktop.activitywatch",
-        location(10),
-        ReadingOrder(0),
-        [41; 32],
-        Class::Open,
-    )
-    .unwrap();
+    let closing = presence_span(10, 20, "afk");
     let later = focus("window-b", 25);
     let mut later_refresh = focus("window-b", 27);
     later_refresh.payload["title"] = json!("another refresh");

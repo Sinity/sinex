@@ -616,6 +616,13 @@ impl Keyed for StateIntervals {
     }
 
     fn affected_ranges(&self, input: &KeyView<'_>, _: &Env) -> Vec<AffectedRange> {
+        // A presence span belongs to its starting day. Only an AFK span can
+        // also close a focus or workspace interval that started earlier.
+        if input.event_type == "presence.span"
+            && Interruption::of(input.event_type, input.payload).is_none()
+        {
+            return vec![];
+        }
         input
             .ts_orig
             .map(|at| {

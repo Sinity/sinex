@@ -250,6 +250,7 @@ One `state.interval` derivation, with declared rules for adjacent transitions, o
 - Genuine suspend or hibernate cuts open desktop intervals; resume alone does not establish a new focus. Transitions come from the source's typed journal and logind events, never from log text containing "Started".
 - Equal-time transitions order by recorded sequence, then stable record identity.
 - The `intervals` and `now` query aliases show an open end as unknown and the evidence's age separately.
+- Every presence span updates the presence intervals for its starting day. An AFK report also searches for earlier focus and workspace intervals it may close in the same scope.
 - A presence span with an observed end after the computation time ends at that current time. Its key stays waiting and schedules a refresh at the observed end, so the final span reaches its recorded end even without another input.
 - Repairs of malformed source records (ActivityWatch heartbeats, for example) belong to the source's parser, not to this derivation.
 
