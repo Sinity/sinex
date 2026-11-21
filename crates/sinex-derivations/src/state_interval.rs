@@ -627,6 +627,8 @@ impl Keyed for StateIntervals {
             .ts_orig
             .map(|at| {
                 vec![AffectedRange {
+                    key_match: matches!(input.event_type, "unit.started" | "unit.stopped")
+                        .then_some(("state", "machine.unit")),
                     open_field: None,
                     output_type: "state.interval",
                     start_field: "started_at",

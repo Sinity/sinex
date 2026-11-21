@@ -14,8 +14,9 @@ impl DirtyKeys for Ranges {
     fn keys(&self, _: &KeyInput<'_>) -> Vec<(String, Value)> {
         vec![]
     }
-    fn affected_ranges(&self, _: &KeyInput<'_>) -> Vec<AffectedRange> {
+    fn affected_ranges(&self, input: &KeyInput<'_>) -> Vec<AffectedRange> {
         let range = AffectedRange {
+            key_match: (input.event_type == "synthetic.selected").then_some(("label", "selected")),
             derivation: NAME,
             output_type: KIND,
             start_field: "start",
@@ -213,7 +214,7 @@ async fn dirty_ranges_page_compressed_members_and_keep_distinct_keys(db: devkit:
         .unwrap();
     let mut tx = sqlx::Connection::begin(&mut *conn).await.unwrap();
     let payload = json!({});
-    let inputs: Vec<_> = (0..256)
+    let mut inputs: Vec<_> = (0..256)
         .map(|_| KeyInput {
             event_type: "synthetic.trigger",
             ts_orig: None,
@@ -250,7 +251,8 @@ async fn dirty_ranges_page_compressed_members_and_keep_distinct_keys(db: devkit:
         &targets,
         None::<&str>,
         None::<&Value>,
-        None::<Uuid>
+        None::<Uuid>,
+        None::<&[Value]>
     )
     .fetch_all(&mut checked)
     .await
@@ -262,7 +264,8 @@ async fn dirty_ranges_page_compressed_members_and_keep_distinct_keys(db: devkit:
         &targets,
         Some(last.derivation.as_str()),
         Some(&last.key),
-        Some(last.event_id)
+        Some(last.event_id),
+        None::<&[Value]>
     )
     .fetch_all(&mut checked)
     .await
@@ -321,6 +324,99 @@ async fn dirty_ranges_page_compressed_members_and_keep_distinct_keys(db: devkit:
     );
     checked_tx.rollback().await.unwrap();
     checked.close().await.unwrap();
+
+    // The matching keys follow the first 300 one-field keys. One member is
+    // live and the others are archived or the wrong event type.
+    let selected = json!({"label":"selected","case":1});
+    let archived = json!({"label":"selected","case":2});
+    let wrong_kind = json!({"label":"selected","case":3});
+    sqlx::query(
+        "INSERT INTO derivation.outputs(derivation,key,event_id) VALUES
+        ($1,$2,'01800000-0000-7000-8000-000000002002'),
+        ($1,$3,'01800000-0000-7000-8000-000000002001'),
+        ($1,$4,'01800000-0000-7000-8000-000000002259')",
+    )
+    .bind(NAME)
+    .bind(&selected)
+    .bind(&archived)
+    .bind(&wrong_kind)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    let trigger = KeyInput {
+        event_type: "synthetic.selected",
+        ts_orig: None,
+        payload: &payload,
+    };
+    let first_keys =
+        sqlx::query_file_scalar!("src/admission/affected_key_page.sql", NAME, None::<&Value>)
+            .fetch_all(&mut *tx)
+            .await
+            .unwrap();
+    assert_eq!(first_keys.len(), 256);
+    assert!(!first_keys.contains(&selected));
+    let second_keys = sqlx::query_file_scalar!(
+        "src/admission/affected_key_page.sql",
+        NAME,
+        first_keys.last()
+    )
+    .fetch_all(&mut *tx)
+    .await
+    .unwrap();
+    assert!(second_keys.contains(&selected));
+    let matching = vec![selected.clone(), archived, wrong_kind];
+    let members = sqlx::query_file!(
+        "src/admission/affected_output_page.sql",
+        &targets,
+        None::<&str>,
+        None::<&Value>,
+        None::<Uuid>,
+        &matching
+    )
+    .fetch_all(&mut *tx)
+    .await
+    .unwrap();
+    assert_eq!(
+        members.len(),
+        2,
+        "only live members of selected keys reach the payload lookup"
+    );
+    assert!(members.iter().all(|row| matching.contains(&row.key)));
+    let mixed = [trigger, inputs.pop().unwrap()];
+    assert_eq!(
+        derived::mark_inputs_dirty(&mut tx, &mixed, 3, &Ranges)
+            .await
+            .unwrap(),
+        301
+    );
+
+    // A selected same-kind payload would fail its time conversion. A valid
+    // admission cannot inspect this unrelated key's payload in the first place.
+    let bad = uuid::Uuid::now_v7();
+    sqlx::query("INSERT INTO core.events(id,event_type,source,run_id,material_id,record_offset,ts_quality,commit_seq,payload,reading_order,record_hash,class)
+        VALUES ($1,$2,'synthetic-ranges',uuidv7(),uuidv7(),0,'unknown',4,jsonb_build_object('start','invalid'),1,decode(repeat('01',32),'hex'),'open')")
+        .bind(bad).bind(KIND).execute(&mut *tx).await.unwrap();
+    sqlx::query("INSERT INTO derivation.outputs(derivation,key,event_id) VALUES($1,$2,$3)")
+        .bind(NAME)
+        .bind(json!({"label":"unrelated"}))
+        .bind(bad)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    assert_eq!(
+        derived::mark_inputs_dirty(&mut tx, &mixed[..1], 4, &Ranges)
+            .await
+            .unwrap(),
+        1
+    );
+    let updated: Vec<Value> = sqlx::query_scalar(
+        "SELECT key FROM derivation.dirty WHERE derivation=$1 AND last_dirty_seq=4",
+    )
+    .bind(NAME)
+    .fetch_all(&mut *tx)
+    .await
+    .unwrap();
+    assert_eq!(updated, [selected]);
     assert!(!crate::writer_lock::try_claim(&mut competing).await.unwrap());
     tx.rollback().await.unwrap();
 }

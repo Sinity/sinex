@@ -59,6 +59,7 @@ pub struct RefusedWork {
     pub reason: String,
 }
 
+mod ranges;
 mod refusals;
 
 /// How far archiving and tombstoning had gone when a derivation read its
@@ -564,85 +565,7 @@ pub(crate) async fn mark_inputs_dirty(
             nearby.insert(query, dirty.len() - before);
         }
     }
-    if !ranges.is_empty() {
-        let names: Vec<_> = ranges.iter().map(|r| r.derivation.to_owned()).collect();
-        let types: Vec<_> = ranges.iter().map(|r| r.output_type.to_owned()).collect();
-        let starts: Vec<_> = ranges.iter().map(|r| r.start_field.to_owned()).collect();
-        let ends: Vec<_> = ranges.iter().map(|r| r.end_field.to_owned()).collect();
-        let from: Vec<_> = ranges.iter().map(|r| r.start).collect();
-        let until: Vec<_> = ranges.iter().map(|r| r.end).collect();
-        let open: Vec<_> = ranges
-            .iter()
-            .map(|r| r.open_field.map(str::to_owned))
-            .collect();
-        let targets: Vec<_> = names
-            .iter()
-            .cloned()
-            .collect::<std::collections::BTreeSet<_>>()
-            .into_iter()
-            .collect();
-        let output_types: Vec<_> = types
-            .iter()
-            .cloned()
-            .collect::<std::collections::BTreeSet<_>>()
-            .into_iter()
-            .collect();
-        #[derive(sqlx::FromRow)]
-        struct Output {
-            derivation: String,
-            key: Value,
-            event_id: Uuid,
-        }
-        #[derive(sqlx::FromRow)]
-        struct AffectedKey {
-            #[sqlx(rename = "derivation!")]
-            derivation: String,
-            #[sqlx(rename = "key!")]
-            key: Value,
-        }
-        let mut after: Option<Output> = None;
-        let mut affected = std::collections::HashSet::new();
-        loop {
-            // Admission holds the session writer claim, excluding lifecycle and
-            // replacement writes between the metadata and payload statements.
-            // This is a transfer page, not a limit on the affected output set.
-            // Fresh parameter-aware plans keep both keyset seeks and compressed
-            // ID-array pruning after repeated executions on this connection.
-            let page = sqlx::query_as::<_, Output>(include_str!("affected_output_page.sql"))
-                .bind(&targets)
-                .bind(after.as_ref().map(|row| row.derivation.as_str()))
-                .bind(after.as_ref().map(|row| &row.key))
-                .bind(after.as_ref().map(|row| row.event_id))
-                .persistent(false)
-                .fetch_all(&mut *conn)
-                .await?;
-            if page.is_empty() {
-                break;
-            }
-            let ids: Vec<_> = page.iter().map(|row| row.event_id).collect();
-            let output_derivations: Vec<_> =
-                page.iter().map(|row| row.derivation.clone()).collect();
-            let output_keys: Vec<_> = page.iter().map(|row| row.key.clone()).collect();
-            let selected = sqlx::query_as::<_, AffectedKey>(include_str!("affected_outputs.sql"))
-                .bind(&ids)
-                .bind(&output_derivations)
-                .bind(&output_keys)
-                .bind(&output_types)
-                .bind(&names)
-                .bind(&types)
-                .bind(&starts)
-                .bind(&ends)
-                .bind(&from)
-                .bind(&until)
-                .bind(&open)
-                .persistent(false)
-                .fetch_all(&mut *conn)
-                .await?;
-            affected.extend(selected.into_iter().map(|row| (row.derivation, row.key)));
-            after = page.into_iter().last();
-        }
-        dirty.extend(affected);
-    }
+    dirty.extend(ranges::affected_keys(conn, ranges).await?);
     // Outcome counts describe offered marks, including repeated input offers;
     // the affected-target union and its stored rows remain unchanged.
     Ok(mark_dirty(conn, dirty, seq).await? + repeated_marks)

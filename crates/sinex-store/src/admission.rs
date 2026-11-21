@@ -48,6 +48,8 @@ pub struct KeyInput<'a> {
 /// A changed input can affect an existing key selected by its output's time range.
 #[derive(Clone, Debug)]
 pub struct AffectedRange {
+    /// Only stored keys with this string field and value can read the changed input.
+    pub key_match: Option<(&'static str, &'static str)>,
     pub open_field: Option<&'static str>,
     pub derivation: &'static str,
     pub output_type: &'static str,

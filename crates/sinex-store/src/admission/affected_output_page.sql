@@ -4,5 +4,6 @@ SELECT o.derivation, o.key, o.event_id FROM derivation.outputs o
                    ) a ON true
                    WHERE o.derivation=ANY($1)
                      AND ($2::text IS NULL OR (o.derivation,o.key,o.event_id)>($2,$3::jsonb,$4::uuid))
+                     AND ($5::jsonb[] IS NULL OR o.key=ANY($5))
                      AND a.event_id IS NULL
                    ORDER BY o.derivation,o.key,o.event_id LIMIT 256

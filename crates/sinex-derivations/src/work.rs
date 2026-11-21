@@ -128,6 +128,7 @@ impl Keyed for WorkEpisodes {
             .ts_orig
             .map(|at| {
                 vec![AffectedRange {
+                    key_match: None,
                     open_field: None,
                     output_type: "work.episode",
                     start_field: "started_at",
@@ -524,6 +525,7 @@ impl Keyed for ActivityDays {
             .ts_orig
             .map(|start| {
                 vec![AffectedRange {
+                    key_match: None,
                     open_field: Some("provisional"),
                     output_type: "activity.day",
                     start_field: "started_at",

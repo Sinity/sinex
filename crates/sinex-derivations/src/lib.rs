@@ -174,6 +174,8 @@ pub enum InputRange {
 /// An input can change a key whose existing output overlaps this range.
 #[derive(Clone, Debug)]
 pub struct AffectedRange {
+    /// Only stored keys with this string field and value can read the changed input.
+    pub key_match: Option<(&'static str, &'static str)>,
     /// A true field means the stored output is still open after its recorded end.
     pub open_field: Option<&'static str>,
     pub output_type: &'static str,

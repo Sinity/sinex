@@ -111,6 +111,7 @@ impl Keyed for StoredProducts {
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or(start);
         vec![AffectedRange {
+            key_match: None,
             open_field: None,
             output_type: "analysis.panel",
             start_field: "started_at",

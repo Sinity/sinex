@@ -119,6 +119,7 @@ impl Keyed for ActivitySessions {
                     .and_then(|value| serde_json::from_value::<Timestamp>(value.clone()).ok())
                     .unwrap_or(start);
                 vec![crate::AffectedRange {
+                    key_match: None,
                     open_field: None,
                     output_type: "activity.session",
                     start_field: "started_at",

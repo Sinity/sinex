@@ -63,6 +63,7 @@ impl DirtyKeys for Registered {
                 d.affected_ranges(&view, &env)
                     .into_iter()
                     .map(move |range| sinex_store::AffectedRange {
+                        key_match: range.key_match,
                         derivation: d.name(),
                         output_type: range.output_type,
                         open_field: range.open_field,
