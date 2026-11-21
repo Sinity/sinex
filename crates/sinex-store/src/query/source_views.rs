@@ -6,6 +6,8 @@ use std::sync::LazyLock;
 pub(super) static SOURCES: LazyLock<String> =
     LazyLock::new(|| SOURCES_SQL.replace("{coverage_kind}", SourceCoverage::EVENT_TYPE));
 
+// Group coverage once for all sources. A source equality can still be pushed
+// into this aggregate, so selective source reads keep their narrow input.
 const SOURCES_SQL: &str = r#"(
     SELECT s.*,
       CASE
@@ -32,8 +34,8 @@ const SOURCES_SQL: &str = r#"(
       WHERE NOT EXISTS (SELECT 1 FROM registry.sources r WHERE r.name = sc.source)
     ) s
     LEFT JOIN core.source_counts sc ON sc.source = s.name
-    CROSS JOIN LATERAL (
-      SELECT count(*) AS readings,
+    LEFT JOIN (
+      SELECT e.payload->>'observed_source' AS source, count(*) AS readings,
         bool_or(e.payload->>'state' = 'missing') AS missing,
         (array_agg((e.payload->>'ended_at')::timestamptz ORDER BY e.commit_seq DESC))[1] AS ended_at,
         max(e.ts_coided) AS last_seen,
@@ -42,14 +44,14 @@ const SOURCES_SQL: &str = r#"(
       FROM core.visible_events e
       WHERE e.event_type = '{coverage_kind}'
         AND e.kind_version = (SELECT max(version) FROM registry.event_types WHERE name = '{coverage_kind}')
-        AND e.payload->>'observed_source' = s.name
         AND e.commit_seq <= {seq} AND NOT audit.is_archived_at(e.id, {seq})
-    ) c
+      GROUP BY e.payload->>'observed_source'
+    ) c ON c.source = s.name
     CROSS JOIN LATERAL (
       SELECT
         s.expectation = 'continuous' AND sc.last_seen < now() - s.silent_after AS silent,
         s.expectation = 'cadence' AND c.ended_at < now() - s.every AS overdue,
-        coalesce(sc.events, 0) = 0 AND c.readings = 0 AS absent,
+        coalesce(sc.events, 0) = 0 AND coalesce(c.readings, 0) = 0 AS absent,
         greatest(sc.last_seen, c.last_seen) >= now() - interval '1 hour' AS recent
     ) f
 ) {t}"#;

@@ -5,6 +5,8 @@ use sinex_model::event_types::coverage::{CoverageCompleteness, CoverageState, So
 use sinex_model::event_types::telemetry::SinexTelemetry;
 use std::time::Duration;
 
+mod coverage;
+
 fn source(name: &str, expect: Expectation) -> RegisteredSource {
     RegisteredSource {
         name: name.into(),
