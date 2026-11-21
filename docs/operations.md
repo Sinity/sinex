@@ -183,6 +183,13 @@ compression ratio is a capacity estimate, not a guaranteed bound.
 
 Worktrees, caches and scratch are outside backups. NATS state is not backed up: committed changes are republished from PostgreSQL with the same commit positions, and unacknowledged frames are resent from the producer spools, which are in the backup ([producers.md](producers.md)).
 
+A backup records the compression jobs it actually disables in its existing
+operation, in the same database transaction as the pause. Normal completion and
+startup recovery re-enable only those jobs, after the copy's database sessions
+have left. Jobs already paused before the copy stay paused. A hold's continued
+existence does not keep compression paused, and an unowned pause is never
+inferred to belong to an interrupted copy.
+
 Preparing a backup pauses publication and spool file removal, then takes the hold and the database snapshot. A source holds publication only from queueing an admission batch until its acknowledgment is saved, and while loading its committed cursor and deleting spool files it has passed. Acquisition and parsing continue without this pause, so a backup can start between batches during a long source read. The writer never waits for this pause inside a job; it must remain able to take the backup snapshot while publication is paused.
 
 Preparation copies the daemon's stored source spools and the state of every configured producer with write access. Each producer snapshot keeps its checkpoint, its pending frames and the bytes needed to resume from that checkpoint. Capture continues while publication is paused; media generations in progress finish before their files are copied. The manifest names the required producers and each copied file; `producers_complete` is true only when every required producer was copied. Preparation requires a known list of producers. The hold protects segment prefixes; producer state is described by the manifest.

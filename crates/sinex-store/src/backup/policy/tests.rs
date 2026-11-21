@@ -64,7 +64,7 @@ async fn startup_stops_only_owned_sessions_and_invalidates_late_snapshot_import(
     )
     .await
     .unwrap();
-    pause(&mut owner).await.unwrap();
+    pause(&mut owner, id, "synthetic").await.unwrap();
     assert!(scheduled(&mut owner).await.iter().all(|enabled| !enabled));
     recover(&mut owner).await.unwrap();
     assert!(scheduled(&mut owner).await.iter().all(|enabled| *enabled));
@@ -127,6 +127,7 @@ async fn startup_stops_only_owned_sessions_and_invalidates_late_snapshot_import(
 async fn copy_waits_for_an_already_running_policy_before_exporting(db: devkit::pg::TestDatabase) {
     use futures::FutureExt;
     let url = db.url(None);
+    let id = OperationId::new();
     let mut owner = AdmissionContext::connect(&url).await.unwrap();
     for statement in [
         "CREATE TABLE core.synthetic_backup_policy(time timestamptz NOT NULL,v integer)",
@@ -194,7 +195,7 @@ async fn copy_waits_for_an_already_running_policy_before_exporting(db: devkit::p
         running,
         "the real running job must be visible to the production wait"
     );
-    pause(&mut owner).await.unwrap();
+    pause(&mut owner, id, "synthetic").await.unwrap();
     let mut reader = PgConnection::connect(&url).await.unwrap();
     let idle = wait_for_visible_workers(&mut reader);
     tokio::pin!(idle);
@@ -212,6 +213,127 @@ async fn copy_waits_for_an_already_running_policy_before_exporting(db: devkit::p
         .await
         .unwrap()
         .unwrap();
-    finish(&mut owner, None).await.unwrap();
+    finish(&mut owner, id).await.unwrap();
     owner.close().await.unwrap();
+}
+
+#[devkit::test]
+async fn deliberate_pause_survives_finish_and_unowned_startup(db: devkit::pg::TestDatabase) {
+    let url = db.url(None);
+    let mut owner = AdmissionContext::connect(&url).await.unwrap();
+    sqlx::query("SELECT alter_job(job_id,scheduled=>false) FROM timescaledb_information.jobs WHERE proc_name='policy_compression' AND hypertable_schema='core'")
+        .execute(&mut *owner).await.unwrap();
+    let id = OperationId::new();
+    pause(&mut owner, id, "synthetic").await.unwrap();
+    let (hold, created) = crate::backup::hold(&mut owner, id, "synthetic")
+        .await
+        .unwrap();
+    assert!(created);
+    finish(&mut owner, id).await.unwrap();
+    assert!(scheduled(&mut owner).await.iter().all(|enabled| !enabled));
+    assert_eq!(
+        crate::backup::get(&mut owner, id).await.unwrap().unwrap(),
+        hold
+    );
+    owner.close().await.unwrap();
+    let mut reopened = AdmissionContext::connect(&url).await.unwrap();
+    recover(&mut reopened).await.unwrap();
+    assert!(
+        scheduled(&mut reopened)
+            .await
+            .iter()
+            .all(|enabled| !enabled)
+    );
+    reopened.close().await.unwrap();
+}
+
+#[devkit::test]
+async fn interrupted_copy_restores_only_its_enabled_jobs(db: devkit::pg::TestDatabase) {
+    let url = db.url(None);
+    let mut owner = AdmissionContext::connect(&url).await.unwrap();
+    sqlx::query("SELECT alter_job(job_id,scheduled=>false) FROM timescaledb_information.jobs WHERE proc_name='policy_compression' AND hypertable_schema='core'")
+        .execute(&mut *owner).await.unwrap();
+    for statement in [
+        "CREATE TABLE core.synthetic_policy(time timestamptz NOT NULL,value integer)",
+        "SELECT create_hypertable('core.synthetic_policy','time')",
+        "ALTER TABLE core.synthetic_policy SET(timescaledb.compress,timescaledb.compress_segmentby='value')",
+    ] {
+        sqlx::query(statement).execute(&mut *owner).await.unwrap();
+    }
+    let job: i32 = sqlx::query_scalar("SELECT add_compression_policy('core.synthetic_policy',interval '7 days',initial_start=>now()+interval '1 day')")
+        .fetch_one(&mut *owner).await.unwrap();
+    let id = OperationId::new();
+    pause(&mut owner, id, "synthetic").await.unwrap();
+    // Retrying the pause must keep the original enabled set, not replace it
+    // with the now-empty set of scheduled jobs.
+    pause(&mut owner, id, "synthetic").await.unwrap();
+    assert!(scheduled(&mut owner).await.iter().all(|enabled| !enabled));
+    owner.close().await.unwrap();
+    let mut reopened = AdmissionContext::connect(&url).await.unwrap();
+    recover(&mut reopened).await.unwrap();
+    let jobs:Vec<(i32,bool)>=sqlx::query_as("SELECT job_id,scheduled FROM timescaledb_information.jobs WHERE proc_name='policy_compression' AND hypertable_schema='core'")
+        .fetch_all(&mut *reopened).await.unwrap();
+    assert!(jobs.iter().any(|(id, enabled)| *id == job && *enabled));
+    assert!(
+        jobs.iter()
+            .filter(|(id, _)| *id != job)
+            .all(|(_, enabled)| !enabled)
+    );
+    recover(&mut reopened).await.unwrap();
+    assert!(
+        sqlx::query_scalar::<_, bool>(
+            "SELECT scheduled FROM timescaledb_information.jobs WHERE job_id=$1"
+        )
+        .bind(job)
+        .fetch_one(&mut *reopened)
+        .await
+        .unwrap()
+    );
+    reopened.close().await.unwrap();
+}
+
+#[devkit::test]
+async fn failed_restore_rolls_back_scheduling_and_keeps_recovery_owner(
+    db: devkit::pg::TestDatabase,
+) {
+    let url = db.url(None);
+    let mut owner = AdmissionContext::connect(&url).await.unwrap();
+    let id = OperationId::new();
+    pause(&mut owner, id, "synthetic").await.unwrap();
+    for statement in [
+        "CREATE FUNCTION core.refuse_policy_completion() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic completion refusal'; END $$",
+        "CREATE TRIGGER refuse_policy_completion BEFORE UPDATE ON core.operations FOR EACH ROW WHEN (OLD.progress ? 'compression_jobs' AND NOT (NEW.progress ? 'compression_jobs')) EXECUTE FUNCTION core.refuse_policy_completion()",
+    ] {
+        sqlx::query(statement).execute(&mut *owner).await.unwrap();
+    }
+    let error = finish(&mut owner, id).await.unwrap_err();
+    assert!(
+        error.to_string().contains("synthetic completion refusal"),
+        "{error}"
+    );
+    assert!(scheduled(&mut owner).await.iter().all(|enabled| !enabled));
+    let recorded: bool =
+        sqlx::query_scalar("SELECT progress ? 'compression_jobs' FROM core.operations WHERE id=$1")
+            .bind(id.0)
+            .fetch_one(&mut *owner)
+            .await
+            .unwrap();
+    assert!(
+        recorded,
+        "a failed finish must retain the original restore set"
+    );
+    sqlx::query("DROP TRIGGER refuse_policy_completion ON core.operations")
+        .execute(&mut *owner)
+        .await
+        .unwrap();
+    owner.close().await.unwrap();
+    let mut reopened = AdmissionContext::connect(&url).await.unwrap();
+    recover(&mut reopened).await.unwrap();
+    assert!(
+        scheduled(&mut reopened)
+            .await
+            .iter()
+            .all(|enabled| *enabled)
+    );
+    reopened.close().await.unwrap();
 }

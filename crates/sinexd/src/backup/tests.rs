@@ -1200,9 +1200,12 @@ fn copy_identity_is_bounded_and_preserves_other_connection_options() {
 async fn leader_crash_reaps_real_dump_waiting_on_a_relation_lock(db: devkit::pg::TestDatabase) {
     use sqlx::Connection;
     let url = db.url(None);
-    let tag = policy::application(OperationId::new());
+    let operation = OperationId::new();
+    let tag = policy::application(operation);
     let mut policy_owner = sinex_store::AdmissionContext::connect(&url).await.unwrap();
-    policy::pause(&mut policy_owner).await.unwrap();
+    policy::pause(&mut policy_owner, operation, "synthetic")
+        .await
+        .unwrap();
     let mut exporter = sqlx::PgConnection::connect(&url).await.unwrap();
     sqlx::query("CREATE TABLE public.synthetic_backup_lock(value integer)")
         .execute(&mut exporter)
@@ -1282,7 +1285,7 @@ async fn leader_crash_reaps_real_dump_waiting_on_a_relation_lock(db: devkit::pg:
     }
     // The client owns OS reaping; the daemon owns departure of its tagged
     // database sessions, including a backend still waiting on this lock.
-    policy::finish(&mut policy_owner, Some(&tag)).await.unwrap();
+    policy::finish(&mut policy_owner, operation).await.unwrap();
     loop {
         let remaining:i64=sqlx::query_scalar("SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND application_name=$1").bind(&tag).fetch_one(&mut observer).await.unwrap();
         if remaining == 0 {
