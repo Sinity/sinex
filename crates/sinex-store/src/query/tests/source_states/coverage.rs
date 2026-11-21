@@ -359,7 +359,11 @@ async fn source_coverage_scans_once_and_filtered_queries_keep_the_source_predica
         .fetch_one(&mut conn)
         .await
         .unwrap();
-    assert_eq!(plan[0]["Plan"]["Actual Rows"], 1, "one selected source");
+    assert_eq!(
+        plan[0]["Plan"]["Actual Rows"].as_f64(),
+        Some(1.0),
+        "one selected source"
+    );
     fn filtered_scans(node: &Json) -> usize {
         let own = usize::from(
             node["Relation Name"]
