@@ -48,7 +48,7 @@ const EVENTS_PER_PASS: i64 = 2_000;
 /// Keys computed per writer batch: one transaction for many keys, so a
 /// derivation's write cost is per batch, not per key.
 const KEYS_PER_BATCH: usize = 256;
-/// Outputs per writer batch, whatever the number of keys.
+/// Target outputs per writer batch. One indivisible key can exceed it.
 const OUTPUTS_PER_BATCH: usize = 20_000;
 /// Payload bytes per writer batch: outputs are held in memory until their
 /// batch is admitted, so large outputs (document text) end a batch early.
@@ -1513,20 +1513,71 @@ impl KeyComputation<'_> {
             }
             let computed: HashSet<usize> = segment.computed.iter().copied().collect();
             remaining.retain(|index| !computed.contains(index));
-            self.submit(segment).await?;
+            self.submit(segment, OUTPUTS_PER_BATCH, OUTPUT_BYTES_PER_BATCH)
+                .await?;
         }
         Ok(())
     }
 
-    async fn submit(&mut self, segment: Segment) -> Result<()> {
+    async fn submit(
+        &mut self,
+        mut segment: Segment,
+        max_outputs: usize,
+        max_bytes: usize,
+    ) -> Result<()> {
+        // The snapshot stops after the first key that reaches a limit. Only its
+        // final key can overflow a preceding group. Keep that key's whole output
+        // set and original snapshot when it goes to a separate transaction.
+        let tail = if segment.scopes.len() > 1
+            && (segment.outputs > max_outputs || segment.bytes > max_bytes)
+        {
+            let last = segment.scopes.len() - 1;
+            Some((
+                segment.scopes.split_off(last),
+                segment.records.split_off(last),
+            ))
+        } else {
+            None
+        };
         let Segment {
             scopes,
             refused,
-            mut records,
+            records,
             read,
             position,
             ..
         } = segment;
+        if !refused.is_empty() {
+            let failed = refused.len();
+            let started = Instant::now();
+            admit_refusals(
+                self.writer,
+                self.derivation.name(),
+                self.run,
+                refused,
+                None,
+                read,
+            )
+            .await?;
+            self.counts.write += started.elapsed();
+            self.counts.keys += failed;
+            self.counts.failed += failed;
+        }
+        for (keys, records) in std::iter::once((scopes, records)).chain(tail) {
+            if !keys.is_empty() {
+                self.submit_keys(keys, records, read, position).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn submit_keys(
+        &mut self,
+        scopes: Vec<ComputedKey>,
+        mut records: Vec<RecordOutcome>,
+        read: ReadMark,
+        position: i64,
+    ) -> Result<()> {
         let name = self.derivation.name();
         let mut n = 0;
         for record in &mut records {
@@ -1539,11 +1590,7 @@ impl KeyComputation<'_> {
             }
         }
         let keys = scopes.len();
-        let computation_failures = refused.len();
         let t = Instant::now();
-        if !refused.is_empty() {
-            admit_refusals(self.writer, name, self.run, refused, None, read).await?;
-        }
         let scope = DerivedScope::Keys { keys: scopes, read };
         let batch = Arc::new(Batch {
             run: self.run,
@@ -1554,22 +1601,53 @@ impl KeyComputation<'_> {
             records,
             archive: vec![],
         });
-        let mut failed = computation_failures;
-        let out = if keys == 0 {
-            sinex_store::Outcome::default()
-        } else {
-            match self.writer.submit(Priority::Derived, batch.clone()).await {
-                Ok(out) => out,
-                Err(initial @ WriteError::InvalidData(_)) => {
-                    // The full transaction rolled back. Diagnose complete keys,
-                    // never individual outputs of a key. Ordinary batches retain
-                    // one write and do not clone their payloads for this path.
-                    let DerivedScope::Keys { keys, .. } = &scope else {
-                        unreachable!()
+        let mut failed = 0;
+        let out = match self.writer.submit(Priority::Derived, batch.clone()).await {
+            Ok(out) => out,
+            Err(initial @ WriteError::InvalidData(_)) => {
+                // The full transaction rolled back. Diagnose complete keys,
+                // never individual outputs of a key. Ordinary batches retain
+                // one write and do not clone their payloads for this path.
+                let DerivedScope::Keys { keys, .. } = &scope else {
+                    unreachable!()
+                };
+                let mut out = sinex_store::Outcome::default();
+                for (key, record) in keys.iter().zip(&batch.records) {
+                    if keys.len() == 1 {
+                        admit_refusals(
+                            self.writer,
+                            name,
+                            self.run,
+                            vec![RefusedWork {
+                                input: RefusedInput::Key(key.key.clone()),
+                                input_seq: position,
+                                reason: initial
+                                    .content_refusal()
+                                    .expect("data refusal has a diagnosis"),
+                            }],
+                            None,
+                            read,
+                        )
+                        .await?;
+                        failed += 1;
+                        break;
+                    }
+                    let unit = Batch {
+                        run: self.run,
+                        kind: BatchKind::Derived {
+                            derivation: name.to_owned(),
+                            scope: DerivedScope::Keys {
+                                keys: vec![key.clone()],
+                                read,
+                            }
+                            .to_value(),
+                        },
+                        records: vec![record.clone()],
+                        archive: vec![],
                     };
-                    let mut out = sinex_store::Outcome::default();
-                    for (key, record) in keys.iter().zip(&batch.records) {
-                        if keys.len() == 1 {
+                    match self.writer.submit(Priority::Derived, unit).await {
+                        Ok(admitted) => out += &admitted,
+                        Err(error @ WriteError::InvalidData(_)) => {
                             admit_refusals(
                                 self.writer,
                                 name,
@@ -1577,7 +1655,7 @@ impl KeyComputation<'_> {
                                 vec![RefusedWork {
                                     input: RefusedInput::Key(key.key.clone()),
                                     input_seq: position,
-                                    reason: initial
+                                    reason: error
                                         .content_refusal()
                                         .expect("data refusal has a diagnosis"),
                                 }],
@@ -1586,52 +1664,17 @@ impl KeyComputation<'_> {
                             )
                             .await?;
                             failed += 1;
-                            break;
                         }
-                        let unit = Batch {
-                            run: self.run,
-                            kind: BatchKind::Derived {
-                                derivation: name.to_owned(),
-                                scope: DerivedScope::Keys {
-                                    keys: vec![key.clone()],
-                                    read,
-                                }
-                                .to_value(),
-                            },
-                            records: vec![record.clone()],
-                            archive: vec![],
-                        };
-                        match self.writer.submit(Priority::Derived, unit).await {
-                            Ok(admitted) => out += &admitted,
-                            Err(error @ WriteError::InvalidData(_)) => {
-                                admit_refusals(
-                                    self.writer,
-                                    name,
-                                    self.run,
-                                    vec![RefusedWork {
-                                        input: RefusedInput::Key(key.key.clone()),
-                                        input_seq: position,
-                                        reason: error
-                                            .content_refusal()
-                                            .expect("data refusal has a diagnosis"),
-                                    }],
-                                    None,
-                                    read,
-                                )
-                                .await?;
-                                failed += 1;
-                            }
-                            Err(error) => return Err(Error::from(error).within(name)),
-                        }
+                        Err(error) => return Err(Error::from(error).within(name)),
                     }
-                    out
                 }
-                Err(error) => return Err(Error::from(error).within(name)),
+                out
             }
+            Err(error) => return Err(Error::from(error).within(name)),
         };
         let c = &mut *self.counts;
         c.write += t.elapsed();
-        c.keys += keys + computation_failures;
+        c.keys += keys;
         c.failed += failed;
         c.outputs += n;
         c.admitted += out.admitted;

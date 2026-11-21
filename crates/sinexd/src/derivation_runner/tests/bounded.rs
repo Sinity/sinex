@@ -135,3 +135,160 @@ async fn a_per_event_pass_submits_large_outputs_in_bounded_batches(db: devkit::p
             .await
     );
 }
+
+fn computed_commands(
+    keys: &[(&str, &[&str])],
+    parent: &Event,
+    position: i64,
+    read: ReadMark,
+) -> Segment {
+    let mut scopes = Vec::new();
+    let mut records = Vec::new();
+    let mut outputs = 0;
+    let mut bytes = 0;
+    for &(key, names) in keys {
+        let events: Vec<_> = names
+            .iter()
+            .map(|name| {
+                fused_output(
+                    "test.paused",
+                    name,
+                    (*name).into(),
+                    std::slice::from_ref(parent),
+                )
+            })
+            .collect();
+        outputs += events.len();
+        bytes += events
+            .iter()
+            .map(|event| payload_bytes(&event.payload))
+            .sum::<usize>();
+        scopes.push(ComputedKey {
+            key: json!(key),
+            dirty_seq: position,
+            waiting: false,
+            refresh_at: None,
+        });
+        records.push(RecordOutcome::Events {
+            location: None,
+            events,
+        });
+    }
+    Segment {
+        computed: (0..keys.len()).collect(),
+        scopes,
+        records,
+        outputs,
+        bytes,
+        read,
+        position,
+        refused: Vec::new(),
+    }
+}
+
+async fn live_commands(w: &World) -> Vec<String> {
+    let mut names: Vec<_> = w
+        .live::<CommandFused>()
+        .await
+        .into_iter()
+        .map(|row| row.command)
+        .collect();
+    names.sort_unstable();
+    names
+}
+
+#[devkit::test]
+async fn complete_keys_yield_the_writer_to_live_admission(db: devkit::pg::TestDatabase) {
+    // The test runtime uses one thread. Polling both senders queues their jobs before the writer runs.
+    let w = World::with_keys(db, vec![Box::new(Paused { pause: None })]).await;
+    let parent = zsh("parent", 0, 1);
+    w.admit(vec![parent.clone()]).await;
+    let mut runner = w
+        .driver_with(vec![Box::new(Paused { pause: None })], vec![])
+        .await;
+    let run = runner.run_of("test.paused").unwrap();
+    let read = ReadMark::now(&mut runner.read).await.unwrap();
+    let head = "SELECT value FROM core.counters WHERE name='commit_seq'";
+    let mut counts = Counts::default();
+    let derivation = Paused { pause: None };
+    let mut compute = KeyComputation {
+        read: &mut runner.read,
+        writer: &w.handle,
+        derivation: &derivation,
+        time_settings: runner.time_settings.clone(),
+        run,
+        counts: &mut counts,
+    };
+    let seed = computed_commands(
+        &[("first", &["old-first"]), ("all", &["old-all"])],
+        &parent,
+        w.count(head).await,
+        read,
+    );
+    // Reaching either budget exactly still fits in one transaction.
+    let bytes = seed.bytes;
+    compute.submit(seed, 2, bytes).await.unwrap();
+    assert_eq!(
+        w.count("SELECT count(DISTINCT xmin::text) FROM core.events WHERE source='test.paused'")
+            .await,
+        1
+    );
+    let read = ReadMark::now(&mut *compute.read).await.unwrap();
+    let replacement = computed_commands(
+        &[("first", &["new-first"]), ("all", &["a", "b", "c"])],
+        &parent,
+        w.count(head).await,
+        read,
+    );
+    let mut writing = Box::pin(compute.submit(replacement, 2, usize::MAX));
+    assert!(futures::poll!(tokio::task::unconstrained(writing.as_mut())).is_pending());
+    // A Bulk acknowledgement follows the first queued Derived write. The
+    // submitting future is parked until we poll it for the next key.
+    w.handle
+        .submit(
+            Priority::Bulk,
+            Batch {
+                run: RunId::new(),
+                kind: BatchKind::Api {
+                    actor: "test".into(),
+                },
+                records: vec![],
+                archive: vec![],
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(live_commands(&w).await, ["new-first", "old-all"]);
+    assert!(futures::poll!(tokio::task::unconstrained(writing.as_mut())).is_pending());
+    let incoming = zsh("incoming", 10, 2);
+    let mut live = Box::pin(w.admit(vec![incoming]));
+    assert!(futures::poll!(tokio::task::unconstrained(live.as_mut())).is_pending());
+    let (written, ()) = tokio::join!(writing, live);
+    written.unwrap();
+    assert_eq!(live_commands(&w).await, ["a", "b", "c", "new-first"]);
+    let (first, live, tail, transactions): (i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT max(commit_seq) FILTER (WHERE payload->>'command'='new-first'),
+                    max(commit_seq) FILTER (WHERE payload->>'command'='incoming'),
+                    min(commit_seq) FILTER (WHERE payload->>'command' IN ('a','b','c')),
+                    count(DISTINCT xmin::text) FILTER (WHERE payload->>'command' IN ('a','b','c'))
+             FROM core.events",
+    )
+    .fetch_one(&mut *compute.read)
+    .await
+    .unwrap();
+    assert!(first < live && live < tail, "{first} < {live} < {tail}");
+    assert_eq!(transactions, 1, "the oversized key committed whole");
+    assert_eq!(w.count("SELECT last_dirty_seq FROM derivation.dirty WHERE derivation='test.paused' AND key='\"all\"'::jsonb").await, live);
+
+    // A byte overflow alone also starts a separate transaction.
+    let read = ReadMark::now(&mut *compute.read).await.unwrap();
+    let by_bytes = computed_commands(
+        &[("first", &["byte-first"]), ("all", &["byte-last"])],
+        &parent,
+        w.count(head).await,
+        read,
+    );
+    let bytes = by_bytes.bytes - 1;
+    compute.submit(by_bytes, usize::MAX, bytes).await.unwrap();
+    assert_eq!(w.count("SELECT count(DISTINCT xmin::text) FROM core.events WHERE payload->>'command' IN ('byte-first','byte-last')").await, 2);
+}

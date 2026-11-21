@@ -503,8 +503,16 @@ impl<const V: u32> Keyed for Count<V> {
 
 /// One output naming `command`, citing every input.
 fn counted(derivation: &str, command: String, inputs: &[Event]) -> Computed {
+    Computed {
+        error: None,
+        outputs: vec![fused_output(derivation, "all", command, inputs)],
+        waiting: false,
+    }
+}
+
+fn fused_output(derivation: &str, record: &str, command: String, inputs: &[Event]) -> Event {
     let payload = CommandFused {
-        record: "all".into(),
+        record: record.into(),
         command,
         host: "box".into(),
         started_at: at(0),
@@ -519,13 +527,7 @@ fn counted(derivation: &str, command: String, inputs: &[Event]) -> Computed {
         competitors: vec![],
         rule_version: 1,
     };
-    Computed {
-        error: None,
-        outputs: vec![
-            sinex_derivations::derived_event::derived(&payload, derivation, inputs).unwrap(),
-        ],
-        waiting: false,
-    }
+    sinex_derivations::derived_event::derived(&payload, derivation, inputs).unwrap()
 }
 
 /// A keyed derivation that calls `pause` while computing: after its inputs
