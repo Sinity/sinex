@@ -607,7 +607,8 @@ Recent telemetry checks archive membership by each sample's event ID, so reading
 the status window does not scan unrelated archive history. The read retains its
 time window, class visibility and order within each consumer's samples.
 Publisher samples use the acknowledged checkpoint of the confirmed stream identified
-by the broker at sample time. Status reports an unknown position when the stream
+by the broker at sample time. The sample's name identifies that external stream's
+checkpoint. Status reports an unknown position when the stream
 or its checkpoint is unavailable. Rates and stall estimates use consecutive
 samples from that same stream instance.
 
