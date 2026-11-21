@@ -161,8 +161,8 @@ enum WriterJob {
         reply: Reply<()>,
     },
     Stage(StageWrite, Reply<()>),
-    BackupPause(Reply<()>),
-    BackupFinish(Option<String>, Reply<()>),
+    BackupPause(OperationId, String, Reply<()>),
+    BackupFinish(OperationId, Reply<()>),
     BackupHold {
         operation: OperationId,
         actor: String,
@@ -476,16 +476,20 @@ impl WriterHandle {
             .await
     }
 
-    pub(crate) async fn backup_pause(&self) -> Result<(), WriteError> {
-        self.ask(Priority::Live, WriterJob::BackupPause).await
-    }
-
-    pub(crate) async fn backup_finish(
+    pub(crate) async fn backup_pause(
         &self,
-        application: Option<String>,
+        operation: OperationId,
+        actor: &str,
     ) -> Result<(), WriteError> {
         self.ask(Priority::Live, |reply| {
-            WriterJob::BackupFinish(application, reply)
+            WriterJob::BackupPause(operation, actor.to_owned(), reply)
+        })
+        .await
+    }
+
+    pub(crate) async fn backup_finish(&self, operation: OperationId) -> Result<(), WriteError> {
+        self.ask(Priority::Live, |reply| {
+            WriterJob::BackupFinish(operation, reply)
         })
         .await
     }
@@ -893,18 +897,18 @@ pub(crate) async fn run_notifying(
                     release_library_copy(&mut connection, store, *copy).await
                 );
             }
-            WriterJob::BackupPause(reply) => {
+            WriterJob::BackupPause(operation, actor, reply) => {
                 answer!(
                     reply,
-                    crate::backup::policy::pause(&mut connection)
+                    crate::backup::policy::pause(&mut connection, operation, &actor)
                         .await
                         .map_err(WriteError::from)
                 );
             }
-            WriterJob::BackupFinish(application, reply) => {
+            WriterJob::BackupFinish(operation, reply) => {
                 answer!(
                     reply,
-                    crate::backup::policy::finish(&mut connection, application.as_deref())
+                    crate::backup::policy::finish(&mut connection, operation)
                         .await
                         .map_err(WriteError::from)
                 );

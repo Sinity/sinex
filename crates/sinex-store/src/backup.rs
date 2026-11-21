@@ -52,7 +52,13 @@ pub async fn hold(conn: &mut PgConnection, id: OperationId, actor: &str) -> Resu
     let mut tx = conn.begin().await?;
     let position = crate::commit_log::allocate_position(&mut tx).await?;
     let scope = serde_json::json!({"scope":"core"});
-    sqlx::query!("INSERT INTO core.operations(id,kind,actor,scope,start_seq,end_seq,result) VALUES($1,'backup_hold',$2,$3,$4,$4,'ok')",id.0,actor,scope,position).execute(&mut *tx).await?;
+    // Copy preparation may already own the operation before its boundary exists.
+    let recorded = sqlx::query!("INSERT INTO core.operations(id,kind,actor,scope,start_seq,end_seq,result) VALUES($1,'backup_hold',$2,$3,$4,$4,'ok') ON CONFLICT(id) DO UPDATE SET start_seq=EXCLUDED.start_seq,end_seq=EXCLUDED.end_seq,result=EXCLUDED.result WHERE core.operations.kind='backup_hold' AND core.operations.actor=EXCLUDED.actor AND core.operations.start_seq IS NULL",id.0,actor,scope,position).execute(&mut *tx).await?;
+    if recorded.rows_affected() != 1 {
+        return Err(Error::Invalid(
+            "backup operation already has a different boundary or owner".into(),
+        ));
+    }
     let blobs = sqlx::query_scalar!("SELECT value FROM core.counters WHERE name='blob_changes'")
         .fetch_one(&mut *tx)
         .await?;

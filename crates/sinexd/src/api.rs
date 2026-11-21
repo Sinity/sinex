@@ -503,9 +503,8 @@ async fn backup_prepare(
             }
         };
         let operation = sinex_model::OperationId::new();
-        let application = crate::backup::policy::application(operation);
         let result: Result<()> = async {
-            writer.backup_pause().await?;
+            writer.backup_pause(operation, caller.actor).await?;
             let (cancel, cancelled) = watch::channel(false);
             let preparing = api.backup_start(&caller, params.to, operation, cancelled);
             tokio::pin!(preparing);
@@ -543,10 +542,7 @@ async fn backup_prepare(
         }.await;
         // Closing the exporter precedes cancellation of any surviving imports.
         // Only after their actual departure can compression run again.
-        let cleaned = writer
-            .backup_finish(Some(application))
-            .await
-            .map_err(Error::from);
+        let cleaned = writer.backup_finish(operation).await.map_err(Error::from);
         let result = match (result, cleaned) {
             (Err(error), Err(cleanup)) => {
                 Err(error.with_note(format!("backup cleanup failed: {cleanup}")))

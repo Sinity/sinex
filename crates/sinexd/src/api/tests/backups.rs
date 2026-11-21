@@ -619,3 +619,55 @@ async fn client_cancellation_during_preparation_restores_policy(db: devkit::pg::
     wait_for_compression(&w, true).await;
     drop(blocked);
 }
+
+#[devkit::test]
+async fn ordinary_copy_preserves_an_existing_compression_pause(db: devkit::pg::TestDatabase) {
+    let broker = devkit::nats::test_nats().unwrap();
+    let client = async_nats::connect(broker.url()).await.unwrap();
+    let w = world_with_api(
+        db,
+        Default::default(),
+        PgPoolOptions::new().max_connections(READ_CONNECTIONS),
+        |api| {
+            api.backup_producers = Some((client, sinex_protocol::Subjects::sinex(), vec![]));
+        },
+    )
+    .await;
+    sqlx::query("SELECT alter_job(job_id,scheduled=>false) FROM timescaledb_information.jobs WHERE proc_name='policy_compression' AND hypertable_schema='core'")
+        .execute(&w.reads).await.unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let (job, body) = open_backup(&w, &root.path().join("paused")).await;
+    let job: sinex_model::backup::CopyJob = serde_json::from_value(job.unwrap()).unwrap();
+    assert!(
+        compression_scheduled(&w)
+            .await
+            .iter()
+            .all(|enabled| !enabled)
+    );
+    drop(body);
+    // Wait for the operation's actual cleanup, rather than accepting the
+    // already-paused scheduler as evidence that the copy has finished.
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let pending: bool = sqlx::query_scalar(
+                "SELECT progress ? 'compression_jobs' FROM core.operations WHERE id=$1",
+            )
+            .bind(job.boundary.id.0)
+            .fetch_one(&w.reads)
+            .await
+            .unwrap();
+            if !pending {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(
+        compression_scheduled(&w)
+            .await
+            .iter()
+            .all(|enabled| !enabled)
+    );
+}
