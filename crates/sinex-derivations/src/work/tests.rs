@@ -651,11 +651,28 @@ fn a_recorded_absence_interrupts_work_before_any_return() {
     );
     let mut acts = work_acts(&inputs, &env);
     let episode = acts[0].payload["episode"].clone();
-    let absence = record(
-        "state.interval",
-        json!({"interval_id":"sleep","state_kind":"machine.suspend","subject_id":"box","label":"suspended","started_at":at(100),"ended_at":null,"start_event_type":"suspend.started","end_event_type":null,"attributes":{"host":"box"}}),
+    let suspend = record(
+        "sleep.started",
+        json!({"host":"box", "boot_id":"synthetic-boot", "cursor":"synthetic-suspend",
+               "logged_at":at(100), "state":"suspend"}),
         100,
     );
+    let absence = crate::AnyKeyed::compute(
+        &crate::state_interval::StateIntervals,
+        &json!({"state":"machine.suspend", "host":"box",
+                "day":env.time_settings.day(at(100)).unwrap().to_string()}),
+        std::slice::from_ref(&suspend),
+        &env,
+    )
+    .outputs
+    .into_iter()
+    .next()
+    .unwrap();
+    let boundary = absence
+        .payload_as::<sinex_model::event_types::StateInterval>()
+        .unwrap();
+    assert_eq!(boundary.started_at_evidence.unwrap().parent, suspend.id);
+    assert_eq!(boundary.ended_at_evidence, None);
     acts.push(absence.clone());
     let result = crate::AnyKeyed::compute(&WorkEpisodes, &json!({"episode":episode}), &acts, &env);
     let interruption = result
