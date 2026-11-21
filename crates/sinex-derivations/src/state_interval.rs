@@ -24,7 +24,7 @@ use crate::{
     AffectedRange, Computed, Env, InputQuery, InputRange, KeyState, KeyView, Keyed, Kind, Neighbour,
 };
 use serde_json::{Value, json};
-use sinex_model::event_types::StateInterval;
+use sinex_model::event_types::{IntervalTimeBoundary, IntervalTimeEvidence, StateInterval};
 use sinex_model::state_transition::{self, SubjectField};
 use sinex_model::{Event, EventPayload, Origin, Timestamp};
 use std::collections::BTreeMap;
@@ -236,6 +236,15 @@ struct PendingInterval<'a> {
     open: Open<'a>,
     end: Option<(Timestamp, &'a str)>,
     closers: Vec<&'a Event>,
+    end_evidence: Option<IntervalTimeEvidence>,
+}
+
+fn time_evidence(event: &Event, boundary: IntervalTimeBoundary) -> IntervalTimeEvidence {
+    IntervalTimeEvidence {
+        parent: event.id,
+        boundary,
+        quality: event.ts_orig.quality,
+    }
 }
 
 fn interval_id(state_kind: &str, open: &Open<'_>) -> String {
@@ -260,6 +269,11 @@ fn to_event(rule: &IntervalRule, l: PendingInterval<'_>) -> Result<Event, sinex_
         label: l.open.label.clone(),
         started_at: l.open.at,
         ended_at: l.end.map(|(t, _)| t),
+        started_at_evidence: Some(time_evidence(
+            l.open.start,
+            IntervalTimeBoundary::Transition,
+        )),
+        ended_at_evidence: l.end_evidence,
         fenced_at: None,
         start_event_type: l.open.start.event_type.to_owned(),
         end_event_type: l.end.map(|(_, t)| t.to_owned()),
@@ -294,6 +308,7 @@ fn fold_one<'a>(rule: &IntervalRule, events: &[&'a Event]) -> Vec<PendingInterva
                         open: o,
                         end: Some((at, e.event_type.as_str())),
                         closers: vec![e],
+                        end_evidence: Some(time_evidence(e, IntervalTimeBoundary::Transition)),
                     });
                 }
                 if !rule.event_types.contains(&e.event_type.as_str()) {
@@ -312,6 +327,7 @@ fn fold_one<'a>(rule: &IntervalRule, events: &[&'a Event]) -> Vec<PendingInterva
                             open: o,
                             end: Some((at, e.event_type.as_str())),
                             closers: vec![e],
+                            end_evidence: Some(time_evidence(e, IntervalTimeBoundary::Transition)),
                         });
                     }
                 }
@@ -321,6 +337,7 @@ fn fold_one<'a>(rule: &IntervalRule, events: &[&'a Event]) -> Vec<PendingInterva
                     open: o,
                     end: None,
                     closers: vec![],
+                    end_evidence: None,
                 });
             }
         }
@@ -335,11 +352,11 @@ fn fold_one<'a>(rule: &IntervalRule, events: &[&'a Event]) -> Vec<PendingInterva
                     continue;
                 }
                 let Some(at) = e.ts_orig.at else { continue };
-                let observed: Option<Timestamp> = e
+                let recorded_end: Option<Timestamp> = e
                     .payload
                     .get(end)
                     .and_then(|v| serde_json::from_value(v.clone()).ok());
-                let observed = observed.map(|t| t.max(at));
+                let observed = recorded_end.map(|t| t.max(at));
                 // An interruption inside the span ends it there: the first
                 // one after its start, if that is before its observed end.
                 let after = interruptions.partition_point(|(_, f)| *f <= at);
@@ -355,6 +372,15 @@ fn fold_one<'a>(rule: &IntervalRule, events: &[&'a Event]) -> Vec<PendingInterva
                 };
                 out.push(PendingInterval {
                     open: Open::new(rule, e, at),
+                    end_evidence: end.and_then(|(until, _)| {
+                        if let Some(closer) = closers.first() {
+                            Some(time_evidence(closer, IntervalTimeBoundary::Transition))
+                        } else if recorded_end == Some(until) {
+                            Some(time_evidence(e, IntervalTimeBoundary::ObservedEnd))
+                        } else {
+                            None
+                        }
+                    }),
                     end,
                     closers,
                 });
@@ -433,7 +459,7 @@ pub enum StateKey {
 impl Keyed for StateIntervals {
     type Key = StateKey;
     const NAME: &'static str = "state.intervals";
-    const VERSION: u32 = 4;
+    const VERSION: u32 = 5;
     const USES_TIME_SETTINGS: bool = true;
     const INPUTS: &'static [&'static str] = INPUT_TYPES;
     const OUTPUTS: &'static [&'static str] = &[StateInterval::EVENT_TYPE];
@@ -535,6 +561,9 @@ impl Keyed for StateIntervals {
             .map(|mut interval| {
                 if matches!(r.shape, Shape::Span { .. }) {
                     waiting |= interval.end.is_some_and(|(end, _)| end > env.now);
+                    if interval.end.is_some_and(|(end, _)| end > env.now) {
+                        interval.end_evidence = None;
+                    }
                     interval.end = interval
                         .end
                         .map(|(end, kind)| (end.min(env.now).max(interval.open.at), kind));

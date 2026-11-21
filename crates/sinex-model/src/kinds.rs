@@ -114,6 +114,11 @@ pub enum TimeRule {
         field: String,
         evidence_field: String,
     },
+    /// An instantaneous parent boundary keeps its own recorded time quality.
+    Inherited {
+        field: String,
+        evidence_field: String,
+    },
     FirstPresent {
         fields: Vec<String>,
         quality: TimeQuality,
@@ -264,6 +269,28 @@ impl KindDeclaration {
                         .and_then(|value| value.get("until"))
                         .is_some_and(|value| !value.is_null())
                 {
+                    TsOrig::unknown()
+                } else {
+                    TsOrig::maybe(
+                        present(field)
+                            .map(|value| serde_json::from_value::<Timestamp>(value.clone()))
+                            .transpose()
+                            .map_err(|_| format!("invalid date-time at /{field}"))?,
+                        quality,
+                    )
+                }
+            }
+            TimeRule::Inherited {
+                field,
+                evidence_field,
+            } => {
+                let quality = payload
+                    .get(evidence_field)
+                    .and_then(|value| value.get("quality"))
+                    .cloned()
+                    .and_then(|value| serde_json::from_value::<TimeQuality>(value).ok())
+                    .unwrap_or(TimeQuality::Unknown);
+                if quality == TimeQuality::Unknown {
                     TsOrig::unknown()
                 } else {
                     TsOrig::maybe(

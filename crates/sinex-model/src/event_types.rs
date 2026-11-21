@@ -46,7 +46,8 @@ pub mod work;
 
 pub use activity::{ActivitySession, ActivitySpan, ActivityWindow};
 pub use derived::{
-    ConversationDay, FigureValue, HealthFigure, MetricFigure, StateInterval, TagApplied,
+    ConversationDay, FigureValue, HealthFigure, IntervalTimeBoundary, IntervalTimeEvidence,
+    MetricFigure, StateInterval, TagApplied,
 };
 pub use fused::CommandFused;
 use serde_json::Value;

@@ -74,7 +74,7 @@ A parser fix re-reads old bytes into a new reading without making them a newer s
 - **Plausibility is a label, never a rejection.** The query field `time_suspect` reports an implausible time, such as `future` or `epoch zero`, while preserving the stated time and the event. `time_suspect:known` selects labelled events; an unlabelled time has an unknown value.
 - **Ranges are half-open.** Ties among equal times break by record coordinates and output index, then by a per-record tie counter, never by commit order or event ID.
 - **One time vocabulary in both products:** quality and precision on every time; published `polylogue.*` events carry both.
-- **Derived `ts_orig`** is declared by the derivation from its inputs, never "now".
+- **Derived `ts_orig`** is declared by the derivation from its inputs, never "now". An inherited boundary names its supporting parent and keeps that parent's time quality; computing an interval does not make a captured instant intrinsic.
 
 How queries use these clocks is in [query](query.md); the clocks themselves and the logical day are in [architecture](architecture.md#configuration-and-clocks).
 

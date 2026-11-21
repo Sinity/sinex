@@ -1,20 +1,30 @@
 //! Derived activity: state intervals, metric figures, and hourly and daily
 //! health figures.
-use crate::Timestamp;
+use crate::{EventId, TimeQuality, Timestamp};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
+/// Which timestamp of the parent establishes this boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum IntervalTimeBoundary {
+    Transition,
+    ObservedEnd,
+}
+
+/// The exact parent and inherited quality of one interval boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct IntervalTimeEvidence {
+    pub parent: EventId,
+    pub boundary: IntervalTimeBoundary,
+    pub quality: TimeQuality,
+}
 
 /// A span during which some state held: a focused window, a workspace, an
 /// ActivityWatch bout. Derived from transitions by the
 /// interval derivation. Identified by its start evidence; the end may still
 /// be unknown (`ended_at` is `None` while the state holds).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2, type = "state.interval",
-    key = ["interval_id"],
-    replace = newer,
-    time = started_at,
-    quality = intrinsic
-)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct StateInterval {
     /// `<state kind>:<subject>:<start record location or start time>`.
     pub interval_id: String,
@@ -23,6 +33,11 @@ pub struct StateInterval {
     pub label: Option<String>,
     pub started_at: Timestamp,
     pub ended_at: Option<Timestamp>,
+    /// Absent in older readings whose boundary support was not recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at_evidence: Option<IntervalTimeEvidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ended_at_evidence: Option<IntervalTimeEvidence>,
     /// A later boot bounds an earlier unknown end without claiming uptime until it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fenced_at: Option<Timestamp>,
@@ -32,6 +47,46 @@ pub struct StateInterval {
     pub end_event_type: Option<String>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub attributes: std::collections::BTreeMap<String, String>,
+}
+
+impl crate::EventPayload for StateInterval {
+    const VERSION: u64 = 3;
+    const EVENT_TYPE: &'static str = "state.interval";
+    const KEY: crate::KeyKind = crate::KeyKind::Fields(&["interval_id"]);
+    const REPLACE: crate::ReplaceRule = crate::ReplaceRule::ReplaceWhenNewer;
+
+    fn ts_orig(&self) -> crate::TsOrig {
+        self.started_at_evidence
+            .filter(|evidence| evidence.quality != TimeQuality::Unknown)
+            .map_or_else(crate::TsOrig::unknown, |evidence| {
+                crate::TsOrig::known(self.started_at, evidence.quality)
+            })
+    }
+
+    fn payload_schema() -> serde_json::Value {
+        serde_json::to_value(schemars::schema_for!(Self)).expect("interval schema serializes")
+    }
+
+    fn declaration() -> crate::KindDeclaration {
+        let mut declaration = crate::KindDeclaration::schemaless(
+            crate::KindRef {
+                name: Self::EVENT_TYPE.into(),
+                version: Self::VERSION,
+            },
+            "sinex".into(),
+        );
+        declaration.normalization = crate::kinds::Normalization::Rust;
+        declaration.payload_schema = Some(Self::payload_schema());
+        declaration.key_rule = Some(crate::kinds::KeyRule::Fields {
+            fields: vec!["interval_id".into()],
+        });
+        declaration.replace_rule = Some(Self::REPLACE);
+        declaration.time_rule = Some(crate::kinds::TimeRule::Inherited {
+            field: "started_at".into(),
+            evidence_field: "started_at_evidence".into(),
+        });
+        declaration
+    }
 }
 
 /// One metric over one local hour or logical day: how many input events it

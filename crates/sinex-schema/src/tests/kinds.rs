@@ -160,7 +160,7 @@ fn field_hints_need_distinct_valid_pointers() {
 }
 
 #[test]
-fn source_instant_evidence_rule_checks_both_declared_fields() {
+fn source_and_inherited_time_rules_check_both_declared_fields() {
     let mut declaration = sinex_model::KindDeclaration::schemaless(
         sinex_model::KindRef {
             name: "fixture.time".into(),
@@ -177,6 +177,20 @@ fn source_instant_evidence_rule_checks_both_declared_fields() {
     });
     assert!(crate::kinds::check(&declaration).is_ok());
     declaration.time_rule = Some(sinex_model::kinds::TimeRule::InstantEvidence {
+        field: "at".into(),
+        evidence_field: "absent".into(),
+    });
+    assert!(
+        crate::kinds::check(&declaration)
+            .unwrap_err()
+            .contains("absent")
+    );
+    declaration.time_rule = Some(sinex_model::kinds::TimeRule::Inherited {
+        field: "at".into(),
+        evidence_field: "stamp".into(),
+    });
+    assert!(crate::kinds::check(&declaration).is_ok());
+    declaration.time_rule = Some(sinex_model::kinds::TimeRule::Inherited {
         field: "at".into(),
         evidence_field: "absent".into(),
     });

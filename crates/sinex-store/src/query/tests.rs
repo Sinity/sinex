@@ -829,6 +829,8 @@ async fn derived_aliases_read_what_the_derivations_write(db: devkit::pg::TestDat
         subject_id: Some(id.into()),
         label: Some(format!("{id} window")),
         started_at: at(0),
+        started_at_evidence: None,
+        ended_at_evidence: None,
         ended_at: ended.map(at),
         start_event_type: "window.focused".into(),
         end_event_type: ended.map(|_| "window.focused".into()),

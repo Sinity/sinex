@@ -10,6 +10,7 @@ use sinex_model::event_types::session::{CaptureProgram, PlayerChanged};
 
 /// A compositor focus interval, as the interval derivation writes it.
 pub(crate) fn hyprland(class: &str, title: &str, from: f64, to: Option<f64>) -> Event {
+    let parent = zsh("parent", from);
     let payload = StateInterval {
         fenced_at: None,
         interval_id: format!("desktop.focus:{class}:{from}"),
@@ -17,6 +18,12 @@ pub(crate) fn hyprland(class: &str, title: &str, from: f64, to: Option<f64>) -> 
         subject_id: Some(class.into()),
         label: Some(format!("{class}: {title}")),
         started_at: at(from),
+        started_at_evidence: Some(sinex_model::event_types::IntervalTimeEvidence {
+            parent: parent.id,
+            boundary: sinex_model::event_types::IntervalTimeBoundary::Transition,
+            quality: parent.ts_orig.quality,
+        }),
+        ended_at_evidence: None,
         ended_at: to.map(at),
         start_event_type: "window.focused".into(),
         end_event_type: to.map(|_| "window.focused".into()),
@@ -25,7 +32,7 @@ pub(crate) fn hyprland(class: &str, title: &str, from: f64, to: Option<f64>) -> 
             .map(|(k, v)| (k.to_owned(), v.to_owned()))
             .collect(),
     };
-    crate::derived_event::derived(&payload, "state.intervals", &[zsh("parent", from)]).unwrap()
+    crate::derived_event::derived(&payload, "state.intervals", &[parent]).unwrap()
 }
 
 pub(crate) fn activitywatch(app: &str, title: &str, from: f64, to: f64) -> Event {

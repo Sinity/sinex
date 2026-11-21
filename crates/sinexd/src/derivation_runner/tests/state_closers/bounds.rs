@@ -541,7 +541,7 @@ async fn explicit_key_recompute_preserves_history_and_other_keys(db: devkit::pg:
                 .unwrap();
         assert!(live);
     }
-    assert_eq!(<StateIntervals as Keyed>::VERSION, 4);
+    assert_eq!(<StateIntervals as Keyed>::VERSION, 5);
     corrected.end_runs().await.unwrap();
 }
 

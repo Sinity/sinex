@@ -243,3 +243,72 @@ fn nul_in_payload_string_is_a_record_failure() {
     .unwrap();
     assert_eq!(event.payload["command"], payload.command);
 }
+
+#[test]
+fn interval_time_and_its_declaration_keep_inherited_quality_and_unknown_legacy_support() {
+    use crate::{EventId, TsOrig};
+    let parent = EventId::new();
+    let at = Timestamp::from_unix_secs(1_700_000_000).unwrap();
+    let mut interval = StateInterval {
+        interval_id: "desktop.focus:synthetic".into(),
+        state_kind: "desktop.focus".into(),
+        subject_id: None,
+        label: None,
+        started_at: at,
+        ended_at: None,
+        fenced_at: None,
+        started_at_evidence: Some(IntervalTimeEvidence {
+            parent,
+            boundary: IntervalTimeBoundary::Transition,
+            quality: TimeQuality::Captured,
+        }),
+        ended_at_evidence: None,
+        start_event_type: "window.focused".into(),
+        end_event_type: None,
+        attributes: Default::default(),
+    };
+    let declaration = StateInterval::declaration();
+    for quality in [
+        TimeQuality::Captured,
+        TimeQuality::Intrinsic,
+        TimeQuality::FileMtime,
+        TimeQuality::Operator,
+        TimeQuality::Unknown,
+    ] {
+        interval.started_at_evidence.as_mut().unwrap().quality = quality;
+        let expected = if quality == TimeQuality::Unknown {
+            TsOrig::unknown()
+        } else {
+            TsOrig::known(at, quality)
+        };
+        assert_eq!(interval.ts_orig(), expected);
+        assert_eq!(
+            declaration
+                .evaluate(
+                    &serde_json::to_value(&interval).unwrap(),
+                    crate::Class::Open
+                )
+                .unwrap()
+                .ts_orig,
+            expected
+        );
+    }
+    let mut legacy = serde_json::to_value(&interval).unwrap();
+    legacy
+        .as_object_mut()
+        .unwrap()
+        .remove("started_at_evidence");
+    legacy.as_object_mut().unwrap().remove("ended_at_evidence");
+    let decoded: StateInterval = serde_json::from_value(legacy.clone()).unwrap();
+    assert_eq!(decoded.started_at, at);
+    assert_eq!(decoded.started_at_evidence, None);
+    assert_eq!(decoded.ended_at_evidence, None);
+    assert_eq!(decoded.ts_orig(), TsOrig::unknown());
+    assert_eq!(
+        declaration
+            .evaluate(&legacy, crate::Class::Open)
+            .unwrap()
+            .ts_orig,
+        TsOrig::unknown()
+    );
+}

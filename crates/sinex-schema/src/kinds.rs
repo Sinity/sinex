@@ -350,10 +350,16 @@ pub fn check(d: &KindDeclaration) -> Result<(), String> {
         }
         fields.extend(times.iter().map(String::as_str));
     }
-    if let Some(TimeRule::InstantEvidence {
-        field,
-        evidence_field,
-    }) = &d.time_rule
+    if let Some(
+        TimeRule::InstantEvidence {
+            field,
+            evidence_field,
+        }
+        | TimeRule::Inherited {
+            field,
+            evidence_field,
+        },
+    ) = &d.time_rule
     {
         fields.push(field);
         fields.push(evidence_field);

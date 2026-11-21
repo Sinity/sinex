@@ -66,6 +66,7 @@ fn boot_fences_unknown_unit_end_without_inventing_continuous_uptime() {
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].ended_at, None);
     assert_eq!(result[0].fenced_at, Some(at(3 * 86400)));
+    assert_eq!(result[0].ended_at_evidence, None);
     assert_eq!(result[0].end_event_type.as_deref(), Some("boot.started"));
 }
 #[devkit::test]

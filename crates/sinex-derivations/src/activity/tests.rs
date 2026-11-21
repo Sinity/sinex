@@ -319,7 +319,8 @@ fn lock_suspend_and_sleep_close_sessions_even_when_the_break_is_short() {
         ("desktop.lock", "locked", Some("box"), "lock"),
         ("machine.suspend", "suspended", Some("box"), "suspend"),
     ] {
-        let mut boundary = captured(
+        let parent = physical(100);
+        let mut boundary = crate::derived_event::derived(
             &sinex_model::event_types::StateInterval {
                 fenced_at: None,
                 interval_id: kind.into(),
@@ -327,13 +328,21 @@ fn lock_suspend_and_sleep_close_sessions_even_when_the_break_is_short() {
                 subject_id: None,
                 label: Some(label.into()),
                 started_at: at(100),
+                started_at_evidence: Some(sinex_model::event_types::IntervalTimeEvidence {
+                    parent: parent.id,
+                    boundary: sinex_model::event_types::IntervalTimeBoundary::Transition,
+                    quality: parent.ts_orig.quality,
+                }),
+                ended_at_evidence: None,
                 ended_at: Some(at(200)),
                 start_event_type: "synthetic".into(),
                 end_event_type: None,
                 attributes: Default::default(),
             },
-            1,
-        );
+            "state.intervals",
+            [&parent],
+        )
+        .unwrap();
         boundary.payload["attributes"]["host"] = json!(host);
         if reason == "lock" {
             boundary.payload["attributes"]["seat"] = json!("seat0");

@@ -172,6 +172,10 @@ fn interval(
                 label,
                 started_at: at,
                 ended_at: end.and_then(|event| event.ts_orig.at),
+                started_at_evidence: Some(time_evidence(start, IntervalTimeBoundary::Transition)),
+                ended_at_evidence: end
+                    .filter(|event| event.ts_orig.at.is_some())
+                    .map(|event| time_evidence(event, IntervalTimeBoundary::Transition)),
                 fenced_at: fence.and_then(|event| event.ts_orig.at),
                 start_event_type: start.event_type.clone(),
                 end_event_type: end.or(fence).map(|event| event.event_type.clone()),
