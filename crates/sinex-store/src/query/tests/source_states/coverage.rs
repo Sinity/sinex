@@ -1,5 +1,6 @@
 use super::*;
 use sinex_model::EventPayload;
+use sqlx::Executor;
 
 // The previous source-correlated relation is the semantic and work control.
 const REPEATED_SOURCES: &str = r#"(
