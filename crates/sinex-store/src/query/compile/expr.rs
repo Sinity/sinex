@@ -859,6 +859,23 @@ impl Compiler<'_> {
         }
     }
 
+    /// Current membership and its transitions commit together. Compare the selected
+    /// position to the head in this statement's snapshot, including on cursor reads.
+    fn live_event_at(&self, id: &str) -> SqlFragment {
+        let mut condition = SqlFragment::text(
+            "CASE WHEN (SELECT value FROM core.counters WHERE name='commit_seq') = ",
+        );
+        condition
+            .param(self.seq)
+            .push(format!(
+                " THEN (SELECT a.event_id FROM audit.archived a WHERE a.event_id={id}) IS NULL \
+             ELSE NOT audit.is_archived_at({id}, "
+            ))
+            .param(self.seq)
+            .push(") END");
+        condition
+    }
+
     /// The conditions every base relation carries: live at the commit
     /// position, and the alias's kinds.
     pub(super) fn base_conditions(&self, cols: &Cols) -> Vec<SqlFragment> {
@@ -869,11 +886,9 @@ impl Compiler<'_> {
         match table {
             Table::Events | Table::Drift => {
                 let mut f = SqlFragment::text(Self::template(cols, "{t}.commit_seq <= "));
-                f.param(self.seq).push(Self::template(
-                    cols,
-                    " AND NOT audit.is_archived_at({t}.id, ",
-                ));
-                f.param(self.seq).push(")");
+                f.param(self.seq)
+                    .push(" AND ")
+                    .append(self.live_event_at(&Self::template(cols, "{t}.id")));
                 out.push(f);
             }
             Table::Archive => {
@@ -939,9 +954,9 @@ impl Compiler<'_> {
                         " AND fused.parents @> ARRAY[{t}.id] AND fused.commit_seq <= ",
                     ))
                     .param(self.seq)
-                    .push(" AND NOT audit.is_archived_at(fused.id, ")
-                    .param(self.seq)
-                    .push("))");
+                    .push(" AND ")
+                    .append(self.live_event_at("fused.id"))
+                    .push(")");
                 out.push(f);
             }
         }

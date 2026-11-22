@@ -578,6 +578,75 @@ async fn as_of_reads_what_was_live_at_a_commit_position(db: devkit::pg::TestData
 }
 
 #[devkit::test]
+async fn current_recall_skips_transition_lookups_and_a_continuation_keeps_its_position(
+    db: devkit::pg::TestDatabase,
+) {
+    use sinex_model::lifecycle::Act;
+
+    async fn transition_lookups(conn: &mut PgConnection) -> i64 {
+        sqlx::query("SELECT pg_stat_force_next_flush()")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        sqlx::query_scalar("SELECT coalesce(pg_stat_get_function_calls('audit.is_archived_at(uuid,bigint)'::regprocedure), 0)")
+            .fetch_one(conn).await.unwrap()
+    }
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    let ids = world(&mut conn).await;
+    sqlx::query("SET track_functions = 'all'")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    let question = "recall 2026-09-14T08:02:00Z ±90s";
+    let before = transition_lookups(&mut conn).await;
+    let initial = ask(&mut conn, question).await;
+    assert_eq!(initial.total, 6);
+    let first = ask_page(
+        &mut conn,
+        question,
+        Page {
+            size: Some(1),
+            cursor: None,
+        },
+    )
+    .await;
+    assert_eq!(transition_lookups(&mut conn).await, before);
+
+    let target = EventId(ids[1].1);
+    crate::lifecycle::move_events(&mut conn, Act::Archive, vec![target], &NoDerivations).await;
+    let after_archive = current_seq(&mut conn).await.unwrap();
+    let before = transition_lookups(&mut conn).await;
+    let current = ask(&mut conn, question).await;
+    assert_eq!(current.total, 4);
+    assert_eq!(transition_lookups(&mut conn).await, before);
+    let continued = ask_page(
+        &mut conn,
+        question,
+        Page {
+            size: Some(1),
+            cursor: first.page.cursor,
+        },
+    )
+    .await;
+    assert_eq!(continued.resolved.commit_seq, initial.resolved.commit_seq);
+    assert_eq!(continued.total, initial.total);
+    assert_eq!(continued.rows, initial.rows[1..2]);
+    assert_eq!(continued.recall, initial.recall);
+    assert!(transition_lookups(&mut conn).await > before);
+
+    crate::lifecycle::move_events(&mut conn, Act::Restore, vec![target], &NoDerivations).await;
+    assert_eq!(ask(&mut conn, question).await.rows, initial.rows);
+    let archived = ask(
+        &mut conn,
+        &format!("{question} | as of seq {after_archive}"),
+    )
+    .await;
+    assert_eq!(archived.rows, current.rows);
+}
+
+#[devkit::test]
 async fn near_conditions_pick_the_nearest_match_once(db: devkit::pg::TestDatabase) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await

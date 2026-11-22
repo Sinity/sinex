@@ -115,6 +115,9 @@ years (29 February matches only 29 February and answers "no such day" in other y
 
 Archived visibility is a relation and read-context choice: `events` excludes
 readings archived at the selected position; `archive` exposes archive history.
+An event query at the head of its database snapshot reads current archive
+membership. An earlier position, including a continued page after another
+commit, reads the recorded transitions through that position.
 `| as of POSITION` selects historical visibility at that exact commit. It does
 not make every archived reading part of the default `events`, and current privacy
 and tombstone policy still applies. There is no separate `archived` table name
