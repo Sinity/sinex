@@ -152,13 +152,16 @@ pub(super) async fn read_shared(
                     input,
                     check: prepare_check.clone(),
                 };
-                let blob = prepare_material.store_reader(input)?;
-                let after = drivers::file_facts(&path)?;
-                if !same_file(&prepare_facts, &after) {
-                    return Err(Error::conflict(
-                        "file changed during capture; retry from an unchanged revision",
-                    ));
-                }
+                let blob = prepare_material.store_validated_reader(input, || {
+                    prepare_check()?;
+                    let after = drivers::file_facts(&path)?;
+                    if !same_file(&prepare_facts, &after) {
+                        return Err(Error::conflict(
+                            "file changed during capture; retry from an unchanged revision",
+                        ));
+                    }
+                    Ok(())
+                })?;
                 (
                     blob,
                     prepare_facts

@@ -106,9 +106,24 @@ impl SealingSink {
     }
 
     pub(crate) fn put_reader(&self, reader: impl std::io::Read + std::io::Seek) -> Result<String> {
-        let key = sinex_sealing::new_key()?;
-        let name = self.blobs.put_sealed_reader(reader, &key)?;
-        self.restore_key(name.clone(), key)?;
+        self.put_validated_reader(reader, || Ok(()))
+    }
+
+    pub(super) fn put_validated_reader(
+        &self,
+        reader: impl std::io::Read + std::io::Seek,
+        validate: impl FnOnce() -> Result<()>,
+    ) -> Result<String> {
+        let data = sinex_sealing::new_key()?;
+        let prepared = self.blobs.prepare_sealed_reader(reader, &data)?;
+        validate()?;
+        let wrapped = sinex_sealing::wrap(&data, &self.recipient)?;
+        let name = self.blobs.put_prepared(prepared)?;
+        self.state
+            .lock()
+            .expect("sealing state")
+            .unadmitted
+            .insert(name.clone(), SealingKey { data, wrapped });
         Ok(name)
     }
 

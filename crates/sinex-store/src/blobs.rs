@@ -114,7 +114,11 @@ impl Blobs {
         self.prepare(self.preparation()?.plain(bytes, 3)?)
     }
     pub fn put_seekable(&self, reader: impl Read + Seek) -> Result<String> {
-        self.prepare(self.preparation()?.plain(reader, 3)?)
+        self.prepare(self.prepare_seekable(reader)?)
+    }
+    /// Encode without registering the bytes, so the caller can validate its input.
+    pub fn prepare_seekable(&self, reader: impl Read + Seek) -> Result<Prepared> {
+        Ok(self.preparation()?.plain(reader, 3)?)
     }
     pub fn put_sealed(&self, bytes: &[u8], key: &sinex_sealing::DataKey) -> Result<String> {
         self.put_sealed_reader(std::io::Cursor::new(bytes), key)
@@ -124,7 +128,15 @@ impl Blobs {
         reader: impl Read + Seek,
         key: &sinex_sealing::DataKey,
     ) -> Result<String> {
-        self.prepare(self.preparation()?.sealed(reader, 3, key)?)
+        self.prepare(self.prepare_sealed_reader(reader, key)?)
+    }
+    /// Seal without registering the bytes, so the caller can validate its input.
+    pub fn prepare_sealed_reader(
+        &self,
+        reader: impl Read + Seek,
+        key: &sinex_sealing::DataKey,
+    ) -> Result<Prepared> {
+        Ok(self.preparation()?.sealed(reader, 3, key)?)
     }
 
     /// Record `name` as the concatenation of `chunks`, each either held

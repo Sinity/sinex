@@ -110,11 +110,24 @@ impl MaterialAccess {
         &self,
         reader: impl std::io::Read + std::io::Seek,
     ) -> Result<String> {
+        self.store_validated_reader(reader, || Ok(()))
+    }
+
+    pub(crate) fn store_validated_reader(
+        &self,
+        reader: impl std::io::Read + std::io::Seek,
+        validate: impl FnOnce() -> Result<()>,
+    ) -> Result<String> {
         match &self.sealing {
-            Some(sealing) => sealing.put_reader(reader),
-            None => self.plain.0.put_seekable(reader).map_err(Error::from),
+            Some(sealing) => sealing.put_validated_reader(reader, validate),
+            None => {
+                let prepared = self.plain.0.prepare_seekable(reader)?;
+                validate()?;
+                Ok(self.plain.0.put_prepared(prepared)?)
+            }
         }
     }
+
     pub(crate) fn archive_input<C>(
         &self,
         located: &sinex_store::blobs::Located,

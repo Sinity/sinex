@@ -43,6 +43,45 @@ fn checked_readers_honor_cancellation_for_reads_and_seeks() {
     assert!(second.seek(SeekFrom::Start(0)).is_err());
 }
 
+#[test]
+fn shared_file_validation_drops_only_its_own_preparation() {
+    for class in [Class::Open, Class::Sealed] {
+        let dir = tempfile::tempdir().unwrap();
+        let store = dir.path().join("store");
+        let blobs = Blobs::open(&store).unwrap();
+        let recipient = sinex_sealing::Identity::generate().to_public();
+        let access = Access {
+            recipient: Some(&recipient),
+            unlock: None,
+        };
+        let first = MaterialAccess::new(blobs.clone(), class, access).unwrap();
+        let second = MaterialAccess::new(blobs.clone(), class, access).unwrap();
+        let incoming = store.canonicalize().unwrap().join("incoming");
+        let open_preparations = || {
+            std::fs::read_dir("/proc/self/fd")
+                .unwrap()
+                .filter_map(|entry| std::fs::read_link(entry.ok()?.path()).ok())
+                .filter(|path| path.starts_with(&incoming))
+                .count()
+        };
+        let bytes = b"the same original bytes in both captures";
+        let refuse = || Err(crate::Error::conflict("file changed during capture"));
+        let error = first
+            .store_validated_reader(Cursor::new(bytes), refuse)
+            .unwrap_err();
+        assert!(error.to_string().contains("file changed during capture"));
+        assert_eq!(open_preparations(), 0);
+
+        second.store_reader(Cursor::new(bytes)).unwrap();
+        assert_eq!(open_preparations(), 1);
+        let error = first
+            .store_validated_reader(Cursor::new(bytes), refuse)
+            .unwrap_err();
+        assert!(error.to_string().contains("file changed during capture"));
+        assert_eq!(open_preparations(), 1);
+    }
+}
+
 #[devkit::test]
 async fn cancelled_owned_file_storage_preserves_original_and_retries_plain_and_sealed(
     db: devkit::pg::TestDatabase,
