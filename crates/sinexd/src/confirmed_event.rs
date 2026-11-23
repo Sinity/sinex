@@ -1,8 +1,8 @@
-//! Build the wire form of committed events, for the confirmed stream, a
-//! snapshot page and a fetch by ID alike.
+//! Build the wire form of committed events, for a snapshot page and a fetch
+//! by ID alike.
 use crate::{Error, Result};
 use sinex_model::{Class, DbCheck, EventId, KindRef, MaterialId, RecordLocation, RunId, Timestamp};
-use sinex_protocol::{ConfirmedEvent, PayloadIdentity, WithheldEvent, WithheldReason};
+use sinex_protocol::{ConfirmedEvent, EventReference, PayloadIdentity};
 use sinex_store::confirmed::Row;
 use std::collections::BTreeMap;
 
@@ -106,18 +106,16 @@ fn event(row: Row, kind_definition_hash: String) -> Result<ConfirmedEvent> {
 }
 
 /// The body-free form of an event.
-pub(crate) fn withheld(
+pub(crate) fn reference(
     commit_seq: i64,
     event: uuid::Uuid,
     event_type: String,
     class_name: &str,
-    reason: WithheldReason,
-) -> Result<WithheldEvent> {
-    Ok(WithheldEvent {
+) -> Result<EventReference> {
+    Ok(EventReference {
         commit_seq,
         event: EventId(event),
         event_type,
         class: class(class_name)?,
-        reason,
     })
 }

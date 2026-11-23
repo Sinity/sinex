@@ -78,8 +78,7 @@ impl<E> Default for ChangePage<E> {
     }
 }
 
-/// The routing fields of a committed event. The publisher loads complete
-/// events only for those it sends inline.
+/// The routing fields of a committed event: all the confirmed stream carries.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EventHeader {
     pub commit_seq: i64,
@@ -130,58 +129,16 @@ impl EventRows for EventHeader {
     }
 }
 
-/// A committed event as the confirmed publisher sends it: complete when its
-/// class is open, by its routing fields otherwise.
-#[derive(Clone, Debug, PartialEq)]
-pub enum StreamEvent {
-    Open(Box<crate::confirmed::Row>),
-    Header(EventHeader),
-}
-impl StreamEvent {
-    pub fn id(&self) -> Uuid {
-        match self {
-            Self::Open(row) => row.id,
-            Self::Header(header) => header.id,
-        }
-    }
-}
-impl EventRows for StreamEvent {
-    const PAYLOAD: bool = true;
-    fn id(&self) -> Uuid {
-        StreamEvent::id(self)
-    }
-    async fn load(conn: &mut PgConnection, ids: &[Uuid]) -> Result<Vec<Self>> {
-        let headers = EventHeader::load(conn, ids).await?;
-        let open: Vec<_> = headers
-            .iter()
-            .filter(|header| header.class == "open")
-            .map(|header| header.id)
-            .collect();
-        let rows: BTreeMap<_, _> = crate::confirmed::rows(conn, &open)
-            .await?
-            .into_iter()
-            .map(|row| (row.id, row))
-            .collect();
-        Ok(headers
-            .into_iter()
-            .map(|header| match rows.get(&header.id) {
-                Some(row) => Self::Open(Box::new(row.clone())),
-                None => Self::Header(header),
-            })
-            .collect())
-    }
-}
-
 /// Read the confirmed stream's work after its start position, in the same order and
-/// with the same history checks as the full feed. Pages are bounded by stored
-/// payload bytes.
+/// with the same history checks as the full feed. Events are read as their
+/// routing fields only; no payload is read.
 pub async fn stream_changes_after_start(
     conn: &mut PgConnection,
     after: ChangeCursor,
     start: &StreamStart,
     limit: i64,
     bytes: i64,
-) -> Result<ChangePage<StreamEvent>> {
+) -> Result<ChangePage<EventHeader>> {
     changes_page_from(conn, after, limit, bytes, Some(start)).await
 }
 

@@ -1,27 +1,46 @@
 use super::*;
 use sinex_protocol::{
-    ConfirmedEvent, ErasedEvent, FetchEvent, FetchEventReply, FetchMaterial, FetchMaterialReply,
-    FetchRefusal, FetchRefusalKind, MaterialFrame,
+    ConfirmedEvent, ErasedEvent, FetchEvents, FetchEventsReply, FetchMaterial, FetchMaterialReply,
+    FetchRefusal, FetchRefusalKind, FetchedEvent, MaterialFrame,
 };
 
-fn fetched_event(reply: FetchEventReply) -> ConfirmedEvent {
+/// A page of one ID.
+fn one(event: EventId) -> FetchEvents {
+    FetchEvents {
+        events: vec![event],
+    }
+}
+
+/// The only item of a page of one.
+fn only(reply: FetchEventsReply) -> FetchedEvent {
     match reply {
-        FetchEventReply::Event(event) => *event,
+        FetchEventsReply::Events { mut events } if events.len() == 1 => events.pop().unwrap(),
+        other => panic!("not a page of one: {other:?}"),
+    }
+}
+
+fn fetched_event(reply: FetchEventsReply) -> ConfirmedEvent {
+    match only(reply) {
+        FetchedEvent::Event(event) => *event,
         other => panic!("not an event: {other:?}"),
     }
 }
 
-fn fetched_erasure(reply: FetchEventReply) -> ErasedEvent {
-    match reply {
-        FetchEventReply::Erased(erased) => erased,
+fn fetched_erasure(reply: FetchEventsReply) -> ErasedEvent {
+    match only(reply) {
+        FetchedEvent::Erased(erased) => erased,
         other => panic!("not an erasure: {other:?}"),
     }
 }
 
-fn event_refusal(reply: FetchEventReply) -> FetchRefusal {
+/// A refusal of the whole request or of its one event.
+fn event_refusal(reply: FetchEventsReply) -> FetchRefusal {
     match reply {
-        FetchEventReply::Refused(refusal) => refusal,
-        other => panic!("not a refusal: {other:?}"),
+        FetchEventsReply::Refused(refusal) => refusal,
+        reply => match only(reply) {
+            FetchedEvent::Refused { refusal, .. } => refusal,
+            other => panic!("not a refusal: {other:?}"),
+        },
     }
 }
 
@@ -109,11 +128,11 @@ async fn authenticated_fetch_preserves_no_rules_payloads_under_kind_and_class_gr
     assert_eq!(ack.refusal(), None);
     let id = ack.admitted()[0];
     for producer in ["replica", "near-prefix", "open-only", "unconfigured"] {
-        let bytes = serde_json::to_vec(&FetchEvent { event: id }).unwrap();
-        let message = rpc(&h.client, h.subjects.fetch_event(producer), bytes)
+        let bytes = serde_json::to_vec(&one(id)).unwrap();
+        let message = rpc(&h.client, h.subjects.fetch_events(producer), bytes)
             .await
             .unwrap();
-        let reply: FetchEventReply = serde_json::from_slice(&message.payload).unwrap();
+        let reply: FetchEventsReply = serde_json::from_slice(&message.payload).unwrap();
         if producer == "replica" {
             let event = fetched_event(reply);
             assert_eq!(event.payload, expected);
@@ -137,12 +156,12 @@ async fn authenticated_fetch_preserves_no_rules_payloads_under_kind_and_class_gr
     }
     let forged = rpc(
         &h.client,
-        h.subjects.fetch_event("unconfigured"),
-        serde_json::to_vec(&json!({"event":id,"producer":"replica"})).unwrap(),
+        h.subjects.fetch_events("unconfigured"),
+        serde_json::to_vec(&json!({"events":[id],"producer":"replica"})).unwrap(),
     )
     .await
     .unwrap();
-    let forged: FetchEventReply = serde_json::from_slice(&forged.payload).unwrap();
+    let forged: FetchEventsReply = serde_json::from_slice(&forged.payload).unwrap();
     assert_eq!(event_refusal(forged).kind, FetchRefusalKind::Invalid);
     let message = rpc(
         &h.client,
@@ -213,13 +232,11 @@ async fn oversized_event_and_material_metadata_use_the_shared_framed_reply(
         )
         .await;
     assert_eq!(ack.refusal(), None);
-    let event: FetchEventReply = sinex_transport::replies::request_json(
+    let event: FetchEventsReply = sinex_transport::replies::request_json(
         &h.client,
-        h.subjects.fetch_event("replica"),
+        h.subjects.fetch_events("replica"),
         "replica",
-        &FetchEvent {
-            event: ack.admitted()[0],
-        },
+        &one(ack.admitted()[0]),
         Duration::from_secs(20),
     )
     .await
@@ -286,12 +303,10 @@ async fn tombstoned_event_fetch_returns_erasure_under_grants(db: devkit::pg::Tes
         )
         .await;
     assert_eq!(ack.refusal(), None);
-    let request = FetchEvent {
-        event: ack.admitted()[0],
-    };
-    let before: FetchEventReply = sinex_transport::replies::request_json(
+    let request = one(ack.admitted()[0]);
+    let before: FetchEventsReply = sinex_transport::replies::request_json(
         &h.client,
-        h.subjects.fetch_event("replica"),
+        h.subjects.fetch_events("replica"),
         "replica",
         &request,
         Duration::from_secs(20),
@@ -303,9 +318,9 @@ async fn tombstoned_event_fetch_returns_erasure_under_grants(db: devkit::pg::Tes
     assert!(received.payload_identity.verifies(&received.payload));
     assert_eq!(Some(received.commit_seq), ack.commit_seq());
     h.tombstone_materials(&[material]).await;
-    let after: FetchEventReply = sinex_transport::replies::request_json(
+    let after: FetchEventsReply = sinex_transport::replies::request_json(
         &h.client,
-        h.subjects.fetch_event("replica"),
+        h.subjects.fetch_events("replica"),
         "replica",
         &request,
         Duration::from_secs(20),
@@ -316,9 +331,9 @@ async fn tombstoned_event_fetch_returns_erasure_under_grants(db: devkit::pg::Tes
     assert_eq!(erased.event, received.id);
     assert_eq!(erased.original_commit_seq, received.commit_seq);
     assert!(erased.commit_seq > erased.original_commit_seq);
-    let denied: FetchEventReply = sinex_transport::replies::request_json(
+    let denied: FetchEventsReply = sinex_transport::replies::request_json(
         &h.client,
-        h.subjects.fetch_event("narrow"),
+        h.subjects.fetch_events("narrow"),
         "narrow",
         &request,
         Duration::from_secs(20),
@@ -335,14 +350,14 @@ async fn tombstoned_event_fetch_returns_erasure_under_grants(db: devkit::pg::Tes
         .unwrap();
     sqlx::query!(
         "UPDATE core.event_tombstones SET original_commit_seq=NULL WHERE event_id=$1",
-        request.event.0
+        request.events[0].0
     )
     .execute(&mut conn)
     .await
     .unwrap();
-    let unknown: FetchEventReply = sinex_transport::replies::request_json(
+    let unknown: FetchEventsReply = sinex_transport::replies::request_json(
         &h.client,
-        h.subjects.fetch_event("replica"),
+        h.subjects.fetch_events("replica"),
         "replica",
         &request,
         Duration::from_secs(20),
@@ -354,15 +369,15 @@ async fn tombstoned_event_fetch_returns_erasure_under_grants(db: devkit::pg::Tes
     assert!(unknown.reason.contains("unknown historical positions"));
     sqlx::query!(
         "UPDATE core.event_tombstones SET original_commit_seq=$2,class=NULL WHERE event_id=$1",
-        request.event.0,
+        request.events[0].0,
         erased.original_commit_seq
     )
     .execute(&mut conn)
     .await
     .unwrap();
-    let unknown: FetchEventReply = sinex_transport::replies::request_json(
+    let unknown: FetchEventsReply = sinex_transport::replies::request_json(
         &h.client,
-        h.subjects.fetch_event("replica"),
+        h.subjects.fetch_events("replica"),
         "replica",
         &request,
         Duration::from_secs(20),
@@ -482,13 +497,11 @@ async fn raw_material_fetch_follows_the_class_admission_stored(db: devkit::pg::T
             .unwrap();
     assert_eq!(class, "guarded", "admission applied the rule once");
     assert!(payload.get("command").is_none());
-    let fetched: FetchEventReply = sinex_transport::replies::request_json(
+    let fetched: FetchEventsReply = sinex_transport::replies::request_json(
         &h.client,
-        h.subjects.fetch_event("replica"),
+        h.subjects.fetch_events("replica"),
         "replica",
-        &FetchEvent {
-            event: hidden_event,
-        },
+        &one(hidden_event),
         Duration::from_secs(20),
     )
     .await
@@ -620,4 +633,122 @@ async fn fetch_material_returns_bytes_and_ranges_and_pages_by_bytes(db: devkit::
     .await
     .unwrap();
     assert_eq!(material_refusal(reply).kind, FetchRefusalKind::Invalid);
+}
+
+/// One page answers each ID under the caller's grant: a readable event
+/// whole, an event of an ungranted class refused, a tombstoned event as its
+/// skeleton and an unknown ID as missing. The tombstone erases nothing from
+/// the confirmed stream; its reference stays and a notice follows.
+#[devkit::test]
+async fn a_page_fetch_answers_each_event_under_the_callers_grant(db: devkit::pg::TestDatabase) {
+    let grant = crate::ingress::fetch::Grants {
+        indexed_catalog: None,
+        public_context: false,
+        write: None,
+        kind_prefixes: vec!["command".into()],
+        classes: vec![sinex_model::Class::Open],
+    };
+    let h = Harness::start_with_grants(
+        db,
+        std::collections::BTreeMap::from([("replica".into(), grant)]),
+    )
+    .await;
+    let mut admitted = Vec::new();
+    for (name, class) in [
+        ("page-open", sinex_model::Class::Open),
+        ("page-guarded", sinex_model::Class::Guarded),
+        ("page-tombstoned", sinex_model::Class::Open),
+    ] {
+        let (material, frame) = h.material_frame(name, format!("{name}\n").as_bytes());
+        assert_eq!(h.send("kitty", &frame).await.refusal(), None);
+        let mut event = imported(material, 0, name);
+        event.class = class;
+        let ack = h
+            .send(
+                "kitty",
+                &Ingress::Events {
+                    source: Some(test_source("kitty")),
+                    frame: format!("{name}-event"),
+                    events: vec![event],
+                    failures: vec![],
+                },
+            )
+            .await;
+        assert_eq!(ack.refusal(), None);
+        admitted.push((material, ack.admitted()[0], ack.commit_seq().unwrap()));
+    }
+    let [
+        (_, open, _),
+        (_, guarded, _),
+        (tombstoned_material, tombstoned, tombstoned_seq),
+    ] = admitted[..]
+    else {
+        unreachable!()
+    };
+    let js = jetstream::new(h.client.clone());
+    let mut conn = PgConnection::connect(&h.url).await.unwrap();
+    crate::publisher::publish_pending(&mut conn, &js, &h.subjects)
+        .await
+        .unwrap();
+    let stream = js.get_stream(h.subjects.confirmed_stream()).await.unwrap();
+    let before = stream.cached_info().state.messages;
+    h.tombstone_materials(&[tombstoned_material]).await;
+    crate::publisher::publish_pending(&mut conn, &js, &h.subjects)
+        .await
+        .unwrap();
+
+    let unknown = EventId::new();
+    let reply: FetchEventsReply = sinex_transport::replies::request_json(
+        &h.client,
+        h.subjects.fetch_events("replica"),
+        "replica",
+        &FetchEvents {
+            events: vec![open, guarded, tombstoned, unknown],
+        },
+        Duration::from_secs(20),
+    )
+    .await
+    .unwrap();
+    let FetchEventsReply::Events { events } = reply else {
+        panic!("a page: {reply:?}")
+    };
+    assert_eq!(events.len(), 4);
+    assert!(
+        matches!(&events[0], FetchedEvent::Event(event) if event.id == open && event.payload["command"] == "page-open"),
+        "{:?}",
+        events[0]
+    );
+    assert!(
+        matches!(&events[1], FetchedEvent::Refused { event, refusal } if *event == guarded && refusal.kind == FetchRefusalKind::Denied),
+        "{:?}",
+        events[1]
+    );
+    assert!(
+        matches!(&events[2], FetchedEvent::Erased(erased) if erased.event == tombstoned && erased.original_commit_seq == tombstoned_seq),
+        "{:?}",
+        events[2]
+    );
+    assert!(
+        matches!(&events[3], FetchedEvent::Refused { event, refusal } if *event == unknown && refusal.kind == FetchRefusalKind::Missing),
+        "{:?}",
+        events[3]
+    );
+
+    let mut stream = js.get_stream(h.subjects.confirmed_stream()).await.unwrap();
+    let state = stream.info().await.unwrap().state.clone();
+    assert!(state.messages > before, "the tombstone adds a notice");
+    assert_eq!(
+        state.messages, state.last_sequence,
+        "no message was removed from the stream"
+    );
+    let mut references = Vec::new();
+    for seq in 1..=state.last_sequence {
+        let message = stream.get_raw_message(seq).await.unwrap();
+        match serde_json::from_slice(&message.payload).unwrap() {
+            Confirmed::Event(reference) => references.push(reference.event),
+            Confirmed::Tombstoned { event, .. } => assert_eq!(event, tombstoned),
+            _ => {}
+        }
+    }
+    assert!(references.contains(&tombstoned));
 }

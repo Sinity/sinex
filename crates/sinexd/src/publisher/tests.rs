@@ -111,11 +111,10 @@ async fn read_all(js: &jetstream::Context, subjects: &Subjects) -> Vec<Confirmed
         .filter(|message| !matches!(message, Confirmed::PositionComplete { .. }))
         .collect()
 }
-/// The commit position and ID of an event message, complete or withheld.
+/// The commit position and ID of an event message.
 pub(super) fn event_message(message: &Confirmed) -> Option<(i64, EventId)> {
     match message {
-        Confirmed::Event(event) => Some((event.commit_seq, event.id)),
-        Confirmed::Withheld(event) => Some((event.commit_seq, event.event)),
+        Confirmed::Event(event) => Some((event.commit_seq, event.event)),
         _ => None,
     }
 }
@@ -124,10 +123,21 @@ async fn instance(js: &jetstream::Context, subjects: &Subjects) -> String {
     stream_instance(&js.get_stream(subjects.confirmed_stream()).await.unwrap())
 }
 
+/// The raw bodies of every message on the stream, in stream order.
+async fn raw_bodies(js: &jetstream::Context, subjects: &Subjects) -> Vec<String> {
+    let stream = js.get_stream(subjects.confirmed_stream()).await.unwrap();
+    let mut bodies = Vec::new();
+    for seq in 1..=stream.cached_info().state.last_sequence {
+        let message = stream.get_raw_message(seq).await.unwrap();
+        bodies.push(String::from_utf8(message.payload.to_vec()).unwrap());
+    }
+    bodies
+}
+
+/// Every event travels as its position, ID, kind and class, whatever its
+/// class: no message carries a payload.
 #[devkit::test]
-async fn publishes_open_events_whole_and_others_by_id_in_commit_order(
-    db: devkit::pg::TestDatabase,
-) {
+async fn publishes_every_event_as_a_reference_in_commit_order(db: devkit::pg::TestDatabase) {
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
@@ -141,15 +151,13 @@ async fn publishes_open_events_whole_and_others_by_id_in_commit_order(
     let url = db.url(None);
     let mut conn = sinex_store::AdmissionContext::connect(&url).await.unwrap();
 
-    let first = executed("1", "ls", 1, Class::Open);
+    let first = executed("1", "list-open-directory", 1, Class::Open);
     let first_id = first.id;
-    admit(
-        &mut conn,
-        batch(vec![first, executed("2", "pass", 1, Class::Guarded)]),
-    )
-    .await;
+    let guarded = executed("2", "guarded-password-entry", 1, Class::Guarded);
+    let guarded_id = guarded.id;
+    admit(&mut conn, batch(vec![first, guarded])).await;
     // A newer reading of "1" replaces it: an archive change at the same commit.
-    let newer = executed("1", "ls -la", 2, Class::Open);
+    let newer = executed("1", "list-open-directory-long", 2, Class::Open);
     let newer_id = newer.id;
     admit(&mut conn, batch(vec![newer])).await;
 
@@ -162,7 +170,6 @@ async fn publishes_open_events_whole_and_others_by_id_in_commit_order(
         Published {
             events: 3,
             changes: 1,
-            ..Published::default()
         }
     );
     // Nothing new: nothing published again.
@@ -172,82 +179,39 @@ async fn publishes_open_events_whole_and_others_by_id_in_commit_order(
     assert_eq!(again, Published::default());
 
     let messages = read_all(&js, &subjects).await;
-    assert_eq!(messages.len(), 4);
-    let seqs: Vec<i64> = messages
-        .iter()
-        .filter_map(|m| event_message(m).map(|(seq, _)| seq))
-        .collect();
-    assert_eq!(seqs, [1, 2, 3]);
-    let Confirmed::Event(open) = &messages[0] else {
-        panic!("an open event travels whole")
+    let reference = |commit_seq, event, class| {
+        Confirmed::Event(EventReference {
+            commit_seq,
+            event,
+            event_type: "command.executed".into(),
+            class,
+        })
     };
-    assert_eq!((open.commit_seq, open.id), (1, first_id));
-    assert_eq!(open.payload["command"], "ls");
-    assert_eq!(open.class, Class::Open);
     assert_eq!(
-        open.payload_identity,
-        sinex_protocol::PayloadIdentity::for_payload(&open.payload)
+        messages[..3],
+        [
+            reference(1, first_id, Class::Open),
+            reference(2, guarded_id, Class::Guarded),
+            reference(3, newer_id, Class::Open),
+        ]
     );
-    let Confirmed::Withheld(guarded) = &messages[1] else {
-        panic!("a guarded event travels by ID")
-    };
-    assert_eq!(guarded.commit_seq, 2);
-    assert_eq!(guarded.class, Class::Guarded);
-    assert_eq!(guarded.reason, WithheldReason::Class);
-    let wire = serde_json::to_value(&messages[1]).unwrap();
-    assert!(wire.get("payload").is_none(), "{wire}");
-    let Confirmed::Event(newer) = &messages[2] else {
-        panic!("the newer open reading travels whole")
-    };
-    assert_eq!(newer.payload["command"], "ls -la");
     let Confirmed::Archived(change) = &messages[3] else {
         panic!("the change follows the event that caused it")
     };
     assert_eq!(change.event, first_id);
     assert_eq!(change.replaced_by, Some(newer_id));
     assert_eq!(change.reason, sinex_model::ArchiveReason::NewerReading);
-}
-
-/// Found on real data: one Atuin command of 4 MB. The event goes out by ID,
-/// and the next ones follow it whole.
-#[devkit::test]
-async fn an_event_larger_than_a_message_goes_out_without_its_payload(db: devkit::pg::TestDatabase) {
-    let nats = devkit::nats::test_nats().unwrap();
-    let subjects = Subjects::new(nats.prefix());
-    let js = context(async_nats::connect(nats.url()).await.unwrap());
-    ensure_stream(
-        &mut PgConnection::connect(&db.url(None)).await.unwrap(),
-        &js,
-        &subjects,
-    )
-    .await
-    .unwrap();
-    let limit = js.client().server_info().max_payload as u64;
-    let url = db.url(None);
-    let mut conn = sinex_store::AdmissionContext::connect(&url).await.unwrap();
-    let huge = "x".repeat(usize::try_from(limit).unwrap() * 2);
-    admit(
-        &mut conn,
-        batch(vec![
-            executed("1", &huge, 1, Class::Open),
-            executed("2", "ls", 2, Class::Open),
-        ]),
-    )
-    .await;
-    let mut publisher_conn = PgConnection::connect(&url).await.unwrap();
-    let done = publish_pending(&mut publisher_conn, &js, &subjects)
-        .await
-        .unwrap();
-    assert_eq!(done.events, 2);
-    let messages = read_all(&js, &subjects).await;
-    assert!(matches!(
-        &messages[0],
-        Confirmed::Withheld(event) if event.commit_seq == 1 && event.reason == WithheldReason::Size
-    ));
-    assert!(matches!(
-        &messages[1],
-        Confirmed::Event(event) if event.commit_seq == 2
-    ));
+    assert_eq!(messages.len(), 4);
+    for body in raw_bodies(&js, &subjects).await {
+        let wire: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert!(wire.get("payload").is_none(), "{body}");
+        for text in ["list-open-directory", "guarded-password-entry"] {
+            assert!(
+                !body.contains(text),
+                "a payload value is on the stream: {body}"
+            );
+        }
+    }
 }
 
 #[devkit::test]
@@ -325,10 +289,10 @@ async fn archive_after_publishing_sends_a_notice(db: devkit::pg::TestDatabase) {
     );
 }
 
-/// A tombstone reaches every surface: an event tombstoned after it was
-/// published is erased from the stream, and consumers are told.
+/// A tombstone needs nothing erased from the stream: the reference already
+/// published holds only what the skeleton keeps, and consumers are told.
 #[devkit::test]
-async fn tombstoning_erases_the_published_message(db: devkit::pg::TestDatabase) {
+async fn tombstoning_sends_a_notice_and_erases_nothing(db: devkit::pg::TestDatabase) {
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
@@ -353,31 +317,11 @@ async fn tombstoning_erases_the_published_message(db: devkit::pg::TestDatabase) 
     assert_eq!(read_all(&js, &subjects).await.len(), 2);
     lifecycle(&mut conn, Act::Archive, vec![secret_id, sibling_id]).await;
     let (_, operation) = lifecycle(&mut conn, Act::Tombstone, vec![secret_id]).await;
-    let remaining: Vec<uuid::Uuid> = sqlx::query_scalar(
-        "SELECT event_id FROM audit.archive_changes WHERE event_id IS NOT NULL ORDER BY event_id",
-    )
-    .fetch_all(&mut conn)
-    .await
-    .unwrap();
-    assert_eq!(
-        remaining
-            .into_iter()
-            .collect::<std::collections::BTreeSet<_>>(),
-        [secret_id.0, sibling_id.0].into_iter().collect(),
-        "payload-free visibility history remains for stream rebuild"
-    );
 
-    let done = publish_pending(&mut publisher_conn, &js, &subjects)
+    publish_pending(&mut publisher_conn, &js, &subjects)
         .await
         .unwrap();
-    assert_eq!(done.tombstoned, 1);
     let messages = read_all(&js, &subjects).await;
-    assert!(
-        !messages
-            .iter()
-            .any(|m| event_message(m).is_some_and(|(_, event)| event == secret_id)),
-        "the tombstoned event's message is gone"
-    );
     let removed_seq: Option<i64> =
         sqlx::query_scalar("SELECT commit_seq FROM core.event_tombstones WHERE event_id=$1")
             .bind(secret_id.0)
@@ -391,23 +335,33 @@ async fn tombstoning_erases_the_published_message(db: devkit::pg::TestDatabase) 
         event: secret_id,
         operation
     }));
-    let raw = js
-        .get_stream(subjects.confirmed_stream())
-        .await
-        .unwrap()
-        .get_raw_message(1)
-        .await;
-    assert!(raw.is_err(), "stream sequence 1 was erased");
-    // Erased once: a second pass has nothing to do.
+    assert!(
+        js.get_stream(subjects.confirmed_stream())
+            .await
+            .unwrap()
+            .get_raw_message(1)
+            .await
+            .is_ok(),
+        "the published reference stays"
+    );
+    assert!(
+        raw_bodies(&js, &subjects)
+            .await
+            .iter()
+            .all(|body| !body.contains("hunter2"))
+    );
     let again = publish_pending(&mut publisher_conn, &js, &subjects)
         .await
         .unwrap();
     assert_eq!(again, Published::default());
+    // The stream differs from the commit reader only by the reference
+    // published before the tombstone, which the notice cancels.
     let expected = commit_order::internal(&mut publisher_conn).await;
     assert_eq!(
         messages
             .iter()
             .filter_map(commit_order::tuple)
+            .filter(|tuple| *tuple != (1, secret_id, "event"))
             .collect::<Vec<_>>(),
         expected
     );
@@ -435,11 +389,6 @@ async fn tombstoning_erases_the_published_message(db: devkit::pg::TestDatabase) 
         vec![Confirmed::PositionComplete {
             commit_seq: stream_start.position
         }]
-    );
-    assert!(
-        !rebuilt
-            .iter()
-            .any(|message| event_message(message).is_some_and(|(_, event)| event == secret_id))
     );
 }
 
@@ -478,9 +427,8 @@ async fn archive_consumer_observes_archive_restore_archive_without_duplicate_eve
     for message in messages {
         match message {
             Confirmed::Event(event) => {
-                assert!(live.insert(event.id));
+                assert!(live.insert(event.event));
             }
-            Confirmed::Withheld(event) => panic!("an open event travels whole: {event:?}"),
             Confirmed::Archived(n) => {
                 assert_eq!(n.event, id);
                 live.remove(&n.event);
@@ -513,272 +461,106 @@ async fn archive_consumer_observes_archive_restore_archive_without_duplicate_eve
 }
 
 mod commit_order;
-mod erase;
 mod outage;
 
-/// Only acknowledged event positions are paired; visibility messages and
-/// erased commit positions can leave gaps in both orders.
+/// The stream is declared without an age, count or size limit, and keeps that
+/// when the publisher provisions it again or a lost stream is created anew.
 #[devkit::test]
-async fn page_pairs_follow_acknowledgments_through_visibility_and_commit_gaps(
-    db: devkit::pg::TestDatabase,
-) {
+async fn confirmed_stream_has_no_age_limit_after_reprovisioning(db: devkit::pg::TestDatabase) {
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
-    ensure_stream(
-        &mut PgConnection::connect(&db.url(None)).await.unwrap(),
-        &js,
-        &subjects,
-    )
-    .await
-    .unwrap();
-    let mut conn = sinex_store::AdmissionContext::connect(&db.url(None))
-        .await
-        .unwrap();
-    let first = executed("first", "pwd", 1, Class::Open);
-    let first_id = first.id;
-    let missing = executed("missing", "gone", 2, Class::Open);
-    let missing_id = missing.id;
-    admit(&mut conn, batch(vec![first, missing])).await;
+    let unlimited = |config: &stream::Config| {
+        assert_eq!(config.max_age, Duration::ZERO);
+        assert_eq!(config.max_messages, -1);
+        assert_eq!(config.max_bytes, -1);
+        assert_eq!(config.max_messages_per_subject, -1);
+        assert_eq!(config.retention, stream::RetentionPolicy::Limits);
+        assert_eq!(config.storage, stream::StorageType::File);
+    };
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    for _ in 0..2 {
+        ensure_stream(&mut conn, &js, &subjects).await.unwrap();
+        let mut found = js.get_stream(subjects.confirmed_stream()).await.unwrap();
+        unlimited(&found.info().await.unwrap().config);
+    }
+    js.delete_stream(subjects.confirmed_stream()).await.unwrap();
     publish_pending(&mut conn, &js, &subjects).await.unwrap();
-    lifecycle(&mut conn, Act::Archive, vec![first_id]).await;
-    publish_pending(&mut conn, &js, &subjects).await.unwrap();
-    let last = executed("last", "secret", 3, Class::Guarded);
-    let last_id = last.id;
-    admit(&mut conn, batch(vec![last])).await;
-    publish_pending(&mut conn, &js, &subjects).await.unwrap();
-    let pairs: Vec<(uuid::Uuid, i64)> =
-        sqlx::query_as("SELECT event_id, stream_seq FROM core.published ORDER BY stream_seq")
-            .fetch_all(&mut conn)
-            .await
-            .unwrap();
-    assert_eq!(pairs, [(first_id.0, 1), (missing_id.0, 2), (last_id.0, 6)]);
-    let messages = read_all(&js, &subjects).await;
-    assert!(matches!(&messages[2], Confirmed::Archived(_)));
-    assert_eq!(
-        event_message(&messages[3]).map(|(_, event)| event),
-        Some(last_id)
-    );
+    let mut found = js.get_stream(subjects.confirmed_stream()).await.unwrap();
+    unlimited(&found.info().await.unwrap().config);
 }
 
+/// A database upgraded from the shape that recorded every published copy
+/// loses that table, and the publisher resumes after its saved position.
 #[devkit::test]
-async fn acknowledgment_before_database_rollback_is_recorded_on_retry(
-    db: devkit::pg::TestDatabase,
-) {
+async fn publisher_resumes_at_its_position_after_the_upgrade(db: devkit::pg::TestDatabase) {
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
-    ensure_stream(
-        &mut PgConnection::connect(&db.url(None)).await.unwrap(),
-        &js,
-        &subjects,
-    )
-    .await
-    .unwrap();
-    let mut conn = sinex_store::AdmissionContext::connect(&db.url(None))
+    let url = db.url(None);
+    let mut conn = sinex_store::AdmissionContext::connect(&url).await.unwrap();
+    let mut publisher_conn = PgConnection::connect(&url).await.unwrap();
+    ensure_stream(&mut publisher_conn, &js, &subjects)
         .await
         .unwrap();
-    let event = executed("first", "pwd", 1, Class::Open);
-    let id = event.id;
-    admit(&mut conn, batch(vec![event])).await;
-    let page = commit_log::after(&mut conn, 0, PAGE, sinex_store::PAGE_BYTES)
+    admit(&mut conn, batch(vec![executed("1", "pwd", 1, Class::Open)])).await;
+    publish_pending(&mut publisher_conn, &js, &subjects)
         .await
         .unwrap();
-    let committed = &page.events[0];
-    let ack = publish(
-        &js,
-        subjects.confirmed_event(&committed.row.class, &committed.row.event_type),
-        format!("event-{}", committed.row.commit_seq),
-        &withheld_copy(committed),
+    let consumer = consumer_for(&instance(&js, &subjects).await);
+    let (saved, _) = commit_log::consumer_position(&mut publisher_conn, &consumer)
+        .await
+        .unwrap();
+    assert_eq!(saved, 1);
+    // An upgrade runs with no writer holding the database.
+    drop(conn);
+    // The previous shape: the table of published copies, one schema version back.
+    sqlx::raw_sql(
+        "CREATE TABLE core.published (
+           event_id uuid NOT NULL,
+           stream_seq bigint NOT NULL,
+           stream_instance text NOT NULL DEFAULT '',
+           CONSTRAINT published_pairs_pkey PRIMARY KEY (event_id, stream_seq, stream_instance));
+         INSERT INTO core.published SELECT id, 1, '' FROM core.events;
+         UPDATE sinex_schema.applied SET version = version - 1",
     )
-    .await
-    .unwrap()
+    .execute(&mut publisher_conn)
     .await
     .unwrap();
-    let mut tx = conn.begin().await.unwrap();
-    commit_log::record_published_in(
-        &mut tx,
-        &instance(&js, &subjects).await,
-        &[(id.0, ack.sequence as i64)],
-    )
-    .await
-    .unwrap();
-    commit_log::set_consumer_position(
-        &mut tx,
-        &consumer_for(&instance(&js, &subjects).await),
-        committed.row.commit_seq,
-        0,
-    )
-    .await
-    .unwrap();
-    tx.rollback().await.unwrap();
+    assert!(matches!(
+        sinex_schema::apply(&mut publisher_conn).await.unwrap(),
+        sinex_schema::Applied::Upgraded { .. }
+    ));
+    let table: Option<String> = sqlx::query_scalar("SELECT to_regclass('core.published')::text")
+        .fetch_one(&mut publisher_conn)
+        .await
+        .unwrap();
+    assert_eq!(table, None);
     assert_eq!(
-        commit_log::consumer_position(&mut conn, &consumer_for(&instance(&js, &subjects).await))
+        commit_log::consumer_position(&mut publisher_conn, &consumer)
             .await
             .unwrap(),
-        (0, 0)
+        (saved, 0)
     );
+    let mut conn = sinex_store::AdmissionContext::connect(&url).await.unwrap();
+    let later = executed("2", "ls", 2, Class::Open);
+    let later_id = later.id;
+    admit(&mut conn, batch(vec![later])).await;
     assert_eq!(
-        publish_pending(&mut conn, &js, &subjects)
+        publish_pending(&mut publisher_conn, &js, &subjects)
             .await
             .unwrap()
             .events,
         1
     );
-    assert_eq!(read_all(&js, &subjects).await.len(), 1);
-    let pairs: Vec<(uuid::Uuid, i64)> =
-        sqlx::query_as("SELECT event_id, stream_seq FROM core.published")
-            .fetch_all(&mut conn)
-            .await
-            .unwrap();
-    assert_eq!(pairs, [(id.0, ack.sequence as i64)]);
-}
-
-/// A crash between JetStream's acknowledgment and the commit, found after the
-/// duplicate window: the stream holds a reference the database does not list.
-/// The next pass records it, so erasure removes that copy too.
-#[devkit::test]
-async fn unrecorded_published_references_are_recorded_at_start(db: devkit::pg::TestDatabase) {
-    let nats = devkit::nats::test_nats().unwrap();
-    let subjects = Subjects::new(nats.prefix());
-    let js = context(async_nats::connect(nats.url()).await.unwrap());
-    ensure_stream(
-        &mut PgConnection::connect(&db.url(None)).await.unwrap(),
-        &js,
-        &subjects,
-    )
-    .await
-    .unwrap();
-    let url = db.url(None);
-    let mut conn = sinex_store::AdmissionContext::connect(&url).await.unwrap();
-    let event = executed("1", "pwd", 1, Class::Open);
-    let id = event.id;
-    admit(&mut conn, batch(vec![event])).await;
-    let mut publisher_conn = PgConnection::connect(&url).await.unwrap();
-    publish_pending(&mut publisher_conn, &js, &subjects)
+    let events: Vec<_> = read_all(&js, &subjects)
         .await
-        .unwrap();
-    let committed = &commit_log::after(&mut conn, 0, PAGE, sinex_store::PAGE_BYTES)
-        .await
-        .unwrap()
-        .events[0];
-    let stray = publish(
-        &js,
-        subjects.confirmed_event(&committed.row.class, &committed.row.event_type),
-        "copy-after-the-duplicate-window".into(),
-        &withheld_copy(committed),
-    )
-    .await
-    .unwrap()
-    .await
-    .unwrap()
-    .sequence;
-
-    publish_pending(&mut publisher_conn, &js, &subjects)
-        .await
-        .unwrap();
-    let recorded: Vec<i64> = sqlx::query_scalar(
-        "SELECT stream_seq FROM core.published WHERE event_id = $1 ORDER BY stream_seq",
-    )
-    .bind(id.0)
-    .fetch_all(&mut conn)
-    .await
-    .unwrap();
-    assert_eq!(recorded, [1, stray as i64], "both copies are recorded");
-
-    lifecycle(&mut conn, Act::Archive, vec![id]).await;
-    lifecycle(&mut conn, Act::Tombstone, vec![id]).await;
-    publish_pending(&mut publisher_conn, &js, &subjects)
-        .await
-        .unwrap();
-    assert!(
-        !read_all(&js, &subjects)
-            .await
-            .iter()
-            .any(|m| event_message(m).is_some_and(|(_, event)| event == id)),
-        "no copy of the tombstoned event stays on the stream"
-    );
-}
-
-#[devkit::test]
-async fn repeated_erasure_keeps_other_copies_until_their_acknowledgment(
-    db: devkit::pg::TestDatabase,
-) {
-    let nats = devkit::nats::test_nats().unwrap();
-    let subjects = Subjects::new(nats.prefix());
-    let js = context(async_nats::connect(nats.url()).await.unwrap());
-    ensure_stream(
-        &mut PgConnection::connect(&db.url(None)).await.unwrap(),
-        &js,
-        &subjects,
-    )
-    .await
-    .unwrap();
-    let mut conn = sinex_store::AdmissionContext::connect(&db.url(None))
-        .await
-        .unwrap();
-    let event = executed("first", "pwd", 1, Class::Open);
-    let id = event.id;
-    admit(&mut conn, batch(vec![event])).await;
-    publish_pending(&mut conn, &js, &subjects).await.unwrap();
-    let page = commit_log::after(&mut conn, 0, PAGE, sinex_store::PAGE_BYTES)
-        .await
-        .unwrap();
-    let committed = &page.events[0];
-    // A redelivery after deduplication expired can acknowledge another copy.
-    let ack = publish(
-        &js,
-        subjects.confirmed_event(&committed.row.class, &committed.row.event_type),
-        "another-copy".into(),
-        &withheld_copy(committed),
-    )
-    .await
-    .unwrap()
-    .await
-    .unwrap();
-    commit_log::record_published_in(
-        &mut conn,
-        &instance(&js, &subjects).await,
-        &[(id.0, ack.sequence as i64)],
-    )
-    .await
-    .unwrap();
-    sqlx::query("INSERT INTO core.event_tombstones (event_id, source, event_type, operation_id,commit_seq,original_commit_seq,class) VALUES ($1, 'test.source', 'test.event', $2,2,1,'open')")
-        .bind(id.0).bind(uuid::Uuid::now_v7()).execute(&mut conn).await.unwrap();
-    // The message was erased before a stop, while its pair was still stored.
-    let stream = js.get_stream(subjects.confirmed_stream()).await.unwrap();
-    stream.delete_message(1).await.unwrap();
+        .iter()
+        .filter_map(event_message)
+        .collect();
     assert_eq!(
-        erase_tombstoned(&mut conn, &js, &subjects).await.unwrap(),
-        2
+        events[1..],
+        [(2, later_id)],
+        "only the new position goes out"
     );
-    assert!(stream.get_raw_message(ack.sequence).await.is_err());
-    assert_eq!(
-        erase_tombstoned(&mut conn, &js, &subjects).await.unwrap(),
-        0
-    );
-    sqlx::query("UPDATE core.counters SET value=2 WHERE name='commit_seq'")
-        .execute(&mut conn)
-        .await
-        .unwrap();
-    publish_pending(&mut conn, &js, &subjects).await.unwrap();
-    let wire = read_wire_all(&js, &subjects).await;
-    assert!(wire.iter().any(|message|matches!(message,Confirmed::Tombstoned{event,commit_seq:Some(2),original_commit_seq:Some(1),..} if *event==id)));
-    assert!(
-        read_all(&js, &subjects)
-            .await
-            .iter()
-            .all(|m| event_message(m).is_none())
-    );
-}
-
-/// A body-free copy of a committed event, as a stray resend would carry it.
-fn withheld_copy(committed: &commit_log::Committed) -> Confirmed {
-    Confirmed::Withheld(sinex_protocol::WithheldEvent {
-        commit_seq: committed.row.commit_seq,
-        event: EventId(committed.row.id),
-        event_type: committed.row.event_type.clone(),
-        class: Class::Open,
-        reason: WithheldReason::Size,
-    })
 }

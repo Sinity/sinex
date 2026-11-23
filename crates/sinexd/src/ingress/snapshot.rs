@@ -6,7 +6,7 @@ use super::*;
 use crate::{Error, Result};
 use sinex_protocol::{
     LastStreamMessage, SnapshotComplete, SnapshotCursor, SnapshotEvent, SnapshotNext,
-    SnapshotReading, SnapshotReply, WithheldReason,
+    SnapshotReading, SnapshotReply,
 };
 use sinex_store::snapshot::Selection;
 
@@ -190,20 +190,25 @@ impl Requests {
                 .into_iter()
                 .map(|event| (event.id.0, event))
                 .collect();
+        let unbuilt = readings
+            .iter()
+            .filter(|row| !built.contains_key(&row.id))
+            .map(|row| row.id)
+            .collect::<Vec<_>>();
+        let mut outputs = sinex_store::producer_reads::event_outputs(&mut tx, &unbuilt).await?;
         let mut events = Vec::with_capacity(readings.len());
         for row in &readings {
             let event = match built.remove(&row.id) {
                 Some(event) => SnapshotReading::Inline(Box::new(event)),
                 None => {
-                    let header = sinex_store::producer_reads::event_output(&mut tx, row.id)
-                        .await?
+                    let output = outputs
+                        .remove(&row.id)
                         .ok_or_else(|| Failure::Restart("snapshot_reading_tombstoned".into()))?;
-                    SnapshotReading::Withheld(crate::confirmed_event::withheld(
+                    SnapshotReading::Reference(crate::confirmed_event::reference(
                         row.commit_seq,
                         row.id,
-                        header.kind,
+                        output.kind,
                         &row.class,
-                        WithheldReason::Class,
                     )?)
                 }
             };

@@ -118,7 +118,7 @@ fn ids(events: &[sinex_protocol::SnapshotEvent]) -> Vec<EventId> {
         .iter()
         .map(|event| match &event.event {
             SnapshotReading::Inline(event) => event.id,
-            SnapshotReading::Withheld(event) => event.event,
+            SnapshotReading::Reference(event) => event.event,
         })
         .collect()
 }
@@ -249,13 +249,12 @@ async fn a_sealed_reading_arrives_withheld_in_a_snapshot(db: devkit::pg::TestDat
         &events[0].event,
         SnapshotReading::Inline(event) if event.id == admitted[0]
     ));
-    let SnapshotReading::Withheld(withheld) = &events[1].event else {
-        panic!("a sealed reading is withheld")
+    let SnapshotReading::Reference(reference) = &events[1].event else {
+        panic!("a sealed reading travels as a reference")
     };
-    assert_eq!(withheld.event, EventId(sealed));
-    assert_eq!(withheld.class, sinex_model::Class::Sealed);
-    assert_eq!(withheld.reason, sinex_protocol::WithheldReason::Class);
-    assert_eq!(withheld.event_type, declaration().kind.name);
+    assert_eq!(reference.event, EventId(sealed));
+    assert_eq!(reference.class, sinex_model::Class::Sealed);
+    assert_eq!(reference.event_type, declaration().kind.name);
     assert!(!events[1].archived);
     // A producer granted only the open class does not get it at all.
     let SnapshotReply::Page { events, .. } = page(&h, "narrow", None).await else {

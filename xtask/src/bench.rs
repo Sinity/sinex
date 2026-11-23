@@ -102,9 +102,6 @@ pub enum Bench {
         /// Populate and consume this many live keyed journal events before measurement.
         #[arg(long, default_value_t = 0)]
         prefill_keys: u64,
-        /// After the measured workload, compare publication lookup and erasure costs.
-        #[arg(long)]
-        publication_probe: bool,
         /// Measure admission while search and publication consume it.
         #[arg(long)]
         consumers: bool,
@@ -138,7 +135,6 @@ pub fn execute(command: Bench) -> ExitCode {
             output,
             older_binary,
             prefill_keys,
-            publication_probe,
             consumers,
             mixed,
         } => synthetic(SyntheticOptions {
@@ -149,7 +145,6 @@ pub fn execute(command: Bench) -> ExitCode {
             output,
             older_binary,
             prefill_keys,
-            publication_probe,
             consumers,
             mixed,
         }),
@@ -326,8 +321,7 @@ fn sinexd_binary_measured(out: &Path) -> Result<(PathBuf, Value), String> {
     }
     let compiler_schema = measurements::query(&compiler,
         "SELECT json_build_object('version',(SELECT max(version) FROM sinex_schema.applied),
-        'live_key_type',(SELECT data_type FROM information_schema.columns WHERE table_schema='core' AND table_name='live_equivalence' AND column_name='equivalence_key'),
-        'publication_columns',(SELECT array_agg(column_name ORDER BY ordinal_position) FROM information_schema.columns WHERE table_schema='core' AND table_name='published'))")?;
+        'live_key_type',(SELECT data_type FROM information_schema.columns WHERE table_schema='core' AND table_name='live_equivalence' AND column_name='equivalence_key'))")?;
     measurements::save(out, "compiler-schema.json", &compiler_schema)?;
     let schema_setup_s = schema_started.elapsed().as_secs_f64();
     let compile_started = Instant::now();
@@ -633,7 +627,6 @@ struct SyntheticOptions {
     output: Option<PathBuf>,
     older_binary: Option<PathBuf>,
     prefill_keys: u64,
-    publication_probe: bool,
     consumers: bool,
     mixed: bool,
 }
@@ -647,7 +640,6 @@ fn synthetic(options: SyntheticOptions) -> Result<(), String> {
         output,
         older_binary,
         prefill_keys,
-        publication_probe,
         consumers,
         mixed,
     } = options;
@@ -850,16 +842,12 @@ fn synthetic(options: SyntheticOptions) -> Result<(), String> {
         "search_trigram_bytes": measurements::relation_size(&after, "search_trigram_text", "bytes"),
         "search_tsv_bytes": measurements::relation_size(&after, "search_text_tsv", "bytes"),
         "live_equivalence_bytes": measurements::relation_size(&after, "live_equivalence", "total_bytes"),
-        "published_bytes": measurements::relation_size(&after, "published", "total_bytes"),
         "stored_bytes": measurements::stored_bytes(&before, &after, events),
         "artifacts": out,
     });
     measurements::save(&out, "metrics.json", &metrics)?;
     if consumers {
         metrics["query_probes"] = measurements::query_probes(&cluster, &out)?;
-    }
-    if publication_probe {
-        metrics["publication_probe"] = measurements::publication_probe(&cluster, &out)?;
     }
     metrics["teardown_s"] = match cluster.stop() {
         Ok(seconds) => json!(seconds),

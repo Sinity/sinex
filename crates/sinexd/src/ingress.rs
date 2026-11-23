@@ -1039,7 +1039,7 @@ enum ResponseBody {
     Context(sinex_protocol::PublicContext),
     Welcome(ProducerWelcome),
     Consumer(sinex_protocol::ConfirmedConsumerReply),
-    Event(sinex_protocol::FetchEventReply),
+    Events(sinex_protocol::FetchEventsReply),
     Material(sinex_protocol::FetchMaterialReply),
     Recorded(sinex_protocol::RecordedPage),
     Materials(sinex_protocol::MaterialsPage),
@@ -1302,10 +1302,10 @@ impl Requests {
                     }),
                 ),
             }
-        } else if subject == self.subjects.fetch_event(&producer) {
-            match serde_json::from_slice::<sinex_protocol::FetchEvent>(payload) {
-                Ok(request) => ResponseBody::Event(self.fetch_event(&producer, &request).await),
-                Err(error) => ResponseBody::Event(sinex_protocol::FetchEventReply::Refused(
+        } else if subject == self.subjects.fetch_events(&producer) {
+            match serde_json::from_slice::<sinex_protocol::FetchEvents>(payload) {
+                Ok(request) => ResponseBody::Events(self.fetch_events(&producer, &request).await),
+                Err(error) => ResponseBody::Events(sinex_protocol::FetchEventsReply::Refused(
                     sinex_protocol::FetchRefusal {
                         kind: sinex_protocol::FetchRefusalKind::Invalid,
                         reason: error.to_string(),
@@ -1512,7 +1512,7 @@ async fn serve(
         subscribe(requests.subjects.materials_all()).await?,
         subscribe(requests.subjects.lifecycle_all()).await?,
         subscribe(requests.subjects.replay_scope_all()).await?,
-        subscribe(requests.subjects.fetch_event_all()).await?,
+        subscribe(requests.subjects.fetch_events_all()).await?,
         subscribe(requests.subjects.fetch_material_all()).await?,
     ]);
     client.flush().await?;

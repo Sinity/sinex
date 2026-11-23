@@ -1,7 +1,7 @@
 //! The confirmed stream across a NATS outage: once NATS is back, every
-//! committed event is on the stream once, in commit order, equal to the stored
-//! row, and a consumer filtering by event type reads the same sequence as the
-//! commit log.
+//! committed event is on the stream once, in commit order, at its stored
+//! position, and a consumer filtering by event type reads the same sequence as
+//! the commit log.
 use super::*;
 use std::collections::BTreeSet;
 use std::io::{BufRead, BufReader};
@@ -374,6 +374,13 @@ async fn the_stream_equals_the_commit_log_across_an_outage(db: devkit::pg::TestD
         events,
         "every event once"
     );
+    // The whole feed, lifecycle changes included, is the in-daemon reader's.
+    assert_eq!(
+        all.iter()
+            .filter_map(commit_order::tuple)
+            .collect::<Vec<_>>(),
+        commit_order::internal(&mut conn).await
+    );
 }
 
 /// Events A are on the stream when its store is copied; events B are published
@@ -422,34 +429,6 @@ async fn stream_lost_its_newest_messages(
     (broker, conn, publisher, groups)
 }
 
-/// Every recorded stream position holds the reference to its own event.
-async fn recorded_positions_hold_their_events(
-    conn: &mut PgConnection,
-    js: &jetstream::Context,
-    subjects: &Subjects,
-) {
-    let stream = js.get_stream(subjects.confirmed_stream()).await.unwrap();
-    let last = stream.cached_info().state.last_sequence as i64;
-    let recorded: Vec<(uuid::Uuid, i64)> =
-        sqlx::query_as("SELECT event_id, stream_seq FROM core.published ORDER BY stream_seq")
-            .fetch_all(&mut *conn)
-            .await
-            .unwrap();
-    assert!(!recorded.is_empty());
-    for (event, seq) in recorded {
-        assert!(
-            seq <= last,
-            "{event} recorded at {seq}, past the stream's last {last}"
-        );
-        let message = stream.get_raw_message(seq as u64).await.unwrap();
-        let message: Confirmed = serde_json::from_slice(&message.payload).unwrap();
-        assert!(
-            event_message(&message).is_some_and(|(_, found)| found.0 == event),
-            "{event} recorded at {seq}, which holds another message"
-        );
-    }
-}
-
 #[devkit::test(multi_thread)]
 async fn publisher_rewinds_to_last_marker_after_stream_truncation(db: devkit::pg::TestDatabase) {
     let subjects = Subjects::new(format!("lost{}", uuid::Uuid::now_v7().simple()));
@@ -476,41 +455,67 @@ async fn publisher_rewinds_to_last_marker_after_stream_truncation(db: devkit::pg
         "every committed event is on the stream"
     );
     assert_eq!(on_stream.len(), committed.len(), "each event once");
-    recorded_positions_hold_their_events(&mut conn, &js, &subjects).await;
-}
-
-#[devkit::test(multi_thread)]
-async fn erasure_never_deletes_a_reused_sequence(db: devkit::pg::TestDatabase) {
-    let subjects = Subjects::new(format!("reuse{}", uuid::Uuid::now_v7().simple()));
-    let (broker, mut conn, mut publisher, [_, lost, after]) =
-        stream_lost_its_newest_messages(&db, &subjects).await;
-    let js = context(async_nats::connect(broker.url.as_str()).await.unwrap());
-    publish_pending(&mut publisher, &js, &subjects)
-        .await
-        .unwrap();
-
-    lifecycle(&mut conn, Act::Archive, vec![lost[0]]).await;
-    lifecycle(&mut conn, Act::Tombstone, vec![lost[0]]).await;
-    let done = publish_pending(&mut publisher, &js, &subjects)
-        .await
-        .unwrap();
-    assert_eq!(done.tombstoned, 1);
-
-    let events: Vec<EventId> = read_filtered(
+    let wire = read_filtered(
         &js,
         &subjects.confirmed_stream(),
         vec![subjects.confirmed_all()],
     )
-    .await
-    .into_iter()
-    .filter_map(|m| event_message(&m).map(|(_, event)| event))
-    .collect();
-    assert!(!events.contains(&lost[0]), "the tombstoned event is erased");
-    for kept in [lost[1], after[0]] {
-        assert!(
-            events.contains(&kept),
-            "{kept} survives another event's erasure"
-        );
+    .await;
+    let mut applied = Vec::new();
+    for message in &wire {
+        // A consumer skips positions it already applied.
+        if let Some(tuple) = commit_order::tuple(message)
+            && !applied.contains(&tuple)
+        {
+            applied.push(tuple);
+        }
     }
-    recorded_positions_hold_their_events(&mut conn, &js, &subjects).await;
+    assert_eq!(applied, commit_order::internal(&mut conn).await);
+}
+
+/// A message published long before keeps its place across a broker restart:
+/// the stream discards nothing.
+#[devkit::test(multi_thread)]
+async fn confirmed_stream_keeps_an_old_message_across_restart(db: devkit::pg::TestDatabase) {
+    let mut broker = Broker::start();
+    let subjects = Subjects::new(format!("kept{}", uuid::Uuid::now_v7().simple()));
+    let js = context(async_nats::connect(broker.url.as_str()).await.unwrap());
+    let url = db.url(None);
+    let mut conn = sinex_store::AdmissionContext::connect(&url).await.unwrap();
+    let mut publisher = PgConnection::connect(&url).await.unwrap();
+    ensure_stream(&mut publisher, &js, &subjects).await.unwrap();
+    let old = imported("old", 0);
+    let old_id = old.id;
+    admit(&mut conn, batch(vec![old])).await;
+    publish_pending(&mut publisher, &js, &subjects)
+        .await
+        .unwrap();
+    let before = js
+        .get_stream(subjects.confirmed_stream())
+        .await
+        .unwrap()
+        .get_raw_message(1)
+        .await
+        .unwrap();
+    broker.stop();
+    broker.restore();
+    let js = context(async_nats::connect(broker.url.as_str()).await.unwrap());
+    ensure_stream(&mut publisher, &js, &subjects).await.unwrap();
+    for n in 1..=3 {
+        admit(&mut conn, batch(vec![imported(&format!("new{n}"), n)])).await;
+        publish_pending(&mut publisher, &js, &subjects)
+            .await
+            .unwrap();
+    }
+    let after = js
+        .get_stream(subjects.confirmed_stream())
+        .await
+        .unwrap()
+        .get_raw_message(1)
+        .await
+        .unwrap();
+    assert_eq!(after.payload, before.payload);
+    assert_eq!(after.time, before.time);
+    let message: Confirmed = serde_json::from_slice(&after.payload).unwrap();
+    assert_eq!(event_message(&message), Some((1, old_id)));
 }

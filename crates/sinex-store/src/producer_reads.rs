@@ -35,14 +35,34 @@ pub struct MaterialOutput {
     pub kind: String,
     pub class: String,
 }
-pub async fn event_output(conn: &mut PgConnection, id: Uuid) -> Result<Option<MaterialOutput>> {
-    Ok(sqlx::query_as!(
-        MaterialOutput,
-        "SELECT e.event_type AS kind,e.class FROM core.events e WHERE e.id=$1",
-        id
+/// The kind and stored class of each of `ids` that is still stored.
+pub async fn event_outputs(
+    conn: &mut PgConnection,
+    ids: &[Uuid],
+) -> Result<std::collections::HashMap<Uuid, MaterialOutput>> {
+    if ids.is_empty() {
+        return Ok(Default::default());
+    }
+    let rows = sqlx::query!(
+        r#"SELECT e.id AS "id!",e.event_type AS "kind!",e.class AS "class!"
+        FROM unnest($1::uuid[]) selected(id) CROSS JOIN LATERAL (
+          SELECT e.id,e.event_type,e.class FROM core.events e WHERE e.id=selected.id OFFSET 0) e"#,
+        ids
     )
-    .fetch_optional(conn)
-    .await?)
+    .fetch_all(conn)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            (
+                row.id,
+                MaterialOutput {
+                    kind: row.kind,
+                    class: row.class,
+                },
+            )
+        })
+        .collect())
 }
 pub async fn material_classes(conn: &mut PgConnection, id: Uuid) -> Result<Vec<MaterialOutput>> {
     Ok(sqlx::query_as!(

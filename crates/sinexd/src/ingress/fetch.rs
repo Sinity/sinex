@@ -4,7 +4,8 @@ use crate::{Error, Result};
 use serde::Deserialize;
 use sinex_model::{Class, DbCheck};
 use sinex_protocol::{
-    FetchEvent, FetchEventReply, FetchMaterial, FetchMaterialReply, FetchRefusalKind,
+    FetchEvents, FetchEventsReply, FetchMaterial, FetchMaterialReply, FetchRefusalKind,
+    FetchedEvent,
 };
 use sqlx::Connection;
 use std::collections::BTreeMap;
@@ -150,42 +151,23 @@ impl Requests {
             .filter(|grant| !grant.kind_prefixes.is_empty() && !grant.classes.is_empty())
             .ok_or_else(denied)
     }
-    async fn event_for(&self, producer: &str, id: EventId) -> ReadResult<FetchEventReply> {
+    /// Read a page of events at one snapshot. A refusal of the whole page
+    /// means the caller has no read grant or the store is unavailable; each
+    /// event the grant does not allow is refused on its own.
+    async fn events_for(&self, producer: &str, ids: &[EventId]) -> ReadResult<Vec<FetchedEvent>> {
         let grant = self.grants(producer)?;
         let mut connection = self.reads.acquire().await.map_err(unavailable)?;
         let mut conn = connection.begin().await.map_err(unavailable)?;
         sinex_store::query::read_one_snapshot(&mut conn)
             .await
             .map_err(unavailable)?;
-        let tombstone = sinex_store::commit_log::erased_reading(&mut conn, id)
+        let requested = ids.iter().map(|id| id.0).collect::<Vec<_>>();
+        let erased = sinex_store::commit_log::erased_readings(&mut conn, &requested)
             .await
             .map_err(unavailable)?;
-        if let Some(erased) = tombstone {
-            if !grant.kind(&erased.event_type) {
-                return Err(denied());
-            }
-            let class: Class = Class::from_db(&erased.class.ok_or_else(|| {
-                unavailable(
-                    "erased event has unknown historical class; confirmed history has a gap",
-                )
-            })?)
-            .ok_or_else(|| unavailable("unknown erased event class"))?;
-            if !grant.class(class) {
-                return Err(denied());
-            }
-            let (Some(commit_seq), Some(original_commit_seq)) =
-                (erased.commit_seq, erased.original_commit_seq)
-            else {
-                return Err(unavailable(
-                    "erased event has unknown historical positions; confirmed history has a gap",
-                ));
-            };
-            return Ok(FetchEventReply::Erased(sinex_protocol::ErasedEvent {
-                event: id,
-                commit_seq,
-                original_commit_seq,
-            }));
-        }
+        let outputs = sinex_store::producer_reads::event_outputs(&mut conn, &requested)
+            .await
+            .map_err(unavailable)?;
         let classes = grant
             .classes
             .iter()
@@ -201,41 +183,68 @@ impl Requests {
         sinex_store::query::set_grants(&mut conn, &classes)
             .await
             .map_err(unavailable)?;
-        let output = sinex_store::producer_reads::event_output(&mut conn, id.0)
-            .await
-            .map_err(unavailable)?
-            .ok_or_else(missing)?;
-        let output_class: Class = Class::from_db(&output.class)
-            .ok_or_else(|| unavailable(format!("unknown event class {:?}", output.class)))?;
-        if !grant.kind(&output.kind) || !grant.class(output_class) {
-            return Err(denied());
+        let mut answers = BTreeMap::new();
+        let mut readable = Vec::new();
+        for &id in ids {
+            let answer = if let Some(erased) = erased.get(&id.0) {
+                Some(erasure(grant, id, erased))
+            } else if let Some(output) = outputs.get(&id.0) {
+                match Class::from_db(&output.class) {
+                    None => Some(Err(unavailable(format!(
+                        "unknown event class {:?}",
+                        output.class
+                    )))),
+                    Some(class) if !grant.kind(&output.kind) || !grant.class(class) => {
+                        Some(Err(denied()))
+                    }
+                    Some(Class::Sealed) => Some(Err(Refusal {
+                        kind: FetchRefusalKind::Locked,
+                        reason: "sealed producer reads require an operator unlock".into(),
+                    })),
+                    Some(_) => {
+                        readable.push(id.0);
+                        None
+                    }
+                }
+            } else {
+                Some(Err(missing()))
+            };
+            if let Some(answer) = answer {
+                answers.insert(id, answer);
+            }
         }
-        if output_class == Class::Sealed {
-            return Err(Refusal {
-                kind: FetchRefusalKind::Locked,
-                reason: "sealed producer reads require an operator unlock".into(),
-            });
-        }
-        let row = sinex_store::confirmed::rows(&mut conn, &[id.0])
+        let rows = sinex_store::confirmed::rows(&mut conn, &readable)
+            .await
+            .map_err(unavailable)?;
+        let built: BTreeMap<_, _> = crate::confirmed_event::build(&mut conn, rows)
             .await
             .map_err(unavailable)?
-            .pop()
-            .ok_or_else(missing)?;
-        let event = crate::confirmed_event::build(&mut conn, vec![row])
-            .await
-            .map_err(unavailable)?
-            .pop()
-            .ok_or_else(missing)?;
-        Ok(FetchEventReply::Event(Box::new(event)))
+            .into_iter()
+            .map(|event| (event.id, event))
+            .collect();
+        Ok(ids
+            .iter()
+            .map(|&id| {
+                let answer = match answers.get(&id) {
+                    Some(answer) => answer.clone(),
+                    None => built
+                        .get(&id)
+                        .map(|event| FetchedEvent::Event(Box::new(event.clone())))
+                        .ok_or_else(missing),
+                };
+                answer.unwrap_or_else(|refusal| FetchedEvent::Refused { event: id, refusal })
+            })
+            .collect())
     }
-    pub(super) async fn fetch_event(
+    pub(super) async fn fetch_events(
         &self,
         producer: &str,
-        request: &FetchEvent,
-    ) -> FetchEventReply {
-        self.event_for(producer, request.event)
-            .await
-            .unwrap_or_else(FetchEventReply::Refused)
+        request: &FetchEvents,
+    ) -> FetchEventsReply {
+        match self.events_for(producer, &request.events).await {
+            Ok(events) => FetchEventsReply::Events { events },
+            Err(refusal) => FetchEventsReply::Refused(refusal),
+        }
     }
     pub(super) async fn fetch_material(
         &self,
@@ -385,6 +394,37 @@ impl Requests {
         .await;
         result.unwrap_or_else(FetchMaterialReply::Refused)
     }
+}
+
+/// A tombstoned event's skeleton, under the same kind and class grants as its
+/// live reading had.
+fn erasure(
+    grant: &Grants,
+    id: EventId,
+    erased: &sinex_store::commit_log::ErasedReading,
+) -> ReadResult<FetchedEvent> {
+    if !grant.kind(&erased.event_type) {
+        return Err(denied());
+    }
+    let class = erased.class.as_deref().ok_or_else(|| {
+        unavailable("erased event has unknown historical class; confirmed history has a gap")
+    })?;
+    let class = Class::from_db(class).ok_or_else(|| unavailable("unknown erased event class"))?;
+    if !grant.class(class) {
+        return Err(denied());
+    }
+    let (Some(commit_seq), Some(original_commit_seq)) =
+        (erased.commit_seq, erased.original_commit_seq)
+    else {
+        return Err(unavailable(
+            "erased event has unknown historical positions; confirmed history has a gap",
+        ));
+    };
+    Ok(FetchedEvent::Erased(sinex_protocol::ErasedEvent {
+        event: id,
+        commit_seq,
+        original_commit_seq,
+    }))
 }
 
 #[cfg(test)]

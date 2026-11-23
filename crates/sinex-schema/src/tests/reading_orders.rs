@@ -74,6 +74,7 @@ async fn reading_order_upgrade_keeps_old_maxima_and_positions(db: devkit::pg::Te
 
 /// Recreate the physical old shape: dropping one column leaves its ordinal behind.
 pub(super) async fn positions_without_reading_orders(conn: &mut PgConnection) {
+    published_before_references(conn).await;
     conn.execute("DROP TABLE derivation.refusals;
         DROP TABLE core.library_copy_fields;
         DROP TABLE raw.owned_blob_releases;

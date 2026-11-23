@@ -28,14 +28,13 @@ pub mod stage_report;
 pub use commands::{Access, Arg, ArgKind, COMMANDS, Command, command};
 pub use nats::{
     AckHint, Acknowledgment, Archived, Confirmed, ConfirmedConsumer, ConfirmedConsumerReply,
-    ConfirmedEvent, DeclarationHash, ErasedEvent, FetchEvent, FetchEventReply, FetchMaterial,
-    FetchMaterialReply, FetchRefusal, FetchRefusalKind, FrameResult, Ingress, Lifecycle,
-    MaterialChunk, MaterialFrame, Materials, MaterialsPage, PRODUCER_VERSION, ProducerEvent,
-    ProducerFailure, ProducerHello, ProducerMaterial, ProducerReplay, ProducerWelcome,
-    RecordedContinuation, RecordedContinuationRequest, RecordedHeaderUse, RecordedHeaders,
-    RecordedMaterialBinding, RecordedPage, RecordedQuery, ReplayBatch, ReplayMaterial,
-    ReplayScopePage, ReplayScopeQuery, ReplaySelection, Restored, Subjects, WithheldEvent,
-    WithheldReason,
+    ConfirmedEvent, DeclarationHash, ErasedEvent, EventReference, FetchEvents, FetchEventsReply,
+    FetchMaterial, FetchMaterialReply, FetchRefusal, FetchRefusalKind, FetchedEvent, FrameResult,
+    Ingress, Lifecycle, MaterialChunk, MaterialFrame, Materials, MaterialsPage, PRODUCER_VERSION,
+    ProducerEvent, ProducerFailure, ProducerHello, ProducerMaterial, ProducerReplay,
+    ProducerWelcome, RecordedContinuation, RecordedContinuationRequest, RecordedHeaderUse,
+    RecordedHeaders, RecordedMaterialBinding, RecordedPage, RecordedQuery, ReplayBatch,
+    ReplayMaterial, ReplayScopePage, ReplayScopeQuery, ReplaySelection, Restored, Subjects,
 };
 pub use request::{Call, Reply, Request, deadline, stopped_early};
 pub use sinex_model::SourceRef;

@@ -812,12 +812,11 @@ decides which prompts may be sent (default; open operator question).
   recorded in `core.search_refusals` and passed; it never holds the position. Read-model
   completion wakes subscriptions, and each captured batch stays within its lower
   exclusive and upper inclusive commit positions across every page.
-- Each message carries its commit or stream position as the SSE `id`. A reconnect with
-  `Last-Event-ID` receives everything after it, from the confirmed stream or
-  PostgreSQL, including lifecycle changes (archive, restore, replay, tombstone) that
-  affect matching rows. A position whose history is unavailable refuses with a named
+- Each message carries its commit position as the SSE `id`. A reconnect with
+  `Last-Event-ID` receives everything after it, read from PostgreSQL, including
+  lifecycle changes (archive, restore, replay, tombstone) that affect matching rows. A position whose history is unavailable refuses with a named
   gap; it never silently starts now.
-- Messages report withheld payloads as withheld; keepalives are not capture evidence.
+- Messages report withheld fields as withheld; keepalives are not capture evidence.
   Grouped, aggregate and ranked subscriptions use `on_change` semantics.
 - Programs that act on every committed fact subscribe to the confirmed stream as
   [outside handlers](producers.md#outside-consumers-and-handlers).

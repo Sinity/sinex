@@ -491,16 +491,6 @@ fn monitor(port: u16) -> Result<Value, String> {
     serde_json::from_str(body).map_err(|e| e.to_string())
 }
 
-fn published_event_counts(cluster: &Cluster) -> Result<Value, String> {
-    query(
-        cluster,
-        "SELECT json_build_object('recorded',(SELECT count(DISTINCT event_id) FROM core.published),
-        'copies',(SELECT count(*) FROM core.published),
-        'missing',(SELECT count(*) FROM core.events event
-          WHERE NOT EXISTS(SELECT 1 FROM core.published WHERE event_id=event.id)))",
-    )
-}
-
 fn nats_ready(port: u16, monitoring: u16) -> bool {
     monitor(monitoring).is_ok() && TcpStream::connect(("127.0.0.1", port)).is_ok()
 }
@@ -733,15 +723,6 @@ pub(super) fn with_consumers(
                     std::thread::sleep(Duration::from_millis(200));
                     continue;
                 }
-                // Delivery is at least once; saved mappings must cover each event once.
-                let published = published_event_counts(cluster)?;
-                if published["recorded"].as_u64() != Some(expected.events)
-                    || published["missing"].as_u64() != Some(0)
-                {
-                    return Err(format!(
-                        "published event coverage is incomplete: {published}"
-                    ));
-                }
                 let correctness = correctness(cluster, expected.events)?;
                 if correctness["events"].as_u64() != Some(expected.events)
                     || correctness["search_rows"].as_u64() != Some(expected.events)
@@ -756,7 +737,7 @@ pub(super) fn with_consumers(
                     "acknowledged_events": expected.events, "confirmed_messages": messages,
                     "expected_messages": expected.messages,
                     "additional_messages": messages.map(|messages| messages - expected.messages),
-                    "published_events": published, "position_resolution_s": 0.2}}),
+                    "position_resolution_s": 0.2}}),
                 );
             }
             std::thread::sleep(Duration::from_millis(200));
@@ -994,31 +975,6 @@ pub(super) fn query_probes(cluster: &Cluster, out: &Path) -> Result<Value, Strin
         "scope": "Protected search-view prefix and regex branches after consumer completion; planning is non-executing and latency uses read-only execution plans."});
     save(out, "query-probes.json", &result)?;
     Ok(result)
-}
-
-pub(super) fn publication_probe(cluster: &Cluster, out: &Path) -> Result<Value, String> {
-    let load = LoadMonitor::start()?;
-    let script = out.join("publication-probe.py");
-    fs::write(&script, include_str!("publication.py")).map_err(|e| e.to_string())?;
-    let output = Command::new("python3")
-        .arg(&script)
-        .arg(cluster.url())
-        .arg(out)
-        .arg(env::current_dir().map_err(|e| e.to_string())?)
-        .output()
-        .map_err(|e| e.to_string())?;
-    let load = load.finish()?;
-    save(out, "publication-probe-load.json", &load.to_json())?;
-    fs::write(out.join("publication-probe.stdout"), output.stdout).map_err(|e| e.to_string())?;
-    fs::write(out.join("publication-probe.stderr"), output.stderr).map_err(|e| e.to_string())?;
-    if !output.status.success() {
-        return Err(format!(
-            "publication probe failed; see {}",
-            out.join("publication-probe.stderr").display()
-        ));
-    }
-    let result = fs::read(out.join("publication-probe.json")).map_err(|e| e.to_string())?;
-    serde_json::from_slice(&result).map_err(|e| e.to_string())
 }
 
 pub(super) fn socket_url(path: &Path) -> String {

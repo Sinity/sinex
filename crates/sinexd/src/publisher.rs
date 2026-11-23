@@ -1,18 +1,18 @@
 //! Publish the committed-change feed with cumulative completion markers. A
 //! scalar checkpoint covers only fully acknowledged positions; transfer pages
-//! may divide a position without advancing it. An open-class event travels
-//! complete; any other event, or one too large for a stream message, travels
-//! by ID for consumers to fetch under their grants. Publisher checkpoints and
-//! erasure mappings belong to one stream instance, so a lost broker store
-//! replays from PostgreSQL. A store that lost only its newest messages keeps
-//! its instance; each pass first moves the saved position back to what the
-//! stream still holds (`align_with_stream`).
+//! may divide a position without advancing it. Every event travels as a
+//! reference (position, ID, kind, class) for consumers to fetch in pages under
+//! their grants, so a tombstone never has to erase anything from the stream.
+//! Publisher checkpoints belong to one stream instance, so a lost broker store
+//! starts a new instance. A store that lost only its newest messages keeps its
+//! instance; each pass first moves the saved position back to what the stream
+//! still holds ([`position_on_stream`]).
 use crate::{Error, Result};
 use async_nats::HeaderMap;
 use async_nats::jetstream::{self, stream};
 use sinex_model::DbCheck;
 use sinex_model::{EventId, OperationId};
-use sinex_protocol::{Archived, Confirmed, Restored, Subjects, WithheldReason};
+use sinex_protocol::{Archived, Confirmed, EventReference, Restored, Subjects};
 use sinex_store::commit_log::{self, ArchiveChange};
 use sqlx::{Connection, PgConnection};
 use std::time::{Duration, Instant};
@@ -33,7 +33,7 @@ pub(crate) fn context(client: async_nats::Client) -> jetstream::Context {
         .build(client)
 }
 
-const CONTRACT: &str = "5";
+const CONTRACT: &str = "6";
 const CONTRACT_KEY: &str = "sinex_confirmed_contract";
 const STREAM_START_KEY: &str = "sinex_stream_start";
 
@@ -119,8 +119,6 @@ pub(crate) async fn current_consumer(
 pub(crate) struct Published {
     pub events: u64,
     pub changes: u64,
-    /// Stream messages of tombstoned events that were erased.
-    pub tombstoned: u64,
 }
 
 /// One acknowledged page and the time spent reading, publishing and saving it.
@@ -213,19 +211,11 @@ pub(crate) async fn publish_pending_measured(
     let instance = stream_instance(&stream);
     let consumer = consumer_for(&instance);
     let (saved, _) = commit_log::consumer_position(conn, &consumer).await?;
-    let position = align_with_stream(
-        conn,
-        &stream,
-        &instance,
-        &consumer,
-        saved,
-        stream_start.position,
-    )
-    .await?;
+    let position =
+        position_on_stream(conn, &stream, &consumer, saved, stream_start.position).await?;
     let mut cursor = commit_log::ChangeCursor::after(position);
     let mut acknowledged = position;
     let mut total = Published::default();
-    total.tombstoned += erase_tombstoned_in(conn, js, subjects, &instance).await?;
     loop {
         let started = Instant::now();
         let page = commit_log::stream_changes_after_start(
@@ -261,7 +251,6 @@ pub(crate) async fn publish_pending_measured(
                     conn,
                     js,
                     subjects,
-                    &instance,
                     &consumer,
                     &[],
                     Some(stream_start.position),
@@ -287,7 +276,6 @@ pub(crate) async fn publish_pending_measured(
                 conn,
                 js,
                 subjects,
-                &instance,
                 &consumer,
                 &page.entries[..split],
                 complete,
@@ -304,7 +292,6 @@ pub(crate) async fn publish_pending_measured(
                 conn,
                 js,
                 subjects,
-                &instance,
                 &consumer,
                 &page.entries[split..],
                 None,
@@ -349,148 +336,79 @@ pub(crate) async fn publish_pending_measured(
 ///
 /// JetStream acknowledges a publish before it syncs its store (every 120 s by
 /// default), so a host crash can drop the stream's newest messages while
-/// PostgreSQL keeps the position and published records for them. The stream
-/// keeps its name and creation time, and its next messages reuse the lost
-/// sequence numbers. Reading back from the stream's newest message to the
-/// completion marker at or below the saved position resolves both crash cases:
-/// - Event references met on the way are recorded. A crash between JetStream's
-///   acknowledgment and the commit leaves them unlisted, and an unlisted copy
-///   would escape erasure.
-/// - If that marker is older than the saved position, the stream lost a
-///   suffix. Records above the stream's last sequence are forgotten, so erasure
-///   never deletes a reused number, and the position moves back to the marker,
-///   so the lost positions are published again. Consumers skip positions they
-///   already applied.
+/// PostgreSQL keeps the position that covered them. The stream keeps its name
+/// and creation time. Reading back from the stream's newest message to the
+/// completion marker at or below the saved position finds what it still
+/// holds: when that marker is older than the saved position, the position
+/// moves back to it, so the lost positions are published again. Consumers skip
+/// positions they already applied.
 ///
 /// Normally the newest message is the marker itself; the walk covers at most
 /// the messages of the one page published after it.
-async fn align_with_stream(
+async fn position_on_stream(
     conn: &mut PgConnection,
     stream: &stream::Stream,
-    instance: &str,
     consumer: &str,
     saved: i64,
     stream_start: i64,
 ) -> Result<i64> {
     let last = stream.cached_info().state.last_sequence;
-    let mut unlisted = Vec::new();
     let mut marker = None;
     let mut seq = last;
     while seq > 0 {
-        match stream.get_raw_message(seq).await {
-            Ok(message) => match serde_json::from_slice::<Confirmed>(&message.payload) {
-                Ok(Confirmed::PositionComplete { commit_seq }) if commit_seq <= saved => {
-                    marker = Some(commit_seq);
-                    break;
-                }
-                Ok(Confirmed::Event(event)) => {
-                    unlisted.push((event.id.0, i64::try_from(seq)?));
-                }
-                Ok(Confirmed::Withheld(event)) => {
-                    unlisted.push((event.event.0, i64::try_from(seq)?));
-                }
-                _ => {}
-            },
-            // Erased messages leave holes.
-            Err(error) if error.kind() == stream::RawMessageErrorKind::NoMessageFound => {}
-            Err(error) => {
-                return Err(Error::internal(format!(
-                    "read confirmed stream message {seq}: {error}"
-                )));
-            }
+        let message = stream.get_raw_message(seq).await.map_err(|error| {
+            Error::internal(format!("read confirmed stream message {seq}: {error}"))
+        })?;
+        if let Ok(Confirmed::PositionComplete { commit_seq }) =
+            serde_json::from_slice::<Confirmed>(&message.payload)
+            && commit_seq <= saved
+        {
+            marker = Some(commit_seq);
+            break;
         }
         seq -= 1;
     }
     let held = marker.unwrap_or(stream_start).max(stream_start);
-    let mut tx = conn.begin().await?;
-    commit_log::record_published_in(&mut tx, instance, &unlisted).await?;
     if held < saved {
-        let last = i64::try_from(last)?;
-        let forgotten = commit_log::forget_published_above(&mut tx, instance, last).await?;
-        commit_log::rewind_consumer_position(&mut tx, consumer, held).await?;
+        commit_log::rewind_consumer_position(conn, consumer, held).await?;
         eprintln!(
-            "sinexd: publisher: the confirmed stream holds positions only up to {held} (saved {saved}, last stream sequence {last}); forgot {forgotten} published records above it and publishing again from there"
+            "sinexd: publisher: the confirmed stream holds positions only up to {held} (saved {saved}, last stream sequence {last}); publishing again from there"
         );
     }
-    tx.commit().await?;
     Ok(held)
 }
 
-/// Data acknowledgments and erasures come before a cumulative completion
-/// marker. The acknowledged (event, stream sequence) pairs of a partly
-/// published position are saved without moving the position checkpoint.
-#[allow(clippy::too_many_arguments)]
+/// Data acknowledgments come before a cumulative completion marker; a partly
+/// published position leaves the position checkpoint where it was.
 async fn publish_chunk(
     conn: &mut PgConnection,
     js: &jetstream::Context,
     subjects: &Subjects,
-    instance: &str,
     consumer: &str,
-    entries: &[commit_log::CommittedChange<commit_log::StreamEvent>],
+    entries: &[commit_log::CommittedChange<commit_log::EventHeader>],
     complete: Option<i64>,
     total: &mut Published,
 ) -> Result<(Duration, Duration, Duration)> {
     let acknowledge_started = Instant::now();
-    let mut tx = conn.begin().await?;
-    let open: Vec<_> = entries
-        .iter()
-        .filter_map(|entry| match &entry.change {
-            commit_log::Change::Event(event) => match event.as_ref() {
-                commit_log::StreamEvent::Open(row) => Some((**row).clone()),
-                commit_log::StreamEvent::Header(_) => None,
-            },
-            _ => None,
-        })
-        .collect();
-    let mut whole: std::collections::BTreeMap<_, _> = crate::confirmed_event::build(&mut tx, open)
-        .await?
-        .into_iter()
-        .map(|event| (event.id.0, event))
-        .collect();
-    let limit = message_limit(js);
     let mut acks = Vec::new();
     for entry in entries {
         let (message, subject, id, event) = match &entry.change {
-            commit_log::Change::Event(event) => {
-                let (id, commit_seq, event_type, class) = match event.as_ref() {
-                    commit_log::StreamEvent::Open(row) => {
-                        (row.id, row.commit_seq, &row.event_type, &row.class)
-                    }
-                    commit_log::StreamEvent::Header(header) => (
-                        header.id,
-                        header.commit_seq,
-                        &header.event_type,
-                        &header.class,
-                    ),
-                };
-                let withheld = |reason| {
-                    crate::confirmed_event::withheld(
-                        commit_seq,
-                        id,
-                        event_type.clone(),
-                        class,
-                        reason,
-                    )
-                    .map(Confirmed::Withheld)
-                };
-                let message = match whole.remove(&id) {
-                    Some(event) => {
-                        let message = Confirmed::Event(Box::new(event));
-                        if serde_json::to_vec(&message)?.len() > limit {
-                            withheld(WithheldReason::Size)?
-                        } else {
-                            message
-                        }
-                    }
-                    None => withheld(WithheldReason::Class)?,
-                };
-                (
-                    message,
-                    subjects.confirmed_event(class, event_type),
-                    format!("event-{}", entry.position),
-                    Some(id),
-                )
-            }
+            commit_log::Change::Event(header) => (
+                Confirmed::Event(EventReference {
+                    commit_seq: header.commit_seq,
+                    event: EventId(header.id),
+                    event_type: header.event_type.clone(),
+                    class: sinex_model::Class::from_db(&header.class).ok_or_else(|| {
+                        Error::internal(format!(
+                            "event {}: unknown class {:?}",
+                            header.id, header.class
+                        ))
+                    })?,
+                }),
+                subjects.confirmed_event(&header.class, &header.event_type),
+                format!("event-{}", entry.position),
+                true,
+            ),
             commit_log::Change::Archive(lifecycle) => {
                 let change = &lifecycle.archive;
                 let message = if change.archived {
@@ -507,7 +425,7 @@ async fn publish_chunk(
                     message,
                     subjects.confirmed_lifecycle(&lifecycle.class, &lifecycle.event_type),
                     format!("archive-{}", change.change_seq),
-                    None,
+                    false,
                 )
             }
             commit_log::Change::Tombstoned(change) => (
@@ -519,96 +437,47 @@ async fn publish_chunk(
                 },
                 subjects.confirmed_lifecycle(&change.class, &change.event_type),
                 format!("tombstoned-{}-{}", entry.position, change.event_id),
-                None,
+                false,
             ),
             commit_log::Change::PositionComplete => continue,
         };
         acks.push((event, publish(js, subject, id, &message).await?));
     }
-    let mut placed = Vec::new();
     for (event, ack) in acks {
-        let ack = ack.await.map_err(|error| {
+        ack.await.map_err(|error| {
             Error::internal(format!("confirmed stream did not acknowledge: {error}"))
         })?;
-        if let Some(event) = event {
-            placed.push((event, i64::try_from(ack.sequence)?));
+        if event {
             total.events += 1;
         } else {
             total.changes += 1;
         }
     }
     let mut acknowledge = acknowledge_started.elapsed();
+    let mut record = Duration::ZERO;
+    let Some(position) = complete else {
+        return Ok((acknowledge, record, Duration::ZERO));
+    };
+    let marker_started = Instant::now();
+    publish(
+        js,
+        subjects.confirmed_control(),
+        format!("position-{position}"),
+        &Confirmed::PositionComplete {
+            commit_seq: position,
+        },
+    )
+    .await?
+    .await
+    .map_err(|error| Error::internal(format!("confirmed position did not acknowledge: {error}")))?;
+    acknowledge += marker_started.elapsed();
     let record_started = Instant::now();
-    commit_log::record_published_in(&mut tx, instance, &placed).await?;
-    total.tombstoned += erase_tombstoned_in(&mut tx, js, subjects, instance).await?;
-    let mut record = record_started.elapsed();
-    if let Some(position) = complete {
-        let marker_started = Instant::now();
-        publish(
-            js,
-            subjects.confirmed_control(),
-            format!("position-{position}"),
-            &Confirmed::PositionComplete {
-                commit_seq: position,
-            },
-        )
-        .await?
-        .await
-        .map_err(|error| {
-            Error::internal(format!("confirmed position did not acknowledge: {error}"))
-        })?;
-        acknowledge += marker_started.elapsed();
-        let record_started = Instant::now();
-        commit_log::set_consumer_position(&mut tx, consumer, position, 0).await?;
-        record += record_started.elapsed();
-    }
+    let mut tx = conn.begin().await?;
+    commit_log::set_consumer_position(&mut tx, consumer, position, 0).await?;
+    record += record_started.elapsed();
     let commit_started = Instant::now();
     tx.commit().await?;
     Ok((acknowledge, record, commit_started.elapsed()))
-}
-
-/// Erasure deletes stream messages and can repeat safely. Ordered tombstone
-/// notices come from the commit log's change feed, never from this cleanup pass.
-async fn erase_tombstoned_in(
-    conn: &mut PgConnection,
-    js: &jetstream::Context,
-    subjects: &Subjects,
-    instance: &str,
-) -> Result<u64> {
-    let mut erased = 0;
-    loop {
-        let pending = commit_log::tombstoned_on_stream_in(conn, instance, PAGE).await?;
-        if pending.is_empty() {
-            return Ok(erased);
-        }
-        let stream = js.get_stream(subjects.confirmed_stream()).await?;
-        for item in &pending {
-            let seq = u64::try_from(item.stream_seq)?;
-            if let Err(error) = stream.delete_message(seq).await
-                && !message_gone(&stream, seq).await?
-            {
-                return Err(Error::internal(format!(
-                    "erase stream message {seq}: {error}"
-                )));
-            }
-        }
-        let pairs: Vec<_> = pending
-            .iter()
-            .map(|item| (item.event_id, item.stream_seq))
-            .collect();
-        commit_log::forget_published_in(conn, instance, &pairs).await?;
-        erased += pairs.len() as u64;
-    }
-}
-
-#[cfg(test)]
-async fn erase_tombstoned(
-    conn: &mut PgConnection,
-    js: &jetstream::Context,
-    subjects: &Subjects,
-) -> Result<u64> {
-    let stream = confirmed_stream(conn, js, subjects).await?;
-    erase_tombstoned_in(conn, js, subjects, &stream_instance(&stream)).await
 }
 
 async fn publish(
@@ -623,12 +492,6 @@ async fn publish(
     js.publish_with_headers(subject, headers, body.into())
         .await
         .map_err(|e| Error::nats(format!("publish {id}: {e}")))
-}
-
-/// The largest stream message body the broker takes, less room for the
-/// subject and headers.
-fn message_limit(js: &jetstream::Context) -> usize {
-    js.client().server_info().max_payload.saturating_sub(4096)
 }
 
 fn archived_message(n: &ArchiveChange) -> Result<Archived> {
@@ -665,29 +528,11 @@ pub(crate) async fn publish_all(
         done.events as f64 / wall.as_secs_f64()
     };
     Ok(format!(
-        "published {} events and {} archive changes, erased {} tombstoned, in {:.2}s, {rate:.0} events/s",
+        "published {} events and {} lifecycle changes in {:.2}s, {rate:.0} events/s",
         done.events,
         done.changes,
-        done.tombstoned,
         wall.as_secs_f64()
     ))
-}
-
-/// Whether the stream no longer holds a message, which is what erasing it
-/// wants. A failed delete reports a missing message only in its description
-/// (generic code 10057), so the stream is asked directly.
-async fn message_gone(stream: &stream::Stream, seq: u64) -> Result<bool> {
-    match stream.get_raw_message(seq).await {
-        Ok(_) => Ok(false),
-        Err(error) if missing(&error) => Ok(true),
-        Err(error) => Err(Error::internal(format!(
-            "check stream message {seq}: {error}"
-        ))),
-    }
-}
-
-fn missing(error: &stream::RawMessageError) -> bool {
-    matches!(error.kind(), stream::RawMessageErrorKind::NoMessageFound)
 }
 
 #[cfg(test)]

@@ -164,10 +164,10 @@ async fn replies_cannot_go_to_another_principal_inbox(db: devkit::pg::TestDataba
     h.client.flush().await.unwrap();
     h.client
         .publish_with_reply(
-            h.subjects.fetch_event("kitty"),
+            h.subjects.fetch_events("kitty"),
             inbox,
-            serde_json::to_vec(&sinex_protocol::FetchEvent {
-                event: ack.admitted()[0],
+            serde_json::to_vec(&sinex_protocol::FetchEvents {
+                events: vec![ack.admitted()[0]],
             })
             .unwrap()
             .into(),

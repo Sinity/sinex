@@ -329,8 +329,6 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   change_seq bigint NOT NULL DEFAULT 0,
   updated_at timestamptz NOT NULL DEFAULT now()
 )".into(),
-        // Every acknowledged event/stream pair is kept until erased.
-        PUBLISHED.into(),
         // Frames outside producers sent over the NATS ingress and what Sinex
         // did with each, written by admission with the frame's events, so a
         // producer can ask what Sinex holds and a redelivered frame is answered
@@ -810,16 +808,6 @@ fn kind_columns() -> String {
         Validation::check("validation")
     )
 }
-
-/// Each event/stream-sequence pair is its own row; bounds select pages, never
-/// individual messages.
-/// One row per acknowledged copy, including redelivery after deduplication expires.
-const PUBLISHED: &str = "CREATE TABLE core.published (
-  event_id uuid NOT NULL,
-  stream_seq bigint NOT NULL,
-  stream_instance text NOT NULL DEFAULT '',
-  CONSTRAINT published_pairs_pkey PRIMARY KEY (event_id, stream_seq, stream_instance)
-)";
 
 /// Blob-only admissions also need a position when pairing a store with a restored database.
 fn blob_changes() -> Vec<String> {

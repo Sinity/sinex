@@ -11,7 +11,7 @@
 //! | `<root>.recorded.<producer>` | the producer, as a request | [`RecordedQuery`]: what Sinex recorded for these frames |
 //! | `<root>.materials.<producer>` | the producer, as a request | [`Materials`]: a page of the materials it registered |
 //! | `<root>.lifecycle.<producer>` | the producer, as a request | [`Lifecycle`]: archive, restore, undo or tombstone, with the producer as actor |
-//! | `<root>.confirmed.event.<class>.<event type>` | `sinexd` | a [`Confirmed::Event`], or a [`Confirmed::Withheld`] reference to fetch by ID |
+//! | `<root>.confirmed.event.<class>.<event type>` | `sinexd` | a [`Confirmed::Event`] reference; consumers fetch the events in pages ([`FetchEvents`]) |
 //! | `<root>.confirmed.lifecycle.<class>.<event type>` | `sinexd` | a [`Confirmed::Archived`], [`Confirmed::Restored`] or [`Confirmed::Tombstoned`] message |
 //!
 //! Each producer's credentials allow only its own subjects
@@ -163,7 +163,7 @@ impl Subjects {
             .or_else(|| rest.strip_prefix("lifecycle."))
             .or_else(|| rest.strip_prefix("replay_scope."))
             .or_else(|| rest.strip_prefix("public_context."))
-            .or_else(|| rest.strip_prefix("fetch_event."))
+            .or_else(|| rest.strip_prefix("fetch_events."))
             .or_else(|| rest.strip_prefix("fetch_material."))
             .or_else(|| rest.strip_prefix("confirmed_consumer."))?;
         valid_producer(producer).then_some(producer)
@@ -176,11 +176,11 @@ impl Subjects {
         format!("{}.public_context.*", self.root)
     }
 
-    pub fn fetch_event(&self, producer: &str) -> String {
-        format!("{}.fetch_event.{producer}", self.root)
+    pub fn fetch_events(&self, producer: &str) -> String {
+        format!("{}.fetch_events.{producer}", self.root)
     }
-    pub fn fetch_event_all(&self) -> String {
-        format!("{}.fetch_event.*", self.root)
+    pub fn fetch_events_all(&self) -> String {
+        format!("{}.fetch_events.*", self.root)
     }
 
     pub fn fetch_material(&self, producer: &str) -> String {
@@ -214,7 +214,7 @@ impl Subjects {
             self.lifecycle(producer),
             self.replay_scope(producer),
             self.public_context(producer),
-            self.fetch_event(producer),
+            self.fetch_events(producer),
             self.fetch_material(producer),
             self.confirmed_consumer(producer),
             format!("{}.>", self.inbox_prefix(producer)),
@@ -580,11 +580,13 @@ impl Acknowledgment {
     }
 }
 
-/// Payload reads use the authenticated subject identity, never an identity from the body.
+/// A page of events to read by ID, such as the references of one batch of
+/// confirmed-stream messages. Payload reads use the authenticated subject
+/// identity, never an identity from the body.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct FetchEvent {
-    pub event: EventId,
+pub struct FetchEvents {
+    pub events: Vec<EventId>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -610,14 +612,29 @@ pub struct FetchRefusal {
     pub reason: String,
 }
 
+/// The answer to [`FetchEvents`]: one item per requested ID, in request
+/// order, read at one database snapshot under the caller's grants, or a
+/// refusal of the whole request (no read grant, a malformed request, an
+/// outage).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "reply", rename_all = "snake_case")]
-pub enum FetchEventReply {
-    Event(Box<ConfirmedEvent>),
-    /// The event was tombstoned. Unknown historical positions stay
-    /// unavailable, as a refusal.
-    Erased(ErasedEvent),
+pub enum FetchEventsReply {
+    Events { events: Vec<FetchedEvent> },
     Refused(FetchRefusal),
+}
+
+/// One requested event as the caller's grants allow it to be read.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "form", rename_all = "snake_case")]
+pub enum FetchedEvent {
+    Event(Box<ConfirmedEvent>),
+    /// The event was tombstoned: its skeleton. Unknown historical positions
+    /// stay unavailable, as a refusal.
+    Erased(ErasedEvent),
+    Refused {
+        event: EventId,
+        refusal: FetchRefusal,
+    },
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -774,16 +791,13 @@ pub enum Confirmed {
     Gap {
         reason: String,
     },
-    /// A committed event of the open class, complete.
-    Event(Box<ConfirmedEvent>),
-    /// A committed event whose class is not open, or whose message would not
-    /// fit one stream message: fetch it by ID under the consumer's grants.
-    Withheld(WithheldEvent),
+    /// A committed event, by reference: consumers fetch its body in pages
+    /// ([`FetchEvents`]) under their own grants.
+    Event(EventReference),
     Archived(Archived),
     /// An archived reading is live again at a new position.
     Restored(Restored),
-    /// The event was tombstoned: its message has been erased from the stream,
-    /// and a consumer drops anything it kept of it.
+    /// The event was tombstoned: a consumer drops anything it kept of it.
     Tombstoned {
         /// Historical tombstones may predate recorded commit boundaries.
         #[serde(default)]
@@ -796,28 +810,18 @@ pub enum Confirmed {
     },
 }
 
-/// Why an event travels without its body.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum WithheldReason {
-    /// Its class is not open; a consumer granted the class fetches it.
-    Class,
-    /// The complete event is larger than one stream message.
-    Size,
-}
-
-/// An event on the stream or in a snapshot without its body.
+/// A committed event without its body: only what its tombstone skeleton
+/// keeps forever, so nothing holding a reference ever needs erasing.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-pub struct WithheldEvent {
+pub struct EventReference {
     pub commit_seq: i64,
     pub event: EventId,
     pub event_type: String,
     pub class: Class,
-    pub reason: WithheldReason,
 }
 
-/// A committed event, as the confirmed stream, a snapshot or a fetch carries it.
+/// A committed event, as a snapshot or a fetch carries it.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ConfirmedEvent {
     /// Absent for older readings whose registered source is unknown.

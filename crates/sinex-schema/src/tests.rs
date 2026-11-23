@@ -106,6 +106,22 @@ async fn a_forward_step_runs_from_its_version_and_records_the_next(db: devkit::p
         .unwrap();
 }
 
+/// The table that recorded each event's confirmed-stream copies, as it stood
+/// before the stream carried references.
+pub(super) async fn published_before_references(conn: &mut PgConnection) {
+    sqlx::query(
+        "CREATE TABLE core.published (
+  event_id uuid NOT NULL,
+  stream_seq bigint NOT NULL,
+  stream_instance text NOT NULL DEFAULT '',
+  CONSTRAINT published_pairs_pkey PRIMARY KEY (event_id, stream_seq, stream_instance)
+)",
+    )
+    .execute(conn)
+    .await
+    .unwrap();
+}
+
 async fn requests_before_outcomes(conn: &mut PgConnection) {
     reading_orders::positions_without_reading_orders(conn).await;
     sqlx::query("DROP TABLE core.operation_rows")
@@ -338,6 +354,7 @@ async fn copy_fields_upgrade_indexes_only_copy_payloads_including_archived_readi
 ) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     let fresh = catalog(&mut conn).await.unwrap();
+    published_before_references(&mut conn).await;
     conn.execute(
         "DROP TABLE derivation.refusals; DROP TABLE core.library_copy_fields; DELETE FROM sinex_schema.applied;
         INSERT INTO sinex_schema.applied(version) VALUES (45)",
@@ -428,6 +445,7 @@ async fn refusal_upgrade_keeps_existing_derivation_work_and_positions(
 ) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     let fresh = catalog(&mut conn).await.unwrap();
+    published_before_references(&mut conn).await;
     conn.execute("DROP TABLE derivation.refusals; DELETE FROM sinex_schema.applied; INSERT INTO sinex_schema.applied(version) VALUES(46);
         INSERT INTO derivation.dirty(derivation,key,first_dirty_seq,last_dirty_seq) VALUES('fixture','{\"day\":\"unknown\"}',7,11);
         INSERT INTO derivation.waiting(derivation,key,refresh_at) VALUES('fixture','{\"day\":\"unknown\"}','2026-01-01T00:00:00Z');

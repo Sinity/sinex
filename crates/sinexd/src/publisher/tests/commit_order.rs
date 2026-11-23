@@ -4,8 +4,7 @@ type Tuple = (i64, EventId, &'static str);
 
 pub(super) fn tuple(message: &Confirmed) -> Option<Tuple> {
     match message {
-        Confirmed::Event(event) => Some((event.commit_seq, event.id, "event")),
-        Confirmed::Withheld(event) => Some((event.commit_seq, event.event, "event")),
+        Confirmed::Event(event) => Some((event.commit_seq, event.event, "event")),
         Confirmed::Archived(a) => Some((a.archived_seq, a.event, "archived")),
         Confirmed::Restored(a) => Some((a.restored_seq, a.event, "restored")),
         Confirmed::Tombstoned {
@@ -67,7 +66,6 @@ async fn commit_log_and_confirmed_order_survive_lost_stream(db: devkit::pg::Test
         .await
         .unwrap();
     let first = executed("same", "pwd", 1, Class::Open);
-    let first_id = first.id;
     admit(&mut conn, batch(vec![first])).await;
     let next = executed("same", "ls", 2, Class::Open);
     let next_id = next.id;
@@ -142,23 +140,6 @@ async fn commit_log_and_confirmed_order_survive_lost_stream(db: devkit::pg::Test
             .collect::<Vec<_>>(),
         vec![(stream_start.position + 1, later_id, "event")]
     );
-    // An old stream instance's sequence must never delete the unrelated new stream slot.
-    sqlx::query("INSERT INTO core.event_tombstones(event_id,source,event_type,operation_id,commit_seq,original_commit_seq,class) VALUES($1,'atuin','command.executed',$2,5,1,'open')")
-        .bind(first_id.0).bind(uuid::Uuid::now_v7()).execute(&mut conn).await.unwrap();
-    assert_eq!(
-        erase_tombstoned_in(&mut conn, &js, &subjects, &current)
-            .await
-            .unwrap(),
-        0
-    );
-    assert!(
-        js.get_stream(subjects.confirmed_stream())
-            .await
-            .unwrap()
-            .get_raw_message(1)
-            .await
-            .is_ok()
-    );
 }
 
 #[devkit::test]
@@ -209,7 +190,6 @@ async fn partial_position_and_marker_rollback_resume(db: devkit::pg::TestDatabas
         &mut conn,
         &js,
         &subjects,
-        &instance,
         &consumer,
         &page.entries,
         None,
@@ -304,7 +284,7 @@ async fn empty_database_is_ready_at_zero_and_nonempty_old_contract_is_refused(
 }
 
 #[devkit::test]
-async fn giant_event_metadata_travels_by_id_and_completes(db: devkit::pg::TestDatabase) {
+async fn giant_event_metadata_travels_as_a_reference_and_completes(db: devkit::pg::TestDatabase) {
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
@@ -356,17 +336,19 @@ async fn giant_event_metadata_travels_by_id_and_completes(db: devkit::pg::TestDa
     ));
     publish_pending(&mut conn, &js, &subjects).await.unwrap();
     let messages = read_wire_all(&js, &subjects).await;
-    assert!(matches!(&messages[0], Confirmed::Event(event) if event.id == parent_id));
+    let reference = |commit_seq, event| {
+        Confirmed::Event(EventReference {
+            commit_seq,
+            event,
+            event_type: "command.executed".into(),
+            class: Class::Open,
+        })
+    };
     assert_eq!(
-        messages[1..],
+        messages,
         [
-            Confirmed::Withheld(sinex_protocol::WithheldEvent {
-                commit_seq: 2,
-                event: id,
-                event_type: "command.executed".into(),
-                class: Class::Open,
-                reason: WithheldReason::Size,
-            }),
+            reference(1, parent_id),
+            reference(2, id),
             Confirmed::PositionComplete { commit_seq: 2 }
         ]
     );
@@ -383,9 +365,7 @@ async fn giant_event_metadata_travels_by_id_and_completes(db: devkit::pg::TestDa
 }
 
 #[devkit::test]
-async fn withheld_events_expose_no_source_key_and_route_by_stored_class(
-    db: devkit::pg::TestDatabase,
-) {
+async fn references_expose_no_source_key_and_route_by_stored_class(db: devkit::pg::TestDatabase) {
     let nats = devkit::nats::test_nats().unwrap();
     let subjects = Subjects::new(nats.prefix());
     let js = context(async_nats::connect(nats.url()).await.unwrap());
@@ -432,12 +412,11 @@ async fn withheld_events_expose_no_source_key_and_route_by_stored_class(
     let wire: Confirmed = serde_json::from_slice(&raw.payload).unwrap();
     assert_eq!(
         wire,
-        Confirmed::Withheld(sinex_protocol::WithheldEvent {
+        Confirmed::Event(EventReference {
             commit_seq: 1,
             event: id,
             event_type: "command.executed".into(),
             class: Class::Guarded,
-            reason: WithheldReason::Class,
         })
     );
     let key: String = sqlx::query_scalar("SELECT equivalence_key FROM core.events WHERE id=$1")

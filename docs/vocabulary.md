@@ -117,7 +117,8 @@ state, signal rule, delivery, outcome, route, attention, inhibition, lane and se
 - **stream instance**: one life of the confirmed stream, named with its creation time; a new instance starts after its **stream start position** in the commit log.
 - **completion marker**: a message on the confirmed stream saying that every change up to a commit position has been published.
 - **outside consumer**: a declared program that reads the confirmed stream under its own credential; an **outside handler** also sends outputs back.
-- **withheld**: a field left out of a stream message or output, fetched by event ID under the caller's grants.
+- **withheld**: a field an output action left out, marked as withheld ([privacy](privacy.md)).
+- **event reference**: a committed event's commit position, ID, kind and class without its payload, as the confirmed stream and a snapshot's sealed readings carry it; the event is fetched by ID under the caller's grants.
 
 ## Privacy
 

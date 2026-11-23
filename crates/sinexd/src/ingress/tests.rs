@@ -1093,12 +1093,12 @@ async fn ingress_events_reach_the_confirmed_stream(db: devkit::pg::TestDatabase)
         .await
         .unwrap();
     let Confirmed::Event(event) = serde_json::from_slice(&message.payload).unwrap() else {
-        panic!("an open event travels complete")
+        panic!("an event travels as a reference")
     };
     assert_eq!(event.commit_seq, ack.commit_seq().unwrap());
-    assert_eq!(event.id, ack.admitted()[0]);
+    assert_eq!(event.event, ack.admitted()[0]);
     assert_eq!(event.event_type, "command.imported");
-    assert_eq!(event.location.unwrap().material, material);
+    assert_eq!(event.class, sinex_model::Class::Open);
     let _ = &h.nats;
 }
 

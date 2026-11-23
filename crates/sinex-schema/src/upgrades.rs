@@ -47,6 +47,10 @@ pub(crate) const STEPS: &[Step] = &[
         name: "derivation_refusals",
         statements: derivation_refusals,
     },
+    Step {
+        name: "stream_references",
+        statements: stream_references,
+    },
 ];
 
 fn source_exclusions() -> Vec<String> {
@@ -137,4 +141,10 @@ fn derivation_refusals() -> Vec<String> {
     let mut before = crate::description::Description::current();
     before.tables.clear();
     after.changes_from(&before)
+}
+
+/// The confirmed stream carries references, which a tombstone never needs to
+/// erase, so the record of where each event's copies sat on the stream goes.
+fn stream_references() -> Vec<String> {
+    vec!["DROP TABLE core.published".into()]
 }

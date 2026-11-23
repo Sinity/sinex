@@ -2,12 +2,11 @@
 //! [`changes_page`] is the ordered feed, including completion markers
 //! for scalar checkpoints and named gaps for unknown historical metadata.
 //! [`after`] is the event-only view used by internal event derivations.
-//! A tombstone keeps positions and payload-free lifecycle history; each
-//! event's stream sequences are tracked per stream instance for erasure.
+//! A tombstone keeps positions and payload-free lifecycle history.
 use crate::event_row::EventRow;
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
-use sinex_model::{AdmissionCounts, EventId, FrameRefusal, KindRef, OperationId};
+use sinex_model::{AdmissionCounts, FrameRefusal, KindRef, OperationId};
 use sqlx::PgConnection;
 use sqlx::types::Json;
 use time::OffsetDateTime;
@@ -17,7 +16,7 @@ mod changes;
 mod stream_start;
 pub use changes::{
     Change, ChangeCursor, ChangePage, CommittedChange, EventHeader, HistoryGap, LifecycleChange,
-    StreamEvent, Tombstone, changes_page, stream_changes_after_start,
+    Tombstone, changes_page, stream_changes_after_start,
 };
 pub use stream_start::StreamStart;
 
@@ -37,22 +36,29 @@ pub(crate) async fn allocate_position(conn: &mut PgConnection) -> Result<i64> {
     Ok(position)
 }
 
-/// Payload-free metadata kept for erasure. Historical missing values stay unknown.
+/// The payload-free skeleton a tombstone keeps. Historical missing values stay unknown.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ErasedReading {
+    pub event_id: Uuid,
     pub event_type: String,
     pub class: Option<String>,
     pub commit_seq: Option<i64>,
     pub original_commit_seq: Option<i64>,
 }
 
-pub async fn erased_reading(
+/// The tombstone skeletons among `events`.
+pub async fn erased_readings(
     conn: &mut PgConnection,
-    event: EventId,
-) -> Result<Option<ErasedReading>> {
-    let row=sqlx::query_as!(ErasedReading, "SELECT event_type,class,commit_seq,original_commit_seq FROM core.event_tombstones WHERE event_id=$1",event.0)
-        .fetch_optional(conn).await?;
-    Ok(row)
+    events: &[Uuid],
+) -> Result<std::collections::HashMap<Uuid, ErasedReading>> {
+    let rows = sqlx::query_as!(
+        ErasedReading,
+        "SELECT event_id,event_type,class,commit_seq,original_commit_seq FROM core.event_tombstones WHERE event_id=ANY($1)",
+        events
+    )
+    .fetch_all(conn)
+    .await?;
+    Ok(rows.into_iter().map(|row| (row.event_id, row)).collect())
 }
 
 /// One committed event as stored.
@@ -526,122 +532,6 @@ pub async fn producer_materials(
     )
     .fetch_all(&mut *conn)
     .await?)
-}
-
-/// Record where published events sit in the confirmed stream.
-#[cfg(test)]
-pub async fn record_published(conn: &mut PgConnection, published: &[(Uuid, i64)]) -> Result<()> {
-    record_published_in(conn, "", published).await
-}
-
-/// Forget every recorded stream position above `last_seq`: the stream no
-/// longer holds those messages, and its next messages will reuse the numbers.
-pub async fn forget_published_above(
-    conn: &mut PgConnection,
-    stream_instance: &str,
-    last_seq: i64,
-) -> Result<u64> {
-    Ok(sqlx::query!(
-        "DELETE FROM core.published WHERE stream_instance = $1 AND stream_seq > $2",
-        stream_instance,
-        last_seq,
-    )
-    .execute(&mut *conn)
-    .await?
-    .rows_affected())
-}
-
-pub async fn record_published_in(
-    conn: &mut PgConnection,
-    stream_instance: &str,
-    published: &[(Uuid, i64)],
-) -> Result<()> {
-    if published.is_empty() {
-        return Ok(());
-    }
-    let mut pairs = published.to_vec();
-    pairs.sort_unstable();
-    pairs.dedup();
-    let (ids, seqs): (Vec<Uuid>, Vec<i64>) = pairs.into_iter().unzip();
-    sqlx::query!(
-        r#"INSERT INTO core.published (event_id, stream_seq, stream_instance)
-           SELECT event_id,stream_seq,$3 FROM unnest($1::uuid[], $2::bigint[]) AS p(event_id,stream_seq)
-           ON CONFLICT (event_id, stream_seq, stream_instance) DO NOTHING"#,
-        &ids,
-        &seqs,
-        stream_instance,
-    )
-    .execute(&mut *conn)
-    .await?;
-    Ok(())
-}
-
-/// A tombstoned event whose message is still on the confirmed stream.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TombstonedOnStream {
-    pub commit_seq: Option<i64>,
-    pub event_id: Uuid,
-    pub stream_seq: i64,
-    pub operation_id: Uuid,
-}
-
-/// Up to `limit` tombstoned events whose messages are still on the stream.
-#[cfg(test)]
-pub async fn tombstoned_on_stream(
-    conn: &mut PgConnection,
-    limit: i64,
-) -> Result<Vec<TombstonedOnStream>> {
-    tombstoned_on_stream_in(conn, "", limit).await
-}
-
-pub async fn tombstoned_on_stream_in(
-    conn: &mut PgConnection,
-    stream_instance: &str,
-    limit: i64,
-) -> Result<Vec<TombstonedOnStream>> {
-    Ok(sqlx::query_as!(
-        TombstonedOnStream,
-        r#"SELECT p.event_id, p.stream_seq, t.operation_id,t.commit_seq
-           FROM core.event_tombstones t
-           JOIN core.published p ON p.event_id = t.event_id
-           WHERE p.stream_instance=$2
-           ORDER BY p.stream_seq, p.event_id LIMIT $1"#,
-        limit,
-        stream_instance,
-    )
-    .fetch_all(&mut *conn)
-    .await?)
-}
-
-/// Forget only acknowledged erasures, keeping every other acknowledged copy.
-#[cfg(test)]
-pub async fn forget_published(conn: &mut PgConnection, erased: &[(Uuid, i64)]) -> Result<()> {
-    forget_published_in(conn, "", erased).await
-}
-
-pub async fn forget_published_in(
-    conn: &mut PgConnection,
-    stream_instance: &str,
-    erased: &[(Uuid, i64)],
-) -> Result<()> {
-    if erased.is_empty() {
-        return Ok(());
-    }
-    let mut pairs = erased.to_vec();
-    pairs.sort_unstable();
-    pairs.dedup();
-    let (ids, seqs): (Vec<Uuid>, Vec<i64>) = pairs.into_iter().unzip();
-    sqlx::query!(
-        r#"DELETE FROM core.published p
-           USING unnest($1::uuid[], $2::bigint[]) AS e(event_id, stream_seq)
-           WHERE p.event_id = e.event_id AND p.stream_seq = e.stream_seq AND p.stream_instance=$3"#,
-        &ids,
-        &seqs,
-        stream_instance,
-    )
-    .execute(&mut *conn)
-    .await?;
-    Ok(())
 }
 
 /// Record a producer replay's acknowledgment in its replacement transaction.

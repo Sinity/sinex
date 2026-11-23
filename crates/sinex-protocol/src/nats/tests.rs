@@ -35,7 +35,7 @@ fn producer_permissions_name_only_its_own_subjects() {
             "sinex.lifecycle.phone",
             "sinex.replay_scope.phone",
             "sinex.public_context.phone",
-            "sinex.fetch_event.phone",
+            "sinex.fetch_events.phone",
             "sinex.fetch_material.phone",
             "sinex.confirmed_consumer.phone",
             "_INBOX.phone.>"
@@ -320,27 +320,40 @@ fn ack_shapes_round_trip() {
     }
 }
 
-/// A fetch reply is one of an event, an erasure or a refusal.
+/// A fetched page item is one of an event, an erasure or a refusal naming
+/// its event; a whole request can be refused.
 #[devkit::test]
-fn fetch_reply_is_one_of_three() {
-    let erased = FetchEventReply::Erased(ErasedEvent {
-        event: EventId::new(),
-        commit_seq: 5,
-        original_commit_seq: 2,
+fn fetch_reply_is_a_page_or_a_refusal() {
+    let event = EventId::new();
+    let page = FetchEventsReply::Events {
+        events: vec![
+            FetchedEvent::Erased(ErasedEvent {
+                event,
+                commit_seq: 5,
+                original_commit_seq: 2,
+            }),
+            FetchedEvent::Refused {
+                event,
+                refusal: FetchRefusal {
+                    kind: FetchRefusalKind::Missing,
+                    reason: "gone".into(),
+                },
+            },
+        ],
+    };
+    let refused = FetchEventsReply::Refused(FetchRefusal {
+        kind: FetchRefusalKind::Denied,
+        reason: "no grant".into(),
     });
-    let refused = FetchEventReply::Refused(FetchRefusal {
-        kind: FetchRefusalKind::Missing,
-        reason: "gone".into(),
-    });
-    for reply in [erased, refused] {
+    for reply in [page, refused] {
         let json = serde_json::to_value(&reply).unwrap();
         assert_eq!(
-            serde_json::from_value::<FetchEventReply>(json).unwrap(),
+            serde_json::from_value::<FetchEventsReply>(json).unwrap(),
             reply
         );
     }
     assert!(
-        serde_json::from_value::<FetchEventReply>(serde_json::json!({"erased":null,"event":null}))
+        serde_json::from_value::<FetchEventsReply>(serde_json::json!({"erased":null,"event":null}))
             .is_err()
     );
     assert!(

@@ -1,6 +1,6 @@
 //! Producer replay scopes, and the current-state snapshot a consumer installs
 //! before following a confirmed stream that starts at a current-state origin.
-use crate::{ConfirmedEvent, ReplayScopePage, ReplayScopeQuery, WithheldEvent};
+use crate::{ConfirmedEvent, EventReference, ReplayScopePage, ReplayScopeQuery};
 use serde::{Deserialize, Serialize};
 use sinex_model::EventId;
 
@@ -109,5 +109,6 @@ pub struct SnapshotEvent {
 #[serde(tag = "form", rename_all = "snake_case")]
 pub enum SnapshotReading {
     Inline(Box<ConfirmedEvent>),
-    Withheld(WithheldEvent),
+    /// A sealed reading, fetched by ID after an operator unlock.
+    Reference(EventReference),
 }

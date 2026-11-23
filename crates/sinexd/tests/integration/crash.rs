@@ -1116,7 +1116,7 @@ async fn publisher_survives(between_pages: bool) {
     };
     config
         .metadata
-        .insert("sinex_confirmed_contract".into(), "5".into());
+        .insert("sinex_confirmed_contract".into(), "6".into());
     config.metadata.insert(
         "sinex_stream_start".into(),
         serde_json::to_string(&stream_start).unwrap(),
@@ -1135,13 +1135,37 @@ async fn publisher_survives(between_pages: bool) {
     let lock_sql = if between_pages {
         format!("SELECT 1 FROM core.consumer_positions WHERE consumer='{consumer}' FOR UPDATE")
     } else {
-        lock("core.published")
+        // Other commit readers save positions in the same table; pause only
+        // the publisher's first save, after its page is on the stream.
+        sqlx::raw_sql(&format!(
+            "CREATE FUNCTION core.pause_publisher_position() RETURNS trigger LANGUAGE plpgsql AS $$
+               BEGIN
+                 PERFORM pg_advisory_xact_lock(hashtextextended('sinex.test.publisher_position',0));
+                 RETURN NEW;
+               END $$;
+             CREATE TRIGGER pause_publisher_position BEFORE INSERT ON core.consumer_positions
+               FOR EACH ROW WHEN (NEW.consumer = '{consumer}')
+               EXECUTE FUNCTION core.pause_publisher_position();"
+        ))
+        .execute(&mut start_conn)
+        .await
+        .unwrap();
+        "SELECT pg_advisory_xact_lock(hashtextextended('sinex.test.publisher_position',0))".into()
     };
     let behind_sql = format!(
         "SELECT (SELECT value FROM core.counters WHERE name='commit_seq') - coalesce((SELECT commit_seq FROM core.consumer_positions WHERE consumer='{consumer}'), 0)"
     );
     let run = || target.daemon(&inputs, &nats);
     kill_at(&target, &mut run(), ready.as_deref(), &lock_sql).await;
+    if !between_pages {
+        sqlx::raw_sql(
+            "DROP TRIGGER pause_publisher_position ON core.consumer_positions;
+             DROP FUNCTION core.pause_publisher_position();",
+        )
+        .execute(&mut start_conn)
+        .await
+        .unwrap();
+    }
 
     let mut daemon = Process::start(&mut run());
     let mut c = target.connect().await;
@@ -1212,8 +1236,7 @@ async fn publisher_survives(between_pages: bool) {
             read += 1;
             let message: sinex_protocol::Confirmed = serde_json::from_slice(&m.payload).unwrap();
             let event = match message {
-                sinex_protocol::Confirmed::Event(event) => Some((event.id, event.commit_seq)),
-                sinex_protocol::Confirmed::Withheld(event) => Some((event.event, event.commit_seq)),
+                sinex_protocol::Confirmed::Event(event) => Some((event.event, event.commit_seq)),
                 _ => None,
             };
             if let Some((event, commit_seq)) = event {
@@ -1237,7 +1260,7 @@ async fn publisher_survives(between_pages: bool) {
     );
 }
 
-/// The first page is on the stream; recording it is blocked.
+/// The first page is on the stream; saving its position is blocked.
 #[devkit::test]
 async fn publisher_killed_recording_a_published_page() {
     publisher_survives(false).await;

@@ -181,7 +181,7 @@ deduplicates.
 Measure the resulting archive size and incremental deduplication; a previous
 compression ratio is a capacity estimate, not a guaranteed bound.
 
-Worktrees, caches and scratch are outside backups. NATS state is not backed up: committed changes are republished from PostgreSQL with the same commit positions, and unacknowledged frames are resent from the producer spools, which are in the backup ([producers.md](producers.md)).
+Worktrees, caches and scratch are outside backups. NATS state is not backed up: a lost stream store is replaced by a new confirmed-stream instance that starts at the current commit position, from which consumers take a snapshot, and unacknowledged frames are resent from the producer spools, which are in the backup ([producers.md](producers.md#rebuild-and-outages)).
 
 A backup records the compression jobs it actually disables in its existing
 operation, in the same database transaction as the pause. Normal completion and
