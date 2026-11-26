@@ -149,6 +149,7 @@ state, signal rule, delivery, outcome, route, attention, inhibition, lane and se
 - **interval**: a state with a start and maybe an end, computed by a derivation.
 - **interval kind**: a kind whose events last from their event time to an end their payload records; declared once with how the end is recorded ([intervals that reach a window](derivations.md#intervals-that-reach-a-window)).
 - **overlap read**: a window's read of an interval kind that also returns the earlier intervals reaching the window's start.
+- **bound**: a time after which an interval whose end is unknown cannot have held (a state interval's fence, the next boot of its host); the interval reaches no window that starts later.
 - **narrowing**: the value of the one payload field an interval kind's readers select by (`state_kind`), kept with each live interval so a read of one value skips the rest.
 - **figure**: a measure over one period and grain, stored as an event (a figure cell) whose state has no default: observed, partial, lower bound, missing with a reason, not applicable, not estimable ([figure cells](evidence.md#figure-cells)).
 - **episode**: a stretch of work on one objective, with interruptions and its resume card ([higher layer](higher-layer.md)).

@@ -1,7 +1,9 @@
-//! Read only the prior boundaries and the forward transitions a state day needs.
+//! Read only the prior boundaries and the forward transitions a state day
+//! needs. A transition that names no scope opens no interval, so it selects
+//! no scope here: it has no prior state and no closer to look for.
 use super::*;
 use sinex_model::state_transition::{self, SubjectField};
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 const ROWS_PER_QUERY: i64 = 256;
 
@@ -39,42 +41,25 @@ impl Row {
             &self.id.to_string(),
         ))
     }
-    fn scope(&self) -> Result<String> {
-        let stable = self.stable()?;
-        Ok(state_transition::scope(&self.payload, || stable))
+    fn scope(&self) -> Option<String> {
+        state_transition::scope(&self.payload)
     }
 }
 
+/// Payload values a wanted record holds, each as a one-field object.
 #[derive(Default)]
 struct Candidates {
     payloads: BTreeMap<String, Value>,
-    keys: BTreeSet<String>,
-    materials: BTreeSet<Uuid>,
 }
 impl Candidates {
     fn field(&mut self, field: &str, value: &Value) {
         let candidate = serde_json::json!({(field): value});
         self.payloads.insert(candidate.to_string(), candidate);
     }
-    fn state(&mut self, row: &Row) {
-        if let Some(scope) = state_transition::SCOPE_FIELDS
-            .iter()
-            .find_map(|field| row.payload.get(*field).filter(|value| value.is_string()))
-        {
-            // Fetch a superset; the shared Rust interpretation chooses the scope.
-            for field in state_transition::SCOPE_FIELDS {
-                self.field(field, scope);
-            }
-        } else if let Some(key) = &row.equivalence_key {
-            self.keys.insert(key.clone());
-        } else if let Some(native) = row
-            .payload
-            .get(sinex_model::record::NATIVE_ID)
-            .filter(|v| v.is_string())
-        {
-            self.field(sinex_model::record::NATIVE_ID, native);
-        } else if let Some(material) = row.material_id {
-            self.materials.insert(material);
+    /// Fetch a superset; the shared Rust interpretation chooses the scope.
+    fn scope(&mut self, scope: &str) {
+        for field in state_transition::SCOPE_FIELDS {
+            self.field(field, &Value::String(scope.to_owned()));
         }
     }
 }
@@ -116,8 +101,6 @@ async fn page(
     let (at, seq) = cursor.map_or((None, None), |(at, seq)| (Some(at), Some(seq)));
     Ok(if let Some(candidates) = prior {
         let payloads: Vec<_> = candidates.payloads.values().cloned().collect();
-        let keys: Vec<_> = candidates.keys.iter().cloned().collect();
-        let materials: Vec<_> = candidates.materials.iter().copied().collect();
         sqlx::query_file_as!(
             Row,
             "src/derivations/sql/state_transition_prior.sql",
@@ -130,8 +113,6 @@ async fn page(
             seq,
             ROWS_PER_QUERY,
             &payloads,
-            &keys,
-            &materials,
         )
         .fetch_all(conn)
         .await?
@@ -249,13 +230,10 @@ pub(super) async fn resolve(
             if kinds
                 .iter()
                 .any(|kind| kind.admits(&row.event_type, &row.payload))
+                && let Some(scope) = row.scope()
             {
-                candidates.state(row);
-                remember(
-                    scopes.entry(row.scope()?).or_default(),
-                    row,
-                    &interruption_fields,
-                );
+                candidates.scope(&scope);
+                remember(scopes.entry(scope).or_default(), row, &interruption_fields);
             }
         }
         cursor = rows.last().map(|row| (row.at, row.commit_seq));
@@ -286,11 +264,11 @@ pub(super) async fn resolve(
             {
                 continue;
             }
-            if let Some(scope) = scopes.get_mut(&row.scope()?) {
-                if scope.previous.is_none_or(|at| at == row.at) {
-                    remember(scope, row, &interruption_fields);
-                    observe(scope, row, &row.stable()?, false, start, end, subjects);
-                }
+            if let Some(scope) = row.scope().and_then(|name| scopes.get_mut(&name))
+                && scope.previous.is_none_or(|at| at == row.at)
+            {
+                remember(scope, row, &interruption_fields);
+                observe(scope, row, &row.stable()?, false, start, end, subjects);
             }
         }
         let row = rows.last().unwrap();
@@ -307,9 +285,7 @@ pub(super) async fn resolve(
     // candidate fields come from the day and the selected prior observations.
     let mut stops = Candidates::default();
     for (name, scope) in &scopes {
-        for field in state_transition::SCOPE_FIELDS {
-            stops.field(field, &Value::String(name.clone()));
-        }
+        stops.scope(name);
         for (field, values) in &scope.field_values {
             for value in values {
                 stops.field(field, &Value::String(value.clone()));
@@ -438,16 +414,17 @@ fn apply(
     if !state && stops.is_empty() {
         return Ok(());
     }
-    let name = row.scope()?;
+    let name = row.scope();
     let stable = row.stable()?;
-    if state && let Some(scope) = scopes.get_mut(&name) {
-        remember(scope, row, fields);
-    }
     if stops.is_empty() {
-        if let Some(scope) = scopes.get_mut(&name) {
+        if let Some(scope) = name.and_then(|name| scopes.get_mut(&name)) {
+            remember(scope, row, fields);
             observe(scope, row, &stable, false, start, end, subjects);
         }
         return Ok(());
+    }
+    if state && let Some(scope) = name.as_ref().and_then(|name| scopes.get_mut(name)) {
+        remember(scope, row, fields);
     }
     for (scope_name, scope) in scopes {
         let matching = stops.iter().any(|n| {
@@ -463,7 +440,7 @@ fn apply(
                     })
             })
         });
-        if scope_name == &name || matching {
+        if name.as_ref() == Some(scope_name) || matching {
             observe(
                 scope,
                 row,

@@ -382,3 +382,52 @@ async fn boundary_reads_visit_pages_instead_of_old_history_and_the_closed_tail(
         actual.visited
     );
 }
+
+#[devkit::test]
+async fn records_that_name_no_scope_do_not_extend_the_read_past_the_closers(
+    db: devkit::pg::TestDatabase,
+) {
+    let mut conn = AdmissionContext::connect(&db.url(None)).await.unwrap();
+    let mut events = vec![
+        focus(-1, Some("hot"), Some("a"), None),
+        focus(1, Some("hot"), Some("a"), None),
+        focus(DAY + 1, Some("hot"), Some("b"), None),
+    ];
+    // Nothing can close a record that names no scope: were each its own
+    // scope, the forward read would look for their closers to the end of
+    // the stored evidence.
+    events.extend((2..=301).map(|n| focus(n, None, Some("unnamed"), None)));
+    events.extend((1..=10).map(|n| focus(-3 * DAY + n, None, Some("unnamed"), None)));
+    events.extend((1..=4096).map(|n| focus(2 * DAY + n, Some("hot"), Some("c"), None)));
+    admit(&mut conn, events).await;
+    let actual = resolve(&mut conn, &kinds(None), at(0), at(DAY), FOCUS, &[])
+        .await
+        .unwrap();
+    assert_eq!(actual.from, at(-1));
+    assert_eq!(actual.until, at(DAY + 1) + time::Duration::microseconds(1));
+    assert_eq!(actual.prior.len(), 1);
+    // The day's 301 records are read twice, to find the scopes and to fold
+    // them, with the prior state and one page that reaches the closer.
+    assert!(
+        actual.visited <= 4 * usize::try_from(ROWS_PER_QUERY).unwrap(),
+        "visited {} metadata rows",
+        actual.visited
+    );
+    // A day holding only such records selects no scope and reads no further.
+    let unnamed_day = resolve(
+        &mut conn,
+        &kinds(None),
+        at(-3 * DAY),
+        at(-2 * DAY),
+        FOCUS,
+        &[],
+    )
+    .await
+    .unwrap();
+    assert_eq!(unnamed_day.visited, 10, "the day's own records, once");
+    assert!(unnamed_day.prior.is_empty());
+    assert_eq!(
+        unnamed_day.until,
+        at(-2 * DAY) + time::Duration::microseconds(1)
+    );
+}

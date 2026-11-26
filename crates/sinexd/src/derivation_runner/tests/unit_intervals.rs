@@ -82,16 +82,21 @@ async fn a_unit_event_recomputes_only_its_own_scope(db: devkit::pg::TestDatabase
     .await;
     runner.catch_up().await.unwrap();
     let before = runs(&w).await;
-    assert_eq!(before.len(), 3);
     assert_eq!(
-        keys(&w, "waiting").await.len(),
-        2,
-        "the two open runs with a host wait; nothing can close the third"
+        before.keys().collect::<Vec<_>>(),
+        ["a.service", "b.service"],
+        "the record that names no host has no key and opens no interval"
     );
+    assert_eq!(keys(&w, "waiting").await.len(), 2, "the two open runs wait");
     assert_eq!(
         w.count("SELECT count(*) FROM derivation.inputs WHERE derivation='unit.intervals'")
             .await,
-        3
+        2
+    );
+    assert_eq!(
+        w.count("SELECT count(*) FROM core.live_intervals WHERE ended_at IS NULL")
+            .await,
+        2
     );
 
     // A stop a day later names one scope, whatever day its run started on.
@@ -113,7 +118,6 @@ async fn a_unit_event_recomputes_only_its_own_scope(db: devkit::pg::TestDatabase
         stop.id
     );
     assert_eq!(after["b.service"], before["b.service"], "the same reading");
-    assert_eq!(after["c.service"], before["c.service"], "the same reading");
     assert_eq!(
         keys(&w, "waiting").await.len(),
         1,
@@ -150,6 +154,21 @@ async fn a_boot_fences_the_open_runs_of_its_host_once(db: devkit::pg::TestDataba
         assert_eq!(fenced[unit].1.fenced_at, Some(at(3600)), "{unit}");
         assert_eq!(fenced[unit].1.ended_at, None, "{unit}");
     }
+    // A fenced run reaches no further than its fence, so the one run still
+    // open is the only one a later window is handed.
+    assert_eq!(
+        w.count("SELECT count(*) FROM core.live_intervals WHERE ended_at IS NULL")
+            .await,
+        1
+    );
+    assert_eq!(
+        w.count(&format!(
+            "SELECT count(*) FROM core.live_intervals WHERE ended_at = to_timestamp({})",
+            at(3600).0.unix_timestamp()
+        ))
+        .await,
+        2
+    );
     assert_eq!(fenced["c.service"].1.fenced_at, None, "another host's boot");
     let waiting = keys(&w, "waiting").await;
     assert_eq!(waiting.len(), 1, "{waiting:?}");

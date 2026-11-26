@@ -12,8 +12,7 @@ CROSS JOIN LATERAL (
                 WHERE k.event_type = e.event_type AND e.payload @> k.contains)
     AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)
     AND ($6::timestamptz IS NULL OR (e.ts_orig, e.commit_seq) < ($6, $7::bigint))
-    AND (e.payload @> ANY($9::jsonb[]) OR e.equivalence_key = ANY($10::text[])
-         OR e.material_id = ANY($11::uuid[]))
+    AND e.payload @> ANY($9::jsonb[])
     ORDER BY e.ts_orig DESC, e.commit_seq DESC
     LIMIT $8
 ) e
