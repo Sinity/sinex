@@ -1244,6 +1244,19 @@ impl DerivationRunner {
                 usize::MAX,
             )
             .await?;
+            // A per-event pass holds this lock from reading its position
+            // until its last batch commits. Ending the switch under it means
+            // no batch computed from the old position commits after the
+            // position is reset and moves it past the history again.
+            let _lock = self.writer.lock_derivations().await;
+            let ended = !derivations::selection::unfinished_switches(&mut self.read)
+                .await?
+                .iter()
+                .any(|unfinished| unfinished.operation == switch.operation);
+            if ended {
+                // Another runner of this daemon finished it meanwhile.
+                continue;
+            }
             self.writer
                 .submit(
                     Priority::Derived,
