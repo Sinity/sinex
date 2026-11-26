@@ -212,7 +212,7 @@ pub(super) fn environment(out: &Path) -> Value {
         "mount": command("findmnt", &["--json", "--target", &out.to_string_lossy()]),
         "postgres": command("postgres", &["--version"]), "nats": command("nats-server", &["--version"]),
         "binary_sha256": command("sha256sum", &[&out.join("sinexd").to_string_lossy()]),
-        "job_id": env::var("AGENTCTL_JOB_ID").ok(),
+        "job_id": env::var("DEVKIT_JOB_ID").ok(),
         "job_head": env::var("AGENTCTL_CHECKOUT_HEAD").ok(),
         "meminfo": fs::read_to_string("/proc/meminfo").ok(),
     })

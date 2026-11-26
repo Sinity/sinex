@@ -398,6 +398,7 @@ fn test_options(args: &[String], env: Vec<(String, String)>) -> Nextest {
         // selectors keep devkit's default refusal when no tests match.
         allow_no_tests: args.len() == 1 && !args[0].starts_with('-'),
         tmpfs: true,
+        junit: None,
     }
 }
 
