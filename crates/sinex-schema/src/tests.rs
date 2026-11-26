@@ -457,6 +457,7 @@ async fn copy_fields_upgrade_indexes_only_copy_payloads_including_archived_readi
 }
 
 mod live_intervals;
+mod output_ranges;
 mod reading_orders;
 mod selection;
 

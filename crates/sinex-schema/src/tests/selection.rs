@@ -3,6 +3,7 @@ use sqlx::Executor;
 
 /// The registry while a selection also named the build that made it.
 pub(super) async fn derivations_with_selected_build(conn: &mut PgConnection) {
+    super::output_ranges::outputs_before_ranges(&mut *conn).await;
     conn.execute("ALTER TABLE registry.derivations ADD COLUMN build text NOT NULL DEFAULT ''")
         .await
         .unwrap();

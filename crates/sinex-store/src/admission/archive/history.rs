@@ -1,5 +1,5 @@
-//! Archived state, its history, the live count of each source and the live
-//! intervals are written together.
+//! Archived state, its history, the live count of each source, the live
+//! intervals and the ranges live outputs cover are written together.
 use crate::Result;
 use sinex_model::{ArchiveReason, DbCheck};
 use sqlx::PgConnection;
@@ -38,8 +38,11 @@ pub(crate) async fn archive_at(
         SELECT change_seq,event_id,archived_seq,true,reason,replaced_by,operation_id,archived_at FROM added),
       resolved AS (
         SELECT added.event_id, live.source FROM added
+        -- A replaced reading's live row already names its replacement, a
+        -- reading of the same record and so of the same source.
         LEFT JOIN LATERAL (
-          SELECT source FROM core.live_equivalence WHERE event_id = added.event_id OFFSET 0
+          SELECT source FROM core.live_equivalence
+          WHERE event_id = coalesce(added.replaced_by, added.event_id) OFFSET 0
         ) live ON true),
       sources AS (
         SELECT source FROM resolved WHERE source IS NOT NULL
@@ -52,6 +55,7 @@ pub(crate) async fn archive_at(
       ids,replacements,position,reason.as_db(),operation,first,last)
       .execute(&mut *conn).await?;
     crate::live_intervals::archived(conn, ids).await?;
+    crate::output_ranges::archived(conn, ids).await?;
     // The input is no longer eligible for derivation. Its original reading
     // remains archived; the current-work diagnosis has no remaining owner.
     let inputs: Vec<String> = ids.iter().map(Uuid::to_string).collect();

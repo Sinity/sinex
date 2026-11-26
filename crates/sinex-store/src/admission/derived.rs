@@ -92,7 +92,6 @@ pub struct RefusedWork {
     pub reason: String,
 }
 
-mod ranges;
 mod refusals;
 
 /// How far archiving and tombstoning had gone when a derivation read its
@@ -453,15 +452,22 @@ pub(super) async fn apply_derived(
             }
             // Keep the key that produced each archived reading, so restoring
             // an aggregate requests a new computation rather than reviving it.
-            sqlx::query!(
+            let joined = sqlx::query!(
                 r#"INSERT INTO derivation.outputs (derivation, key, event_id)
-                   SELECT $1, k, id FROM unnest($2::jsonb[], $3::uuid[]) AS o(k, id) ON CONFLICT DO NOTHING"#,
+                   SELECT $1, k, id FROM unnest($2::jsonb[], $3::uuid[]) AS o(k, id) ON CONFLICT DO NOTHING
+                   RETURNING key, event_id"#,
                 derivation,
                 &out_keys,
                 &out_ids,
             )
-            .execute(&mut *conn)
+            .fetch_all(&mut *conn)
             .await?;
+            let (joined_keys, joined_outputs) = joined
+                .into_iter()
+                .map(|row| (row.key, row.event_id))
+                .unzip();
+            crate::output_ranges::record(conn, derivation, keys, joined_keys, joined_outputs)
+                .await?;
             let seqs: Vec<i64> = scoped.iter().map(|s| s.dirty_seq).collect();
             sqlx::query!(
                 r#"DELETE FROM derivation.dirty d USING unnest($2::jsonb[], $3::bigint[]) AS s(k, seq)
@@ -741,7 +747,7 @@ pub(crate) async fn mark_inputs_dirty(
             nearby.insert(query, dirty.len() - before);
         }
     }
-    dirty.extend(ranges::affected_keys(conn, ranges).await?);
+    dirty.extend(crate::output_ranges::affected_keys(conn, ranges).await?);
     store_inputs(conn, stored).await?;
     // Outcome counts describe offered marks, including repeated input offers;
     // the affected-target union and its stored rows remain unchanged.

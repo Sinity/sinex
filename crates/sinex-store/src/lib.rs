@@ -23,6 +23,7 @@ pub mod lifecycle;
 pub mod live;
 mod live_intervals;
 pub mod material_bytes;
+mod output_ranges;
 pub mod payloads;
 pub mod positions;
 pub mod privacy;
@@ -46,7 +47,7 @@ pub mod writer_lock;
 
 pub use admission::{
     AffectedRange, ComputedKey, DerivedScope, DirtyKeys, KeyInput, NoDerivations, Outcome,
-    ReadMark, RefusedInput, RefusedWork,
+    OutputRange, ReadMark, RefusedInput, RefusedWork,
 };
 pub use blobs::Blobs;
 pub use blobs::Verified;

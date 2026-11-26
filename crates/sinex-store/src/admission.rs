@@ -46,18 +46,28 @@ pub struct KeyInput<'a> {
     pub payload: &'a Value,
 }
 
-/// A changed input can affect an existing key selected by its output's time range.
-#[derive(Clone, Debug)]
-pub struct AffectedRange {
-    /// Only stored keys with this string field and value can read the changed input.
-    pub key_match: Option<(&'static str, &'static str)>,
-    pub open_field: Option<&'static str>,
-    /// A stored output with no end stops overlapping after this field's time.
-    pub fence_field: Option<&'static str>,
+/// The time a stored output of a keyed derivation covers, by the payload
+/// fields that record it. Admission keeps this range for every live output
+/// of the type a batch of the derivation's keys admits
+/// (`derivation.output_ranges`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OutputRange {
     pub derivation: &'static str,
     pub output_type: &'static str,
     pub start_field: &'static str,
     pub end_field: &'static str,
+    /// A true field means the stored output is still open after its recorded end.
+    pub open_field: Option<&'static str>,
+    /// A stored output with no end stops overlapping after this field's time.
+    pub fence_field: Option<&'static str>,
+}
+
+/// A changed input can affect the keys of a derivation whose live outputs of
+/// `output_type` cover part of this range.
+#[derive(Clone, Debug)]
+pub struct AffectedRange {
+    pub derivation: &'static str,
+    pub output_type: &'static str,
     pub start: time::OffsetDateTime,
     pub end: time::OffsetDateTime,
 }
@@ -77,6 +87,10 @@ pub trait DirtyKeys: Send + Sync {
     /// the derivation reads the key by that list.
     fn stores_inputs(&self, _derivation: &str, _key: &Value) -> bool {
         false
+    }
+    /// What the outputs named by [`DirtyKeys::affected_ranges`] cover.
+    fn output_ranges(&self) -> Vec<OutputRange> {
+        Vec::new()
     }
     fn affected_ranges(&self, _: &KeyInput<'_>) -> Vec<AffectedRange> {
         Vec::new()

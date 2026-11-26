@@ -213,6 +213,10 @@ performance is measured, never asserted: no test checks elapsed time.
   derivations over it, reporting input bytes, stored bytes per source,
   database and blob store size, timings, and sampled memory and load.
   Estimates for full inputs assume time grows linearly with input bytes.
+- `cargo xtask bench output-ranges` runs the two statements of admission's
+  lookup of stored outputs an input's range touches over generated ranges of
+  one derivation at 10,000, 100,000 and 1,000,000 stored outputs, and
+  records the rows each read from its plan.
 - A change is measured with paired runs, before and after, on the same
   sample and machine.
 - Reports carry the hardware-independent figures (bytes and WAL written per

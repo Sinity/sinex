@@ -29,8 +29,13 @@
 //! `bench synthetic` measures admission alone: it stages a generated shell
 //! history of small events into its own PostgreSQL and records the rate under
 //! `synthetic-admission`.
+//!
+//! `bench output-ranges` stores generated output ranges of one derivation at
+//! three sizes and records what admission's lookup of the outputs an input's
+//! range touches reads at each, under `output-range-lookup`.
 mod cases;
 mod measurements;
+mod output_ranges;
 
 use devkit::bench::{self, Candidate, Limit, LoadMonitor, Manifest, Process};
 use devkit::history::Store;
@@ -117,6 +122,13 @@ pub enum Bench {
         #[arg(long)]
         output: PathBuf,
     },
+    /// Measure what the lookup of stored outputs an input's range touches
+    /// reads at 10,000, 100,000 and 1,000,000 stored outputs of one derivation.
+    OutputRanges {
+        /// Parent directory for kept run artifacts.
+        #[arg(long)]
+        output: PathBuf,
+    },
     #[command(flatten)]
     Shared(devkit::cli::Bench),
 }
@@ -150,6 +162,7 @@ pub fn execute(command: Bench) -> ExitCode {
             mixed,
         }),
         Bench::Cases { events, output } => cases::run(events, &output),
+        Bench::OutputRanges { output } => output_ranges::run(&output),
         Bench::Shared(b) => return devkit::cli::bench("sinex", b),
     };
     match result {
@@ -294,13 +307,11 @@ fn sinexd_binary(out: &Path) -> Result<PathBuf, String> {
     sinexd_binary_measured(out).map(|(binary, _)| binary)
 }
 
-fn sinexd_binary_measured(out: &Path) -> Result<(PathBuf, Value), String> {
-    let root = env::current_dir().map_err(|e| e.to_string())?;
-    let target = root.join("target/bench");
-    let schema_started = Instant::now();
-    // A benchmark must compile against this checkout's declarations, even
-    // when another checkout is building a different schema at the same time.
-    let mut compiler = Cluster::start(&out.join("cp"), false, &[])?;
+/// Build this checkout's schema tool, which creates the schema it declares.
+fn schema_tool() -> Result<PathBuf, String> {
+    let target = env::current_dir()
+        .map_err(|e| e.to_string())?
+        .join("target/bench");
     let schema = devkit::cargo_command()
         .args(["build", "--locked", "-p", "sinex-schema"])
         .env("CARGO_TARGET_DIR", &target)
@@ -309,7 +320,17 @@ fn sinexd_binary_measured(out: &Path) -> Result<(PathBuf, Value), String> {
     if !schema.success() {
         return Err("building benchmark schema tool failed".into());
     }
-    let tool = target.join("debug/sinex-schema");
+    Ok(target.join("debug/sinex-schema"))
+}
+
+fn sinexd_binary_measured(out: &Path) -> Result<(PathBuf, Value), String> {
+    let root = env::current_dir().map_err(|e| e.to_string())?;
+    let target = root.join("target/bench");
+    let schema_started = Instant::now();
+    // A benchmark must compile against this checkout's declarations, even
+    // when another checkout is building a different schema at the same time.
+    let mut compiler = Cluster::start(&out.join("cp"), false, &[])?;
+    let tool = schema_tool()?;
     let applied = Command::new(&tool)
         .arg("apply")
         .arg(compiler.url())

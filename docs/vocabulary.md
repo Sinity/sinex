@@ -151,6 +151,8 @@ state, signal rule, delivery, outcome, route, attention, inhibition, lane and se
 - **overlap read**: a window's read of an interval kind that also returns the earlier intervals reaching the window's start.
 - **bound**: a time after which an interval whose end is unknown cannot have held (a state interval's fence, the next boot of its host); the interval reaches no window that starts later.
 - **narrowing**: the value of the one payload field an interval kind's readers select by (`state_kind`), kept with each live interval so a read of one value skips the rest.
+- **output range**: the time a stored output of a keyed derivation covers, from the payload fields its derivation declares; kept for every live output so the outputs an input's range touches are found by index ([stored outputs an input's range touches](derivations.md#stored-outputs-an-inputs-range-touches)).
+- **fence**: a time that bounds an output with no end without ending it.
 - **figure**: a measure over one period and grain, stored as an event (a figure cell) whose state has no default: observed, partial, lower bound, missing with a reason, not applicable, not estimable ([figure cells](evidence.md#figure-cells)).
 - **episode**: a stretch of work on one objective, with interruptions and its resume card ([higher layer](higher-layer.md)).
 - **panel**: figures for several metrics over a range of units, each cell drawn by its state.

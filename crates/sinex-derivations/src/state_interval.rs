@@ -25,7 +25,8 @@
 //! later readings arrive, its start does not.
 use crate::derived_event::derived;
 use crate::{
-    AffectedRange, Computed, Env, InputQuery, InputRange, KeyState, KeyView, Keyed, Kind, Neighbour,
+    AffectedRange, Computed, Env, InputQuery, InputRange, KeyState, KeyView, Keyed, Kind,
+    Neighbour, OutputRange,
 };
 use serde_json::{Value, json};
 use sinex_model::event_types::{IntervalTimeBoundary, IntervalTimeEvidence, StateInterval};
@@ -472,6 +473,13 @@ impl Keyed for StateIntervals {
     const USES_TIME_SETTINGS: bool = true;
     const INPUTS: &'static [&'static str] = INPUT_TYPES;
     const OUTPUTS: &'static [&'static str] = &[StateInterval::EVENT_TYPE];
+    const OUTPUT_RANGES: &'static [OutputRange] = &[OutputRange {
+        output_type: StateInterval::EVENT_TYPE,
+        start_field: "started_at",
+        end_field: "ended_at",
+        open_field: None,
+        fence_field: Some("fenced_at"),
+    }];
 
     fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Self::Key> {
         let mut machine: Vec<_> = machine::keys(input, env)
@@ -636,12 +644,7 @@ impl Keyed for StateIntervals {
             .ts_orig
             .map(|at| {
                 vec![AffectedRange {
-                    key_match: None,
-                    open_field: None,
-                    fence_field: Some("fenced_at"),
-                    output_type: "state.interval",
-                    start_field: "started_at",
-                    end_field: "ended_at",
+                    output_type: StateInterval::EVENT_TYPE,
                     start: at,
                     end: at,
                 }]

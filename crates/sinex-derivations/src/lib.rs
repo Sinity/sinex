@@ -187,19 +187,27 @@ pub enum InputRange {
     },
 }
 
-/// An input can change a key whose existing output overlaps this range.
-#[derive(Clone, Debug)]
-pub struct AffectedRange {
-    /// Only stored keys with this string field and value can read the changed input.
-    pub key_match: Option<(&'static str, &'static str)>,
+/// The time a stored output of a keyed derivation covers, by the payload
+/// fields that record it. The store keeps this range for every live output
+/// of the type, so the outputs an input's range overlaps are found by index.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OutputRange {
+    pub output_type: &'static str,
+    pub start_field: &'static str,
+    pub end_field: &'static str,
     /// A true field means the stored output is still open after its recorded end.
     pub open_field: Option<&'static str>,
     /// A stored output with no end stops overlapping after this field's
     /// time: something later bounded it without ending it.
     pub fence_field: Option<&'static str>,
+}
+
+/// An input can change a key whose existing output of `output_type` covers
+/// part of this range ([`Keyed::OUTPUT_RANGES`] declares what an output
+/// covers).
+#[derive(Clone, Debug)]
+pub struct AffectedRange {
     pub output_type: &'static str,
-    pub start_field: &'static str,
-    pub end_field: &'static str,
     pub start: Timestamp,
     pub end: Timestamp,
 }
@@ -327,6 +335,10 @@ pub trait Keyed: Send + Sync {
     const USES_TIME_SETTINGS: bool = false;
     const INPUTS: &'static [&'static str];
     const OUTPUTS: &'static [&'static str];
+    /// The output types whose stored outputs an input can change by
+    /// overlapping them ([`Keyed::affected_ranges`]), with the fields that
+    /// record what each covers.
+    const OUTPUT_RANGES: &'static [OutputRange] = &[];
 
     fn version(&self) -> u32 {
         Self::VERSION
@@ -482,6 +494,9 @@ pub trait AnyKeyed: Send + Sync {
     fn output_types(&self) -> &'static [&'static str] {
         self.spec().outputs
     }
+    fn output_ranges(&self) -> &'static [OutputRange] {
+        &[]
+    }
     fn keys_for(&self, input: &KeyView<'_>, env: &Env) -> Vec<Value>;
     fn inputs(&self, key: &Value, env: &Env) -> Option<InputQuery>;
     fn exact_inputs(&self, _: &Value, _: &Env) -> Option<Vec<EventId>> {
@@ -514,6 +529,9 @@ impl<K: Keyed> AnyKeyed for K {
             inputs: K::INPUTS,
             outputs: K::OUTPUTS,
         }
+    }
+    fn output_ranges(&self) -> &'static [OutputRange] {
+        K::OUTPUT_RANGES
     }
     fn version(&self) -> u32 {
         Keyed::version(self)
