@@ -525,6 +525,8 @@ async fn publisher_resumes_at_its_position_after_the_upgrade(db: devkit::pg::Tes
          INSERT INTO core.published SELECT id, 1, '' FROM core.events;
          DROP TABLE derivation.inputs;
          ALTER TABLE derivation.waiting DROP COLUMN woken_by;
+         DROP TABLE core.live_intervals;
+         DROP FUNCTION core.interval_end(text, timestamptz, jsonb);
          UPDATE sinex_schema.applied SET version = 47",
     )
     .execute(&mut publisher_conn)
