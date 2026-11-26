@@ -410,6 +410,20 @@ pub fn material_only_roots<'a>(
     ))
 }
 
+/// Limit each statement in the current writer transaction.
+pub async fn set_batch_statement_timeout(
+    conn: &mut PgConnection,
+    timeout: std::time::Duration,
+) -> Result<()> {
+    sqlx::query!(
+        "SELECT set_config('statement_timeout', $1, true)",
+        format!("{}ms", timeout.as_millis()),
+    )
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
 /// Run one batch of `op` inside the caller's transaction: at most `roots`
 /// roots and their chains. On a refusal the caller rolls back.
 pub async fn step(

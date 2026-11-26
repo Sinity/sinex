@@ -1706,9 +1706,7 @@ async fn lifecycle_step(
     ) {
         // Cold compressed chunks and locks can make a single delete much slower
         // than the previous batch. Roll it back and retry fewer roots.
-        sqlx::query("SET LOCAL statement_timeout = '2s'")
-            .execute(tx.connection())
-            .await?;
+        lifecycle::set_batch_statement_timeout(tx.connection(), Duration::from_secs(2)).await?;
     }
     let since = sinex_store::query::current_seq(&mut tx).await?;
     let step = match lifecycle::step(&mut tx, operation, progress, roots, keys).await {

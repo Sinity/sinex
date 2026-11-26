@@ -325,7 +325,9 @@ async fn lifecycle_members_are_the_whole_chain_among_unrelated_history(
         .collect();
     let mut tx = conn.begin().await.unwrap();
     for phase in [Phase::Archive, Phase::ArchiveMadeLive, Phase::Tombstone] {
-        let planned = plan(&mut tx, phase, &ids, &HashSet::new()).await.unwrap();
+        let planned = plan(&mut tx, phase, &ids, &HashSet::new(), false)
+            .await
+            .unwrap();
         assert_eq!(
             planned
                 .members
@@ -362,7 +364,7 @@ async fn lifecycle_members_are_the_whole_chain_among_unrelated_history(
     .await;
     assert!(matches!(archived, Ended::Ok { .. }));
     let mut tx = conn.begin().await.unwrap();
-    let restored = plan(&mut tx, Phase::Restore, &ids, &HashSet::new())
+    let restored = plan(&mut tx, Phase::Restore, &ids, &HashSet::new(), false)
         .await
         .unwrap();
     assert_eq!(
