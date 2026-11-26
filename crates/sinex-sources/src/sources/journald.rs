@@ -24,6 +24,15 @@
 //! started or stopped, a boot, sleep, a shutdown), keyed by the same cursor.
 //! Only entries the expected program wrote count: `_COMM` is set by journald,
 //! so another program cannot fake one.
+//!
+//! A run's end has several records and a journal may hold any subset of
+//! them. A user's manager logs "unit succeeded" at debug level, which a
+//! journal does not normally store, so for a user unit that exits on its own
+//! the only end record is the one systemd writes with what the run consumed,
+//! and it writes that at a stored level only when the run consumed a
+//! notable amount. A run that left none of these records has no end in the
+//! journal, and none is made up for it.
+//!
 //! `journal-json` reads unwrapped `journalctl -o json --all` exports through
 //! the export driver. Both formats use the same entry and state readings;
 //! export bytes remain unchanged and need no capture envelope.
@@ -55,7 +64,7 @@ pub const SPEC: SourceSpec = SourceSpec {
     // Journal messages carry command lines, paths and sometimes secrets.
     class: Class::Guarded,
     parser: "journald-json",
-    parser_version: 3,
+    parser_version: 4,
     event_types: &[
         "journal.entry",
         "unit.started",
@@ -119,6 +128,8 @@ mod message {
     pub(super) const RELOAD_DONE: &str = "7b05ebc668384222baa8881179cfda54";
     pub(super) const UNIT_SUCCEEDED: &str = "7ad2d189f7e94e70a38c781354912448";
     pub(super) const UNIT_FAILED: &str = "d9b373ed55a64feb8242e02dbe79a49c";
+    /// Written once, when a run becomes inactive or failed.
+    pub(super) const UNIT_RESOURCES: &str = "ae8f7b866b0347b9af31fe1c80b127c0";
     pub(super) const STARTUP_FINISHED: &str = "b07a249cd024414a82dd00cd181378ff";
     pub(super) const SLEEP_START: &str = "6bbd95ee977941e497c48be27c254128";
     pub(super) const SLEEP_STOP: &str = "8811e6df2a8e40f58a94cea26f8ebf14";
@@ -179,6 +190,7 @@ fn state_change(entry: &JournalEntry) -> Option<JournalReading> {
         message::STOP_DONE => stopped("stopped", field("JOB_RESULT")),
         message::UNIT_SUCCEEDED => stopped("succeeded", None),
         message::UNIT_FAILED => stopped("failed", field("UNIT_RESULT")),
+        message::UNIT_RESOURCES => stopped("ended", None),
         message::RELOAD_DONE => {
             let (unit, manager, invocation_id) = unit_change()?;
             Some(JournalReading::UnitReloaded(UnitReloaded {

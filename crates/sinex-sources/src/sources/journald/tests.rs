@@ -174,6 +174,12 @@ fn every_way_a_unit_ends_is_a_stopped_unit_with_its_outcome() {
             "start_failed",
             Some("dependency"),
         ),
+        (
+            "ae8f7b866b0347b9af31fe1c80b127c0",
+            json!({"CPU_USAGE_NSEC": "2500000000", "MEMORY_PEAK": "1048576"}),
+            "ended",
+            None,
+        ),
     ] {
         let mut fields = json!({"UNIT": "x.service"});
         fields
@@ -187,6 +193,51 @@ fn every_way_a_unit_ends_is_a_stopped_unit_with_its_outcome() {
         assert_eq!(stopped.outcome, outcome, "{id}");
         assert_eq!(stopped.result.as_deref(), result, "{id}");
     }
+}
+
+/// A user's manager writes no "unit succeeded" entry at a stored level, so
+/// the record of what a scope consumed is the only end its run has.
+#[devkit::test]
+fn a_user_scope_ends_at_the_record_of_what_its_run_consumed() {
+    let out = read(manager_entry(
+        "ae8f7b866b0347b9af31fe1c80b127c0",
+        json!({"USER_UNIT": "run-p10-i20.scope", "USER_INVOCATION_ID": "inv3",
+               "CPU_USAGE_NSEC": "2500000000", "MEMORY_PEAK": "1048576",
+               "IO_METRIC_WRITE_BYTES": "4096",
+               "_PID": "2000", "_UID": "1000", "_SYSTEMD_UNIT": "user@1000.service"}),
+    ));
+    assert_eq!(out.len(), 2);
+    let JournalReading::UnitStopped(stopped) = &out[1] else {
+        panic!("{:?}", out[1]);
+    };
+    assert_eq!(
+        (stopped.unit.as_str(), stopped.manager.as_str()),
+        ("run-p10-i20.scope", "user")
+    );
+    assert_eq!(stopped.uid, Some(1000));
+    assert_eq!(stopped.invocation_id.as_deref(), Some("inv3"));
+    assert_eq!(
+        (stopped.outcome.as_str(), stopped.result.as_deref()),
+        ("ended", None)
+    );
+    assert_eq!(stopped.cursor, "s=1;i=9");
+    assert_eq!(stopped.logged_at, entry(&out).logged_at);
+    // The figures stay on the entry itself.
+    assert_eq!(
+        entry(&out).fields.get("CPU_USAGE_NSEC"),
+        Some(&json!("2500000000"))
+    );
+}
+
+/// The same record from a program other than the manager is only an entry.
+#[devkit::test]
+fn a_consumption_record_another_program_wrote_ends_no_unit() {
+    let mut forged = manager_entry(
+        "ae8f7b866b0347b9af31fe1c80b127c0",
+        json!({"USER_UNIT": "run-p10-i20.scope", "USER_INVOCATION_ID": "inv3"}),
+    );
+    forged["_COMM"] = json!("logger");
+    assert_eq!(read(forged).len(), 1);
 }
 
 #[devkit::test]

@@ -34,9 +34,11 @@ pub struct UnitStarted {
 }
 
 /// A unit stopped being active: a stop job finished, it exited on its own,
-/// or it (or its start job) failed.
+/// it (or its start job) failed, or the manager recorded what its run
+/// consumed. One run can have several of these records; they share its
+/// invocation ID.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2, type = "unit.stopped", key = ["cursor"], replace = repeat, time = logged_at, quality = intrinsic)]
+#[event(version = 3, type = "unit.stopped", key = ["cursor"], replace = repeat, time = logged_at, quality = intrinsic)]
 pub struct UnitStopped {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<String>,
@@ -49,8 +51,10 @@ pub struct UnitStopped {
     pub uid: Option<i64>,
     pub invocation_id: Option<String>,
     /// `stopped` (a stop job finished), `succeeded` (it exited on its own
-    /// with success), `failed` (it failed) or `start_failed` (its start job
-    /// did not succeed).
+    /// with success), `failed` (it failed), `start_failed` (its start job
+    /// did not succeed) or `ended` (the manager recorded what the run
+    /// consumed when it became inactive; that record does not say how the
+    /// run ended).
     pub outcome: String,
     /// systemd's result: the job's (`done`, `failed`, `dependency`,
     /// `timeout`…) or, for a failed unit, the unit's (`exit-code`, `signal`,
