@@ -22,6 +22,7 @@ impl DirtyKeys for Ranges {
             start_field: "start",
             end_field: "end",
             open_field: Some("open"),
+            fence_field: None,
             start: at(12).0,
             end: at(15).0,
         };
@@ -312,7 +313,8 @@ async fn dirty_ranges_page_compressed_members_and_keep_distinct_keys(db: devkit:
         &ends,
         &from,
         &until,
-        &open as &[Option<String>]
+        &open as &[Option<String>],
+        &[None::<String>, None] as &[Option<String>]
     )
     .fetch_all(&mut *checked_tx)
     .await
@@ -447,6 +449,7 @@ impl DirtyKeys for TwoDerivations {
                 start_field: "start",
                 end_field: "end",
                 open_field: None,
+                fence_field: None,
                 start: at(12).0,
                 end: at(15).0,
             })

@@ -217,14 +217,25 @@
         "window.focused",
         "workspace.switched",
         "presence.span",
-        "unit.started",
-        "unit.stopped",
         "boot.started",
         "sleep.started",
         "sleep.ended"
       ],
       "kind": "keyed",
       "name": "state.intervals",
+      "outputs": [
+        "state.interval"
+      ]
+    },
+    {
+      "history": "recompute",
+      "inputs": [
+        "unit.started",
+        "unit.stopped",
+        "boot.started"
+      ],
+      "kind": "keyed",
+      "name": "unit.intervals",
       "outputs": [
         "state.interval"
       ]

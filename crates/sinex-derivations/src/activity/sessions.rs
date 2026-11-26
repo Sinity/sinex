@@ -121,6 +121,7 @@ impl Keyed for ActivitySessions {
                 vec![crate::AffectedRange {
                     key_match: None,
                     open_field: None,
+                    fence_field: None,
                     output_type: "activity.session",
                     start_field: "started_at",
                     end_field: "ended_at",

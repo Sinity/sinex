@@ -33,6 +33,7 @@ pub mod presence;
 pub mod session;
 pub mod state_interval;
 pub mod tags;
+pub mod unit_interval;
 pub mod work;
 
 /// What a key function sees of an admitted or archived event.
@@ -178,6 +179,9 @@ pub struct AffectedRange {
     pub key_match: Option<(&'static str, &'static str)>,
     /// A true field means the stored output is still open after its recorded end.
     pub open_field: Option<&'static str>,
+    /// A stored output with no end stops overlapping after this field's
+    /// time: something later bounded it without ending it.
+    pub fence_field: Option<&'static str>,
     pub output_type: &'static str,
     pub start_field: &'static str,
     pub end_field: &'static str,
@@ -626,7 +630,7 @@ fn builtin(configuration: &Configuration) -> Vec<Box<dyn AnyKeyed>> {
         .iter()
         .map(|family| Box::new(fusion::Fusion(family)) as Box<dyn AnyKeyed>)
         .collect();
-    all.extend::<[Box<dyn AnyKeyed>; 22]>([
+    all.extend::<[Box<dyn AnyKeyed>; 23]>([
         Box::new(library::LibraryItems),
         Box::new(session::ShellSessions),
         Box::new(activity::InputCoverage),
@@ -643,6 +647,7 @@ fn builtin(configuration: &Configuration) -> Vec<Box<dyn AnyKeyed>> {
         Box::new(activity::ActivitySessions(configuration.activity.clone())),
         Box::new(conversation::ConversationDays),
         Box::new(state_interval::StateIntervals),
+        Box::new(unit_interval::UnitIntervals),
         Box::new(figures::HourlyMetrics),
         Box::new(figures::DailyMetrics),
         Box::new(presence::Presence),

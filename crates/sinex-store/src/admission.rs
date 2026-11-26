@@ -52,6 +52,8 @@ pub struct AffectedRange {
     /// Only stored keys with this string field and value can read the changed input.
     pub key_match: Option<(&'static str, &'static str)>,
     pub open_field: Option<&'static str>,
+    /// A stored output with no end stops overlapping after this field's time.
+    pub fence_field: Option<&'static str>,
     pub derivation: &'static str,
     pub output_type: &'static str,
     pub start_field: &'static str,

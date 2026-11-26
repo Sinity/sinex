@@ -130,6 +130,7 @@ impl Keyed for WorkEpisodes {
                 vec![AffectedRange {
                     key_match: None,
                     open_field: None,
+                    fence_field: None,
                     output_type: "work.episode",
                     start_field: "started_at",
                     end_field: "last_activity",
@@ -527,6 +528,7 @@ impl Keyed for ActivityDays {
                 vec![AffectedRange {
                     key_match: None,
                     open_field: Some("provisional"),
+                    fence_field: None,
                     output_type: "activity.day",
                     start_field: "started_at",
                     end_field: "ended_at",

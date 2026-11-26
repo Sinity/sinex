@@ -135,6 +135,7 @@ state, signal rule, delivery, outcome, route, attention, inhibition, lane and se
 - **derivation**: a declared computation whose outputs are stored events; **per-event** or **keyed** ([derivations](derivations.md)).
 - **dirty key**: a key whose inputs changed and whose output set will be recomputed.
 - **waiting key**: a key whose outputs wait for evidence outside its inputs; it may name the key of its derivation whose dirty mark wakes it.
+- **unit scope**: one systemd unit under one manager and user in one boot of one host; the key of its runs in `unit.intervals`.
 - **stored inputs**: for a key shape that declares them, the events its key function names the key for, kept by admission so the key is read by event ID.
 - **provisional**: the value of a key whose time window is still open.
 - **fusion**: joining readings of one occurrence seen by several sources, for a defined family, into a **fused record** with its **basis**. A **fusion family** is declared in data: its members, scope, identifiers and windows.

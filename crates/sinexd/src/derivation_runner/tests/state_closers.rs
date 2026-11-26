@@ -35,66 +35,6 @@ async fn state_closer_after_more_than_sixty_four_refreshes_is_not_lost(
 
 mod bounds;
 
-#[devkit::test]
-async fn unit_stop_revisits_older_unit_keys_across_days_and_archival(db: devkit::pg::TestDatabase) {
-    let w = World::with_keys(db, state_keys()).await;
-    let unit = |kind: &str, seconds: u64, host: Option<&str>| {
-        let payload = json!({
-            "host":host,"boot_id":"boot-a","unit":"fixture.service","manager":"system","uid":0,
-            "invocation_id":"run-a","cursor":format!("{kind}/{seconds}"),"logged_at":at(seconds as i64),
-            "outcome":"stopped"
-        });
-        (sinex_model::event_types::find(kind).unwrap().build)(
-            &payload,
-            "machine.journald",
-            location(seconds),
-            ReadingOrder(0),
-            *blake3::hash(payload.to_string().as_bytes()).as_bytes(),
-            Class::Open,
-        )
-        .unwrap()
-    };
-    w.admit(vec![
-        focus("window-a", 0),
-        unit("unit.started", 1, Some("box")),
-        unit("unit.started", 2, None),
-    ])
-    .await;
-    let mut runner = w.driver_with(state_keys(), vec![]).await;
-    runner.clock = Some(at(3 * 86400));
-    runner.catch_up().await.unwrap();
-    let before = w.live::<StateInterval>().await;
-    assert_eq!(before.len(), 3);
-    let stop = unit("unit.stopped", 86400, Some("box"));
-    w.admit(vec![stop.clone()]).await;
-    let mut conn = PgConnection::connect(&w.url).await.unwrap();
-    let dirty: Vec<Value> =
-        sqlx::query_scalar("SELECT key FROM derivation.dirty WHERE derivation='state.intervals'")
-            .fetch_all(&mut conn)
-            .await
-            .unwrap();
-    assert!(dirty.iter().all(|k| k["state"] == "machine.unit"));
-    assert!(
-        dirty
-            .iter()
-            .any(|k| k["day"] == "2024-06-15" && k["host"] == "box")
-    );
-    runner.catch_up().await.unwrap();
-    let after = w.live::<StateInterval>().await;
-    assert_eq!(after.len(), 3);
-    assert_eq!(before[0], after[0], "parallel desktop focus stays open");
-    assert_eq!(after[1].ended_at, Some(at(86400)));
-    assert_eq!(after[1].ended_at_evidence.as_ref().unwrap().parent, stop.id);
-    assert_eq!(
-        before[2], after[2],
-        "an unknown host keeps its own interval"
-    );
-    w.moved(Act::Archive, vec![stop.id]).await;
-    runner.catch_up().await.unwrap();
-    assert_eq!(w.live::<StateInterval>().await, before);
-    runner.end_runs().await.unwrap();
-}
-
 fn presence_span(start: i64, end: i64, status: &str) -> Event {
     Event::build(
         &sinex_model::event_types::desktop::PresenceSpan {

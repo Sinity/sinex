@@ -113,6 +113,7 @@ impl Keyed for StoredProducts {
         vec![AffectedRange {
             key_match: None,
             open_field: None,
+            fence_field: None,
             output_type: "analysis.panel",
             start_field: "started_at",
             end_field: "ended_at",

@@ -20,15 +20,7 @@ fn journal_event(kind: &str, seconds: i64, mut payload: Value) -> Event {
     )
     .unwrap()
 }
-pub(super) fn unit(kind: &str, seconds: i64, boot: &str, invocation: &str) -> Event {
-    journal_event(
-        kind,
-        seconds,
-        json!({"boot_id":boot,
-    "unit":"example.service","manager":"system","uid":0,"invocation_id":invocation,"outcome":"stopped"}),
-    )
-}
-pub(super) fn machine(kind: &str, events: &[Event]) -> Vec<StateInterval> {
+fn machine(kind: &str, events: &[Event]) -> Vec<StateInterval> {
     let env = Env::at(
         at(10 * 86400),
         sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
@@ -47,43 +39,24 @@ pub(super) fn machine(kind: &str, events: &[Event]) -> Vec<StateInterval> {
         .collect()
 }
 #[devkit::test]
-fn unit_pairing_keeps_boot_and_invocation_identity() {
-    let start = unit("unit.started", 0, "boot-a", "run-a");
-    let wrong = unit("unit.stopped", 5, "boot-a", "run-b");
-    let other_boot = unit("unit.stopped", 6, "boot-b", "run-a");
-    let stop = unit("unit.stopped", 10, "boot-a", "run-a");
-    let result = machine("machine.unit", &[start.clone(), wrong, other_boot]);
-    assert_eq!(result.len(), 1);
+fn a_new_boot_fences_the_previous_one_and_leaves_its_end_unknown() {
+    let first = journal_event("boot.started", 0, json!({"boot_id":"boot-a"}));
+    let second = journal_event("boot.started", 3600, json!({"boot_id":"boot-b"}));
+    let result = machine("machine.boot", &[first, second]);
+    assert_eq!(result.len(), 2);
     assert_eq!(result[0].ended_at, None);
-    let result = machine("machine.unit", &[start, stop]);
-    assert_eq!(result[0].ended_at, Some(at(10)));
+    assert_eq!(result[0].fenced_at, Some(at(3600)));
+    assert_eq!(result[1].fenced_at, None);
 }
 #[devkit::test]
-fn boot_fences_unknown_unit_end_without_inventing_continuous_uptime() {
-    let start = unit("unit.started", 0, "boot-a", "run-a");
-    let boot = journal_event("boot.started", 3 * 86400, json!({"boot_id":"boot-b"}));
-    let result = machine("machine.unit", &[start, boot]);
-    assert_eq!(result.len(), 1);
-    assert_eq!(result[0].ended_at, None);
-    assert_eq!(result[0].fenced_at, Some(at(3 * 86400)));
-    assert_eq!(result[0].ended_at_evidence, None);
-    assert_eq!(result[0].end_event_type.as_deref(), Some("boot.started"));
-}
-#[devkit::test]
-fn a_late_start_job_completion_does_not_reopen_an_already_stopped_oneshot() {
-    let result = machine(
-        "machine.unit",
-        &[
-            unit("unit.stopped", 0, "boot-a", "run-a"),
-            unit("unit.started", 1, "boot-a", "run-a"),
-        ],
+fn a_day_key_of_unit_runs_computes_to_nothing() {
+    // Unit runs moved to their own derivation: a stored day key of the old
+    // shape has no query, so a recompute archives what it held.
+    let env = Env::at(
+        at(0),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
     );
-    assert!(result.is_empty());
-}
-#[devkit::test]
-fn separate_hosts_cannot_close_each_others_units() {
-    let start = unit("unit.started", 0, "boot-a", "run-a");
-    let mut other = unit("unit.stopped", 10, "boot-a", "run-a");
-    other.payload["host"] = json!("other-box");
-    assert_eq!(machine("machine.unit", &[start, other])[0].ended_at, None);
+    let key = json!({"state":"machine.unit","day":"2024-06-15","host":"box","unknown_record":null});
+    assert!(Keyed::inputs(&StateIntervals, &key, &env).is_none());
 }

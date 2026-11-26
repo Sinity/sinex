@@ -92,7 +92,7 @@ fn text<'a>(p: &'a Value, f: &str) -> Option<&'a str> {
     p.get(f).and_then(Value::as_str).filter(|s| !s.is_empty())
 }
 
-fn scalar(p: &Value, f: &str) -> Option<String> {
+pub(crate) fn scalar(p: &Value, f: &str) -> Option<String> {
     match p.get(f)? {
         Value::String(s) => Some(s.clone()),
         Value::Null => None,
@@ -174,8 +174,6 @@ const INPUT_TYPES: &[&str] = &[
     "window.focused",
     "workspace.switched",
     "presence.span",
-    "unit.started",
-    "unit.stopped",
     "boot.started",
     "sleep.started",
     "sleep.ended",
@@ -239,7 +237,7 @@ struct PendingInterval<'a> {
     end_evidence: Option<IntervalTimeEvidence>,
 }
 
-fn time_evidence(event: &Event, boundary: IntervalTimeBoundary) -> IntervalTimeEvidence {
+pub(crate) fn time_evidence(event: &Event, boundary: IntervalTimeBoundary) -> IntervalTimeEvidence {
     IntervalTimeEvidence {
         parent: event.id,
         boundary,
@@ -459,7 +457,7 @@ pub enum StateKey {
 impl Keyed for StateIntervals {
     type Key = StateKey;
     const NAME: &'static str = "state.intervals";
-    const VERSION: u32 = 5;
+    const VERSION: u32 = 6;
     const USES_TIME_SETTINGS: bool = true;
     const INPUTS: &'static [&'static str] = INPUT_TYPES;
     const OUTPUTS: &'static [&'static str] = &[StateInterval::EVENT_TYPE];
@@ -627,9 +625,9 @@ impl Keyed for StateIntervals {
             .ts_orig
             .map(|at| {
                 vec![AffectedRange {
-                    key_match: matches!(input.event_type, "unit.started" | "unit.stopped")
-                        .then_some(("state", "machine.unit")),
+                    key_match: None,
                     open_field: None,
+                    fence_field: Some("fenced_at"),
                     output_type: "state.interval",
                     start_field: "started_at",
                     end_field: "ended_at",

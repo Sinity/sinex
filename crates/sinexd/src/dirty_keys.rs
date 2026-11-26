@@ -72,6 +72,7 @@ impl DirtyKeys for Registered {
                         derivation: d.name(),
                         output_type: range.output_type,
                         open_field: range.open_field,
+                        fence_field: range.fence_field,
                         start_field: range.start_field,
                         end_field: range.end_field,
                         start: range.start.0,

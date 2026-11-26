@@ -504,7 +504,68 @@ fn world() -> Vec<Event> {
             next(),
         ));
     }
+    // Units across two boots: a run that stops, one closed by its restart a
+    // day later, one the second boot fences, one still open.
+    for (kind, seconds, payload) in [
+        ("boot.started", 10, json!({"boot_id": "boot-a"})),
+        (
+            "unit.started",
+            100,
+            unit_run("boot-a", "a.service", "run-1"),
+        ),
+        (
+            "unit.stopped",
+            200,
+            unit_run("boot-a", "a.service", "run-1"),
+        ),
+        (
+            "unit.started",
+            300,
+            unit_run("boot-a", "b.service", "run-2"),
+        ),
+        (
+            "unit.started",
+            86_450,
+            unit_run("boot-a", "b.service", "run-3"),
+        ),
+        ("boot.started", 90_000, json!({"boot_id": "boot-b"})),
+        (
+            "unit.started",
+            90_400,
+            unit_run("boot-b", "c.service", "run-4"),
+        ),
+    ] {
+        out.push(journal(kind, seconds, payload, next()));
+    }
     out
+}
+
+fn unit_run(boot: &str, unit: &str, invocation: &str) -> Value {
+    json!({"boot_id": boot, "unit": unit, "manager": "system", "uid": 0,
+           "invocation_id": invocation, "outcome": "stopped"})
+}
+
+/// A journal unit or boot record of host `box`.
+fn journal(kind: &str, seconds: i64, mut payload: Value, record_offset: u64) -> Event {
+    payload["host"] = json!("box");
+    payload["cursor"] = json!(format!("{kind}/{seconds}"));
+    payload["logged_at"] = json!(at(seconds));
+    payload["started_at"] = json!(at(seconds));
+    (sinex_model::event_types::find(kind).unwrap().build)(
+        &payload,
+        "machine.journald",
+        Origin::Record {
+            location: RecordLocation {
+                material: MaterialId(uuid::Uuid::from_u128(u128::from(record_offset) + 1)),
+                record_offset,
+            },
+            output_index: 0,
+        },
+        ReadingOrder(0),
+        *blake3::hash(&record_offset.to_le_bytes()).as_bytes(),
+        Class::Open,
+    )
+    .unwrap()
 }
 
 mod basis;

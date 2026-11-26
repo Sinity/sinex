@@ -57,6 +57,10 @@ async fn overlaps(
         .iter()
         .map(|r| r.open_field.map(str::to_owned))
         .collect();
+    let fences: Vec<_> = ranges
+        .iter()
+        .map(|r| r.fence_field.map(str::to_owned))
+        .collect();
     let targets: Vec<_> = names
         .iter()
         .cloned()
@@ -134,6 +138,7 @@ async fn overlaps(
                         .bind(&from)
                         .bind(&until)
                         .bind(&open)
+                        .bind(&fences)
                         .persistent(false)
                         .fetch_all(&mut *conn)
                         .await?;

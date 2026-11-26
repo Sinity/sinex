@@ -455,17 +455,3 @@ fn open_afk_span_clamped_at_creation() {
         Some(at(300))
     );
 }
-
-#[devkit::test]
-fn start_after_start_closes_previous() {
-    let starts = [
-        machine::unit("unit.started", 0, "boot-a", "run-a"),
-        machine::unit("unit.started", 30, "boot-a", "run-b"),
-    ];
-    let output = machine::machine("machine.unit", &starts);
-    assert_eq!(output.len(), 2);
-    assert_eq!(output[0].started_at, at(0));
-    assert_eq!(output[0].ended_at, Some(at(30)));
-    assert_eq!(output[1].started_at, at(30));
-    assert_eq!(output[1].ended_at, None);
-}
