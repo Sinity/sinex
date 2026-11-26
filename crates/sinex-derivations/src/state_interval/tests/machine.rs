@@ -80,7 +80,11 @@ fn a_boot_or_sleep_that_names_no_host_has_no_key_and_opens_no_interval() {
             },
             &env,
         );
-        assert_eq!(keys, Vec::<Value>::new(), "{kind}");
+        // A sleep still names the focus and workspace days it may interrupt.
+        assert!(
+            keys.iter().all(|key| key.get("host").is_none()),
+            "{kind}: {keys:?}"
+        );
         // A stored key of the earlier form has no query and computes to
         // nothing, so the open interval it held is archived and it stops
         // waiting.

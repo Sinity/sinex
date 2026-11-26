@@ -320,7 +320,11 @@ fn open_state(state_kind: &str, label: &str, start: i64) -> Event {
         label: Some(label.into()),
         started_at: at(start),
         ended_at: None,
-        started_at_evidence: None,
+        started_at_evidence: Some(sinex_model::event_types::IntervalTimeEvidence {
+            parent: sinex_model::EventId::new(),
+            boundary: sinex_model::event_types::IntervalTimeBoundary::Transition,
+            quality: sinex_model::TimeQuality::Captured,
+        }),
         ended_at_evidence: None,
         fenced_at: None,
         start_event_type: "fixture.transition".into(),

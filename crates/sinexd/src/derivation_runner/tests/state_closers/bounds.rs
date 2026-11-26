@@ -271,7 +271,7 @@ async fn scalar_bounds_keep_older_keys_unknown_times_and_afk(db: devkit::pg::Tes
     .await;
     let mut next = identified;
     next["window"] = json!("identified-b");
-    let identified_close = older_format_row(
+    older_format_row(
         &mut conn,
         &template,
         Some(3 * 86400),
@@ -403,10 +403,11 @@ async fn scalar_bounds_keep_older_keys_unknown_times_and_afk(db: devkit::pg::Tes
     let bucket = interval(&focus, "bucket-a");
     assert_eq!(bucket.payload["ended_at"], json!(at(2 * 86400)));
     assert!(has_parent(bucket, opened) && has_parent(bucket, afk));
-    assert!(has_parent(
-        interval(&focus, "identified-a"),
-        identified_close
-    ));
+    // Records that name no scope open no interval, whatever else they share.
+    assert!(focus.outputs.iter().all(|event| {
+        !["identified-a", "identified-b"]
+            .contains(&event.payload["subject_id"].as_str().unwrap_or_default())
+    }));
     assert!(has_parent(interval(&focus, "empty-a"), empty_close));
     let unknown = focus
         .outputs
@@ -541,7 +542,7 @@ async fn explicit_key_recompute_preserves_history_and_other_keys(db: devkit::pg:
                 .unwrap();
         assert!(live);
     }
-    assert_eq!(<StateIntervals as Keyed>::VERSION, 6);
+    assert_eq!(<StateIntervals as Keyed>::VERSION, 7);
     corrected.end_runs().await.unwrap();
 }
 

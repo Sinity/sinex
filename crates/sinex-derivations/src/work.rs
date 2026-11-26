@@ -135,8 +135,12 @@ impl Keyed for WorkEpisodes {
             .unwrap_or_default()
     }
     fn affected_ranges(&self, input: &KeyView<'_>, _: &Env) -> Vec<AffectedRange> {
+        // Admission asks this for every state interval it stores, and nearly
+        // all of them are unit runs.
         if input.event_type == "state.interval"
-            && !absence_states().any(|kind| kind.admits(input.event_type, input.payload))
+            && !input.payload["state_kind"]
+                .as_str()
+                .is_some_and(|state| ABSENCE_STATES.contains(&state))
         {
             return vec![];
         }

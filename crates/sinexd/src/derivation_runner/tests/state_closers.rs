@@ -310,7 +310,11 @@ async fn a_day_of_focus_records_without_a_scope_stops_waiting(db: devkit::pg::Te
                     label: None,
                     started_at: record.ts_orig.at.unwrap(),
                     ended_at: None,
-                    started_at_evidence: None,
+                    started_at_evidence: Some(sinex_model::event_types::IntervalTimeEvidence {
+                        parent: record.id,
+                        boundary: sinex_model::event_types::IntervalTimeBoundary::Transition,
+                        quality: record.ts_orig.quality,
+                    }),
                     ended_at_evidence: None,
                     fenced_at: None,
                     start_event_type: "window.focused".into(),
