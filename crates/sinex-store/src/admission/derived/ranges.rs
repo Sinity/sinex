@@ -71,9 +71,14 @@ async fn overlaps(
         .collect();
     #[derive(sqlx::FromRow)]
     struct Output {
+        #[sqlx(rename = "derivation!")]
         derivation: String,
+        #[sqlx(rename = "key!")]
         key: Value,
+        #[sqlx(rename = "event_id!")]
         event_id: Uuid,
+        #[sqlx(rename = "archived!")]
+        archived: bool,
     }
     #[derive(sqlx::FromRow)]
     struct AffectedKey {
@@ -82,45 +87,59 @@ async fn overlaps(
         #[sqlx(rename = "key!")]
         key: Value,
     }
-    let mut after: Option<Output> = None;
-    loop {
-        // Admission holds the session writer claim, excluding lifecycle and
-        // replacement writes between the metadata and payload statements.
-        // This is a transfer page, not a limit on the affected output set.
-        // Fresh parameter-aware plans keep both keyset seeks and compressed
-        // ID-array pruning after repeated executions on this connection.
-        let page = sqlx::query_as::<_, Output>(include_str!("../affected_output_page.sql"))
-            .bind(&targets)
-            .bind(after.as_ref().map(|row| row.derivation.as_str()))
-            .bind(after.as_ref().map(|row| &row.key))
-            .bind(after.as_ref().map(|row| row.event_id))
-            .bind(matching_keys)
-            .persistent(false)
-            .fetch_all(&mut *conn)
-            .await?;
-        if page.is_empty() {
-            break;
+    // Each derivation is paged on its own, and with matching keys each key on
+    // its own, so every page starts its index scan at its cursor. A page reads
+    // 256 members whatever their archive state; only live ones go on.
+    let keys: Vec<Option<&Value>> = match matching_keys {
+        Some(keys) => keys.iter().map(Some).collect(),
+        None => vec![None],
+    };
+    for target in &targets {
+        for key in &keys {
+            let mut after: Option<(Value, Uuid)> = None;
+            loop {
+                // Admission holds the session writer claim, excluding lifecycle and
+                // replacement writes between the metadata and payload statements.
+                // This is a transfer page, not a limit on the affected output set.
+                // Fresh parameter-aware plans keep both keyset seeks and compressed
+                // ID-array pruning after repeated executions on this connection.
+                let page = sqlx::query_as::<_, Output>(include_str!("../affected_output_page.sql"))
+                    .bind(target)
+                    .bind(*key)
+                    .bind(after.as_ref().map(|(key, _)| key))
+                    .bind(after.as_ref().map(|(_, event_id)| *event_id))
+                    .persistent(false)
+                    .fetch_all(&mut *conn)
+                    .await?;
+                let Some(last) = page.last() else { break };
+                after = Some((last.key.clone(), last.event_id));
+                let live: Vec<_> = page.into_iter().filter(|row| !row.archived).collect();
+                if live.is_empty() {
+                    continue;
+                }
+                let ids: Vec<_> = live.iter().map(|row| row.event_id).collect();
+                let output_derivations: Vec<_> =
+                    live.iter().map(|row| row.derivation.clone()).collect();
+                let output_keys: Vec<_> = live.iter().map(|row| row.key.clone()).collect();
+                let selected =
+                    sqlx::query_as::<_, AffectedKey>(include_str!("../affected_outputs.sql"))
+                        .bind(&ids)
+                        .bind(&output_derivations)
+                        .bind(&output_keys)
+                        .bind(&output_types)
+                        .bind(&names)
+                        .bind(&types)
+                        .bind(&starts)
+                        .bind(&ends)
+                        .bind(&from)
+                        .bind(&until)
+                        .bind(&open)
+                        .persistent(false)
+                        .fetch_all(&mut *conn)
+                        .await?;
+                affected.extend(selected.into_iter().map(|row| (row.derivation, row.key)));
+            }
         }
-        let ids: Vec<_> = page.iter().map(|row| row.event_id).collect();
-        let output_derivations: Vec<_> = page.iter().map(|row| row.derivation.clone()).collect();
-        let output_keys: Vec<_> = page.iter().map(|row| row.key.clone()).collect();
-        let selected = sqlx::query_as::<_, AffectedKey>(include_str!("../affected_outputs.sql"))
-            .bind(&ids)
-            .bind(&output_derivations)
-            .bind(&output_keys)
-            .bind(&output_types)
-            .bind(&names)
-            .bind(&types)
-            .bind(&starts)
-            .bind(&ends)
-            .bind(&from)
-            .bind(&until)
-            .bind(&open)
-            .persistent(false)
-            .fetch_all(&mut *conn)
-            .await?;
-        affected.extend(selected.into_iter().map(|row| (row.derivation, row.key)));
-        after = page.into_iter().last();
     }
     Ok(())
 }

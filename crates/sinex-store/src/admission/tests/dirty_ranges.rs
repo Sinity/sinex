@@ -245,14 +245,12 @@ async fn dirty_ranges_page_compressed_members_and_keep_distinct_keys(db: devkit:
     // Run the page queries on another connection so this writer's
     // transaction stays untouched.
     let mut checked = PgConnection::connect(&db.url(None)).await.unwrap();
-    let targets = vec![NAME.to_owned()];
     let first = sqlx::query_file!(
         "src/admission/affected_output_page.sql",
-        &targets,
-        None::<&str>,
+        NAME,
         None::<&Value>,
-        None::<Uuid>,
-        None::<&[Value]>
+        None::<&Value>,
+        None::<Uuid>
     )
     .fetch_all(&mut checked)
     .await
@@ -261,11 +259,10 @@ async fn dirty_ranges_page_compressed_members_and_keep_distinct_keys(db: devkit:
     let last = first.last().unwrap();
     let second = sqlx::query_file!(
         "src/admission/affected_output_page.sql",
-        &targets,
-        Some(last.derivation.as_str()),
+        NAME,
+        None::<&Value>,
         Some(&last.key),
-        Some(last.event_id),
-        None::<&[Value]>
+        Some(last.event_id)
     )
     .fetch_all(&mut checked)
     .await
@@ -276,6 +273,10 @@ async fn dirty_ranges_page_compressed_members_and_keep_distinct_keys(db: devkit:
             .iter()
             .any(|prior| prior.key == row.key && prior.event_id == row.event_id)
     }));
+    // The page holds 256 members whatever their archive state; the two
+    // archived members of the first key stay out of the payload lookup.
+    assert_eq!(first.iter().filter(|row| row.archived).count(), 2);
+    let first: Vec<_> = first.into_iter().filter(|row| !row.archived).collect();
     let ids: Vec<_> = first.iter().map(|row| row.event_id).collect();
     assert!(
         ids.len()
@@ -284,7 +285,7 @@ async fn dirty_ranges_page_compressed_members_and_keep_distinct_keys(db: devkit:
                 .copied()
                 .collect::<std::collections::HashSet<_>>()
                 .len(),
-        "duplicate event has distinct derivations in one page"
+        "one event is a member of two keys in one page"
     );
     let output_derivations: Vec<_> = first.iter().map(|row| row.derivation.clone()).collect();
     let page_keys: Vec<_> = first.iter().map(|row| row.key.clone()).collect();
@@ -365,23 +366,28 @@ async fn dirty_ranges_page_compressed_members_and_keep_distinct_keys(db: devkit:
     .unwrap();
     assert!(second_keys.contains(&selected));
     let matching = vec![selected.clone(), archived, wrong_kind];
-    let members = sqlx::query_file!(
-        "src/admission/affected_output_page.sql",
-        &targets,
-        None::<&str>,
-        None::<&Value>,
-        None::<Uuid>,
-        &matching
-    )
-    .fetch_all(&mut *tx)
-    .await
-    .unwrap();
+    let mut members = Vec::new();
+    for key in &matching {
+        members.extend(
+            sqlx::query_file!(
+                "src/admission/affected_output_page.sql",
+                NAME,
+                Some(key),
+                None::<&Value>,
+                None::<Uuid>
+            )
+            .fetch_all(&mut *tx)
+            .await
+            .unwrap(),
+        );
+    }
+    assert_eq!(members.len(), 3, "one member under each selected key");
+    assert!(members.iter().all(|row| matching.contains(&row.key)));
     assert_eq!(
-        members.len(),
+        members.iter().filter(|row| !row.archived).count(),
         2,
         "only live members of selected keys reach the payload lookup"
     );
-    assert!(members.iter().all(|row| matching.contains(&row.key)));
     let mixed = [trigger, inputs.pop().unwrap()];
     assert_eq!(
         derived::mark_inputs_dirty(&mut tx, &mixed, 3, &Ranges)
@@ -418,5 +424,161 @@ async fn dirty_ranges_page_compressed_members_and_keep_distinct_keys(db: devkit:
     .unwrap();
     assert_eq!(updated, [selected]);
     assert!(!crate::writer_lock::try_claim(&mut competing).await.unwrap());
+    tx.rollback().await.unwrap();
+}
+
+const OTHER: &str = "fixture.other_ranges";
+
+struct TwoDerivations;
+impl DirtyKeys for TwoDerivations {
+    fn keys(&self, _: &KeyInput<'_>) -> Vec<(String, Value)> {
+        vec![]
+    }
+    fn affected_ranges(&self, _: &KeyInput<'_>) -> Vec<AffectedRange> {
+        [NAME, OTHER]
+            .into_iter()
+            .map(|derivation| AffectedRange {
+                key_match: None,
+                derivation,
+                output_type: KIND,
+                start_field: "start",
+                end_field: "end",
+                open_field: None,
+                start: at(12).0,
+                end: at(15).0,
+            })
+            .collect()
+    }
+}
+
+/// Blocks the membership scan of one page statement reads, from its plan.
+async fn page_blocks(
+    conn: &mut PgConnection,
+    key: Option<&Value>,
+    after: Option<(&Value, Uuid)>,
+) -> f64 {
+    let plan: Value = sqlx::query_scalar(&format!(
+        "EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON,TIMING OFF) {}",
+        include_str!("../affected_output_page.sql")
+    ))
+    .bind(NAME)
+    .bind(key)
+    .bind(after.map(|(key, _)| key))
+    .bind(after.map(|(_, id)| id))
+    .persistent(false)
+    .fetch_one(conn)
+    .await
+    .unwrap();
+    fn membership_scan(node: &Value) -> Option<&Value> {
+        if node["Relation Name"] == "outputs" {
+            return Some(node);
+        }
+        node["Plans"].as_array()?.iter().find_map(membership_scan)
+    }
+    let scan = membership_scan(&plan[0]["Plan"]).expect("the page reads memberships");
+    scan["Shared Hit Blocks"].as_f64().unwrap() + scan["Shared Read Blocks"].as_f64().unwrap()
+}
+
+#[devkit::test]
+async fn affected_output_pages_start_at_their_cursor(db: devkit::pg::TestDatabase) {
+    use sqlx::Executor;
+    const MEMBERS: i64 = 32_768;
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    // Every member overlaps the probed range. The first half is 257 small
+    // keys and the second half one large key, whose last 64 members belong to
+    // another derivation that is paged after the first. Members are stored in
+    // key order, so table reads are as local for a late page as for the first.
+    sqlx::query("INSERT INTO core.events(id,event_type,source,run_id,material_id,record_offset,ts_quality,commit_seq,payload,reading_order,record_hash,class)
+      SELECT ('01800000-0000-7000-8000-'||lpad(to_hex(n),12,'0'))::uuid,$1,
+        'synthetic-ranges',uuidv7(),uuidv7(),n,'unknown',1,
+        jsonb_build_object('start',$2::timestamptz,'end',$3::timestamptz),
+        1,decode(repeat('01',32),'hex'),'open' FROM generate_series(1,$4::bigint)n")
+        .bind(KIND).bind(at(10).0).bind(at(20).0).bind(MEMBERS).execute(&mut conn).await.unwrap();
+    sqlx::query(
+        "INSERT INTO derivation.outputs(derivation,key,event_id)
+      SELECT CASE WHEN n>$3-64 THEN $2 ELSE $1 END,
+        jsonb_build_object('label',CASE WHEN n<=$3/2 THEN n/64 ELSE 512 END),
+        ('01800000-0000-7000-8000-'||lpad(to_hex(n),12,'0'))::uuid
+      FROM generate_series(1,$3::bigint)n",
+    )
+    .bind(NAME)
+    .bind(OTHER)
+    .bind(MEMBERS)
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    conn.execute("VACUUM (ANALYZE) derivation.outputs")
+        .await
+        .unwrap();
+
+    // Paging one derivation visits each of its members once, in key order,
+    // and paging one key visits that key's members once.
+    let large = json!({"label":512});
+    for (key, expected) in [(None, MEMBERS - 64), (Some(&large), MEMBERS / 2 - 64)] {
+        let mut after: Option<(Value, Uuid)> = None;
+        let mut cursors: Vec<(String, Uuid)> = Vec::new();
+        let mut members = 0;
+        loop {
+            let page = sqlx::query_file!(
+                "src/admission/affected_output_page.sql",
+                NAME,
+                key,
+                after.as_ref().map(|(key, _)| key),
+                after.as_ref().map(|(_, id)| *id)
+            )
+            .fetch_all(&mut conn)
+            .await
+            .unwrap();
+            let Some(last) = page.last() else { break };
+            assert!(
+                page.iter()
+                    .all(|row| row.derivation == NAME && !row.archived)
+            );
+            assert!(page.iter().all(|row| key.is_none_or(|key| row.key == *key)));
+            members += page.len() as i64;
+            after = Some((last.key.clone(), last.event_id));
+            cursors.push((last.key.to_string(), last.event_id));
+        }
+        assert_eq!(members, expected);
+        let distinct: std::collections::HashSet<_> = cursors.iter().collect();
+        assert_eq!(distinct.len(), cursors.len());
+    }
+
+    // A page reads the same blocks wherever its cursor stands: the scan
+    // starts at the cursor, not at the first member of the derivation or key.
+    let member = |n: i64| Uuid::parse_str(&format!("01800000-0000-7000-8000-{n:012x}")).unwrap();
+    for key in [None, Some(&large)] {
+        let late = (&large, member(MEMBERS - 1024));
+        let first = page_blocks(&mut conn, key, None).await;
+        let late = page_blocks(&mut conn, key, Some(late)).await;
+        assert!(
+            first <= 64.0 && late <= first + 16.0,
+            "a late page read {late} blocks, the first page {first}"
+        );
+    }
+
+    // Both derivations' members reach the range test.
+    let mut tx = conn.begin().await.unwrap();
+    let payload = json!({});
+    let marked = derived::mark_inputs_dirty(
+        &mut tx,
+        &[KeyInput {
+            event_type: "synthetic.trigger",
+            ts_orig: None,
+            payload: &payload,
+        }],
+        2,
+        &TwoDerivations,
+    )
+    .await
+    .unwrap();
+    let dirty: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT derivation,count(*) FROM derivation.dirty GROUP BY derivation ORDER BY derivation",
+    )
+    .fetch_all(&mut *tx)
+    .await
+    .unwrap();
+    assert_eq!(dirty, [(NAME.to_owned(), 258), (OTHER.to_owned(), 1)]);
+    assert_eq!(marked, 258 + 1);
     tx.rollback().await.unwrap();
 }
