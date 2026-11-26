@@ -185,11 +185,15 @@ pub(super) async fn apply_derived(
                 } else {
                     "SELECT e.id FROM core.events e WHERE e.source=$1"
                 };
+                // OFFSET 0 keeps the child lookup one index probe per event.
+                // Joined flat, the planner cannot size the recursion's work
+                // table and scans the whole child index once per level.
                 sqlx::query_scalar(&format!(
                 "WITH RECURSIVE outputs AS ({outputs}), descendants AS (
                   SELECT o.id FROM outputs o
                     WHERE NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=o.id)
-                  UNION SELECT c.child FROM descendants p CROSS JOIN LATERAL core.event_children_of(p.id) c)
+                  UNION SELECT c.child FROM descendants p
+                    CROSS JOIN LATERAL (SELECT child FROM core.event_children_of(p.id) OFFSET 0) c)
                  SELECT d.id FROM descendants d WHERE NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=d.id)"))
                 .bind(derivation).fetch_all(&mut *conn).await?
             } else {
@@ -203,7 +207,9 @@ pub(super) async fn apply_derived(
                 sinex_model::ArchiveReason::VersionChange,
                 Some(selection.operation),
             );
-            let dirty = mark_archived_dirty(conn, &live, seq, keys, Some(batch), by).await?;
+            // `live` already holds every live descendant, so the keys are
+            // marked from it directly instead of walking the chains again.
+            let dirty = mark_dirty_events(conn, &live, &live, seq, keys, Some(batch)).await?;
             super::archive::archive_at(conn, &live, seq, by.0, None, by.1).await?;
             remove_live(conn, &live).await?;
             sqlx::query("INSERT INTO registry.derivations (name,version,kind,inputs,outputs) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (name) DO UPDATE SET version=EXCLUDED.version,kind=EXCLUDED.kind,inputs=EXCLUDED.inputs,outputs=EXCLUDED.outputs")

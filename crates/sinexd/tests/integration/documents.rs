@@ -5,6 +5,7 @@ use crate::support::daemon;
 
 use serde_json::{Value, json};
 use sqlx::Connection;
+use std::io::Write;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::time::{Duration, Instant};

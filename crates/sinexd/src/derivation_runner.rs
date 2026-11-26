@@ -1121,17 +1121,7 @@ impl DerivationRunner {
                     changed: count(cmp.changed),
                     removed: count(cmp.removed),
                     context: serde_json::json!({"build": self.build, "positions": {"from": from, "through": through}, "behind": cmp.behind, "input_types": input_types, "output_types": self.keyed[index].output_types(), "kind": "keyed", "history": self.keyed[index].history_policy(), "now": env.now, "settings": self.time_settings.label()}),
-                    examples: serde_json::json!(
-                        cmp.examples
-                            .iter()
-                            .map(|(kind, key, old, new)| serde_json::json!({
-                                "kind": format!("{kind:?}").to_lowercase(),
-                                "key": key,
-                                "old": old,
-                                "new": new,
-                            }))
-                            .collect::<Vec<_>>()
-                    ),
+                    examples: cmp.stored_examples(),
                 },
             )
             .await?,
@@ -1268,7 +1258,7 @@ impl DerivationRunner {
             keys: i64::try_from(cmp.keys)?, unchanged: i64::try_from(cmp.same)?,
             added: i64::try_from(cmp.added)?, changed: i64::try_from(cmp.changed)?, removed: i64::try_from(cmp.removed)?,
             context: serde_json::json!({"build": self.build, "positions": {"from": from, "through": through}, "behind": cmp.behind, "input_types": inputs, "output_types": outputs, "kind": "per_event", "history": self.per_event[index].history_policy(), "now": env.now, "settings": self.time_settings.label()}),
-            examples: serde_json::json!(cmp.examples.iter().map(|(kind,key,old,new)| serde_json::json!({"kind":format!("{kind:?}"),"key":key,"old":old,"new":new})).collect::<Vec<_>>()),
+            examples: cmp.stored_examples(),
         }).await?);
         Ok(cmp)
     }

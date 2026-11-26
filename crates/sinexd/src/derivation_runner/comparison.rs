@@ -53,6 +53,24 @@ impl Comparison {
     }
 }
 
+impl Comparison {
+    /// The examples as a stored comparison keeps them, the same for keyed
+    /// and per-event derivations.
+    pub(super) fn stored_examples(&self) -> Value {
+        self.examples
+            .iter()
+            .map(|(kind, key, old, new)| {
+                serde_json::json!({
+                    "kind": format!("{kind:?}").to_lowercase(),
+                    "key": key,
+                    "old": old,
+                    "new": new,
+                })
+            })
+            .collect()
+    }
+}
+
 impl std::fmt::Display for Comparison {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Some(id) = self.id {
