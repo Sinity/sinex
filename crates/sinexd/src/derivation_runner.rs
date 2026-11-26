@@ -50,6 +50,12 @@ const EVENTS_PER_PASS: i64 = 2_000;
 const KEYS_PER_BATCH: usize = 256;
 /// Target outputs per writer batch. One indivisible key can exceed it.
 const OUTPUTS_PER_BATCH: usize = 20_000;
+/// The most previous outputs a batch of keys archives in its own
+/// transaction; more are archived in transactions before it.
+const ARCHIVED_PER_BATCH: usize = 4096;
+/// Outputs in the first transaction of an archive that takes several; later
+/// transactions follow how long the last one held the writer.
+const FIRST_ARCHIVED: usize = 256;
 /// Payload bytes per writer batch: outputs are held in memory until their
 /// batch is admitted, so large outputs (document text) end a batch early.
 const OUTPUT_BYTES_PER_BATCH: usize = 32 << 20;
@@ -265,6 +271,7 @@ impl DerivationRunner {
             registry::register_derivation(&mut runner.read, d).await?;
         }
         runner.archive_removed_derivation_outputs().await?;
+        runner.finish_switches(None).await?;
         Ok(runner)
     }
 
@@ -1129,17 +1136,29 @@ impl DerivationRunner {
         Ok(cmp)
     }
 
-    /// Select the compared version of `name`, through the writer. For a
-    /// `recompute` keyed derivation every key its inputs or outputs name is
-    /// marked dirty with the switch, and admission marks the keys of whatever
-    /// is committed from then on, so the selected version computes the whole
-    /// history as it stands, including inputs newer than the comparison.
+    /// Select the compared version of `name` and, when it recomputes
+    /// history, archive the previous outputs. Returns how many keys the
+    /// selection scheduled.
     pub(crate) async fn switch(
         &mut self,
         name: &str,
         comparison: i64,
         actor: &str,
     ) -> Result<usize> {
+        let scheduled = self.select(name, comparison, actor).await?;
+        // The version is selected. Other keyed work need not wait for the
+        // archive of the previous outputs, which holds this switch's keys.
+        self.finish_switches(Some(name)).await?;
+        Ok(scheduled)
+    }
+
+    /// The selection of a switch, in one transaction through the writer. For
+    /// a `recompute` keyed derivation every key its inputs or outputs name is
+    /// marked dirty with the selection, and admission marks the keys of
+    /// whatever is committed from then on, so the selected version computes
+    /// the whole history as it stands, including inputs newer than the
+    /// comparison.
+    async fn select(&mut self, name: &str, comparison: i64, actor: &str) -> Result<usize> {
         let _lock = self.writer.lock_derivations().await;
         let (version, inputs, outputs, kind, history) =
             if let Some(d) = self.keyed.iter().find(|d| d.name() == name) {
@@ -1194,6 +1213,56 @@ impl DerivationRunner {
             )
             .await?;
         Ok(total)
+    }
+
+    /// Archive the previous outputs of every switch of this runner's
+    /// derivations that selected its version and has not ended, then end it:
+    /// the switch just made (`only`), or those a stopped daemon left. The
+    /// outputs go in transactions of their own, so live batches are admitted
+    /// between them; until the switch ends its keys are held and a per-event
+    /// derivation keeps its position.
+    async fn finish_switches(&mut self, only: Option<&str>) -> Result<()> {
+        for switch in derivations::selection::unfinished_switches(&mut self.read).await? {
+            let name = switch.derivation.as_str();
+            if only.is_some_and(|only| only != name) || !self.runs.contains_key(name) {
+                continue;
+            }
+            let run = self.run_of(name)?;
+            let outputs = derivations::selection::live_outputs_through(
+                &mut self.read,
+                name,
+                switch.selected_at,
+            )
+            .await?;
+            archive_outputs(
+                &self.writer,
+                run,
+                name,
+                &outputs,
+                &[],
+                Some(switch.operation),
+                usize::MAX,
+            )
+            .await?;
+            self.writer
+                .submit(
+                    Priority::Derived,
+                    Batch {
+                        run,
+                        kind: BatchKind::Derived {
+                            derivation: name.to_owned(),
+                            scope: DerivedScope::Switched {
+                                operation: switch.operation,
+                            }
+                            .to_value(),
+                        },
+                        records: vec![],
+                        archive: vec![],
+                    },
+                )
+                .await?;
+        }
+        Ok(())
     }
 
     async fn compare_per_event(&mut self, name: &str, examples: usize) -> Result<Comparison> {
@@ -1607,7 +1676,14 @@ impl KeyComputation<'_> {
         }
         for (keys, records) in std::iter::once((scopes, records)).chain(tail) {
             if !keys.is_empty() {
-                self.submit_keys(keys, records, read, position).await?;
+                self.submit_keys(
+                    keys,
+                    records,
+                    read,
+                    position,
+                    max_outputs.min(ARCHIVED_PER_BATCH),
+                )
+                .await?;
             }
         }
         Ok(())
@@ -1619,6 +1695,7 @@ impl KeyComputation<'_> {
         mut records: Vec<RecordOutcome>,
         read: ReadMark,
         position: i64,
+        replaces_at_most: usize,
     ) -> Result<()> {
         let name = self.derivation.name();
         let mut n = 0;
@@ -1633,7 +1710,11 @@ impl KeyComputation<'_> {
         }
         let keys = scopes.len();
         let t = Instant::now();
-        let scope = DerivedScope::Keys { keys: scopes, read };
+        let scope = DerivedScope::Keys {
+            keys: scopes,
+            read,
+            replaces_at_most: Some(replaces_at_most),
+        };
         let batch = Arc::new(Batch {
             run: self.run,
             kind: BatchKind::Derived {
@@ -1644,7 +1725,7 @@ impl KeyComputation<'_> {
             archive: vec![],
         });
         let mut failed = 0;
-        let out = match self.writer.submit(Priority::Derived, batch.clone()).await {
+        let out = match self.replace(batch.clone()).await {
             Ok(out) => out,
             Err(initial @ WriteError::InvalidData(_)) => {
                 // The full transaction rolled back. Diagnose complete keys,
@@ -1681,13 +1762,14 @@ impl KeyComputation<'_> {
                             scope: DerivedScope::Keys {
                                 keys: vec![key.clone()],
                                 read,
+                                replaces_at_most: Some(replaces_at_most),
                             }
                             .to_value(),
                         },
                         records: vec![record.clone()],
                         archive: vec![],
                     };
-                    match self.writer.submit(Priority::Derived, unit).await {
+                    match self.replace(Arc::new(unit)).await {
                         Ok(admitted) => out += &admitted,
                         Err(error @ WriteError::InvalidData(_)) => {
                             admit_refusals(
@@ -1725,6 +1807,91 @@ impl KeyComputation<'_> {
         c.superseded_input += out.superseded_input;
         Ok(())
     }
+
+    /// Admit a batch of complete keys. A batch that would archive more
+    /// previous outputs than one transaction may is refused with their
+    /// identities; they are archived in transactions of their own, with live
+    /// batches admitted between them, and the batch is submitted again. Its
+    /// keys stay dirty until it commits, so an interruption computes them
+    /// again.
+    async fn replace(&self, batch: Arc<Batch>) -> Result<sinex_store::Outcome, WriteError> {
+        loop {
+            let outputs = match self.writer.submit(Priority::Derived, batch.clone()).await {
+                Err(WriteError::ArchiveFirst(outputs)) => outputs,
+                answer => return answer,
+            };
+            let BatchKind::Derived { derivation, scope } = &batch.kind else {
+                unreachable!("a batch of keys is derived")
+            };
+            let Ok(DerivedScope::Keys {
+                keys,
+                replaces_at_most,
+                ..
+            }) = serde_json::from_value(scope.clone())
+            else {
+                unreachable!("only a batch of keys is told to archive first")
+            };
+            let replacing: Vec<_> = keys
+                .into_iter()
+                .map(|key| (key.key, key.dirty_seq))
+                .collect();
+            archive_outputs(
+                self.writer,
+                batch.run,
+                derivation,
+                &outputs,
+                &replacing,
+                None,
+                replaces_at_most.unwrap_or(usize::MAX),
+            )
+            .await?;
+        }
+    }
+}
+
+/// Archive `outputs` of `derivation` in transactions of their own, at most
+/// `most` in each. The first takes [`FIRST_ARCHIVED`]; each later one is
+/// sized by how long the last held the writer, so a live batch waits behind
+/// one bounded transaction however many outputs there are.
+async fn archive_outputs(
+    writer: &WriterHandle,
+    run: RunId,
+    derivation: &str,
+    outputs: &[uuid::Uuid],
+    replacing: &[(Value, i64)],
+    switch: Option<uuid::Uuid>,
+    most: usize,
+) -> Result<(), WriteError> {
+    let most = most.max(1);
+    let mut size = FIRST_ARCHIVED.min(most);
+    let mut rest = outputs;
+    while !rest.is_empty() {
+        let (part, later) = rest.split_at(size.min(rest.len()));
+        rest = later;
+        let archived = writer
+            .submit(
+                Priority::Derived,
+                Batch {
+                    run,
+                    kind: BatchKind::Derived {
+                        derivation: derivation.to_owned(),
+                        scope: DerivedScope::Archive {
+                            outputs: part.to_vec(),
+                            replacing: replacing.to_vec(),
+                            switch,
+                        }
+                        .to_value(),
+                    },
+                    records: vec![],
+                    archive: vec![],
+                },
+            )
+            .await?;
+        if let Some(held) = archived.timings.get("service") {
+            size = crate::writer::next_bulk_size(size, *held).min(most);
+        }
+    }
+    Ok(())
 }
 
 /// Read and compute the `remaining` keys of `work` in the snapshot `conn` is

@@ -137,6 +137,7 @@ fn aggregate(derivation: &str, key: Value, dirty_seq: i64, output: Event) -> Bat
                     woken_by: None,
                 }],
                 read: ReadMark::default(),
+                replaces_at_most: None,
             }
             .to_value(),
         },

@@ -83,6 +83,7 @@ impl From<Error> for Failure {
                 Failure::new(FailureKind::Conflict, error.to_string()).with_code("request_conflict")
             }
             Error::StaleCursor => Failure::new(FailureKind::StaleCursor, error.to_string()),
+            Error::ArchiveFirst(_) => Failure::new(FailureKind::Refused, error.to_string()),
             Error::StaleCheckpoint => {
                 let mut failure = Failure::new(FailureKind::Conflict, error.to_string())
                     .with_code("stale_checkpoint");

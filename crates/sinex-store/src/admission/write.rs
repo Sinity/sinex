@@ -3,7 +3,7 @@
 //! archived readings, dirty keys and citations; then failures and the source
 //! position.
 use super::classify::Classified;
-use super::derived::{mark_archived_dirty, mark_inputs_dirty};
+use super::derived::{archive_chains, computed_keys, mark_inputs_dirty};
 use super::{DirtyKeys, KeyInput, Outcome};
 use crate::Error;
 use crate::Result;
@@ -174,12 +174,23 @@ pub(super) async fn insert_admitted(
         )
         .await?;
         outcome.replaced = replaced.len();
-        outcome.dirty_keys += mark_archived_dirty(
+        // A replaced reading has the type of the reading that replaced it.
+        let left: Vec<(Uuid, &str)> = ords
+            .iter()
+            .zip(&live)
+            .map(|(ord, id)| {
+                let event = &events[usize::try_from(*ord).expect("ord is an event index")];
+                (*id, event.event_type.as_str())
+            })
+            .collect();
+        let computed = computed_keys(batch)?;
+        outcome.dirty_keys += archive_chains(
             conn,
             &live,
+            &left,
             last,
             keys,
-            Some(batch),
+            computed.as_ref().map(|(name, keys)| (*name, keys)),
             (sinex_model::ArchiveReason::NewerReading, None),
         )
         .await?;

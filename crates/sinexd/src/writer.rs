@@ -55,6 +55,28 @@ pub(crate) enum WriteError {
     /// the caller computes it again from the committed state.
     #[error("{0}; evaluate again")]
     Stale(&'static str),
+    /// A batch of computed keys would archive more previous outputs than one
+    /// transaction may: these. Nothing was written; the derivation runner
+    /// archives them in earlier transactions and submits the batch again.
+    #[error("the batch would archive {} previous outputs; archive them first", .0.len())]
+    ArchiveFirst(Vec<uuid::Uuid>),
+}
+
+/// How long one transaction of bulk work (a batch of a lifecycle operation,
+/// a part of a large archive of outputs) should hold the writer. Live batches
+/// wait at most about this long behind such work.
+pub(crate) const BULK_HOLD: Duration = Duration::from_millis(250);
+
+/// How many units the next transaction of bulk work takes, from the `size`
+/// of the last and how long it `held` the writer.
+pub(crate) fn next_bulk_size(size: usize, held: Duration) -> usize {
+    if held < BULK_HOLD / 2 {
+        size.saturating_mul(2)
+    } else if held > BULK_HOLD * 2 && size > 1 {
+        size / 2
+    } else {
+        size
+    }
 }
 
 impl WriteError {
@@ -91,7 +113,9 @@ impl From<WriteError> for command_surface::Failure {
             WriteError::Stopped => {
                 Failure::new(FailureKind::NotRunning, message).with_code("writer_stopped")
             }
-            WriteError::Internal(_) => Failure::new(FailureKind::Internal, message),
+            WriteError::Internal(_) | WriteError::ArchiveFirst(_) => {
+                Failure::new(FailureKind::Internal, message)
+            }
             WriteError::RequestConflict => {
                 Failure::new(FailureKind::Conflict, message).with_code("request_conflict")
             }
@@ -1269,6 +1293,7 @@ async fn signal_step(
                             woken_by: None,
                         }],
                         read: *read,
+                        replaces_at_most: None,
                     }
                     .to_value(),
                 },
@@ -1344,6 +1369,10 @@ impl From<sinex_store::Error> for WriteError {
         if let sinex_store::Error::StaleCheckpoint = error {
             return WriteError::Stale("signal checkpoint changed");
         }
+        let error = match error {
+            sinex_store::Error::ArchiveFirst(outputs) => return WriteError::ArchiveFirst(outputs),
+            error => error,
+        };
         let storage_refused = match &error {
             sinex_store::Error::Blob(
                 hashed_blobs::Error::Refused(_) | hashed_blobs::Error::Corrupt { .. },

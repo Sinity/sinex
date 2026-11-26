@@ -17,6 +17,12 @@ pub enum DerivedScope {
         keys: Vec<ComputedKey>,
         /// How far archiving and tombstoning had gone when the inputs were read.
         read: ReadMark,
+        /// The most previous outputs this batch may archive. A batch that
+        /// would archive more is refused with [`Error::ArchiveFirst`] naming
+        /// them, and the caller archives them in earlier transactions
+        /// ([`DerivedScope::Archive`]). `None` archives any number.
+        #[serde(default)]
+        replaces_at_most: Option<usize>,
     },
     /// A per-event derivation's outputs for committed events up to `position`.
     Position {
@@ -35,11 +41,34 @@ pub enum DerivedScope {
     /// Recompute these keys (a version change, `sinexctl recompute`). Carries
     /// no events; the keys are marked dirty like admission marks them.
     Recompute { keys: Vec<Value> },
-    /// Atomically select a compared producer, archive its old chains and schedule its outputs.
+    /// Atomically select a compared producer and schedule its outputs. A
+    /// selection that recomputes history leaves the previous outputs live and
+    /// its switch operation unfinished, holding the scheduled keys: the
+    /// caller archives the outputs in [`DerivedScope::Archive`] batches and
+    /// ends the switch with [`DerivedScope::Switched`].
     Select {
         selection: crate::derivations::selection::Selection,
         keys: Vec<Value>,
     },
+    /// Archive these live outputs of the derivation with their chains, in a
+    /// transaction of their own: the part of a large replacement or of a
+    /// version switch that one transaction is not to hold the writer for.
+    /// Carries no events. Outputs that are no longer live are passed over.
+    Archive {
+        outputs: Vec<Uuid>,
+        /// The keys whose replacement this is part of, each with the dirty
+        /// mark its computation saw. They stay dirty with that mark, so the
+        /// batch that completes the replacement clears it and an interrupted
+        /// replacement is computed again.
+        replacing: Vec<(Value, i64)>,
+        /// The unfinished switch operation the outputs are archived under;
+        /// the keys this batch dirties wait for its end.
+        switch: Option<Uuid>,
+    },
+    /// End a switch whose previous outputs are archived: its operation gets
+    /// its result, the keys it held are released and a per-event derivation
+    /// starts reading its inputs again from the beginning.
+    Switched { operation: Uuid },
     /// Stored inputs of keys, from history the runner paged through: each
     /// pair is a key and an event its key function names it for. Carries no
     /// events and marks nothing dirty.
@@ -173,65 +202,128 @@ pub(super) async fn apply_derived(
             selection,
             keys: marked,
         } => {
+            if batch.event_count() != 0 {
+                return Err(Error::Invalid("a selection carries no events".into()));
+            }
             crate::derivations::selection::validate(conn, derivation, &selection).await?;
-            let live: Vec<Uuid> = if selection.history == sinex_model::DerivationHistory::Recompute
-            {
-                // A keyed derivation's outputs are the members of its keys,
-                // an indexed read. A per-event derivation keeps no such list,
-                // so its outputs are found by their source, which scans every
-                // uncompressed chunk.
-                let outputs = if selection.kind == "keyed" {
-                    "SELECT o.event_id AS id FROM derivation.outputs o WHERE o.derivation=$1"
-                } else {
-                    "SELECT e.id FROM core.events e WHERE e.source=$1"
-                };
-                // OFFSET 0 keeps the child lookup one index probe per event.
-                // Joined flat, the planner cannot size the recursion's work
-                // table and scans the whole child index once per level.
-                sqlx::query_scalar(&format!(
-                "WITH RECURSIVE outputs AS ({outputs}), descendants AS (
-                  SELECT o.id FROM outputs o
-                    WHERE NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=o.id)
-                  UNION SELECT c.child FROM descendants p
-                    CROSS JOIN LATERAL (SELECT child FROM core.event_children_of(p.id) OFFSET 0) c)
-                 SELECT d.id FROM descendants d WHERE NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=d.id)"))
-                .bind(derivation).fetch_all(&mut *conn).await?
-            } else {
-                vec![]
-            };
-            if selection.history == sinex_model::DerivationHistory::Recompute {
+            let recomputes = selection.history == sinex_model::DerivationHistory::Recompute;
+            if recomputes {
                 refusals::clear_all(conn, derivation).await?;
             }
             let seq = super::archive::position(conn).await?;
-            let by = (
-                sinex_model::ArchiveReason::VersionChange,
-                Some(selection.operation),
-            );
-            // `live` already holds every live descendant, so the keys are
-            // marked from it directly instead of walking the chains again.
-            let dirty = mark_dirty_events(conn, &live, &live, seq, keys, Some(batch)).await?;
-            super::archive::archive_at(conn, &live, seq, by.0, None, by.1).await?;
-            remove_live(conn, &live).await?;
             sqlx::query("INSERT INTO registry.derivations (name,version,kind,inputs,outputs) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (name) DO UPDATE SET version=EXCLUDED.version,kind=EXCLUDED.kind,inputs=EXCLUDED.inputs,outputs=EXCLUDED.outputs")
                 .bind(derivation).bind(selection.version).bind(&selection.kind).bind(&selection.inputs).bind(&selection.outputs)
                 .execute(&mut *conn).await?;
-            if selection.kind == "per_event"
-                && selection.history == sinex_model::DerivationHistory::Recompute
-            {
+            // A switch that recomputes history ends once the previous outputs
+            // are archived; one that keeps history is complete here.
+            sqlx::query(
+                "INSERT INTO core.operations (id,kind,actor,scope,start_seq,end_seq,result)
+                 VALUES ($1,'producer_switch',$2,$3,$4,
+                   CASE WHEN $5 THEN NULL ELSE $4 END, CASE WHEN $5 THEN NULL ELSE 'ok' END)",
+            )
+            .bind(selection.operation)
+            .bind(&selection.actor)
+            .bind(serde_json::json!({"derivation": derivation, "comparison": selection.comparison, "version": selection.version, "build": selection.build, "history": selection.history, "settings": selection.settings}))
+            .bind(seq)
+            .bind(recomputes)
+            .execute(&mut *conn)
+            .await?;
+            let name = derivation.to_owned();
+            let dirty = mark_dirty(
+                conn,
+                marked.into_iter().map(|key| (name.clone(), key)).collect(),
+                seq,
+            )
+            .await?;
+            if recomputes {
+                hold_dirtied(conn, selection.operation, seq).await?;
+            }
+            Ok(dirty)
+        }
+        DerivedScope::Archive {
+            outputs,
+            replacing,
+            switch,
+        } => {
+            if batch.event_count() != 0 {
+                return Err(Error::Invalid(
+                    "an archive of outputs carries no events".into(),
+                ));
+            }
+            if let Some(operation) = switch {
+                crate::derivations::selection::unfinished(conn, derivation, operation).await?;
+            }
+            // Only the derivation's own live outputs leave through its batch:
+            // events it made, or outputs of its keys.
+            let live = sqlx::query_scalar!(
+                "SELECT l.event_id FROM core.live_equivalence l
+                 WHERE l.event_id = ANY($1)
+                   AND (l.source = $2 OR EXISTS (SELECT 1 FROM derivation.outputs o
+                          WHERE o.event_id = l.event_id AND o.derivation = $2))",
+                &outputs,
+                derivation,
+            )
+            .fetch_all(&mut *conn)
+            .await?;
+            let seq = super::archive::position(conn).await?;
+            let (replaced_keys, seen): (Vec<Value>, Vec<i64>) = replacing.into_iter().unzip();
+            sqlx::query!(
+                r#"INSERT INTO derivation.dirty (derivation, key, first_dirty_seq, last_dirty_seq)
+                   SELECT $1, k, s, s FROM unnest($2::jsonb[], $3::bigint[]) AS r(k, s)
+                   ON CONFLICT (derivation, key) DO NOTHING"#,
+                derivation,
+                &replaced_keys,
+                &seen,
+            )
+            .execute(&mut *conn)
+            .await?;
+            let computed = replaced_keys.into_iter().collect();
+            let reason = if switch.is_some() {
+                sinex_model::ArchiveReason::VersionChange
+            } else {
+                sinex_model::ArchiveReason::Recomputed
+            };
+            let dirty = archive_chains(
+                conn,
+                &live,
+                &[],
+                seq,
+                keys,
+                Some((derivation, &computed)),
+                (reason, switch),
+            )
+            .await?;
+            if let Some(operation) = switch {
+                hold_dirtied(conn, operation, seq).await?;
+            }
+            Ok(dirty)
+        }
+        DerivedScope::Switched { operation } => {
+            if batch.event_count() != 0 {
+                return Err(Error::Invalid(
+                    "the end of a switch carries no events".into(),
+                ));
+            }
+            let kind =
+                crate::derivations::selection::unfinished(conn, derivation, operation).await?;
+            if kind == "per_event" {
                 crate::derivations::reset_position(conn, derivation).await?;
             }
-            sqlx::query("INSERT INTO core.operations (id,kind,actor,scope) VALUES ($1,'producer_switch',$2,$3)")
-                .bind(selection.operation).bind(&selection.actor)
-                .bind(serde_json::json!({"derivation": derivation, "comparison": selection.comparison, "version": selection.version, "build": selection.build, "history": selection.history, "settings": selection.settings}))
-                .execute(&mut *conn).await?;
-            let name = derivation.to_owned();
-            Ok(dirty
-                + mark_dirty(
-                    conn,
-                    marked.into_iter().map(|key| (name.clone(), key)).collect(),
-                    seq,
-                )
-                .await?)
+            sqlx::query!(
+                "UPDATE core.operations SET result = 'ok',
+                   end_seq = (SELECT value FROM core.counters WHERE name = 'commit_seq')
+                 WHERE id = $1",
+                operation,
+            )
+            .execute(&mut *conn)
+            .await?;
+            sqlx::query!(
+                "UPDATE derivation.dirty SET held_by = NULL WHERE held_by = $1",
+                operation,
+            )
+            .execute(&mut *conn)
+            .await?;
+            Ok(0)
         }
         DerivedScope::Inputs { inputs } => {
             if batch.event_count() != 0 {
@@ -282,31 +374,25 @@ pub(super) async fn apply_derived(
                 0
             } else {
                 let seq = super::archive::position(conn).await?;
-                let dirty = mark_archived_dirty(
+                archive_chains(
                     conn,
                     &gone,
+                    &[],
                     seq,
                     keys,
-                    Some(batch),
+                    None,
                     (sinex_model::ArchiveReason::Recomputed, None),
                 )
-                .await?;
-                super::archive::archive_at(
-                    conn,
-                    &gone,
-                    seq,
-                    sinex_model::ArchiveReason::Recomputed,
-                    None,
-                    None,
-                )
-                .await?;
-                remove_live(conn, &gone).await?;
-                dirty
+                .await?
             };
             refusals::position(conn, derivation, position, admitted_reading_order).await?;
             Ok(dirty)
         }
-        DerivedScope::Keys { keys: scoped, .. } => {
+        DerivedScope::Keys {
+            keys: scoped,
+            replaces_at_most,
+            ..
+        } => {
             if scoped.len() != batch.records.len() {
                 return Err(Error::Invalid(format!(
                     "derived batch: {} keys for {} records",
@@ -331,39 +417,36 @@ pub(super) async fn apply_derived(
             }
             let all_keys: Vec<Value> = scoped.iter().map(|s| s.key.clone()).collect();
             refusals::clear_keys(conn, derivation, &all_keys).await?;
-            // Previous outputs not produced again and still live go to the archive.
+            // Previous outputs not produced again and still live go to the
+            // archive. Live as the archive of outputs reads it, so a batch
+            // told to archive them first finds none left when it returns.
             let gone = sqlx::query_scalar!(
                 r#"SELECT o.event_id AS "event_id!" FROM derivation.outputs o
                    WHERE o.derivation = $1 AND o.key = ANY($2) AND NOT (o.event_id = ANY($3))
-                   AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = o.event_id)"#,
+                   AND EXISTS (SELECT 1 FROM core.live_equivalence l WHERE l.event_id = o.event_id)"#,
                 derivation,
                 &all_keys,
                 &out_ids,
             )
             .fetch_all(&mut *conn)
             .await?;
+            if replaces_at_most.is_some_and(|most| gone.len() > most) {
+                return Err(Error::ArchiveFirst(gone));
+            }
             let mut dirty = 0;
             if !gone.is_empty() {
                 let seq = super::archive::position(conn).await?;
-                dirty += mark_archived_dirty(
+                let computed = all_keys.iter().cloned().collect();
+                dirty += archive_chains(
                     conn,
                     &gone,
+                    &[],
                     seq,
                     keys,
-                    Some(batch),
+                    Some((derivation, &computed)),
                     (sinex_model::ArchiveReason::Recomputed, None),
                 )
                 .await?;
-                super::archive::archive_at(
-                    conn,
-                    &gone,
-                    seq,
-                    sinex_model::ArchiveReason::Recomputed,
-                    None,
-                    None,
-                )
-                .await?;
-                remove_live(conn, &gone).await?;
             }
             // Keep the key that produced each archived reading, so restoring
             // an aggregate requests a new computation rather than reviving it.
@@ -440,6 +523,8 @@ pub(super) async fn without_superseded_inputs(
         DerivedScope::Keys { read, .. } | DerivedScope::Position { read, .. } => *read,
         DerivedScope::Recompute { .. }
         | DerivedScope::Select { .. }
+        | DerivedScope::Archive { .. }
+        | DerivedScope::Switched { .. }
         | DerivedScope::Inputs { .. }
         | DerivedScope::Refused { .. } => return Ok(None),
     };
@@ -472,7 +557,11 @@ pub(super) async fn without_superseded_inputs(
     let mut kept = batch.clone();
     let mut dropped = 0usize;
     match scope {
-        DerivedScope::Keys { keys: scoped, read } => {
+        DerivedScope::Keys {
+            keys: scoped,
+            read,
+            replaces_at_most,
+        } => {
             if scoped.len() != batch.records.len() {
                 return Err(Error::Invalid(format!(
                     "derived batch: {} keys for {} records",
@@ -508,6 +597,7 @@ pub(super) async fn without_superseded_inputs(
                 scope: DerivedScope::Keys {
                     keys: kept_keys,
                     read,
+                    replaces_at_most,
                 }
                 .to_value(),
             };
@@ -539,6 +629,8 @@ pub(super) async fn without_superseded_inputs(
         }
         DerivedScope::Recompute { .. }
         | DerivedScope::Select { .. }
+        | DerivedScope::Archive { .. }
+        | DerivedScope::Switched { .. }
         | DerivedScope::Inputs { .. }
         | DerivedScope::Refused { .. } => return Ok(None),
     }
@@ -653,118 +745,143 @@ pub(crate) async fn mark_inputs_dirty(
     Ok(mark_dirty(conn, dirty, seq).await? + repeated_marks)
 }
 
-/// Every live descendant leaves the live set in this transaction, including
-/// keyed aggregates. Their keys recompute new readings from the remaining
-/// live inputs; the stored descendants never keep an archived parent.
-pub(crate) async fn mark_archived_dirty(
+/// Keys a batch is computing now, with their derivation: their own outputs
+/// leaving the live set does not dirty them again.
+pub(crate) type ComputedKeys<'a> = Option<(&'a str, &'a std::collections::HashSet<Value>)>;
+
+/// Take the chains under `roots` out of the live set at `seq`: every live
+/// reading among the roots and their descendants is archived, keyed
+/// aggregates included, and every key that read one is marked dirty, so it
+/// recomputes from the inputs that remain and no stored descendant keeps an
+/// archived parent. A root that a newer reading replaced has already left
+/// the live tables; `replaced` names such roots with their event types.
+pub(crate) async fn archive_chains(
     conn: &mut PgConnection,
-    ids: &[Uuid],
+    roots: &[Uuid],
+    replaced: &[(Uuid, &str)],
     seq: i64,
     keys: &dyn DirtyKeys,
-    recomputing: Option<&Batch>,
+    computed: ComputedKeys<'_>,
     (reason, operation): (sinex_model::ArchiveReason, Option<Uuid>),
 ) -> Result<usize> {
-    let descendants = sqlx::query_scalar!(
-        r#"WITH RECURSIVE descendants(id) AS (
-             SELECT edge.child FROM unnest($1::uuid[]) root(id) CROSS JOIN LATERAL core.event_children_of(root.id) edge
-             UNION
-             SELECT edge.child FROM descendants d CROSS JOIN LATERAL core.event_children_of(d.id) edge)
-           SELECT d.id AS "id!" FROM descendants d
-           LEFT JOIN LATERAL (
-             SELECT event_id FROM audit.archived WHERE event_id = d.id OFFSET 0
-           ) archived ON true
-           WHERE NOT (d.id = ANY($1)) AND archived.event_id IS NULL"#,
-        ids,
-    ).fetch_all(&mut *conn).await?;
-    let all: Vec<Uuid> = ids.iter().chain(&descendants).copied().collect();
-    let marked = mark_dirty_events(conn, &all, &all, seq, keys, recomputing).await?;
-    super::archive::archive_at(conn, &descendants, seq, reason, None, operation).await?;
-    remove_live(conn, &descendants).await?;
+    let chain = super::archive::live_chain(conn, roots).await?;
+    let mut selected: Vec<(Uuid, &str)> = replaced.to_vec();
+    selected.extend(chain.iter().map(|(id, kind)| (*id, kind.as_str())));
+    let marked = mark_selected_dirty(conn, &selected, seq, keys, computed).await?;
+    let leaving: Vec<Uuid> = chain.iter().map(|(id, _)| *id).collect();
+    super::archive::archive_at(conn, &leaving, seq, reason, None, operation).await?;
+    remove_live(conn, &leaving).await?;
     Ok(marked)
 }
 
-/// Use the selected chain's kinds before reading payloads. Keys that already
-/// have these outputs still become dirty even when no current derivation consumes their kind.
+/// The keys a batch computes whole, with its derivation.
+pub(super) fn computed_keys(
+    batch: &Batch,
+) -> Result<Option<(&str, std::collections::HashSet<Value>)>> {
+    let BatchKind::Derived { derivation, scope } = &batch.kind else {
+        return Ok(None);
+    };
+    Ok(
+        match serde_json::from_value::<DerivedScope>(scope.clone())
+            .map_err(|error| Error::Invalid(format!("derived batch scope: {error}")))?
+        {
+            DerivedScope::Keys { keys, .. } => Some((
+                derivation.as_str(),
+                keys.into_iter().map(|scope| scope.key).collect(),
+            )),
+            _ => None,
+        },
+    )
+}
+
+/// The keys dirtied at `seq` wait for the end of `operation`.
+async fn hold_dirtied(conn: &mut PgConnection, operation: Uuid, seq: i64) -> Result<()> {
+    sqlx::query!(
+        "UPDATE derivation.dirty SET held_by = $1 WHERE last_dirty_seq = $2",
+        operation,
+        seq,
+    )
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+/// How many selected events one payload read covers. A compressed batch
+/// holds a thousand rows, so a group this size reads about as many rows as
+/// it returns when its events were stored together.
+const KEY_INPUTS_PER_READ: usize = 4096;
+
+/// Mark the keys that read the `selected` events, each named with its event
+/// type, and the keys they are outputs of. The types say which events any
+/// derivation reads; only those payloads are read, once each, in ID order: a
+/// group's inclusive ID bounds and its types skip the chunks and compressed
+/// batches that hold none of it. Keys that already have these outputs become
+/// dirty even when no current derivation reads their kind.
 pub(crate) async fn mark_selected_dirty(
     conn: &mut PgConnection,
     selected: &[(Uuid, &str)],
     seq: i64,
     keys: &dyn DirtyKeys,
+    computed: ComputedKeys<'_>,
 ) -> Result<usize> {
-    let ids: Vec<_> = selected.iter().map(|(id, _)| *id).collect();
-    let inputs: Vec<_> = selected
+    if selected.is_empty() {
+        return Ok(0);
+    }
+    let mut read: Vec<(Uuid, &str)> = selected
         .iter()
         .filter(|(_, kind)| keys.reads_type(kind))
-        .map(|(id, _)| *id)
+        .copied()
         .collect();
-    mark_dirty_events(conn, &ids, &inputs, seq, keys, None).await
-}
-
-async fn mark_dirty_events(
-    conn: &mut PgConnection,
-    ids: &[Uuid],
-    inputs: &[Uuid],
-    seq: i64,
-    keys: &dyn DirtyKeys,
-    recomputing: Option<&Batch>,
-) -> Result<usize> {
-    let rows = if inputs.is_empty() {
-        vec![]
-    } else {
-        sqlx::query!(
-            "SELECT selected.id AS \"id!\", e.event_type, e.ts_orig, e.payload
-         FROM (SELECT DISTINCT unnest($1::uuid[]) id) selected
-         CROSS JOIN LATERAL (
-           SELECT event_type, ts_orig, payload FROM core.events
-           WHERE id = selected.id OFFSET 0
-         ) e",
-            inputs,
-        )
-        .fetch_all(&mut *conn)
-        .await?
-    };
+    read.sort_unstable();
+    read.dedup();
+    let mut rows = Vec::with_capacity(read.len());
+    for group in read.chunks(KEY_INPUTS_PER_READ) {
+        let ids: Vec<Uuid> = group.iter().map(|(id, _)| *id).collect();
+        let mut kinds: Vec<String> = group.iter().map(|(_, kind)| (*kind).to_owned()).collect();
+        kinds.sort_unstable();
+        kinds.dedup();
+        // Planned afresh with its arrays, like the other reads by event ID,
+        // so chunks and batches are pruned by this group's values.
+        rows.extend(
+            sqlx::query_as::<_, (Uuid, String, Option<time::OffsetDateTime>, Value)>(
+                "SELECT e.id, e.event_type, e.ts_orig, e.payload FROM core.events e
+                 WHERE e.id = ANY($1) AND e.id >= $2 AND e.id <= $3 AND e.event_type = ANY($4)",
+            )
+            .bind(&ids)
+            .bind(ids[0])
+            .bind(ids[ids.len() - 1])
+            .bind(&kinds)
+            .persistent(false)
+            .fetch_all(&mut *conn)
+            .await?,
+        );
+    }
     let inputs: Vec<_> = rows
         .iter()
-        .map(|row| KeyInput {
-            id: row.id,
-            event_type: &row.event_type,
-            ts_orig: row.ts_orig,
-            payload: &row.payload,
+        .map(|(id, event_type, ts_orig, payload)| KeyInput {
+            id: *id,
+            event_type,
+            ts_orig: *ts_orig,
+            payload,
         })
         .collect();
     let mut marked = mark_inputs_dirty(conn, &inputs, seq, keys).await?;
     // A key may come from a request or a semantic join rather than from the
     // output's fields. Being the key of an existing output also makes it dirty.
+    let ids: Vec<Uuid> = selected.iter().map(|(id, _)| *id).collect();
     let output_keys = sqlx::query!(
         "SELECT DISTINCT derivation, key FROM derivation.outputs WHERE event_id = ANY($1)",
-        ids,
+        &ids,
     )
     .fetch_all(&mut *conn)
     .await?;
-    let computed = match recomputing.map(|batch| &batch.kind) {
-        Some(BatchKind::Derived { derivation, scope }) => {
-            match serde_json::from_value::<DerivedScope>(scope.clone())
-                .map_err(|error| Error::Invalid(format!("derived batch scope: {error}")))?
-            {
-                DerivedScope::Keys { keys, .. } => Some((
-                    derivation.as_str(),
-                    keys.into_iter()
-                        .map(|scope| scope.key)
-                        .collect::<std::collections::HashSet<_>>(),
-                )),
-                _ => None,
-            }
-        }
-        _ => None,
-    };
     marked += mark_dirty(
         conn,
         output_keys
             .into_iter()
             .filter(|row| {
                 !computed
-                    .as_ref()
-                    .is_some_and(|(name, keys)| *name == row.derivation && keys.contains(&row.key))
+                    .is_some_and(|(name, keys)| name == row.derivation && keys.contains(&row.key))
             })
             .map(|row| (row.derivation, row.key))
             .collect(),

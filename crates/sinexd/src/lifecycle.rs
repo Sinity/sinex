@@ -11,13 +11,9 @@ use sinex_model::{DbCheck, OperationId};
 use sinex_store::lifecycle::{self, Comparison, Counts, Operation, Progress, Refusal, Step};
 use sqlx::PgConnection;
 use std::collections::VecDeque;
-use std::time::Duration;
 
 type SourceRoots<'a> = futures::stream::BoxStream<'a, sinex_store::Result<uuid::Uuid>>;
 
-/// How long one batch should hold the writer. Live batches wait at most
-/// about this long behind an operation.
-const BATCH_HOLD: Duration = Duration::from_millis(250);
 const FIRST_ROOTS: i64 = 256;
 const FIRST_MATERIAL_ONLY_ROOTS: i64 = 16;
 
@@ -286,11 +282,11 @@ async fn drive(
                 if done {
                     return Ok(Answer::Done(report(op, &progress, &total, &[])));
                 }
-                if held < BATCH_HOLD / 2 {
-                    roots = roots.saturating_mul(2);
-                } else if held > BATCH_HOLD * 2 && roots > 1 {
-                    roots /= 2;
-                }
+                roots = i64::try_from(crate::writer::next_bulk_size(
+                    usize::try_from(roots).unwrap_or(1),
+                    held,
+                ))
+                .unwrap_or(i64::MAX);
             }
             Step::Refused { progress, refusals } => {
                 if progress.batches == 0 {

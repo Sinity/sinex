@@ -26,8 +26,8 @@
 //! Keys dirtied by an operation are held until it ends, so no aggregate is
 //! derived between two of its batches.
 use crate::admission::{
-    DirtyKeys, KeyInput, archive_at, mark_dirty, mark_inputs_dirty, mark_selected_dirty, position,
-    remove_live, restore_at,
+    DirtyKeys, KeyInput, archive_at, live_chain, mark_dirty, mark_inputs_dirty,
+    mark_selected_dirty, position, remove_live, restore_at,
 };
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
@@ -795,33 +795,18 @@ async fn plan(
     material_only: bool,
 ) -> Result<Plan> {
     // Recursive cardinality estimates grow independently of the chain's real size.
-    // Keep lookups parameterized by each discovered ID. Live membership
-    // already carries the type, so archiving need not read event history.
+    // Keep lookups parameterized by each discovered ID.
     match phase {
-        Phase::Archive | Phase::ArchiveMadeLive => {
-            let rows = sqlx::query_as!(Member,
-                r#"WITH RECURSIVE chain(id) AS (
-                     SELECT unnest($1::uuid[])
-                     UNION
-                     SELECT c.child FROM chain CROSS JOIN LATERAL (
-                       SELECT child FROM core.event_children_of(chain.id) OFFSET 0) c)
-                   SELECT live.event_id AS "id!", live.event_type AS "event_type!"
-                   FROM chain CROSS JOIN LATERAL (
-                     SELECT event_id, event_type FROM core.live_locations WHERE event_id = chain.id
-                     UNION
-                     SELECT event_id, event_type FROM core.live_equivalence WHERE event_id = chain.id
-                     OFFSET 0) live"#,
-                roots
-            )
-            .fetch_all(&mut *conn)
-            .await?;
-            Ok(Plan {
-                members: rows,
-                live: Vec::new(),
-                derived_again: vec![],
-                refusals: vec![],
-            })
-        }
+        Phase::Archive | Phase::ArchiveMadeLive => Ok(Plan {
+            members: live_chain(conn, roots)
+                .await?
+                .into_iter()
+                .map(|(id, event_type)| Member { id, event_type })
+                .collect(),
+            live: Vec::new(),
+            derived_again: vec![],
+            refusals: vec![],
+        }),
         Phase::Tombstone => {
             let chain = sqlx::query_scalar!(
                 r#"WITH RECURSIVE chain(id) AS (
@@ -1023,7 +1008,7 @@ async fn archive_members(
         .map(|member| (member.id, member.event_type.as_str()))
         .collect();
     let ids: Vec<_> = members.iter().map(|member| member.id).collect();
-    mark_selected_dirty(conn, &selected, seq, keys).await?;
+    mark_selected_dirty(conn, &selected, seq, keys, None).await?;
     archive_at(conn, &ids, seq, ArchiveReason::Archive, None, Some(op.id.0)).await?;
     remove_live(conn, &ids).await
 }
