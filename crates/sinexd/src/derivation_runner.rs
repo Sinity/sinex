@@ -2028,17 +2028,17 @@ async fn stored_inputs(
             .collect();
         if let Some(query) = derivation.inputs(key, env) {
             let window = to_window(&query, env.now);
-            if !added.contains_key(&window) {
-                let read = derivations::read_window(conn, &window).await?;
-                added.insert(window.clone(), read);
-            }
+            let read = match added.remove(&window) {
+                Some(read) => read,
+                None => derivations::read_window(conn, &window).await?,
+            };
             let listed: HashSet<_> = rows.iter().map(|row| row.event.id).collect();
             rows.extend(
-                added[&window]
-                    .iter()
+                read.iter()
                     .filter(|row| !listed.contains(&row.event.id))
                     .cloned(),
             );
+            added.insert(window, read);
         }
         rows.sort_by_key(|row| (row.event.ts_orig.at, row.commit_seq));
         inputs.push(rows.into_iter().map(|row| row.event).collect());
