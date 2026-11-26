@@ -14,6 +14,7 @@ pub(super) struct ScopeArgs {
     pub since: Option<String>,
     pub until: Option<String>,
     pub operation: Option<String>,
+    pub material_only: bool,
 }
 
 fn uuid(what: &str, text: &str) -> Result<uuid::Uuid> {
@@ -28,6 +29,7 @@ impl Api {
     ) -> Result<Reply> {
         let (act, args, dry_run) = match request {
             Request::Tombstone {
+                material_only,
                 target,
                 material,
                 run,
@@ -46,6 +48,7 @@ impl Api {
                     since,
                     until,
                     operation,
+                    material_only,
                 },
                 dry_run,
             ),
@@ -265,6 +268,9 @@ impl Api {
                 )
                 .await
             }
+            Some("tombstone") if caller.actor != "operator" => {
+                Err(Error::refused("only the operator can continue a tombstone"))
+            }
             Some(_) => Ok(crate::lifecycle::resume(&mut conn, writer, operation)
                 .await?
                 .reply()),
@@ -290,8 +296,12 @@ impl Api {
                 "name exactly one scope: a reference or query, --material, --run, --source or --operation",
             ));
         }
-        if args.source.is_none() && (args.since.is_some() || args.until.is_some()) {
-            return Err(Error::bad_request("--since and --until narrow --source"));
+        if args.source.is_none()
+            && (args.since.is_some() || args.until.is_some() || args.material_only)
+        {
+            return Err(Error::bad_request(
+                "--since, --until and --material-only narrow --source",
+            ));
         }
         if !args.material.is_empty() {
             return args
@@ -312,10 +322,25 @@ impl Api {
             });
         }
         if let Some(source) = args.source {
+            let after = args.since.as_deref().map(timestamp).transpose()?;
+            let before = args.until.as_deref().map(timestamp).transpose()?;
+            if args.material_only {
+                let declaration = sinex_sources::sources::sinnix_lake::lake_source(&source)
+                    .filter(|source| source.material_only.is_some())
+                    .ok_or_else(|| {
+                        Error::bad_request("the source declares no material-only rule")
+                    })?;
+                return Ok(Scope::MaterialOnly {
+                    source,
+                    parser_version: declaration.spec.parser_version,
+                    after,
+                    before,
+                });
+            }
             return Ok(Scope::Source {
                 source,
-                after: args.since.as_deref().map(timestamp).transpose()?,
-                before: args.until.as_deref().map(timestamp).transpose()?,
+                after,
+                before,
             });
         }
         let target = args.target.expect("one scope was given");

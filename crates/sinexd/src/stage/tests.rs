@@ -648,3 +648,64 @@ async fn material_count(conn: &mut PgConnection) -> i64 {
 fn a_resume_requires_an_inventory_instead_of_discarding_saved_progress() {
     assert!(serde_json::from_value::<SavedProgress>(json!({"checkpoints":{}})).is_err());
 }
+
+#[devkit::test]
+async fn netflow_keeps_local_records_in_material(db: devkit::pg::TestDatabase) {
+    let dir = tempfile::tempdir().unwrap();
+    let lake = dir.path().join("lake");
+    let lane = lake.join("device/fixture-host/netflow");
+    std::fs::create_dir_all(&lane).unwrap();
+    let mut bytes = Vec::new();
+    for (i, (src, dst)) in [
+        ("127.0.0.2", "127.1.0.1"),
+        ("::1", "::ffff:127.0.0.8"),
+        ("192.0.2.1", "192.0.2.1"),
+        ("::ffff:192.0.2.1", "192.0.2.1"),
+        ("192.0.2.1", "192.0.2.2"),
+        ("2001:db8::1", "2001:db8::2"),
+        ("127.0.0.1", "192.0.2.2"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        serde_json::to_writer(
+            &mut bytes,
+            &json!({
+                "schema":"sinnix-capture-v1", "schema_version":1, "lane":"netflow",
+                "host":"fixture-host", "ts":1760000000.0, "seq":i+1,
+                "payload":{"src":src,"dst":dst,"proto":"tcp","bytes":10,"packets":1},
+            }),
+        )
+        .unwrap();
+        bytes.push(b'\n');
+    }
+    std::fs::write(lane.join("netflow-20251009.jsonl"), &bytes).unwrap();
+    let store = dir.path().join("store");
+    stage(&db, &store, vec![named(&lake, "sinnix-lake")]).await;
+
+    let mut conn = <PgConnection as sqlx::Connection>::connect(&db.url(None))
+        .await
+        .unwrap();
+    let (material, blob): (uuid::Uuid, String) = sqlx::query_as(
+        "SELECT id, blob FROM raw.materials WHERE parser = 'sinnix-lake:network.netflow'",
+    )
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    let readings: Vec<i64> = sqlx::query_scalar(
+        "SELECT (payload->>'seq')::bigint FROM core.events WHERE material_id = $1 ORDER BY record_offset",
+    )
+    .bind(material)
+    .fetch_all(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(readings, [5, 6, 7]);
+    let blobs = Blobs::open(&store).unwrap();
+    blobs.load(&mut conn).await.unwrap();
+    assert_eq!(
+        blobs
+            .read(&blobs.locate(&mut conn, &blob).await.unwrap())
+            .unwrap(),
+        bytes
+    );
+}

@@ -26,6 +26,8 @@ pub(crate) async fn archive_at(
             "replacement IDs do not cover archived events".into(),
         ));
     }
+    let first = ids.iter().min();
+    let last = ids.iter().max();
     sqlx::query!(r#"WITH added AS (
         INSERT INTO audit.archived(event_id,archived_seq,reason,replaced_by,operation_id)
         SELECT event_id,$3,$4,replaced_by,$5 FROM unnest($1::uuid[],$2::uuid[]) AS r(event_id,replaced_by)
@@ -33,20 +35,21 @@ pub(crate) async fn archive_at(
         RETURNING change_seq,event_id,archived_seq,reason,replaced_by,operation_id,archived_at),
       changes AS (
         INSERT INTO audit.archive_changes(change_seq,event_id,commit_seq,archived,reason,replaced_by,operation_id,recorded_at)
-        SELECT change_seq,event_id,archived_seq,true,reason,replaced_by,operation_id,archived_at FROM added)
+        SELECT change_seq,event_id,archived_seq,true,reason,replaced_by,operation_id,archived_at FROM added),
+      resolved AS (
+        SELECT added.event_id, live.source FROM added
+        LEFT JOIN LATERAL (
+          SELECT source FROM core.live_equivalence WHERE event_id = added.event_id OFFSET 0
+        ) live ON true),
+      sources AS (
+        SELECT source FROM resolved WHERE source IS NOT NULL
+        UNION ALL
+        SELECT e.source FROM core.events e JOIN resolved r ON r.event_id = e.id
+        WHERE r.source IS NULL AND e.id = ANY($1) AND e.id >= $6 AND e.id <= $7)
       UPDATE core.source_counts c SET events = c.events - left_live.n
-      FROM (SELECT coalesce(live.source, stored.source) AS source, count(*) AS n
-            FROM added
-            LEFT JOIN LATERAL (
-              SELECT source FROM core.live_equivalence WHERE event_id = added.event_id OFFSET 0
-            ) live ON true
-            LEFT JOIN LATERAL (
-              SELECT source FROM core.events
-              WHERE id = added.event_id AND live.source IS NULL OFFSET 0
-            ) stored ON true
-            GROUP BY coalesce(live.source, stored.source)) left_live
+      FROM (SELECT source, count(*) AS n FROM sources GROUP BY source) left_live
       WHERE c.source = left_live.source"#,
-      ids,replacements,position,reason.as_db(),operation)
+      ids,replacements,position,reason.as_db(),operation,first,last)
       .execute(&mut *conn).await?;
     crate::live_intervals::archived(conn, ids).await?;
     // The input is no longer eligible for derivation. Its original reading

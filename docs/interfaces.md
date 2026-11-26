@@ -344,7 +344,7 @@ refused with a shell-quoted correction. Commands and verbs are never guessed.
 | `archive` | 0 | move selected live chains to the archive |
 | `restore` | 0 | restore archived chains |
 | `replay` | 0 | read stored originals again or recompute a derivation; `--trial` retains a comparison; `--switch TRIAL` selects its version |
-| `tombstone` | 0 | permanently remove archived payloads after the applicable operator confirmation |
+| `tombstone` | 0 | permanently remove archived payloads or [readings a parser now leaves in material](lifecycle.md#material-only-readings) |
 | `undo` | 0 | reverse an operation or request of writes |
 | `continue` | 0 | continue an operation from its committed position |
 | `resume` | 0 | reopen an episode or item where work stopped |

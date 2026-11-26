@@ -35,6 +35,8 @@ pub(crate) enum Priority {
 pub(crate) enum WriteError {
     #[error("the request read deadline passed before writer admission")]
     ReadDeadline,
+    #[error("a lifecycle batch exceeded the database statement timeout")]
+    LifecycleBatchTimeout,
     #[error("admission refused the batch: {0}")]
     Refused(String),
     #[error("admission refused the batch: database refused invalid data ({0})")]
@@ -73,6 +75,7 @@ impl From<WriteError> for command_surface::Failure {
         let message = error.to_string();
         match error {
             WriteError::ReadDeadline => crate::request_deadline::timeout().into(),
+            WriteError::LifecycleBatchTimeout => Failure::new(FailureKind::Timeout, message),
             WriteError::Refused(_) | WriteError::InvalidData(_) => {
                 Failure::new(FailureKind::BadValue, message)
             }
@@ -538,7 +541,15 @@ impl WriterHandle {
         operation: &lifecycle::Operation,
         roots: lifecycle::Roots,
     ) -> Result<LifecycleStep, WriteError> {
-        self.ask(Priority::Derived, |reply| WriterJob::Lifecycle {
+        let priority = if matches!(
+            operation.scope,
+            sinex_model::lifecycle::Scope::MaterialOnly { .. }
+        ) {
+            Priority::Bulk
+        } else {
+            Priority::Derived
+        };
+        self.ask(priority, |reply| WriterJob::Lifecycle {
             operation: Box::new(operation.clone()),
             roots,
             reply,
@@ -1327,6 +1338,11 @@ impl From<sqlx::Error> for WriteError {
 
 impl From<sinex_store::Error> for WriteError {
     fn from(error: sinex_store::Error) -> Self {
+        if matches!(&error, sinex_store::Error::Database(sqlx::Error::Database(database))
+            if database.code().as_deref() == Some("57014"))
+        {
+            return WriteError::LifecycleBatchTimeout;
+        }
         if let sinex_store::Error::RequestConflict = error {
             return WriteError::RequestConflict;
         }
@@ -1666,10 +1682,7 @@ async fn lifecycle_step(
         complete,
     } = &mut roots
         && *source_operation == operation.id
-        && matches!(
-            operation.scope,
-            sinex_model::lifecycle::Scope::Source { .. }
-        )
+        && operation.scope.streamed_source()
         && operation.act != sinex_model::lifecycle::Act::Undo
         && ids.windows(2).all(|pair| pair[0] < pair[1])
     {
@@ -1686,6 +1699,16 @@ async fn lifecycle_step(
                 held: started.elapsed(),
             });
         }
+    }
+    if matches!(
+        operation.scope,
+        sinex_model::lifecycle::Scope::MaterialOnly { .. }
+    ) {
+        // Cold compressed chunks and locks can make a single delete much slower
+        // than the previous batch. Roll it back and retry fewer roots.
+        sqlx::query("SET LOCAL statement_timeout = '2s'")
+            .execute(tx.connection())
+            .await?;
     }
     let since = sinex_store::query::current_seq(&mut tx).await?;
     let step = match lifecycle::step(&mut tx, operation, progress, roots, keys).await {

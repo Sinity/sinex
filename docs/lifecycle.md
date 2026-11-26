@@ -190,6 +190,32 @@ Tombstone (archived → tombstoned) is irreversible and allowed only on archived
 
 Tombstoning is the only irreversible deletion Sinex has.
 
+### Material-only readings
+
+When a source narrows what it reads into events, the operator can remove the
+superseded readings with the parser's declared material-only rule:
+
+```sh
+sinexctl --deadline none tombstone --source network.netflow --material-only --dry-run
+sinexctl --deadline none tombstone --source network.netflow --material-only
+```
+
+The preview counts matching stored readings, including archived readings.
+`--since` and `--until` can restrict original event time to a half-open interval
+for both commands. The write streams IDs from the read connection, up to the
+operation's recorded start position. It records the source and parser version
+so a continuation cannot switch rules midway. A reading without a classifiable
+payload stays in place.
+
+Each bulk writer transaction archives the live members of the selected chains
+and tombstones the entire chains at the same commit position. Live admission
+can run between the transactions. Batch size follows writer hold time, and a
+database statement timeout rolls back a slow batch so it can retry with fewer
+roots. The write reports both transitions and leaves the materials readable.
+It keeps the usual tombstone skeletons and provenance edges so earlier
+citations still resolve. PostgreSQL may retain freed space for reuse, so file
+sizes need not fall when the rows leave.
+
 ## Archive reasons
 
 | Reason | Set by |

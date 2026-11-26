@@ -122,7 +122,7 @@ const JUDGED_PAIR: &[Arg] = &[
 
 /// What an archive, restore or tombstone acts on. Exactly one scope; an
 /// omitted scope is an error, never everything.
-const LIFECYCLE_SCOPE_OR_OPERATION: &[Arg] = &[
+const TOMBSTONE_SCOPE: &[Arg] = &[
     pos_opt(
         "target",
         ArgKind::Rest,
@@ -149,6 +149,11 @@ const LIFECYCLE_SCOPE_OR_OPERATION: &[Arg] = &[
         "operation",
         ArgKind::Text,
         "the events an earlier operation archived together",
+    ),
+    opt(
+        "material-only",
+        ArgKind::Bool,
+        "with --source: archive and tombstone readings its parser now leaves in material",
     ),
     opt(
         "dry-run",
@@ -602,8 +607,8 @@ pub const COMMANDS: &[Command] = &[
     Command {
         examples: &["sinexctl tombstone --source terminal.atuin --dry-run"],
         name: "tombstone",
-        summary: "Irreversibly remove archived events' fields and everything computed from them, keeping a record that they existed. A saved source file's bytes go when no event uses them. Refused for anything live. Use --dry-run first.",
-        args: LIFECYCLE_SCOPE_OR_OPERATION,
+        summary: "Irreversibly remove archived events' fields and everything computed from them, keeping a record that they existed. A saved source file's bytes go when no event uses them. Use --dry-run first.",
+        args: TOMBSTONE_SCOPE,
         access: Access::Operator,
         mcp: false,
     },

@@ -6,7 +6,7 @@ use sinex_model::lifecycle::{Act, Scope};
 use sqlx::PgConnection;
 use uuid::Uuid;
 
-const FIRST_V7: Uuid = Uuid::from_u128(0x0000_0000_0000_7000_8000_0000_0000_0000);
+pub(super) const FIRST_V7: Uuid = Uuid::from_u128(0x0000_0000_0000_7000_8000_0000_0000_0000);
 
 /// The next roots of `phase` after `after`, in ID order, among readings
 /// committed by the operation's start. Live roots for an archive, archived
@@ -27,6 +27,9 @@ pub(super) async fn roots(
     // time, so the start of the range is the smallest UUIDv7, not nil.
     let (start, after) = (op.start_seq, after.unwrap_or(FIRST_V7));
     let rows = match (&op.scope, phase) {
+        (Scope::MaterialOnly { .. }, _) => {
+            return Err(Error::Invalid("material-only roots must be prepared by the source parser".into()));
+        }
         (Scope::Operation { operation }, Phase::ArchiveMadeLive) => {
             // What the operation admitted (its readings carry its ID as their
             // run) or restored, still live.
@@ -171,8 +174,10 @@ pub(super) async fn source_batch(
     phase: Phase,
     ids: &[Uuid],
 ) -> Result<Vec<Uuid>> {
-    let Scope::Source { source, .. } = &op.scope else {
-        return Err(Error::Invalid("source roots require a source scope".into()));
+    let source = match &op.scope {
+        Scope::MaterialOnly { .. } => return Ok(ids.to_vec()),
+        Scope::Source { source, .. } => source,
+        _ => return Err(Error::Invalid("source roots require a source scope".into())),
     };
     // The same-operation stream has already checked immutable source/time/
     // admission headers. Lifecycle membership can change before this batch.
@@ -312,6 +317,7 @@ pub(super) async fn whole_request(conn: &mut PgConnection, op: &Operation) -> Re
                 Some(_) => {}
             }
         }
+        Scope::MaterialOnly { .. } => return Ok(refusals),
         Scope::Run { .. } | Scope::Source { .. } => {}
     }
     if op.act == Act::Tombstone

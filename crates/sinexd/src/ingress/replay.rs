@@ -398,6 +398,7 @@ impl Ingest {
                     | WriteError::StorageRefused(_)
                     | WriteError::Stopped
                     | WriteError::ReadDeadline
+                    | WriteError::LifecycleBatchTimeout
                     | WriteError::Internal(_)
                     | WriteError::RequestConflict),
                 ) => {
