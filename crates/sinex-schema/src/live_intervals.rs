@@ -88,17 +88,23 @@ pub(crate) fn upgrade() -> Vec<String> {
         .iter()
         .map(|(event_type, ..)| quoted(event_type))
         .collect();
+    // The inner query ends at OFFSET 0 so that liveness is joined to the five
+    // stored columns: joined to the events it would carry every payload
+    // through the join's work files.
     let fill = format!(
         "INSERT INTO core.live_intervals (event_id, event_type, narrowing, started_at, ended_at)
-         SELECT e.id, e.event_type, e.payload->>k.narrowed_by, e.ts_orig, i.ended_at
-         FROM core.events e
-         JOIN (VALUES {rows}) AS k(event_type, end_field, end_rule, narrowed_by)
-           ON k.event_type = e.event_type
-         CROSS JOIN LATERAL (
-           SELECT core.interval_end(k.end_rule, e.ts_orig, e.payload->k.end_field) AS ended_at) i
-         WHERE e.event_type IN ({event_types}) AND e.ts_orig IS NOT NULL
-           AND (i.ended_at IS NULL OR i.ended_at > e.ts_orig)
-           AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)",
+         SELECT s.id, s.event_type, s.narrowing, s.ts_orig, s.ended_at
+         FROM (
+           SELECT e.id, e.event_type, e.payload->>k.narrowed_by AS narrowing, e.ts_orig, i.ended_at
+           FROM core.events e
+           JOIN (VALUES {rows}) AS k(event_type, end_field, end_rule, narrowed_by)
+             ON k.event_type = e.event_type
+           CROSS JOIN LATERAL (
+             SELECT core.interval_end(k.end_rule, e.ts_orig, e.payload->k.end_field) AS ended_at) i
+           WHERE e.event_type IN ({event_types}) AND e.ts_orig IS NOT NULL
+             AND (i.ended_at IS NULL OR i.ended_at > e.ts_orig)
+           OFFSET 0) s
+         WHERE NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = s.id)",
         rows = rows.join(", "),
         event_types = event_types.join(", "),
     );
