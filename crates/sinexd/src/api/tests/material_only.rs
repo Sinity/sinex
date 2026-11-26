@@ -59,9 +59,9 @@ async fn material_only_tombstone_removes_old_local_flow_readings(db: devkit::pg:
             .unwrap();
     assert_eq!(indexed.len(), local_ids.len());
 
-    let request = json!({"method":"tombstone","source":"network.netflow","material_only":true});
+    let request = json!({"method":"tombstone","source":"network.netflow","material-only":true});
     let mut preview = request.clone();
-    preview["dry_run"] = true.into();
+    preview["dry-run"] = true.into();
     let (_, before) = call_unbounded(&w, Some(OPERATOR), preview.clone()).await;
     assert_eq!(before["outcome"], "ok", "{before}");
     assert_eq!(before["result"]["matching_readings"], local_ids.len());

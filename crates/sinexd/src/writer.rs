@@ -1338,11 +1338,6 @@ impl From<sqlx::Error> for WriteError {
 
 impl From<sinex_store::Error> for WriteError {
     fn from(error: sinex_store::Error) -> Self {
-        if matches!(&error, sinex_store::Error::Database(sqlx::Error::Database(database))
-            if database.code().as_deref() == Some("57014"))
-        {
-            return WriteError::LifecycleBatchTimeout;
-        }
         if let sinex_store::Error::RequestConflict = error {
             return WriteError::RequestConflict;
         }
@@ -1700,10 +1695,11 @@ async fn lifecycle_step(
             });
         }
     }
-    if matches!(
+    let material_only = matches!(
         operation.scope,
         sinex_model::lifecycle::Scope::MaterialOnly { .. }
-    ) {
+    );
+    if material_only {
         // Cold compressed chunks and locks can make a single delete much slower
         // than the previous batch. Roll it back and retry fewer roots.
         lifecycle::set_batch_statement_timeout(tx.connection(), Duration::from_secs(2)).await?;
@@ -1713,6 +1709,12 @@ async fn lifecycle_step(
         Ok(step) => step,
         Err(error) => {
             tx.rollback().await?;
+            if material_only
+                && matches!(&error, sinex_store::Error::Database(sqlx::Error::Database(database))
+                    if database.code().as_deref() == Some("57014"))
+            {
+                return Err(WriteError::LifecycleBatchTimeout);
+            }
             return Err(WriteError::from(error));
         }
     };
