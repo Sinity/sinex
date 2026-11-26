@@ -458,44 +458,17 @@ fn metadata(root: &Path, features: &[String], host: &str) -> Result<Metadata, St
 mod tests;
 
 /// Whether the selected compilation can run without a schema database.
-pub fn database_free(root: &Path, args: &[String]) -> Result<bool, String> {
-    let mut selected = Vec::new();
-    let mut features = Vec::new();
-    let mut workspace = false;
-    let mut development = false;
-    let mut args = args.iter().take_while(|arg| arg.as_str() != "--");
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "-p" | "--package" => match args.next() {
-                Some(name) => selected.push(name.as_str()),
-                None => return Ok(false),
-            },
-            "--workspace" | "--all" | "--exclude" => workspace = true,
-            "--tests" | "--test" | "--benches" | "--bench" | "--all-targets" => development = true,
-            "--no-default-features" | "--all-features" => features.push(arg.clone()),
-            "--features" | "-F" => {
-                features.push(arg.clone());
-                if let Some(value) = args.next() {
-                    features.push(value.clone());
-                }
-            }
-            value if value.starts_with("--features=") || value.starts_with("-F") => {
-                features.push(arg.clone())
-            }
-            value if value.starts_with("--package=") => selected.push(&value[10..]),
-            value if value.starts_with("-p") => selected.push(&value[2..]),
-            value if value.starts_with("--test=") || value.starts_with("--bench=") => {
-                development = true
-            }
-            _ => {}
-        }
-    }
-    let metadata = metadata(root, &features, &host_triple()?)?;
+pub fn compiles_without_database(
+    root: &Path,
+    compilation: &crate::arguments::Compilation,
+) -> Result<bool, String> {
+    let selected: Vec<&str> = compilation.packages().iter().map(String::as_str).collect();
+    let metadata = metadata(root, &compilation.feature_arguments(), &host_triple()?)?;
     Ok(selection_database_free(
         &metadata,
         &selected,
-        workspace,
-        development,
+        compilation.workspace(),
+        compilation.includes_development_targets(),
     ))
 }
 

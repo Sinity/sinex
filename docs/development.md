@@ -56,10 +56,17 @@ A host may queue these commands through its own job runner.
 
 Compile-time staging queries use `core,public` as their database search path, resolving the declared staging template. The admission writer uses `pg_temp,core,public`, resolving its private clone of that same declaration. The xtask environment, benchmark compiler and package build set the compile-time path together.
 
-`cargo xtask test -p PACKAGE` passes package selection unchanged to Cargo.
-`-E` and test-name filters narrow execution after compilation; they do not
-remove unrelated build targets from a selected package. Target flags can
-limit that compilation too:
+`cargo xtask test` declares one option of its own, `--test-threads N`
+(`--jobs`, `-j`), the number of tests running at once; without it nextest
+reads `NEXTEST_TEST_THREADS`, and the run records whichever applied. Every
+other argument reaches `cargo nextest run` unchanged and in order after
+`--locked`: package selection (`-p`, `--exclude`), target flags, `-E`
+filtersets, test names, `--partition`, `--base`, and options with values such
+as `--build-jobs 1` or `--profile fuzz`. A value belongs to the option before
+it, never to a test name. Without package selection Cargo selects every
+workspace member. `-E` and test names narrow execution after compilation; they
+do not remove unrelated build targets from a selected package. Target flags
+can limit that compilation:
 
 ```sh
 cargo xtask test -p sinex-store --lib -E 'test(query::)'
@@ -76,8 +83,18 @@ targets and their separately built executables. Integration tests that use
 workspace run includes them. Database and NATS preparation stay with xtask.
 
 For test runs, `--build-jobs 1` limits compilation and `--test-threads 1`
-limits concurrent tests. Nextest's `--jobs` and `-j` alias test concurrency.
-Cargo overrides accept both `--config KEY=VALUE` and `--config=KEY=VALUE`.
+limits concurrent tests. Cargo overrides accept both `--config KEY=VALUE` and
+`--config=KEY=VALUE`. Arguments after `--` go to the test binaries. Put
+`--test-threads` before the pass-through arguments: from the first argument
+xtask does not declare, the rest belongs to nextest as written.
+
+`cargo xtask compile` needs a selection and declares what decides whether the
+schema database is prepared: `-p`/`--package`, `--workspace`, `--exclude`,
+the target flags (`--lib`, `--bins`, `--bin`, `--tests`, `--test`,
+`--examples`, `--example`, `--benches`, `--bench`, `--all-targets`) and the
+feature flags (`-F`/`--features`, `--all-features`, `--no-default-features`).
+Other arguments, such as `--release`, pass to `cargo check` as written after
+those.
 
 Cargo's selected packages, default features and explicit feature flags own
 feature resolution. `sinex-sources` defaults to its full source set, and

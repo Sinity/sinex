@@ -1,173 +1,78 @@
 use super::*;
+use crate::arguments::parse;
 
 mod selection;
 
-fn options(args: &[&str]) -> Nextest {
-    let Cli::Test { args, .. } =
-        Cli::try_parse_from(["xtask", "test"].into_iter().chain(args.iter().copied())).unwrap()
-    else {
-        panic!("expected test command")
+fn command(args: &[&str]) -> Cli {
+    let args = ["xtask"].into_iter().chain(args.iter().copied());
+    match parse(args.map(String::from).collect()) {
+        Ok(cli) => cli,
+        Err(error) => panic!("{error}"),
+    }
+}
+
+fn with_command<'a>(name: &'a str, args: &[&'a str]) -> Vec<&'a str> {
+    [name].into_iter().chain(args.iter().copied()).collect()
+}
+
+fn selection_of(args: &[&str]) -> TestRun {
+    let Cli::Test { run, .. } = command(&with_command("test", args)) else {
+        panic!("expected the test command")
     };
-    test_options(&args, vec![("synthetic".into(), "kept".into())])
+    run
+}
+
+fn options(args: &[&str]) -> Nextest {
+    test_options(
+        &selection_of(args),
+        vec![("synthetic".into(), "kept".into())],
+    )
+}
+
+fn compilation(args: &[&str]) -> Compilation {
+    let Cli::Compile(compilation) = command(&with_command("compile", args)) else {
+        panic!("expected the compile command")
+    };
+    compilation
+}
+
+fn owned(args: &[&str]) -> Vec<String> {
+    args.iter().map(|arg| (*arg).to_owned()).collect()
 }
 
 #[devkit::test]
 fn test_selection_defaults_to_the_full_workspace() {
     let got = options(&[]);
-    assert_eq!(got.args, ["--locked", "--workspace"]);
+    // Cargo selects every member of this virtual workspace without a flag.
+    assert_eq!(got.args, ["--locked"]);
     assert!(got.tmpfs);
     assert_eq!(got.env, [("synthetic".into(), "kept".into())]);
     assert!(!got.allow_no_tests);
 }
 
 #[devkit::test]
-fn test_selection_preserves_the_original_name_filter() {
+fn a_single_name_filter_may_match_no_test() {
     let got = options(&["session_socket"]);
-    assert_eq!(got.args, ["--locked", "--workspace", "session_socket"]);
+    assert_eq!(got.args, ["--locked", "session_socket"]);
     assert!(got.allow_no_tests);
-}
-
-#[devkit::test]
-fn package_selection_limits_the_cargo_build() {
-    for (args, expected) in [
-        (
-            vec!["-p", "sinex-sources", "session_socket"],
-            vec![
-                "--locked",
-                "-p",
-                "sinex-sources",
-                "-E",
-                "test(session_socket)",
-            ],
-        ),
-        (
-            vec!["-psinex-sources", "session_socket"],
-            vec![
-                "--locked",
-                "-p",
-                "sinex-sources",
-                "-E",
-                "test(session_socket)",
-            ],
-        ),
-        (
-            vec!["--package=sinex-sources", "-E", "test(session_socket)"],
-            vec![
-                "--locked",
-                "-p",
-                "sinex-sources",
-                "-E",
-                "(test(session_socket))",
-            ],
-        ),
-        (
-            vec!["--package", "sinex-model", "-p", "sinex-protocol"],
-            vec!["--locked", "-p", "sinex-model", "-p", "sinex-protocol"],
-        ),
+    for args in [
+        vec!["session_socket", "other"],
+        vec!["--test-threads", "2"],
+        vec!["-p", "sinexd"],
+        vec!["--nocapture"],
     ] {
-        let got = options(&args);
-        assert_eq!(got.args, expected);
-        assert!(!got.allow_no_tests);
+        assert!(!options(&args).allow_no_tests, "{args:?}");
     }
 }
 
 #[devkit::test]
-fn package_selection_keeps_other_options_and_binary_arguments() {
-    let got = options(&[
-        "-p",
-        "sinexd",
-        "--lib",
-        "--test-threads",
-        "2",
-        "--",
-        "--nocapture",
-    ]);
-    assert_eq!(
-        got.args,
-        [
-            "--locked",
-            "-p",
-            "sinexd",
-            "--lib",
-            "--test-threads",
-            "2",
-            "--",
-            "--nocapture"
-        ]
-    );
-}
-
-// The nightly fuzz workflow's invocation: profile names are option values,
-// not test names.
-#[devkit::test]
-fn profile_options_keep_their_values() {
-    let got = options(&[
-        "--profile",
-        "fuzz",
-        "--cargo-profile",
-        "release",
-        "-p",
-        "sinex-fuzz",
-    ]);
-    assert_eq!(
-        got.args,
-        [
-            "--locked",
-            "-p",
-            "sinex-fuzz",
-            "--profile",
-            "fuzz",
-            "--cargo-profile",
-            "release"
-        ]
-    );
-    assert!(!got.allow_no_tests);
-    let got = options(&[
-        "-p",
-        "sinexd",
-        "--build-jobs",
-        "1",
-        "--config",
-        "profile.dev.debug=0",
-        "--test-threads",
-        "1",
-    ]);
-    assert_eq!(
-        got.args,
-        [
-            "--locked",
-            "-p",
-            "sinexd",
-            "--build-jobs",
-            "1",
-            "--config",
-            "profile.dev.debug=0",
-            "--test-threads",
-            "1",
-        ]
-    );
-    assert!(!got.allow_no_tests);
-}
-
-#[devkit::test]
-fn test_selection_filtersets_keep_the_workspace_unless_package_is_selected() {
-    let got = options(&["-E", "package(sinex-protocol)"]);
-    assert_eq!(
-        got.args,
-        ["--locked", "--workspace", "-E", "package(sinex-protocol)"]
-    );
-    assert!(!got.allow_no_tests);
-}
-
-#[devkit::test]
-fn test_selection_does_not_repeat_explicit_workspace_selection() {
-    assert_eq!(options(&["--workspace"]).args, ["--locked", "--workspace"]);
-}
-
-#[devkit::test]
-fn explicit_workspace_target_and_feature_selection_keeps_cargo_meaning() {
-    assert_eq!(
-        options(&[
+fn selection_and_runner_options_reach_nextest_unchanged_and_in_order() {
+    for args in [
+        vec!["-p", "sinex-sources", "-E", "test(session_socket)"],
+        vec!["-psinex-sources", "-Etest(session_socket)", "--lib"],
+        vec!["--package=sinex-sources", "--filterset=test(a)", "name"],
+        vec!["--workspace", "--exclude", "sinex-fuzz", "--no-fail-fast"],
+        vec![
             "--workspace",
             "-psinexd",
             "--lib",
@@ -177,105 +82,57 @@ fn explicit_workspace_target_and_feature_selection_keeps_cargo_meaning() {
             "sinex-sources/full",
             "-F",
             "sinex-protocol/cli",
-        ])
-        .args,
-        [
-            "--locked",
-            "--workspace",
-            "-p",
-            "sinexd",
-            "--lib",
-            "--bin",
-            "sinexd",
-            "--features",
-            "sinex-sources/full",
-            "-F",
-            "sinex-protocol/cli",
         ],
-    );
-    assert_eq!(
-        options(&["-p=sinexd", "--lib", "--bin=sinexd"]).args,
-        ["--locked", "-p", "sinexd", "--lib", "--bin=sinexd"],
-    );
-}
-
-#[devkit::test]
-fn test_selection_does_not_treat_binary_arguments_as_package_selection() {
-    let got = test_options(&["--".into(), "-p".into()], Vec::new());
-    assert_eq!(got.args, ["--locked", "--workspace", "--", "-p"]);
-}
-
-#[devkit::test]
-fn compile_requires_and_preserves_explicit_selection() {
-    assert!(Cli::try_parse_from(["xtask", "compile"]).is_err());
-    let Cli::Compile { args } =
-        Cli::try_parse_from(["xtask", "compile", "-p", "sinex-model", "--tests"]).unwrap()
-    else {
-        panic!("expected compile")
-    };
-    assert_eq!(args, ["-p", "sinex-model", "--tests"]);
-}
-
-#[devkit::test]
-fn compile_prepares_a_database_only_for_packages_with_checked_queries() {
-    let database_free = |args: &[String]| {
-        boundaries::database_free(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .parent()
-                .unwrap(),
-            args,
-        )
-        .unwrap()
-    };
-    for args in [
-        vec!["-p", "sinexctl"],
-        vec!["--package=sinex-session", "--tests"],
-        vec!["-psinex-capture"],
-        vec!["-p", "sinex-schema", "-p", "sinex-model"],
+        vec!["-E", "package(sinex-protocol)", "--partition", "hash:1/2"],
+        vec!["--base=HEAD^1"],
+        vec!["--changed", "-E", "kind(test)"],
+        vec!["-p", "sinexd", "--", "--nocapture"],
+        vec!["--", "-p"],
     ] {
-        assert!(database_free(
-            &args.into_iter().map(String::from).collect::<Vec<_>>()
-        ));
+        let mut expected = vec!["--locked"];
+        expected.extend(&args);
+        assert_eq!(options(&args).args, expected, "{args:?}");
     }
+}
+
+// The nightly fuzz workflow's invocation: profile names are option values,
+// not test names.
+#[devkit::test]
+fn options_with_values_keep_their_values() {
     for args in [
-        vec![],
-        vec!["--workspace"],
-        vec!["-p", "sinex-store"],
-        vec!["-p", "sinexctl", "--workspace"],
-        vec!["-p", "sinexctl", "-p", "sinexd"],
-        vec!["-p"],
+        vec![
+            "--profile",
+            "fuzz",
+            "--cargo-profile",
+            "release",
+            "-p",
+            "sinex-fuzz",
+        ],
+        vec!["--config", "profile.dev.debug=0", "-p", "sinexd"],
+        vec!["--build-jobs", "1", "--run-ignored", "only", "-p", "sinexd"],
+        // A value xtask has never heard of belongs to its flag.
+        vec!["--some-new-option", "value", "--lib"],
     ] {
-        assert!(!database_free(
-            &args.into_iter().map(String::from).collect::<Vec<_>>()
-        ));
+        let mut expected = vec!["--locked"];
+        expected.extend(&args);
+        let got = options(&args);
+        assert_eq!(got.args, expected, "{args:?}");
+        assert!(!got.allow_no_tests);
     }
 }
 
 #[devkit::test]
-fn environment_test_threads_are_recorded_without_changing_selection() {
-    let args = vec!["session_socket".into()];
-    let mut selected = test_options(&args, Vec::new());
+fn a_build_jobs_value_stays_with_its_flag_before_a_test_name() {
+    let got = options(&["--build-jobs", "1", "session_socket"]);
     assert_eq!(
-        test_arguments(&args, Some("1")),
-        ["--test-threads", "1", "session_socket"]
+        got.args,
+        ["--locked", "--build-jobs", "1", "session_socket"]
     );
-    selected.args = test_arguments(&selected.args, Some("1"));
-    assert_eq!(
-        selected.args,
-        [
-            "--test-threads",
-            "1",
-            "--locked",
-            "--workspace",
-            "session_socket"
-        ]
-    );
-    assert!(selected.allow_no_tests);
-    assert_eq!(test_arguments(&args, None), args);
+    assert!(!got.allow_no_tests);
 }
 
 #[devkit::test]
-fn explicit_test_thread_options_take_precedence_over_the_environment() {
+fn test_thread_options_are_the_typed_thread_count() {
     for args in [
         vec!["--test-threads", "4"],
         vec!["--test-threads=4"],
@@ -285,17 +142,110 @@ fn explicit_test_thread_options_take_precedence_over_the_environment() {
         vec!["-j4"],
         vec!["-j=4"],
     ] {
-        let args = args.into_iter().map(String::from).collect::<Vec<_>>();
-        assert_eq!(test_arguments(&args, Some("1")), args);
+        assert_eq!(
+            options(&args).args,
+            ["--locked", "--test-threads", "4"],
+            "{args:?}"
+        );
+    }
+    assert_eq!(
+        options(&["--test-threads", "-2", "-p", "sinexd"]).args,
+        ["--locked", "--test-threads", "-2", "-p", "sinexd"]
+    );
+}
+
+#[devkit::test]
+fn the_run_records_the_thread_count_that_applied() {
+    let invocation = owned(&["session_socket"]);
+    let selection = selection_of(&["session_socket"]);
+    assert_eq!(
+        selection.recorded(&invocation, Some("1")),
+        ["--test-threads", "1", "session_socket"]
+    );
+    assert_eq!(selection.recorded(&invocation, None), invocation);
+    // The environment's count does not reach nextest as an argument.
+    assert_eq!(
+        selection.nextest_arguments(),
+        ["--locked", "session_socket"]
+    );
+    let explicit = owned(&["--test-threads", "4"]);
+    assert_eq!(
+        selection_of(&["--test-threads", "4"]).recorded(&explicit, Some("1")),
+        explicit
+    );
+    // Arguments for the test binaries do not hide the environment's count.
+    let after = owned(&["--", "--test-threads", "8"]);
+    assert_eq!(
+        selection_of(&["--", "--test-threads", "8"]).recorded(&after, Some("num-cpus")),
+        ["--test-threads", "num-cpus", "--", "--test-threads", "8"]
+    );
+    assert_eq!(
+        options(&["--", "--test-threads", "8"]).args,
+        ["--locked", "--", "--test-threads", "8"]
+    );
+}
+
+#[devkit::test]
+fn no_run_takes_no_selection() {
+    assert!(matches!(
+        command(&["test", "--no-run"]),
+        Cli::Test { no_run: true, .. }
+    ));
+    for args in [["--no-run", "name"], ["--no-run", "-j2"]] {
+        assert!(
+            parse(
+                ["xtask", "test"]
+                    .into_iter()
+                    .chain(args)
+                    .map(String::from)
+                    .collect()
+            )
+            .is_err()
+        );
     }
 }
 
 #[devkit::test]
-fn binary_arguments_do_not_hide_inherited_test_threads() {
-    let args = vec!["--".into(), "--test-threads".into(), "8".into()];
+fn compile_requires_a_selection_and_passes_the_rest_to_cargo() {
+    assert!(parse(owned(&["xtask", "compile"])).is_err());
+    let got = compilation(&["-p", "sinex-model", "--tests", "--release", "--", "-x"]);
+    assert_eq!(got.packages(), ["sinex-model"]);
+    assert!(got.includes_development_targets());
     assert_eq!(
-        test_arguments(&args, Some("num-cpus")),
-        ["--test-threads", "num-cpus", "--", "--test-threads", "8"]
+        got.arguments(),
+        ["-p", "sinex-model", "--tests", "--release", "--", "-x"]
     );
-    assert_eq!(test_arguments(&[], Some("-2")), ["--test-threads", "-2"]);
+    assert_eq!(
+        compilation(&["-psinex-model", "--profile", "dev", "--lib"]).arguments(),
+        ["-p", "sinex-model", "--profile", "dev", "--lib"]
+    );
+}
+
+#[devkit::test]
+fn compile_decides_from_packages_targets_and_features() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap();
+    let database_free =
+        |args: &[&str]| boundaries::compiles_without_database(root, &compilation(args)).unwrap();
+    for args in [
+        vec!["-p", "sinexctl"],
+        vec!["--package=sinex-session", "--tests"],
+        vec!["-psinex-capture"],
+        vec!["-p", "sinex-schema", "-p", "sinex-model"],
+    ] {
+        assert!(database_free(&args), "{args:?}");
+    }
+    for args in [
+        vec!["--workspace"],
+        vec!["--all"],
+        vec!["-p", "sinex-store"],
+        vec!["-p", "sinexctl", "--workspace"],
+        vec!["-p", "sinexctl", "--exclude", "sinexd"],
+        vec!["-p", "sinexctl", "-p", "sinexd"],
+        vec!["--lib", "-p", "sinexd"],
+        vec!["--release"],
+    ] {
+        assert!(!database_free(&args), "{args:?}");
+    }
 }

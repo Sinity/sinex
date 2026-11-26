@@ -1,71 +1,20 @@
 //! Sinex development commands and shared devkit runners.
+mod arguments;
 mod bench;
 mod boundaries;
 mod common_link;
 mod database;
 mod development;
 
-use clap::Parser;
+use arguments::{Cli, Compilation, TestRun};
 use devkit::{Nextest, Run, pg::Schema};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 type Result<T = ()> = std::result::Result<T, String>;
 
-#[derive(Parser)]
-#[command(name = "xtask", about = "Sinex development commands")]
-enum Cli {
-    /// fmt, dependency boundaries and clippy against the schema database.
-    Check,
-    /// Run exported NixOS checks and record scenario results.
-    Vm(devkit::vm::Vm),
-    /// Run isolated development services and daemon, optionally watching source edits.
-    Run(development::Development),
-    /// LLVM line coverage with explicit output and optional threshold.
-    Coverage(devkit::coverage::Coverage),
-    /// Build every test binary and the clippy of every target without
-    /// running any test: the warm target that new checkouts copy.
-    Warm,
-    /// Compile selected packages or targets against the schema database.
-    Compile {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
-        args: Vec<String>,
-    },
-    /// Rust tests under nextest; each database test clones the schema template.
-    Test {
-        /// Build every test binary against the schema database without
-        /// running any (a cloud environment's warm build).
-        #[arg(long, conflicts_with = "args")]
-        no_run: bool,
-        /// Further `cargo nextest run` arguments: its own package and target
-        /// selection, filters, names and runner options.
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
-    },
-    /// The development database: `ensure` prints `DATABASE_URL`, `exec` runs a
-    /// command with it set.
-    #[command(subcommand)]
-    Db(devkit::cli::db::Db),
-    /// Check the workspace dependency graph.
-    Boundaries { dir: Option<PathBuf> },
-    /// Backfill and derivation on a fixed sample of the real inputs.
-    #[command(subcommand)]
-    Bench(bench::Bench),
-    /// Build against a local checkout of polylogue-sinex-common instead of
-    /// the commit Cargo.lock pins.
-    LinkCommon {
-        /// The checkout; by default `$POLYLOGUE_SINEX_COMMON`, else
-        /// `../polylogue-sinex-common`.
-        checkout: Option<PathBuf>,
-    },
-    /// Return to the commit of polylogue-sinex-common that Cargo.lock pinned.
-    UnlinkCommon,
-    #[command(flatten)]
-    Shared(devkit::cli::Command),
-}
-
 fn main() -> ExitCode {
-    match Cli::parse() {
+    match arguments::parse(std::env::args().collect()).unwrap_or_else(|error| error.exit()) {
         Cli::Vm(options) => recorded("vm", &invocation(), |run| {
             devkit::vm::execute(
                 run,
@@ -87,14 +36,14 @@ fn main() -> ExitCode {
             let tests = build_tests(run);
             clippy(run).and(tests)
         }),
-        Cli::Compile { args } => recorded("compile", &args, |run| compile(run, &args)),
+        Cli::Compile(compilation) => {
+            recorded("compile", &invocation(), |run| compile(run, &compilation))
+        }
         Cli::Test { no_run: true, .. } => recorded("test", &["--no-run".into()], build_tests),
-        Cli::Test { args, .. } => {
-            let threads = std::env::var("NEXTEST_TEST_THREADS").ok();
-            let arguments = test_arguments(&args, threads.as_deref());
-            recorded("test", &arguments, |run| {
-                test(run, &args, threads.as_deref())
-            })
+        Cli::Test { run: selection, .. } => {
+            let inherited = std::env::var("NEXTEST_TEST_THREADS").ok();
+            let arguments = selection.recorded(&invocation(), inherited.as_deref());
+            recorded("test", &arguments, |run| test(run, &selection))
         }
         Cli::Db(devkit::cli::db::Db::Exec { command }) => {
             exit_code(database::exec(Path::new("."), &command))
@@ -185,12 +134,13 @@ fn clippy(run: &mut Run) -> Result {
     Ok(())
 }
 
-fn compile(run: &mut Run, args: &[String]) -> Result {
+fn compile(run: &mut Run, compilation: &Compilation) -> Result {
+    let arguments = compilation.arguments();
     let selected: Vec<&str> = ["check", "--locked"]
         .into_iter()
-        .chain(args.iter().map(String::as_str))
+        .chain(arguments.iter().map(String::as_str))
         .collect();
-    if boundaries::database_free(&run.root, args)? {
+    if boundaries::compiles_without_database(&run.root, compilation)? {
         run.cargo_with("compile", &selected, &[])?;
     } else {
         let mut prepared = None;
@@ -245,39 +195,26 @@ fn with_services(
     result
 }
 
-/// Cargo package and target selection bounds the build; nextest filters bound
-/// execution inside those targets. With no package selection, test the workspace.
-fn test(run: &mut Run, args: &[String], threads: Option<&str>) -> Result {
+/// Cargo's package and target selection bounds the build; nextest filters
+/// bound execution inside those targets. With no package selection, test the
+/// workspace.
+fn test(run: &mut Run, selection: &TestRun) -> Result {
     with_services(run, |run, env| {
-        let mut options = test_options(args, env.to_vec());
-        options.args = test_arguments(&options.args, threads);
-        run.nextest("test", &options)?;
+        run.nextest("test", &test_options(selection, env.to_vec()))?;
         Ok(())
     })
 }
 
-fn thread_option(arg: &str) -> bool {
-    matches!(arg, "--test-threads" | "--jobs" | "-j")
-        || arg.starts_with("--test-threads=")
-        || arg.starts_with("--jobs=")
-        || (arg.starts_with("-j") && arg.len() > 2)
-}
-
-// Record environment concurrency as arguments so history keeps different test setups apart.
-fn test_arguments(args: &[String], threads: Option<&str>) -> Vec<String> {
-    let Some(threads) = threads else {
-        return args.to_vec();
-    };
-    let explicit_threads = args
-        .iter()
-        .take_while(|arg| arg.as_str() != "--")
-        .any(|arg| thread_option(arg));
-    if explicit_threads {
-        return args.to_vec();
+fn test_options(selection: &TestRun, env: Vec<(String, String)>) -> Nextest {
+    Nextest {
+        args: selection.nextest_arguments(),
+        env,
+        // A single name that matches no test stays a pass; every other
+        // selector keeps devkit's refusal when no tests match.
+        allow_no_tests: selection.names_one_test(),
+        tmpfs: true,
+        junit: None,
     }
-    let mut arguments = vec!["--test-threads".into(), threads.into()];
-    arguments.extend_from_slice(args);
-    arguments
 }
 
 /// Every test binary, built against the schema database and not run.
@@ -295,111 +232,6 @@ fn build_tests(run: &mut Run) -> Result {
         &env,
     )?;
     Ok(())
-}
-
-/// Nextest options that take a value, so the value is not read as a test name.
-const VALUE_OPTIONS: &[&str] = &[
-    "--test-threads",
-    "-j",
-    "--jobs",
-    "--retries",
-    "--profile",
-    "-P",
-    "--cargo-profile",
-    "--config",
-    "--build-jobs",
-    "--target-dir",
-    "--max-fail",
-    "--color",
-    "--partition",
-    "--run-ignored",
-    "--success-output",
-    "--failure-output",
-    "--status-level",
-    "--final-status-level",
-    "--message-format",
-    "--test",
-    "--bin",
-    "--example",
-    "--target",
-    "--exclude",
-    "--features",
-    "-F",
-];
-
-fn test_options(args: &[String], env: Vec<(String, String)>) -> Nextest {
-    let (own, binary) = match args.iter().position(|arg| arg == "--") {
-        Some(split) => args.split_at(split),
-        None => (args, &[][..]),
-    };
-    let mut packages = Vec::new();
-    let mut workspace = false;
-    let mut filters = Vec::new();
-    let mut names = Vec::new();
-    let mut rest = Vec::new();
-    let mut own = own.iter();
-    while let Some(arg) = own.next() {
-        let arg = arg.as_str();
-        if let Some(package) = arg
-            .strip_prefix("--package=")
-            .or_else(|| arg.strip_prefix("-p").filter(|value| !value.is_empty()))
-        {
-            packages.push(package.strip_prefix('=').unwrap_or(package).to_owned());
-        } else if matches!(arg, "-p" | "--package") {
-            packages.extend(own.next().cloned());
-        } else if let Some(filter) = arg
-            .strip_prefix("--filterset=")
-            .or_else(|| arg.strip_prefix("--filter-expr="))
-        {
-            filters.push(filter.to_owned());
-        } else if matches!(arg, "-E" | "--filterset" | "--filter-expr") {
-            filters.extend(own.next().cloned());
-        } else if matches!(arg, "--workspace" | "--all") {
-            workspace = true;
-        } else if VALUE_OPTIONS.contains(&arg) {
-            rest.push(arg.to_owned());
-            rest.extend(own.next().cloned());
-        } else if arg.starts_with('-') {
-            rest.push(arg.to_owned());
-        } else {
-            names.push(arg.to_owned());
-        }
-    }
-    let mut selected = vec!["--locked".to_owned()];
-    if workspace || packages.is_empty() {
-        selected.push("--workspace".to_owned());
-    }
-    for package in &packages {
-        selected.extend(["-p".to_owned(), package.clone()]);
-    }
-    selected.extend(rest);
-    if packages.is_empty() {
-        for filter in &filters {
-            selected.extend(["-E".to_owned(), filter.clone()]);
-        }
-        selected.extend(names.iter().cloned());
-    } else {
-        // Preserve how name filters and filtersets combine inside the packages
-        // Cargo selected, without turning package selection into a build-wide filter.
-        let narrowing = filters
-            .iter()
-            .map(|filter| format!("({filter})"))
-            .chain(names.iter().map(|name| format!("test({name})")))
-            .collect::<Vec<_>>();
-        if !narrowing.is_empty() {
-            selected.extend(["-E".to_owned(), narrowing.join(" | ")]);
-        }
-    }
-    selected.extend(binary.iter().cloned());
-    Nextest {
-        args: selected,
-        env,
-        // Preserve the original single name-filter invocation. New nextest
-        // selectors keep devkit's default refusal when no tests match.
-        allow_no_tests: args.len() == 1 && !args[0].starts_with('-'),
-        tmpfs: true,
-        junit: None,
-    }
 }
 
 fn target_dir() -> PathBuf {
