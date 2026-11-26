@@ -8,6 +8,7 @@ mod diagnostics;
 mod documents;
 mod end_to_end;
 mod output_ordinals;
+mod paused_derivation;
 mod shutdown;
 mod signals;
 mod telemetry;

@@ -411,6 +411,7 @@ impl Api {
             &self.host,
             &self.derivations,
             sinex_model::time_settings::TimeSettings::from_parts(self.zone.clone(), self.day_start),
+            crate::build_identity::current()?,
         )
         .await?
         .with_blobs(self.blobs.clone());

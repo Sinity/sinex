@@ -273,10 +273,10 @@ async fn serve(
     }
     let time_settings =
         sinex_model::time_settings::TimeSettings::from_parts(o.api.zone.clone(), o.api.day_start);
-    let writer_derivations = crate::analysis::keyed_with(&configuration)
-        .into_iter()
-        .filter(|d| sources.runs(d.name()) == Some(true))
-        .collect();
+    // Admission marks the keys of every keyed derivation the build has,
+    // running or not. A derivation turned off is paused: its marks wait, and
+    // it computes them when it runs again.
+    let writer_derivations = crate::analysis::keyed_with(&configuration);
     let writer_settings = time_settings.clone();
     let url = o.database.clone();
     let writer_store = blobs.clone();
@@ -300,6 +300,7 @@ async fn serve(
         per_event,
         &o.host,
         time_settings,
+        crate::build_identity::current()?,
     )
     .await?
     .with_blobs(blobs.clone());

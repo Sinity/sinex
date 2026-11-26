@@ -15,6 +15,10 @@ pub(crate) struct Comparison {
     /// The stored comparison's ID.
     pub id: Option<i64>,
     pub keys: usize,
+    /// Keys compared while their stored outputs were older than their newest
+    /// inputs: a dirty key, or a per-event input after the saved position.
+    /// Their differences may come from those inputs, not from the version.
+    pub behind: usize,
     pub same: usize,
     pub added: usize,
     pub changed: usize,
@@ -56,8 +60,8 @@ impl std::fmt::Display for Comparison {
         }
         writeln!(
             f,
-            "keys {} | outputs unchanged {} | added {} | changed {} | removed {}",
-            self.keys, self.same, self.added, self.changed, self.removed
+            "keys {} | behind their inputs {} | outputs unchanged {} | added {} | changed {} | removed {}",
+            self.keys, self.behind, self.same, self.added, self.changed, self.removed
         )?;
         for (kind, key, old, new) in &self.examples {
             writeln!(f, "{kind:?} at {key}")?;

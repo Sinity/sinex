@@ -157,7 +157,6 @@ async fn recent_samples_keep_history_within_the_window(db: devkit::pg::TestDatab
                 inputs: vec![],
                 outputs: vec![],
             },
-            "test",
         )
         .await
         .unwrap();

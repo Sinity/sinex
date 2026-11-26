@@ -7,6 +7,7 @@ use std::collections::BTreeSet;
 
 /// The schema before live intervals were kept.
 pub(super) async fn events_before_live_intervals(conn: &mut PgConnection) {
+    selection::derivations_with_selected_build(&mut *conn).await;
     conn.execute(
         "DROP TABLE core.live_intervals;
          DROP FUNCTION core.interval_end(text, timestamptz, jsonb)",

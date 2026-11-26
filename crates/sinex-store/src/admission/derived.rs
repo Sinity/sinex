@@ -176,12 +176,21 @@ pub(super) async fn apply_derived(
             crate::derivations::selection::validate(conn, derivation, &selection).await?;
             let live: Vec<Uuid> = if selection.history == sinex_model::DerivationHistory::Recompute
             {
-                sqlx::query_scalar(
-                "WITH RECURSIVE descendants AS (
-                  SELECT e.id FROM core.events e WHERE e.source=$1
-                    AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=e.id)
+                // A keyed derivation's outputs are the members of its keys,
+                // an indexed read. A per-event derivation keeps no such list,
+                // so its outputs are found by their source, which scans every
+                // uncompressed chunk.
+                let outputs = if selection.kind == "keyed" {
+                    "SELECT o.event_id AS id FROM derivation.outputs o WHERE o.derivation=$1"
+                } else {
+                    "SELECT e.id FROM core.events e WHERE e.source=$1"
+                };
+                sqlx::query_scalar(&format!(
+                "WITH RECURSIVE outputs AS ({outputs}), descendants AS (
+                  SELECT o.id FROM outputs o
+                    WHERE NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=o.id)
                   UNION SELECT c.child FROM descendants p CROSS JOIN LATERAL core.event_children_of(p.id) c)
-                 SELECT d.id FROM descendants d WHERE NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=d.id)")
+                 SELECT d.id FROM descendants d WHERE NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id=d.id)"))
                 .bind(derivation).fetch_all(&mut *conn).await?
             } else {
                 vec![]
@@ -197,8 +206,8 @@ pub(super) async fn apply_derived(
             let dirty = mark_archived_dirty(conn, &live, seq, keys, Some(batch), by).await?;
             super::archive::archive_at(conn, &live, seq, by.0, None, by.1).await?;
             remove_live(conn, &live).await?;
-            sqlx::query("INSERT INTO registry.derivations (name,version,kind,inputs,outputs,build) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (name) DO UPDATE SET version=EXCLUDED.version,kind=EXCLUDED.kind,inputs=EXCLUDED.inputs,outputs=EXCLUDED.outputs,build=EXCLUDED.build")
-                .bind(derivation).bind(selection.version).bind(&selection.kind).bind(&selection.inputs).bind(&selection.outputs).bind(&selection.build)
+            sqlx::query("INSERT INTO registry.derivations (name,version,kind,inputs,outputs) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (name) DO UPDATE SET version=EXCLUDED.version,kind=EXCLUDED.kind,inputs=EXCLUDED.inputs,outputs=EXCLUDED.outputs")
+                .bind(derivation).bind(selection.version).bind(&selection.kind).bind(&selection.inputs).bind(&selection.outputs)
                 .execute(&mut *conn).await?;
             if selection.kind == "per_event"
                 && selection.history == sinex_model::DerivationHistory::Recompute

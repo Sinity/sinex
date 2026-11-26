@@ -187,6 +187,17 @@ impl World {
         keyed: Vec<Box<dyn AnyKeyed>>,
         per_event: Vec<Box<dyn AnyPerEvent>>,
     ) -> DerivationRunner {
+        self.driver_built_by(crate::build_identity::current().unwrap(), keyed, per_event)
+            .await
+    }
+
+    /// A runner whose code is the source revision `build`.
+    async fn driver_built_by(
+        &self,
+        build: &'static str,
+        keyed: Vec<Box<dyn AnyKeyed>>,
+        per_event: Vec<Box<dyn AnyPerEvent>>,
+    ) -> DerivationRunner {
         let read = PgConnection::connect(&self.url).await.unwrap();
         DerivationRunner::start(
             read,
@@ -195,6 +206,7 @@ impl World {
             per_event.into_iter().map(Arc::from).collect(),
             "test",
             TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"),
+            build,
         )
         .await
         .unwrap()
@@ -737,6 +749,7 @@ async fn runner_start_does_not_wait_for_access_to_event_history(db: devkit::pg::
         vec![Arc::new(Echo)],
         "test",
         TimeSettings::new("Europe/Warsaw", 4, 0).unwrap(),
+        crate::build_identity::current().unwrap(),
     )
     .await
     .unwrap();
@@ -959,6 +972,7 @@ async fn an_interrupted_switch_preserves_selection_until_the_next_explicit_switc
         vec![],
         "test",
         TimeSettings::new("Europe/Warsaw", 4, 0).expect("fixture day setting"),
+        crate::build_identity::current().unwrap(),
     )
     .await
     .unwrap();

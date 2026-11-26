@@ -5,41 +5,14 @@ use crate::support::daemon;
 
 use serde_json::{Value, json};
 use sqlx::Connection;
-use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
 const TOKEN: &str = "synthetic-document-operator";
 
-fn call(socket: &Path, mut request: Value) -> Value {
-    // These fixtures assert delivered facts, not the operation's latency.
-    request
-        .as_object_mut()
-        .unwrap()
-        .entry("deadline")
-        .or_insert(Value::Null);
-    let body = serde_json::to_vec(&request).unwrap();
-    let mut stream = UnixStream::connect(socket).unwrap();
-    stream
-        .set_read_timeout(Some(Duration::from_secs(30)))
-        .unwrap();
-    write!(stream, "POST /v1 HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {TOKEN}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
-    stream.write_all(&body).unwrap();
-    let mut response = Vec::new();
-    stream.read_to_end(&mut response).unwrap();
-    let split = response
-        .windows(4)
-        .position(|bytes| bytes == b"\r\n\r\n")
-        .unwrap();
-    let headers = std::str::from_utf8(&response[..split]).unwrap();
-    assert!(headers.starts_with("HTTP/1.1 200"), "{headers}");
-    let reply: sinex_protocol::Reply = serde_json::from_slice(&response[split + 4..]).unwrap();
-    match reply {
-        sinex_protocol::Reply::Ok { result } => result,
-        sinex_protocol::Reply::Failed { failure }
-        | sinex_protocol::Reply::StoppedEarly { failure, .. } => panic!("{request}: {failure:?}"),
-    }
+fn call(socket: &Path, request: Value) -> Value {
+    daemon::call(socket, TOKEN, request)
 }
 
 async fn wait_rows(socket: &Path, words: &str, count: usize) -> Vec<Value> {

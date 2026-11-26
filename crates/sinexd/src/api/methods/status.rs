@@ -227,10 +227,19 @@ impl Api {
         let comparisons =
             sinex_store::registry::latest_comparisons(&mut conn, &names, &versions, build).await?;
         let producer_versions: Vec<_> = available.into_iter().map(|(name, version, history)| {
-            let current = selected.iter().find(|(selected_name, _, _)| selected_name == &name);
+            let current = selected
+                .iter()
+                .find(|(selected_name, _)| selected_name == &name)
+                .map(|(_, version)| *version);
             let compared = comparisons.iter().find(|(producer,..)| producer == &name);
-            json!({"name": name, "selected": current.map(|(_,version,_)| version), "selected_build": current.map(|(_,_,build)|build), "available": version,
-                "state": if current.is_some_and(|(_,selected_version,selected_build)| *selected_version == i64::from(version) && selected_build == build) { "selected" } else { "pending_history_switch" },
+            // The selection is the version: a build that declares the
+            // selected version runs it, whichever build selected it.
+            let state = match current {
+                Some(selected) if selected == i64::from(version) => "selected",
+                Some(_) => "pending_history_switch",
+                None => "never_run",
+            };
+            json!({"name": name, "selected": current, "available": version, "state": state,
                 "history": history, "build": build, "last_comparison": compared.map(|(_,id,made_at,keys,changed,complete)| json!({"id":id,"made_at":made_at,"keys":keys,"changed":changed,"complete":complete}))})
         }).collect();
         let rule_rows = sinex_store::signals::rule_rows(

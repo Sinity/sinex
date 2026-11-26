@@ -104,6 +104,9 @@ pub(crate) struct DerivationRunner {
     read: PgConnection,
     writer: WriterHandle,
     runs: BTreeMap<String, RunId>,
+    /// The source revision of the code this runner computes with. Its runs'
+    /// manifests and its comparisons record it; a selection does not.
+    build: &'static str,
     /// Largest stored reading order before this runner writes per-event outputs.
     previous_orders: Option<BTreeMap<String, i64>>,
     /// Where each per-event derivation's last pass that found no input ended.
@@ -198,7 +201,8 @@ pub(crate) fn to_window(q: &InputQuery, now: Timestamp) -> Window {
 }
 
 impl DerivationRunner {
-    /// Register available producers and start runs without changing selected versions or progress.
+    /// Register available producers and start runs, as `build`, without
+    /// changing selected versions or progress.
     pub(crate) async fn start(
         mut read: PgConnection,
         writer: WriterHandle,
@@ -206,6 +210,7 @@ impl DerivationRunner {
         per_event: Vec<Arc<dyn AnyPerEvent>>,
         host: &str,
         time_settings: TimeSettings,
+        build: &'static str,
     ) -> Result<Self> {
         let catalog: Vec<Derivation> = keyed
             .iter()
@@ -233,7 +238,7 @@ impl DerivationRunner {
                 name: &name,
                 kind: "derivation",
                 version: &version,
-                build: crate::build_identity::current()?,
+                build,
                 emits: &emits,
             };
             let run = runs::start(&mut read, &manifest, host).await?;
@@ -251,13 +256,13 @@ impl DerivationRunner {
             read,
             writer,
             runs,
+            build,
             previous_orders: None,
             empty_passes: BTreeMap::new(),
             counts: BTreeMap::new(),
         };
         for d in &catalog {
-            registry::register_derivation(&mut runner.read, d, crate::build_identity::current()?)
-                .await?;
+            registry::register_derivation(&mut runner.read, d).await?;
         }
         runner.archive_removed_derivation_outputs().await?;
         Ok(runner)
@@ -402,6 +407,7 @@ impl DerivationRunner {
         host: &str,
         catalog: &Catalog,
         time_settings: TimeSettings,
+        build: &'static str,
     ) -> Result<Self> {
         let keyed: Vec<_> = catalog
             .keyed
@@ -427,7 +433,7 @@ impl DerivationRunner {
             name,
             kind: "derivation",
             version: &version,
-            build: crate::build_identity::current()?,
+            build,
             emits,
         };
         crate::request_deadline::finish_read(&mut read).await?;
@@ -445,6 +451,7 @@ impl DerivationRunner {
             read,
             writer,
             runs,
+            build,
             previous_orders: Some(BTreeMap::new()),
             empty_passes: BTreeMap::new(),
             counts: BTreeMap::new(),
@@ -458,7 +465,10 @@ impl DerivationRunner {
         self
     }
 
-    /// Mark every key of `name` dirty, through the writer.
+    /// Mark every key of `name` dirty, through the writer. While another
+    /// version is selected its history is recomputed only by the switch, so
+    /// the request is refused. Which build runs the selected version makes
+    /// no difference.
     pub(crate) async fn recompute_all(
         &mut self,
         name: &str,
@@ -470,15 +480,13 @@ impl DerivationRunner {
             .iter()
             .find(|d| d.name() == name)
             .ok_or_else(|| Error::internal(format!("no keyed derivation {name}")))?;
-        if registry::selected(&mut self.read, name).await?
-            != Some((
-                i64::from(d.version_for(&self.time_settings)),
-                crate::build_identity::current()?.to_owned(),
-            ))
+        let version = i64::from(d.version_for(&self.time_settings));
+        if let Some(selected) = registry::selected(&mut self.read, name).await?
+            && selected != version
         {
-            return Err(Error::conflict(
-                "producer version changed; compare it and switch using its comparison ID",
-            ));
+            return Err(Error::conflict(format!(
+                "{name}: version {selected} is selected and this build runs version {version}; compare it and switch using its comparison ID"
+            )));
         }
         let keys = self.all_keys(name, range).await?;
         let total = keys.len();
@@ -508,13 +516,16 @@ impl DerivationRunner {
             .ok_or_else(|| Error::internal(format!("no run for derivation {name}")))
     }
 
-    /// Read a key's inputs and compute it, without writing anything.
-    async fn compute_key(
+    /// Compute a key and read what is stored for it, in one snapshot and
+    /// without writing anything: the key's computed outputs, its stored
+    /// outputs, and whether it was dirty, which means its stored outputs were
+    /// made before its newest inputs.
+    async fn compare_key(
         &mut self,
         index: usize,
         key: &Value,
         env: &Env,
-    ) -> Result<sinex_derivations::Computed> {
+    ) -> Result<(Vec<Event>, Vec<Event>, bool)> {
         sinex_store::query::initialize_calendar(&mut self.read).await?;
         let mut snapshot = self.read.begin().await?;
         sinex_store::query::read_one_snapshot(&mut snapshot).await?;
@@ -522,26 +533,34 @@ impl DerivationRunner {
         let name = d.name();
         let t = Instant::now();
         let inputs = if let Some(ids) = d.exact_inputs(key, env) {
-            exact_inputs(&mut snapshot, ids).await?
+            Some(exact_inputs(&mut snapshot, ids).await?)
         } else if d.stores_inputs(key) {
-            stored_inputs(&mut snapshot, d.as_ref(), &[key], env)
-                .await?
-                .pop()
-                .unwrap_or_default()
+            Some(
+                stored_inputs(&mut snapshot, d.as_ref(), &[key], env)
+                    .await?
+                    .pop()
+                    .unwrap_or_default(),
+            )
+        } else if let Some(q) = d.inputs(key, env) {
+            Some(
+                derivations::read_window(&mut snapshot, &to_window(&q, env.now))
+                    .await?
+                    .into_iter()
+                    .map(|input| input.event)
+                    .collect(),
+            )
         } else {
-            let Some(q) = d.inputs(key, env) else {
-                return Ok(sinex_derivations::Computed::default());
-            };
-            derivations::read_window(&mut snapshot, &to_window(&q, env.now))
-                .await?
-                .into_iter()
-                .map(|input| input.event)
-                .collect()
+            None
         };
         let read = t.elapsed();
         let t = Instant::now();
         let derivation = self.keyed[index].as_ref();
-        let mut computed = off_worker(|| derivation.compute(key, &inputs, env));
+        // A key the declaration has no query for computes to nothing, as in
+        // the runner's own pass.
+        let mut computed = match &inputs {
+            Some(inputs) => off_worker(|| derivation.compute(key, inputs, env)),
+            None => sinex_derivations::Computed::default(),
+        };
         let position = derivations::head(&mut snapshot).await?;
         provenance::stamp(
             &mut snapshot,
@@ -554,12 +573,16 @@ impl DerivationRunner {
         if let Some(error) = &computed.error {
             return Err(Error::internal(error));
         }
+        let compute = t.elapsed();
+        let t = Instant::now();
+        let dirty = sinex_store::query::key_dirty(&mut snapshot, name, key).await?;
+        let stored = derivations::outputs(&mut snapshot, name, key).await?;
         snapshot.commit().await?;
         let c = self.counts.entry(name.to_owned()).or_default();
-        c.read += read;
-        c.compute += t.elapsed();
-        c.inputs += inputs.len();
-        Ok(computed)
+        c.read += read + t.elapsed();
+        c.compute += compute;
+        c.inputs += inputs.map_or(0, |inputs| inputs.len());
+        Ok((computed.outputs, stored, dirty))
     }
 
     /// Recompute keys through the shared batched computation engine.
@@ -1037,6 +1060,13 @@ impl DerivationRunner {
     /// Compute `name` over its keys (optionally only keys touched by inputs in
     /// `range`) and compare with the stored outputs, writing nothing: the
     /// comparison for a derivation change.
+    ///
+    /// Inputs keep arriving while it runs, and it holds nothing still. Each
+    /// key is compared in one snapshot of its own, so its two sides agree on
+    /// the inputs they saw; a key that was dirty in that snapshot is counted
+    /// as behind its inputs, because its difference may come from an input
+    /// the stored outputs had not been computed from yet. The comparison
+    /// records the commit positions it ran between.
     pub(crate) async fn compare(
         &mut self,
         name: &str,
@@ -1061,7 +1091,7 @@ impl DerivationRunner {
             .iter()
             .map(|kind| (*kind).to_owned())
             .collect();
-        let input_state = derivations::selection::input_state(&mut self.read, &input_types).await?;
+        let from = derivations::head(&mut self.read).await?;
         let keys = self.all_keys(name, range).await?;
         let env = self.env();
         let mut cmp = Comparison {
@@ -1070,38 +1100,11 @@ impl DerivationRunner {
         };
         let version = self.keyed[index].version_for(&self.time_settings);
         for key in keys {
-            let new = self.compute_key(index, &key, &env).await?.outputs;
-            let old = derivations::outputs(&mut self.read, name, &key).await?;
-            let by_key = |events: &[Event]| -> BTreeMap<String, Event> {
-                events
-                    .iter()
-                    .map(|e| {
-                        (
-                            e.equivalence_key.clone().map(|k| k.0).unwrap_or_default(),
-                            e.clone(),
-                        )
-                    })
-                    .collect()
-            };
-            let (new, old) = (by_key(&new), by_key(&old));
-            for (k, n) in &new {
-                match old.get(k) {
-                    None => cmp.note(Change::Added, &key, None, Some(n), examples),
-                    Some(o) if o.payload == n.payload => cmp.same += 1,
-                    Some(o) => cmp.note(Change::Changed, &key, Some(o), Some(n), examples),
-                }
-            }
-            for (k, o) in &old {
-                if !new.contains_key(k) {
-                    cmp.note(Change::Removed, &key, Some(o), None, examples);
-                }
-            }
+            let (computed, stored, dirty) = self.compare_key(index, &key, &env).await?;
+            cmp.behind += usize::from(dirty);
+            compare_outputs(&mut cmp, &key, &stored, &computed, examples);
         }
-        if !input_state.is_current(&mut self.read, &input_types).await? {
-            return Err(Error::conflict(
-                "producer inputs changed during comparison; compare again",
-            ));
-        }
+        let through = derivations::head(&mut self.read).await?;
         let count = |n: usize| i64::try_from(n).unwrap_or(i64::MAX);
         cmp.id = Some(
             derivations::store_comparison(
@@ -1117,7 +1120,7 @@ impl DerivationRunner {
                     added: count(cmp.added),
                     changed: count(cmp.changed),
                     removed: count(cmp.removed),
-                    context: serde_json::json!({"build": crate::build_identity::current()?, "inputs": input_state, "input_types": input_types, "output_types": self.keyed[index].output_types(), "kind": "keyed", "history": self.keyed[index].history_policy(), "now": env.now, "settings": self.time_settings.label()}),
+                    context: serde_json::json!({"build": self.build, "positions": {"from": from, "through": through}, "behind": cmp.behind, "input_types": input_types, "output_types": self.keyed[index].output_types(), "kind": "keyed", "history": self.keyed[index].history_policy(), "now": env.now, "settings": self.time_settings.label()}),
                     examples: serde_json::json!(
                         cmp.examples
                             .iter()
@@ -1135,6 +1138,12 @@ impl DerivationRunner {
         );
         Ok(cmp)
     }
+
+    /// Select the compared version of `name`, through the writer. For a
+    /// `recompute` keyed derivation every key its inputs or outputs name is
+    /// marked dirty with the switch, and admission marks the keys of whatever
+    /// is committed from then on, so the selected version computes the whole
+    /// history as it stands, including inputs newer than the comparison.
     pub(crate) async fn switch(
         &mut self,
         name: &str,
@@ -1168,7 +1177,7 @@ impl DerivationRunner {
             actor: actor.to_owned(),
             history,
             version: i64::from(version),
-            build: crate::build_identity::current()?.to_owned(),
+            build: self.build.to_owned(),
             settings: self.time_settings.label(),
             inputs: inputs.iter().map(|kind| (*kind).to_owned()).collect(),
             outputs: outputs.iter().map(|kind| (*kind).to_owned()).collect(),
@@ -1214,11 +1223,14 @@ impl DerivationRunner {
             .map(|kind| (*kind).to_owned())
             .collect();
         let version = self.per_event[index].version();
-        let snapshot = derivations::selection::input_state(&mut self.read, &inputs).await?;
+        let from = derivations::head(&mut self.read).await?;
         let mut cmp = Comparison::default();
         let env = self.env();
         let mut after = 0;
         loop {
+            // An input after the saved position has no stored outputs yet,
+            // whatever the version: it is behind, like a dirty key.
+            let derived_to = derivations::position(&mut self.read, name).await?;
             let page = derivations::after_seq(
                 &mut self.read,
                 &inputs,
@@ -1247,19 +1259,15 @@ impl DerivationRunner {
                     examples,
                 );
                 cmp.keys += 1;
+                cmp.behind += usize::from(row.commit_seq > derived_to);
             }
         }
-        // An input removed after the read cannot leave a comparison eligible to switch.
-        if !snapshot.is_current(&mut self.read, &inputs).await? {
-            return Err(Error::conflict(
-                "producer inputs changed during comparison; compare again",
-            ));
-        }
+        let through = derivations::head(&mut self.read).await?;
         cmp.id = Some(derivations::store_comparison(&mut self.read, &derivations::StoredComparison {
             id: 0, derivation: name.to_owned(), version: i64::from(version), range: None, made_at: Timestamp::now(),
             keys: i64::try_from(cmp.keys)?, unchanged: i64::try_from(cmp.same)?,
             added: i64::try_from(cmp.added)?, changed: i64::try_from(cmp.changed)?, removed: i64::try_from(cmp.removed)?,
-            context: serde_json::json!({"build": crate::build_identity::current()?, "inputs": snapshot, "input_types": inputs, "output_types": outputs, "kind": "per_event", "history": self.per_event[index].history_policy(), "now": env.now, "settings": self.time_settings.label()}),
+            context: serde_json::json!({"build": self.build, "positions": {"from": from, "through": through}, "behind": cmp.behind, "input_types": inputs, "output_types": outputs, "kind": "per_event", "history": self.per_event[index].history_policy(), "now": env.now, "settings": self.time_settings.label()}),
             examples: serde_json::json!(cmp.examples.iter().map(|(kind,key,old,new)| serde_json::json!({"kind":format!("{kind:?}"),"key":key,"old":old,"new":new})).collect::<Vec<_>>()),
         }).await?);
         Ok(cmp)
@@ -1918,12 +1926,11 @@ pub(crate) async fn compute_now(
             .map(|kind| (*kind).to_owned())
             .collect(),
     };
-    let build = crate::build_identity::current()?;
     crate::request_deadline::finish_read(conn).await?;
-    registry::register_derivation(conn, &available, build).await?;
-    if registry::selected(conn, derivation.name()).await?
-        != Some((available.version, build.to_owned()))
-    {
+    registry::register_derivation(conn, &available).await?;
+    // While another version is selected, this one computes only the keys
+    // that are already dirty; the switch recomputes the rest.
+    if registry::selected(conn, derivation.name()).await? != Some(available.version) {
         let mut dirty = Vec::new();
         for key in keys {
             if sinex_store::query::key_dirty(conn, derivation.name(), &key).await? {
