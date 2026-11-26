@@ -340,6 +340,7 @@ async fn a_day_of_focus_records_without_a_scope_stops_waiting(db: devkit::pg::Te
                     woken_by: None,
                 }],
                 read: Default::default(),
+                replaces_at_most: None,
             }
             .to_value(),
         },
