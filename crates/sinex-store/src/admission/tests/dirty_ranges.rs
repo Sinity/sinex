@@ -566,6 +566,7 @@ async fn affected_output_pages_start_at_their_cursor(db: devkit::pg::TestDatabas
     let marked = derived::mark_inputs_dirty(
         &mut tx,
         &[KeyInput {
+            id: uuid::Uuid::nil(),
             event_type: "synthetic.trigger",
             ts_orig: None,
             payload: &payload,
