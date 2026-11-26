@@ -419,7 +419,7 @@ pub async fn set_batch_statement_timeout(
         "SELECT set_config('statement_timeout', $1, true)",
         format!("{}ms", timeout.as_millis()),
     )
-    .execute(conn)
+    .fetch_one(conn)
     .await?;
     Ok(())
 }
