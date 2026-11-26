@@ -514,7 +514,8 @@ async fn publisher_resumes_at_its_position_after_the_upgrade(db: devkit::pg::Tes
     assert_eq!(saved, 1);
     // An upgrade runs with no writer holding the database.
     drop(conn);
-    // The previous shape: the table of published copies, one schema version back.
+    // The shape before the step that drops the table of published copies
+    // (version 47), without what the later steps add.
     sqlx::raw_sql(
         "CREATE TABLE core.published (
            event_id uuid NOT NULL,
@@ -522,7 +523,9 @@ async fn publisher_resumes_at_its_position_after_the_upgrade(db: devkit::pg::Tes
            stream_instance text NOT NULL DEFAULT '',
            CONSTRAINT published_pairs_pkey PRIMARY KEY (event_id, stream_seq, stream_instance));
          INSERT INTO core.published SELECT id, 1, '' FROM core.events;
-         UPDATE sinex_schema.applied SET version = version - 1",
+         DROP TABLE derivation.inputs;
+         ALTER TABLE derivation.waiting DROP COLUMN woken_by;
+         UPDATE sinex_schema.applied SET version = 47",
     )
     .execute(&mut publisher_conn)
     .await
