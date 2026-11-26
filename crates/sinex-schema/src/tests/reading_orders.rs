@@ -24,10 +24,10 @@ async fn reading_order_upgrade_keeps_old_maxima_and_positions(db: devkit::pg::Te
       INSERT INTO audit.archived(event_id,archived_seq,reason) VALUES('01800000-0000-7000-8000-000000000001',1,'archive');
       ANALYZE core.runs; ANALYZE core.events").await.unwrap();
 
-    conn.execute("INSERT INTO registry.derivations(name,version,kind,inputs,outputs,build)
-        SELECT 'synthetic.orders.'||n::text,'1','per_event','{}','{}','synthetic' FROM generate_series(0,3)n;
-        INSERT INTO registry.derivations(name,version,kind,inputs,outputs,build)
-        VALUES('synthetic.empty','1','per_event','{}','{}','synthetic');
+    conn.execute("INSERT INTO registry.derivations(name,version,kind,inputs,outputs)
+        SELECT 'synthetic.orders.'||n::text,'1','per_event','{}','{}' FROM generate_series(0,3)n;
+        INSERT INTO registry.derivations(name,version,kind,inputs,outputs)
+        VALUES('synthetic.empty','1','per_event','{}','{}');
         INSERT INTO derivation.positions(derivation,commit_seq) VALUES('synthetic.orders.0',123),('synthetic.legacy',456)").await.unwrap();
     let mut expected = (0..4)
         .map(|n| (format!("synthetic.orders.{n}"), (1_i64 << 42) + n))

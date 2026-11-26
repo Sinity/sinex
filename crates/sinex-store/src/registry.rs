@@ -91,40 +91,46 @@ pub struct Derivation {
 }
 
 /// Register the initial selection without changing an existing version or its progress.
-pub async fn register_derivation(
-    conn: &mut PgConnection,
-    derivation: &Derivation,
-    build: &str,
-) -> Result<()> {
-    sqlx::query("INSERT INTO registry.derivations (name, kind, version, inputs, outputs, build) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (name) DO NOTHING")
-        .bind(&derivation.name).bind(derivation.kind).bind(derivation.version).bind(&derivation.inputs).bind(&derivation.outputs).bind(build)
-        .execute(conn).await?;
+pub async fn register_derivation(conn: &mut PgConnection, derivation: &Derivation) -> Result<()> {
+    sqlx::query!(
+        "INSERT INTO registry.derivations (name, kind, version, inputs, outputs)
+         VALUES ($1,$2,$3,$4,$5) ON CONFLICT (name) DO NOTHING",
+        derivation.name,
+        derivation.kind,
+        derivation.version,
+        &derivation.inputs,
+        &derivation.outputs,
+    )
+    .execute(conn)
+    .await?;
     Ok(())
 }
 
-/// The selected semantic version, without a fallback for an unregistered producer.
-pub async fn selected(conn: &mut PgConnection, name: &str) -> Result<Option<(i64, String)>> {
-    Ok(
-        sqlx::query_as("SELECT version,build FROM registry.derivations WHERE name=$1")
-            .bind(name)
-            .fetch_optional(conn)
-            .await?,
+/// The selected version of a derivation; none for one never registered. The
+/// selection is the version alone: builds that declare the same version run
+/// the same selection, and each run's manifest names its build.
+pub async fn selected(conn: &mut PgConnection, name: &str) -> Result<Option<i64>> {
+    Ok(sqlx::query_scalar!(
+        "SELECT version FROM registry.derivations WHERE name=$1",
+        name
     )
+    .fetch_optional(conn)
+    .await?)
 }
 
-/// Selected producer builds, bounded by the configured registry.
-pub async fn selected_derivations(conn: &mut PgConnection) -> Result<Vec<(String, i64, String)>> {
+/// The selected version of every registered derivation.
+pub async fn selected_derivations(conn: &mut PgConnection) -> Result<Vec<(String, i64)>> {
     Ok(
-        sqlx::query!("SELECT name,version,build FROM registry.derivations ORDER BY name")
+        sqlx::query!("SELECT name,version FROM registry.derivations ORDER BY name")
             .fetch_all(conn)
             .await?
             .into_iter()
-            .map(|row| (row.name, row.version, row.build))
+            .map(|row| (row.name, row.version))
             .collect(),
     )
 }
 
-/// Latest comparison summary for each installed declaration and build.
+/// The latest comparison this build made of each installed declaration.
 pub async fn latest_comparisons(
     conn: &mut PgConnection,
     names: &[String],

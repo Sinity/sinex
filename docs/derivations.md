@@ -25,6 +25,7 @@ Every computation from admitted evidence upward runs as a derivation: a declared
 - A per-event pass that finds no event of its kinds up to the head it read at starts its next pass from that head, so an idle derivation reads only new commits. The saved position moves only with admitted outputs; after a restart, or when a version switch resets it, the next pass starts from the saved position. Compressed chunks wholly before a pass's start are skipped by their commit-position range.
 - Dirty keys are marked in the same transaction as the inputs that dirty them. There is no separate invalidation stream.
 - Matching existing output ranges loads each event by its selected output ID; unrelated event history is outside that lookup. Start and end boundaries remain inclusive, and a missing end or declared open interval retains its overlap meaning.
+- A key's stored outputs are read from its members. The live member IDs come from the key's own index; their rows are then read by ID, inside the members' inclusive ID bounds and under the derivation's name, which every output carries as its source. The read opens that derivation's batches in the chunks that hold members and nothing else, so its cost follows the key's outputs, not the store's history.
 - Recomputing a derivation is idempotent: the same live inputs give the same outputs by key and payload.
 
 Per-event derivations keep their committed input position and largest admitted
@@ -68,6 +69,8 @@ Each derivation declares:
 
 A supplied daemon configuration names every built derivation explicitly as enabled or disabled; missing names are refused together. With no configuration file the daemon runs no derivations. The NixOS deployment enables each derivation by default and writes every choice. Empty tag rules omit the tag applier from the running set.
 
+A derivation turned off is paused, not absent. Admission marks the keys of every keyed derivation the build has, whether the runner computes it or not, so the keys whose inputs arrive while a derivation is off wait as dirty keys and are computed when it runs again. A per-event derivation resumes from its saved position.
+
 Registration is validated at start. Unknown types, dependency cycles and unimplemented operations refuse to start the runner, naming the derivation and the reason. Derivations run in dependency order.
 
 ## Reads outside a key's period
@@ -108,21 +111,38 @@ Admission checks affected output ranges in the same transaction as the input cha
 version work. `sinex derivation:NAME replay --dry-run` previews changes without
 writing any request, run or trial. `sinex derivation:NAME replay --trial` explicitly
 retains the comparison as `trial:ID`, queried through `trials`.
-`sinex derivation:NAME replay --switch ID` consumes that trial and refuses changed
-inputs. Library comparisons retain their separate rating meaning. The current
-build still exposes `sinexctl recompute --compare` and `--switch`; its stored
-comparison and switch validation described below is the surviving mechanism.
+`sinex derivation:NAME replay --switch ID` consumes that trial, whatever inputs
+arrived since it was made. Library comparisons retain their separate rating
+meaning. The current build still exposes `sinexctl recompute --compare` and
+`--switch`; its stored comparison and switch validation described below is the
+surviving mechanism.
 
 Configured derivations and their document/OCR reader versions are initialized once at daemon start. Execution, comparisons and status share those same objects, so an available version identifies the reader actually running.
 
 Every event records the producer version of the parser or derivation that made it ([producer versions](events.md#producer-versions-runs-and-manifests)). For derivations that version governs history as follows.
 
+- **The selection is the version.** The store holds one selected version per derivation. A build that declares the selected version runs it, whichever build selected it: `recompute DERIVATION`, with or without a time range, marks its keys, and every key computes. The build that ran is recorded on each run's manifest, on each comparison and on the switch operation, never in the selection, so a deploy that changes no version changes no selection. A derivation's author changes its version when its outputs can change.
 - **A new version is tried before it switches.** `recompute DERIVATION --compare` runs the new version against the live outputs on real data and stores what would change (counts per key, examples, keys added and removed) as a comparison, leaving the selected outputs in place. Switching is a separate, attributed operation recorded in the [operations log](lifecycle.md#operations-and-actors).
 - **Each derivation declares what a switch does to history.** `recompute` replays its whole history through the dirty-key path, archiving the old outputs as a set with their chains; `keep_history` keeps outputs made by the old version and applies the new one from the switch onward. Readers see the producer version on every output, and an answer spanning outputs of several versions says so.
 - **Nothing recomputes at daemon start.** A build carrying a new version computes only new and dirty keys with it, and answers spanning both versions disclose the mix. History is recomputed, for `recompute` derivations, only by the switch, after its compare. Status shows each derivation's pending switch and its compare result.
 - **A changed setting is a new version.** A change to anything a derivation reads as configuration (a profile parameter, the logical-day boundary, a fusion rule file) is a version change of that derivation and follows the same rules.
 
-`recompute DERIVATION --compare` stores a comparison ID tied to the installed build, its logical-day settings, and the input and lifecycle positions used throughout the comparison. Its initial per-kind input fingerprint and commit/change range boundaries come from one statement snapshot. The after-check and switch inspect only newer events and visibility changes of the input kinds, plus the existing tombstone counter. Unrelated captures do not invalidate the comparison. Per-event comparisons match prior unarchived outputs by exact parent membership; an output citing several inputs participates in each input's comparison. The initial fingerprint streams matching-kind metadata once through the existing kind indexes; it does not search unrelated newer history through the global commit feed. Validation does not repeat that history scan. A comparison that covered only a time range cannot select a version. `recompute DERIVATION --switch ID` consumes a full comparison of that same declaration and build; changed inputs refuse the switch and require another comparison. The writer records the caller and comparison in `producer_switch`, selects the version and, for `recompute`, archives its live output chains before scheduling the complete new output set. A `keep_history` declaration preserves those chains and its read position. Startup records available producers and leaves stored keys and positions unchanged. `status` lists selected and available versions. Runs record the full source commit and dirty flag; a build lacking that identity refuses producer execution.
+`recompute DERIVATION --compare` stores a comparison ID tied to the build that made it, its declaration and its logical-day settings. A comparison is a trial of that build's code on the data as it stands, and it holds nothing still: capture and the runner continue while it runs.
+
+- **Each key is compared in one snapshot.** The new version's outputs are computed from the key's inputs, and the key's stored outputs are read, in the same snapshot, so both sides saw the same inputs. Different keys are compared at different commit positions; the comparison records the positions it ran between.
+- **A key behind its inputs is counted.** A key that was dirty in its snapshot has stored outputs older than its newest inputs, so its difference may come from those inputs and not from the version. The same holds for a per-event input after the derivation's saved position. Such keys are compared like the others, and the comparison reports how many there were.
+- Per-event comparisons match prior unarchived outputs by exact parent membership; an output citing several inputs participates in each input's comparison.
+- A comparison that covered only a time range cannot select a version.
+
+`recompute DERIVATION --switch ID` consumes one full comparison that the running build made of the same declaration under the same settings. Inputs committed, archived or restored after the comparison do not refuse it, because no switch depends on them standing still:
+
+- a keyed `recompute` switch archives the derivation's live output chains and marks dirty every key its inputs or stored outputs name, in one writer transaction; admission marks the keys of whatever is committed from then on, so the selected version computes the whole history as it stands;
+- a per-event `recompute` switch archives the output chains and resets the saved position, so every input is read again;
+- a `keep_history` switch preserves those chains and its read position and applies the version to what comes after.
+
+The comparison's part in a switch is the trial. A rule that also required unchanged inputs would protect only the comparison's counts, and on a store that captures continuously it would refuse every switch of a derivation whose comparison takes longer than the gap between two of its inputs.
+
+The writer records the caller, comparison and build in `producer_switch` and selects the version. Startup records available producers and leaves stored keys and positions unchanged. `status` lists selected and available versions: a derivation whose selected version differs from the running one has a pending switch, and one that never ran has none selected. Runs record the full source commit and dirty flag; a build lacking that identity refuses producer execution.
 
 Stored products disclose the producers that made their selected inputs and ancestors,
 grouped by source, run manifest and build, and material parser version. A shared

@@ -60,10 +60,21 @@ pub(crate) const STEPS: &[Step] = &[
         statements: crate::live_intervals::upgrade,
     },
     Step {
+        name: "selection_by_version",
+        statements: selection_by_version,
+    },
+    Step {
         name: "fenced_interval_bounds",
         statements: crate::live_intervals::bound_fenced_intervals,
     },
 ];
+
+/// A derivation's selection is its version. The build that ran it is on each
+/// run's manifest and on the switch operation, so the registry stops
+/// repeating it.
+fn selection_by_version() -> Vec<String> {
+    vec!["ALTER TABLE registry.derivations DROP COLUMN build".into()]
+}
 
 fn source_exclusions() -> Vec<String> {
     vec!["ALTER TABLE registry.sources ADD COLUMN exclusion text".into()]

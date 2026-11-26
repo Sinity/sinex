@@ -197,6 +197,7 @@ async fn local_runner(
         .collect(),
         host,
         time_settings.clone(),
+        build_identity::current()?,
     )
     .await?;
     if let Some(blobs) = blobs {

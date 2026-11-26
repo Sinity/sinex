@@ -135,6 +135,9 @@ state, signal rule, delivery, outcome, route, attention, inhibition, lane and se
 - **derivation**: a declared computation whose outputs are stored events; **per-event** or **keyed** ([derivations](derivations.md)).
 - **dirty key**: a key whose inputs changed and whose output set will be recomputed.
 - **waiting key**: a key whose outputs wait for evidence outside its inputs; it may name the key of its derivation whose dirty mark wakes it.
+- **selected version**: the one version of a derivation whose outputs the store keeps current; a build that declares it runs it, and another version replaces it only by a switch ([versions](derivations.md#versions)).
+- **paused derivation**: a derivation the configuration turns off; its keys are still marked dirty and wait until it runs again.
+- **behind its inputs**: of a key in a comparison, dirty when it was compared, so its stored outputs are older than its newest inputs.
 - **unit scope**: one systemd unit under one manager and user in one boot of one host; the key of its runs in `unit.intervals`.
 - **stored inputs**: for a key shape that declares them, the events its key function names the key for, kept by admission so the key is read by event ID.
 - **provisional**: the value of a key whose time window is still open.
@@ -191,7 +194,7 @@ catalogs describe which have shipped:
 - **continue**: continue an operation from its committed position (`op:ID continue`).
 - **resume**: reopen work where it stopped, an episode or item, not a lifecycle move.
 - **run**: one execution, qualified as a producer run or query run (`run:ID`); event provenance retains the producer's identity.
-- **trial**: a derivation comparison explicitly retained by `replay --trial`, with build/settings/input identity; `--dry-run` stores none.
+- **trial**: a derivation comparison explicitly retained by `replay --trial`, with its build, settings and the commit positions it ran between; `--dry-run` stores none.
 - **watch**: a saved question with a delivery rule (`save NAME --watch`); stored `signal.*` kinds and the common evaluator remain unchanged.
 - **latest**: the most recent timed shell session, optionally narrowed by directory.
 - **short reference**: `e:` and an event ID's last eight hexadecimal digits; ambiguous forms return candidates.

@@ -526,7 +526,6 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   name text PRIMARY KEY,
   kind text NOT NULL CHECK (kind IN ('per_event', 'keyed')),
   version bigint NOT NULL,
-  build text NOT NULL DEFAULT '',
   inputs text[] NOT NULL,
   outputs text[] NOT NULL
 )".into(),

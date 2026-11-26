@@ -144,6 +144,7 @@ impl World {
             "test",
             sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
                 .expect("fixture day setting"),
+            crate::build_identity::current().unwrap(),
         )
         .await
         .unwrap();

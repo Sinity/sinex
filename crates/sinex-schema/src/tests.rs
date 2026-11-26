@@ -458,6 +458,7 @@ async fn copy_fields_upgrade_indexes_only_copy_payloads_including_archived_readi
 
 mod live_intervals;
 mod reading_orders;
+mod selection;
 
 #[devkit::test]
 async fn refusal_upgrade_keeps_existing_derivation_work_and_positions(

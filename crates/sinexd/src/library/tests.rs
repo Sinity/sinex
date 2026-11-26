@@ -953,6 +953,7 @@ async fn archiving_scans_recomputes_items_and_original_renditions(db: devkit::pg
         "h",
         sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
             .expect("fixture day setting"),
+        crate::build_identity::current().unwrap(),
     )
     .await
     .unwrap();
@@ -1132,6 +1133,7 @@ async fn archiving_the_latest_change_falls_back_to_the_previous_copy(db: devkit:
         "h",
         sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
             .expect("fixture day setting"),
+        crate::build_identity::current().unwrap(),
     )
     .await
     .unwrap();
