@@ -146,7 +146,7 @@ async fn sigterm_finishes_empty_source_daemon_and_releases_writer_for_restart() 
                 break status;
             }
             assert!(
-                started.elapsed() < Duration::from_secs(15),
+                started.elapsed() < Duration::from_secs(10),
                 "daemon did not stop: {}",
                 std::fs::read_to_string(&log).unwrap()
             );

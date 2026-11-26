@@ -48,12 +48,7 @@ impl Process {
         let deadline = started + Duration::from_secs(10);
         loop {
             if let Some(status) = self.child.try_wait().unwrap() {
-                let elapsed = started.elapsed();
-                assert!(
-                    elapsed <= Duration::from_secs(10),
-                    "process took {elapsed:?} to stop"
-                );
-                eprintln!("SIGTERM to reaped exit: {elapsed:?}");
+                eprintln!("SIGTERM to reaped exit: {:?}", started.elapsed());
                 assert!(
                     status.success(),
                     "process stopped unsuccessfully: {}",
