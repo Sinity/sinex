@@ -40,6 +40,10 @@ pub enum DerivedScope {
         selection: crate::derivations::selection::Selection,
         keys: Vec<Value>,
     },
+    /// Stored inputs of keys, from history the runner paged through: each
+    /// pair is a key and an event its key function names it for. Carries no
+    /// events and marks nothing dirty.
+    Inputs { inputs: Vec<(Value, Uuid)> },
 }
 
 /// One native work identity, distinct even when a keyed value is a UUID.
@@ -124,6 +128,10 @@ pub struct ComputedKey {
     pub waiting: bool,
     /// A time-dependent output may refresh without another input.
     pub refresh_at: Option<sinex_model::Timestamp>,
+    /// While waiting: the key of the same derivation whose dirty mark
+    /// recomputes this one; none recomputes it whenever the derivation runs.
+    #[serde(default)]
+    pub woken_by: Option<Value>,
 }
 
 impl DerivedScope {
@@ -209,6 +217,21 @@ pub(super) async fn apply_derived(
                     seq,
                 )
                 .await?)
+        }
+        DerivedScope::Inputs { inputs } => {
+            if batch.event_count() != 0 {
+                return Err(Error::Invalid("stored inputs carry no events".into()));
+            }
+            let name = derivation.to_owned();
+            store_inputs(
+                conn,
+                inputs
+                    .into_iter()
+                    .map(|(key, event)| (name.clone(), key, event))
+                    .collect(),
+            )
+            .await?;
+            Ok(0)
         }
         DerivedScope::Recompute { keys: marked } => {
             refusals::clear_keys(conn, derivation, &marked).await?;
@@ -354,15 +377,18 @@ pub(super) async fn apply_derived(
                 .iter()
                 .map(|scope| scope.refresh_at.map(|at| at.0))
                 .collect();
+            let woken_by: Vec<_> = waiting.iter().map(|scope| scope.woken_by.clone()).collect();
             let waiting: Vec<Value> = waiting.into_iter().map(|s| s.key.clone()).collect();
             let done: Vec<Value> = done.into_iter().map(|s| s.key.clone()).collect();
             sqlx::query!(
-                r#"INSERT INTO derivation.waiting (derivation, key, refresh_at)
-                   SELECT $1, k, t FROM unnest($2::jsonb[], $3::timestamptz[]) AS w(k,t)
-                   ON CONFLICT (derivation, key) DO UPDATE SET refresh_at=EXCLUDED.refresh_at"#,
+                r#"INSERT INTO derivation.waiting (derivation, key, refresh_at, woken_by)
+                   SELECT $1, k, t, w FROM unnest($2::jsonb[], $3::timestamptz[], $4::jsonb[]) AS w(k,t,w)
+                   ON CONFLICT (derivation, key) DO UPDATE
+                   SET refresh_at=EXCLUDED.refresh_at, woken_by=EXCLUDED.woken_by"#,
                 derivation,
                 &waiting,
                 &refresh as &[Option<time::OffsetDateTime>],
+                &woken_by as &[Option<Value>],
             )
             .execute(&mut *conn)
             .await?;
@@ -399,6 +425,7 @@ pub(super) async fn without_superseded_inputs(
         DerivedScope::Keys { read, .. } | DerivedScope::Position { read, .. } => *read,
         DerivedScope::Recompute { .. }
         | DerivedScope::Select { .. }
+        | DerivedScope::Inputs { .. }
         | DerivedScope::Refused { .. } => return Ok(None),
     };
     // Nothing archived or tombstoned since the inputs were read: all still live.
@@ -497,6 +524,7 @@ pub(super) async fn without_superseded_inputs(
         }
         DerivedScope::Recompute { .. }
         | DerivedScope::Select { .. }
+        | DerivedScope::Inputs { .. }
         | DerivedScope::Refused { .. } => return Ok(None),
     }
     Ok(Some((kept, dropped)))
@@ -532,6 +560,37 @@ pub(crate) async fn mark_dirty(
     Ok(n)
 }
 
+/// Keep, for keys whose shape declares it, the events their key function
+/// names them for. The runner reads such a key by these IDs, filtered to live
+/// readings, so a row outlives its event's archival and its restore finds it.
+pub(crate) async fn store_inputs(
+    conn: &mut PgConnection,
+    inputs: Vec<(String, Value, Uuid)>,
+) -> Result<()> {
+    if inputs.is_empty() {
+        return Ok(());
+    }
+    let mut names = Vec::with_capacity(inputs.len());
+    let mut keys = Vec::with_capacity(inputs.len());
+    let mut events = Vec::with_capacity(inputs.len());
+    for (name, key, event) in inputs {
+        names.push(name);
+        keys.push(key);
+        events.push(event);
+    }
+    sqlx::query!(
+        r#"INSERT INTO derivation.inputs (derivation, key_hash, event_id)
+           SELECT d, md5(k::text)::uuid, e FROM unnest($1::text[], $2::jsonb[], $3::uuid[]) AS i(d, k, e)
+           ON CONFLICT DO NOTHING"#,
+        &names,
+        &keys,
+        &events,
+    )
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
 /// Mark the keys read from these inputs, including existing outputs whose
 /// semantic range the input crosses. Both admission and archival use this path.
 pub(crate) async fn mark_inputs_dirty(
@@ -541,13 +600,19 @@ pub(crate) async fn mark_inputs_dirty(
     keys: &dyn DirtyKeys,
 ) -> Result<usize> {
     let mut dirty = Vec::new();
+    let mut stored = Vec::new();
     let mut ranges = Vec::new();
     // keys.keys maps a selected input to every registered producer target;
     // sharing a read never narrows that complete producer/version mapping.
     let mut nearby = std::collections::HashMap::<crate::derivations::Window, usize>::new();
     let mut repeated_marks = 0;
     for input in inputs {
-        dirty.extend(keys.keys(input));
+        for (derivation, key) in keys.keys(input) {
+            if keys.stores_inputs(&derivation, &key) {
+                stored.push((derivation.clone(), key.clone(), input.id));
+            }
+            dirty.push((derivation, key));
+        }
         ranges.extend(keys.affected_ranges(input));
         for query in keys.nearby_inputs(input) {
             if let Some(marks) = nearby.get(&query) {
@@ -557,6 +622,7 @@ pub(crate) async fn mark_inputs_dirty(
             let before = dirty.len();
             for selected in crate::derivations::read_window(conn, &query).await? {
                 dirty.extend(keys.keys(&KeyInput {
+                    id: selected.event.id.0,
                     event_type: &selected.event.event_type,
                     ts_orig: selected.event.ts_orig.at.map(|at| at.0),
                     payload: &selected.event.payload,
@@ -566,6 +632,7 @@ pub(crate) async fn mark_inputs_dirty(
         }
     }
     dirty.extend(ranges::affected_keys(conn, ranges).await?);
+    store_inputs(conn, stored).await?;
     // Outcome counts describe offered marks, including repeated input offers;
     // the affected-target union and its stored rows remain unchanged.
     Ok(mark_dirty(conn, dirty, seq).await? + repeated_marks)
@@ -630,7 +697,7 @@ async fn mark_dirty_events(
         vec![]
     } else {
         sqlx::query!(
-            "SELECT e.event_type, e.ts_orig, e.payload
+            "SELECT selected.id AS \"id!\", e.event_type, e.ts_orig, e.payload
          FROM (SELECT DISTINCT unnest($1::uuid[]) id) selected
          CROSS JOIN LATERAL (
            SELECT event_type, ts_orig, payload FROM core.events
@@ -644,6 +711,7 @@ async fn mark_dirty_events(
     let inputs: Vec<_> = rows
         .iter()
         .map(|row| KeyInput {
+            id: row.id,
             event_type: &row.event_type,
             ts_orig: row.ts_orig,
             payload: &row.payload,

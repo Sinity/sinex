@@ -89,6 +89,7 @@ impl<const V: u32> Keyed for Days<V> {
             ],
             waiting: false,
             error: None,
+            woken_by: None,
         }
     }
 }

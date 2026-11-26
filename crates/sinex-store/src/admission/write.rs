@@ -183,6 +183,7 @@ pub(super) async fn insert_admitted(
         let event = &events[usize::try_from(*ord).expect("ord is non-negative")];
         outcome.admitted_ids.push(event.id);
         let input = KeyInput {
+            id: event.id.0,
             event_type: &event.event_type,
             ts_orig: event.ts_orig.at.map(|t| t.0),
             payload: &event.payload,

@@ -32,6 +32,7 @@ impl Keyed for ExactTargets {
         Computed {
             error: None,
             waiting: false,
+            woken_by: None,
             outputs: vec![
                 sinex_derivations::derived_event::derived(
                     &CommandFused {

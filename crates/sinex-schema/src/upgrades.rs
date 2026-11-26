@@ -51,6 +51,10 @@ pub(crate) const STEPS: &[Step] = &[
         name: "stream_references",
         statements: stream_references,
     },
+    Step {
+        name: "stored_key_inputs",
+        statements: stored_key_inputs,
+    },
 ];
 
 fn source_exclusions() -> Vec<String> {
@@ -147,4 +151,29 @@ fn derivation_refusals() -> Vec<String> {
 /// erase, so the record of where each event's copies sat on the stream goes.
 fn stream_references() -> Vec<String> {
     vec!["DROP TABLE core.published".into()]
+}
+
+/// Stored inputs of keys, and what a waiting key names as its waker. Keys
+/// already waiting name nothing and keep their behaviour.
+fn stored_key_inputs() -> Vec<String> {
+    let mut after = crate::description::Description::current();
+    after.tables = vec![
+        crate::tables::WAITING_WITH_WAKERS.into(),
+        crate::tables::WAITING_ANY_INPUT.into(),
+        crate::tables::WAITING_WOKEN_BY.into(),
+        crate::tables::WAITING_REFRESH.into(),
+        crate::tables::DERIVATION_INPUTS.into(),
+    ];
+    let mut before = crate::description::Description::current();
+    before.tables = vec![
+        "CREATE TABLE derivation.waiting (
+  derivation text NOT NULL,
+  key jsonb NOT NULL,
+  since timestamptz NOT NULL DEFAULT now(),
+  refresh_at timestamptz,
+  PRIMARY KEY (derivation, key)
+)"
+        .into(),
+    ];
+    after.changes_from(&before)
 }

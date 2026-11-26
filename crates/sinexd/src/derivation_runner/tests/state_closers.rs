@@ -133,6 +133,7 @@ async fn only_afk_presence_revisits_an_earlier_focus_day(db: devkit::pg::TestDat
         sinex_store::DirtyKeys::affected_ranges(
             &keys,
             &sinex_store::KeyInput {
+                id: uuid::Uuid::nil(),
                 event_type: &span.event_type,
                 ts_orig: span.ts_orig.at.map(|t| t.0),
                 payload: &span.payload,

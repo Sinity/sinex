@@ -45,6 +45,11 @@ impl DirtyKeys for Registered {
             })
             .collect()
     }
+    fn stores_inputs(&self, derivation: &str, key: &Value) -> bool {
+        self.derivations
+            .iter()
+            .any(|d| d.name() == derivation && d.stores_inputs(key))
+    }
     fn affected_ranges(&self, event: &KeyInput<'_>) -> Vec<sinex_store::AffectedRange> {
         let view = KeyView {
             event_type: event.event_type,

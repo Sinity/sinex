@@ -272,6 +272,10 @@ pub struct Computed {
     /// the key's window (an interval still open, a session still growing).
     /// The driver recomputes such keys whenever the derivation runs again.
     pub waiting: bool,
+    /// While waiting: the key of this derivation whose dirty mark recomputes
+    /// this one. A waiting key that names none recomputes whenever the
+    /// derivation has dirty keys.
+    pub woken_by: Option<Value>,
 }
 
 impl Computed {
@@ -285,6 +289,7 @@ impl Computed {
                 outputs,
                 waiting,
                 error: None,
+                woken_by: None,
             },
             Err(error) => Self {
                 error: Some(error),
@@ -318,6 +323,15 @@ pub trait Keyed: Send + Sync {
 
     fn exact_inputs(&self, _: &Self::Key, _: &Env) -> Option<Vec<EventId>> {
         None
+    }
+    /// Whether this key's inputs are exactly the events `keys_for` names it
+    /// for. The store then keeps that list as the events are admitted, and
+    /// the key is read by event ID; `inputs` adds what no event names the
+    /// key for (a neighbour of a rare kind). A key selected by a payload
+    /// field rather than a time window declares this: events are not
+    /// reachable by payload field.
+    fn stores_inputs(&self, _: &Self::Key) -> bool {
+        false
     }
     fn reads_type(&self, event_type: &str) -> bool {
         Self::INPUTS.contains(&event_type)
@@ -454,6 +468,9 @@ pub trait AnyKeyed: Send + Sync {
     fn exact_inputs(&self, _: &Value, _: &Env) -> Option<Vec<EventId>> {
         None
     }
+    fn stores_inputs(&self, _: &Value) -> bool {
+        false
+    }
     fn reads_type(&self, event_type: &str) -> bool {
         self.inputs_types().contains(&event_type)
     }
@@ -511,6 +528,10 @@ impl<K: Keyed> AnyKeyed for K {
             env,
         )
     }
+    fn stores_inputs(&self, key: &Value) -> bool {
+        serde_json::from_value::<K::Key>(key.clone())
+            .is_ok_and(|key| Keyed::stores_inputs(self, &key))
+    }
     fn reads_type(&self, event_type: &str) -> bool {
         Keyed::reads_type(self, event_type)
     }
@@ -528,8 +549,7 @@ impl<K: Keyed> AnyKeyed for K {
             Ok(key) => Keyed::compute(self, &key, inputs, env),
             Err(error) => Computed {
                 error: Some(sinex_model::BuildError::Key(error.to_string())),
-                outputs: vec![],
-                waiting: false,
+                ..Computed::default()
             },
         }
     }

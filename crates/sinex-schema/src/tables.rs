@@ -552,15 +552,11 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   PRIMARY KEY (derivation, key, event_id)
 )".into(),
         "CREATE INDEX outputs_event ON derivation.outputs (event_id)".into(),
-        // Keys whose outputs wait for inputs outside their window (an open
-        // interval); recomputed whenever the derivation runs.
-        "CREATE TABLE derivation.waiting (
-  derivation text NOT NULL,
-  key jsonb NOT NULL,
-  since timestamptz NOT NULL DEFAULT now(),
-  refresh_at timestamptz,
-  PRIMARY KEY (derivation, key)
-)".into(),
+        WAITING_WITH_WAKERS.into(),
+        WAITING_ANY_INPUT.into(),
+        WAITING_WOKEN_BY.into(),
+        WAITING_REFRESH.into(),
+        DERIVATION_INPUTS.into(),
         // A comparison: what a recompute of a derivation would change,
         // computed without writing outputs, kept so a version change can be
         // judged before it is applied.
@@ -845,6 +841,32 @@ const PRODUCER_ORDERS: &str = "CREATE TABLE core.producer_orders (
 )";
 
 /// Per-event progress and the largest admitted output order survive restarts.
+/// Keys whose outputs wait for inputs outside their window (an open
+/// interval). A key that names what wakes it is recomputed when that key of
+/// its derivation is dirty; one that names nothing, whenever the derivation
+/// runs.
+pub(crate) const WAITING_WITH_WAKERS: &str = "CREATE TABLE derivation.waiting (
+  derivation text NOT NULL,
+  key jsonb NOT NULL,
+  since timestamptz NOT NULL DEFAULT now(),
+  refresh_at timestamptz,
+  woken_by jsonb,
+  PRIMARY KEY (derivation, key)
+)";
+pub(crate) const WAITING_ANY_INPUT: &str =
+    "CREATE INDEX waiting_any_input ON derivation.waiting (derivation) WHERE woken_by IS NULL";
+pub(crate) const WAITING_WOKEN_BY: &str = "CREATE INDEX waiting_woken_by ON derivation.waiting (derivation, woken_by) WHERE woken_by IS NOT NULL";
+pub(crate) const WAITING_REFRESH: &str = "CREATE INDEX waiting_refresh ON derivation.waiting (derivation, refresh_at) WHERE woken_by IS NOT NULL AND refresh_at IS NOT NULL";
+/// For keys whose shape declares it: the events their key function names
+/// them for, so the key is read by event ID. Rows outlive archival; readers
+/// keep the live ones. There is one row per input, so the key is stored as
+/// the MD5 of its text, a third of the size of a typical key.
+pub(crate) const DERIVATION_INPUTS: &str = "CREATE TABLE derivation.inputs (
+  derivation text NOT NULL,
+  key_hash uuid NOT NULL,
+  event_id uuid NOT NULL,
+  PRIMARY KEY (derivation, key_hash, event_id)
+)";
 pub(crate) const POSITIONS_WITH_READING_ORDERS: &str = "CREATE TABLE derivation.positions (derivation text PRIMARY KEY, commit_seq bigint NOT NULL, reading_order bigint NOT NULL DEFAULT 0)";
 
 /// Current terminal input failures, committed with derivation progress. Native

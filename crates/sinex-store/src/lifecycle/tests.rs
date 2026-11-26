@@ -134,6 +134,7 @@ fn aggregate(derivation: &str, key: Value, dirty_seq: i64, output: Event) -> Bat
                     dirty_seq,
                     waiting: false,
                     refresh_at: None,
+                    woken_by: None,
                 }],
                 read: ReadMark::default(),
             }

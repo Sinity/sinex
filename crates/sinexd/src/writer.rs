@@ -1255,6 +1255,7 @@ async fn signal_step(
                             dirty_seq: commit.observed_seq.unwrap_or(0),
                             waiting: false,
                             refresh_at: None,
+                            woken_by: None,
                         }],
                         read: *read,
                     }

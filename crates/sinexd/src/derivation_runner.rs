@@ -322,8 +322,13 @@ impl DerivationRunner {
             .find(|d| d.name() == name)
             .ok_or_else(|| Error::internal(format!("no keyed derivation {name}")))?;
         let types: Vec<String> = d.inputs_types().iter().map(|s| (*s).to_owned()).collect();
+        let d = d.clone();
         let mut keys: Vec<Value> = Vec::new();
         let mut seen: HashSet<String> = HashSet::new();
+        // Inputs of keys read by their stored lists. Events admitted before
+        // a key shape declared its list are added here, for every input
+        // paged through: a key in the range reads all of its inputs.
+        let mut stored: Vec<(Value, uuid::Uuid)> = Vec::new();
         let mut after = 0i64;
         loop {
             let page = derivations::after_seq(
@@ -338,23 +343,27 @@ impl DerivationRunner {
             after = last.commit_seq;
             for c in &page {
                 let t = c.event.ts_orig.at;
-                if let Some((from, to)) = range
-                    && !t.is_some_and(|t| t >= from && t < to)
-                {
-                    continue;
-                }
                 let view = KeyView {
                     event_type: &c.event.event_type,
                     ts_orig: t,
                     payload: &c.event.payload,
                 };
+                let in_range =
+                    range.is_none_or(|(from, to)| t.is_some_and(|t| t >= from && t < to));
                 for k in d.keys_for(&view, &env) {
-                    if seen.insert(k.to_string()) {
+                    if d.stores_inputs(&k) {
+                        stored.push((k.clone(), c.event.id.0));
+                    }
+                    if in_range && seen.insert(k.to_string()) {
                         keys.push(k);
                     }
                 }
             }
+            if stored.len() >= KEYS_PER_REQUEST {
+                self.store_inputs(name, std::mem::take(&mut stored)).await?;
+            }
         }
+        self.store_inputs(name, stored).await?;
         if range.is_none() {
             for k in derivations::output_keys(&mut self.read, name).await? {
                 if seen.insert(k.to_string()) {
@@ -363,6 +372,24 @@ impl DerivationRunner {
             }
         }
         Ok(keys)
+    }
+
+    /// Add to the stored inputs of keys, through the writer.
+    async fn store_inputs(&mut self, name: &str, inputs: Vec<(Value, uuid::Uuid)>) -> Result<()> {
+        if inputs.is_empty() {
+            return Ok(());
+        }
+        let batch = Batch {
+            run: self.run_of(name)?,
+            kind: BatchKind::Derived {
+                derivation: name.to_owned(),
+                scope: DerivedScope::Inputs { inputs }.to_value(),
+            },
+            records: vec![],
+            archive: vec![],
+        };
+        self.writer.submit(Priority::Derived, batch).await?;
+        Ok(())
     }
 
     /// A runner for one operation on one keyed derivation: a recompute or a
@@ -496,6 +523,11 @@ impl DerivationRunner {
         let t = Instant::now();
         let inputs = if let Some(ids) = d.exact_inputs(key, env) {
             exact_inputs(&mut snapshot, ids).await?
+        } else if d.stores_inputs(key) {
+            stored_inputs(&mut snapshot, d.as_ref(), &[key], env)
+                .await?
+                .pop()
+                .unwrap_or_default()
         } else {
             let Some(q) = d.inputs(key, env) else {
                 return Ok(sinex_derivations::Computed::default());
@@ -613,20 +645,32 @@ impl DerivationRunner {
                 .collect();
             for index in indices {
                 let name = self.keyed[index].name();
-                let had_dirty = touched.contains_key(&index);
                 let (done, mut keys) = touched.remove(&index).unwrap_or_default();
-                let waiting =
-                    derivations::waiting(&mut self.read, name, (!had_dirty).then_some(env.now.0))
-                        .await?;
-                for (key, _) in waiting {
-                    if done.contains(&key.to_string()) {
+                let dirty: Vec<Value> = keys.iter().map(|(key, _)| key.clone()).collect();
+                let waiting = derivations::waiting(&mut self.read, name, &dirty, env.now.0).await?;
+                // A key that woke others keeps its dirty mark until they are
+                // computed: a stop in between leaves it dirty, and the next
+                // pass wakes them again.
+                let wakers: HashSet<String> = waiting
+                    .iter()
+                    .filter_map(|waiting| waiting.woken_by.as_ref())
+                    .map(Value::to_string)
+                    .filter(|waker| done.contains(waker))
+                    .collect();
+                let (last, mut keys): (Vec<KeyWork>, Vec<KeyWork>) = keys
+                    .drain(..)
+                    .partition(|(key, _)| wakers.contains(&key.to_string()));
+                for waiting in waiting {
+                    if done.contains(&waiting.key.to_string()) {
                         continue;
                     }
-                    keys.push((key, 0));
+                    keys.push((waiting.key, 0));
                     work += 1;
                 }
-                if !keys.is_empty() {
-                    self.compute_keys(index, keys, env).await?;
+                for keys in [keys, last] {
+                    if !keys.is_empty() {
+                        self.compute_keys(index, keys, env).await?;
+                    }
                 }
             }
         }
@@ -1711,10 +1755,14 @@ async fn compute_segment(
     // page.
     let mut windows: Vec<Window> = Vec::new();
     let mut window_keys: Vec<usize> = Vec::new();
+    let mut stored: Vec<usize> = Vec::new();
     for &index in remaining {
         let key = &work[index].0;
         let inputs = if let Some(ids) = derivation.exact_inputs(key, env) {
             Some(exact_inputs(&mut *conn, ids).await?)
+        } else if derivation.stores_inputs(key) {
+            stored.push(index);
+            continue;
         } else if let Some(q) = derivation.inputs(key, env) {
             windows.push(to_window(&q, env.now));
             window_keys.push(index);
@@ -1735,6 +1783,30 @@ async fn compute_segment(
         .await?;
         if segment.full() {
             return Ok(segment);
+        }
+    }
+    // Keys read by their stored inputs: one list read and one event read
+    // for each group of keys.
+    for group in stored.chunks(KEYS_PER_BATCH) {
+        let keys: Vec<&Value> = group.iter().map(|&index| &work[index].0).collect();
+        let t = Instant::now();
+        let inputs = stored_inputs(&mut *conn, derivation, &keys, env).await?;
+        counts.read += t.elapsed();
+        for (&index, inputs) in group.iter().zip(inputs) {
+            compute_one(
+                conn,
+                derivation,
+                counts,
+                &mut segment,
+                work,
+                index,
+                Some(inputs),
+                env,
+            )
+            .await?;
+            if segment.full() {
+                return Ok(segment);
+            }
         }
     }
     let mut reader = derivations::Windows::new(windows, ROWS_PER_PAGE, sinex_store::PAGE_BYTES);
@@ -1807,6 +1879,7 @@ async fn compute_one(
         key: key.clone(),
         dirty_seq: *dirty_seq,
         waiting: computed.waiting,
+        woken_by: computed.woken_by.take().filter(|_| computed.waiting),
         refresh_at: derivation.refresh_at(
             inputs.as_deref().unwrap_or_default(),
             &computed.outputs,
@@ -1912,6 +1985,65 @@ pub(crate) async fn compute_now(
         )));
     }
     Ok(counts)
+}
+
+/// The inputs of keys read by their stored lists, in the order of `keys`:
+/// each key's live stored events and what its query adds, by `ts_orig` then
+/// commit order.
+async fn stored_inputs(
+    conn: &mut PgConnection,
+    derivation: &dyn AnyKeyed,
+    keys: &[&Value],
+    env: &Env,
+) -> Result<Vec<Vec<Event>>> {
+    let owned: Vec<Value> = keys.iter().map(|key| (*key).clone()).collect();
+    let listed = derivations::stored_inputs(conn, derivation.name(), &owned).await?;
+    let mut ids_of: std::collections::HashMap<String, Vec<uuid::Uuid>> =
+        std::collections::HashMap::new();
+    for (key, event) in &listed {
+        ids_of.entry(key.to_string()).or_default().push(*event);
+    }
+    let ids = listed
+        .iter()
+        .map(|(_, event)| sinex_model::EventId(*event))
+        .collect();
+    let mut live = std::collections::HashMap::new();
+    let mut reader = derivations::ListedInputs::new(ids, ROWS_PER_PAGE, sinex_store::PAGE_BYTES)?;
+    while let Some(page) = reader.next(conn).await? {
+        for row in page {
+            live.insert(row.event.id.0, row);
+        }
+    }
+    let mut inputs = Vec::with_capacity(keys.len());
+    // Keys of one group often add the same query (the boot records of one
+    // host): it is read once.
+    let mut added: std::collections::HashMap<Window, Vec<derivations::Committed>> =
+        std::collections::HashMap::new();
+    for key in keys {
+        let mut rows: Vec<derivations::Committed> = ids_of
+            .get(&key.to_string())
+            .into_iter()
+            .flatten()
+            .filter_map(|id| live.get(id).cloned())
+            .collect();
+        if let Some(query) = derivation.inputs(key, env) {
+            let window = to_window(&query, env.now);
+            if !added.contains_key(&window) {
+                let read = derivations::read_window(conn, &window).await?;
+                added.insert(window.clone(), read);
+            }
+            let listed: HashSet<_> = rows.iter().map(|row| row.event.id).collect();
+            rows.extend(
+                added[&window]
+                    .iter()
+                    .filter(|row| !listed.contains(&row.event.id))
+                    .cloned(),
+            );
+        }
+        rows.sort_by_key(|row| (row.event.ts_orig.at, row.commit_seq));
+        inputs.push(rows.into_iter().map(|row| row.event).collect());
+    }
+    Ok(inputs)
 }
 
 /// Exact targets use the same snapshot as the key's read mark, including

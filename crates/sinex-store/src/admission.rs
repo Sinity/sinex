@@ -40,6 +40,7 @@ pub(crate) use register::observed;
 /// What a keyed derivation's key function sees of an admitted or archived event.
 #[derive(Clone, Debug)]
 pub struct KeyInput<'a> {
+    pub id: Uuid,
     pub event_type: &'a str,
     pub ts_orig: Option<time::OffsetDateTime>,
     pub payload: &'a Value,
@@ -70,6 +71,11 @@ pub trait DirtyKeys: Send + Sync {
     /// Every registered producer target for this input. Neighbour selection
     /// does not restrict this mapping to the producer that offered a window.
     fn keys(&self, event: &KeyInput<'_>) -> Vec<(String, Value)>;
+    /// Whether the store keeps the events `keys` names this key for, because
+    /// the derivation reads the key by that list.
+    fn stores_inputs(&self, _derivation: &str, _key: &Value) -> bool {
+        false
+    }
     fn affected_ranges(&self, _: &KeyInput<'_>) -> Vec<AffectedRange> {
         Vec::new()
     }

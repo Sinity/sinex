@@ -87,6 +87,7 @@ async fn a_key_computed_from_an_input_archived_meanwhile_is_computed_again(
                             dirty_seq: i64::MAX,
                             waiting: false,
                             refresh_at: None,
+                            woken_by: None,
                         }],
                         read: Default::default(),
                     }

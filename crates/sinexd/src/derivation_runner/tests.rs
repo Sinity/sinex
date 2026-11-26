@@ -384,6 +384,7 @@ impl Keyed for Waiting {
                     .unwrap(),
             ],
             waiting: true,
+            woken_by: None,
         }
     }
     fn key_state(&self, _: &Self::Key, _: &Env) -> KeyState {
@@ -464,6 +465,7 @@ async fn a_key_dirtied_again_stays_dirty(db: devkit::pg::TestDatabase) {
                     dirty_seq: 0,
                     waiting: false,
                     refresh_at: None,
+                    woken_by: None,
                 }],
                 read: Default::default(),
             }
@@ -507,6 +509,7 @@ fn counted(derivation: &str, command: String, inputs: &[Event]) -> Computed {
         error: None,
         outputs: vec![fused_output(derivation, "all", command, inputs)],
         waiting: false,
+        woken_by: None,
     }
 }
 
@@ -1003,6 +1006,8 @@ mod tokens;
 mod embedding;
 
 mod exact;
+
+mod stored_inputs;
 
 mod document_formats;
 

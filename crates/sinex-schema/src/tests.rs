@@ -108,7 +108,25 @@ async fn a_forward_step_runs_from_its_version_and_records_the_next(db: devkit::p
 
 /// The table that recorded each event's confirmed-stream copies, as it stood
 /// before the stream carried references.
+/// The waiting table before a key could name what wakes it, and no stored
+/// inputs.
+async fn waiting_before_wakers(conn: &mut PgConnection) {
+    conn.execute(
+        "DROP TABLE derivation.inputs; DROP TABLE derivation.waiting;
+         CREATE TABLE derivation.waiting (
+           derivation text NOT NULL,
+           key jsonb NOT NULL,
+           since timestamptz NOT NULL DEFAULT now(),
+           refresh_at timestamptz,
+           PRIMARY KEY (derivation, key)
+         )",
+    )
+    .await
+    .unwrap();
+}
+
 pub(super) async fn published_before_references(conn: &mut PgConnection) {
+    waiting_before_wakers(&mut *conn).await;
     sqlx::query(
         "CREATE TABLE core.published (
   event_id uuid NOT NULL,
@@ -452,7 +470,7 @@ async fn refusal_upgrade_keeps_existing_derivation_work_and_positions(
         INSERT INTO derivation.positions(derivation,commit_seq,reading_order) VALUES('fixture.events',19,23)")
         .await.unwrap();
     async fn retained(conn: &mut PgConnection) -> serde_json::Value {
-        sqlx::query_scalar("SELECT jsonb_build_object('dirty',(SELECT jsonb_agg(to_jsonb(d)) FROM derivation.dirty d),'waiting',(SELECT jsonb_agg(to_jsonb(w)) FROM derivation.waiting w),'positions',(SELECT jsonb_agg(to_jsonb(p)) FROM derivation.positions p),'copies',(SELECT jsonb_agg(to_jsonb(c)) FROM core.library_copy_fields c))")
+        sqlx::query_scalar("SELECT jsonb_build_object('dirty',(SELECT jsonb_agg(to_jsonb(d)) FROM derivation.dirty d),'waiting',(SELECT jsonb_agg(to_jsonb(w) - 'woken_by') FROM derivation.waiting w),'positions',(SELECT jsonb_agg(to_jsonb(p)) FROM derivation.positions p),'copies',(SELECT jsonb_agg(to_jsonb(c)) FROM core.library_copy_fields c))")
             .fetch_one(conn).await.unwrap()
     }
     let before = retained(&mut conn).await;
@@ -465,6 +483,16 @@ async fn refusal_upgrade_keeps_existing_derivation_work_and_positions(
     ));
     assert_eq!(catalog(&mut conn).await.unwrap(), fresh);
     assert_eq!(retained(&mut conn).await, before);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM derivation.waiting WHERE woken_by IS NULL"
+        )
+        .fetch_one(&mut conn)
+        .await
+        .unwrap(),
+        1,
+        "a key already waiting names nothing"
+    );
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM derivation.refusals")
             .fetch_one(&mut conn)

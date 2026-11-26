@@ -907,21 +907,74 @@ pub async fn dirty(
     Ok(rows)
 }
 
-/// Keys of `derivation` waiting on inputs outside their window, with when
-/// each started waiting.
+/// A waiting key selected for recomputation.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Waiting {
+    pub key: Value,
+    pub since: Timestamp,
+    /// The key it named as what wakes it, when it named one.
+    pub woken_by: Option<Value>,
+}
+
+/// The waiting keys of `derivation` to recompute now, oldest first. A key
+/// that names what wakes it is selected when that key is among `dirty`, the
+/// keys this pass recomputes. A key that names nothing is selected whenever
+/// `dirty` holds any key. Either is selected once its refresh time has passed.
 pub async fn waiting(
     conn: &mut PgConnection,
     derivation: &str,
-    due: Option<time::OffsetDateTime>,
-) -> Result<Vec<(Value, Timestamp)>> {
+    dirty: &[Value],
+    now: time::OffsetDateTime,
+) -> Result<Vec<Waiting>> {
+    // Three indexed reads, so keys waiting on a named key cost nothing while
+    // that key is clean.
     Ok(sqlx::query!(
-        "SELECT key, since FROM derivation.waiting WHERE derivation = $1 AND ($2::timestamptz IS NULL OR refresh_at <= $2) AND NOT EXISTS (SELECT 1 FROM derivation.refusals f WHERE f.derivation=$1 AND f.input=jsonb_build_object('key',derivation.waiting.key)) ORDER BY since",
-        derivation, due,
+        r#"SELECT w.key AS "key!", w.since AS "since!", w.woken_by FROM (
+             SELECT key, since, woken_by FROM derivation.waiting
+             WHERE derivation = $1 AND woken_by IS NULL AND ($2 OR refresh_at <= $4)
+             UNION
+             SELECT key, since, woken_by FROM derivation.waiting
+             WHERE derivation = $1 AND woken_by = ANY($3::jsonb[])
+             UNION
+             SELECT key, since, woken_by FROM derivation.waiting
+             WHERE derivation = $1 AND woken_by IS NOT NULL AND refresh_at <= $4
+           ) w
+           WHERE NOT EXISTS (SELECT 1 FROM derivation.refusals f
+             WHERE f.derivation = $1 AND f.input = jsonb_build_object('key', w.key))
+           ORDER BY w.since, w.key"#,
+        derivation,
+        !dirty.is_empty(),
+        dirty,
+        now,
     )
     .fetch_all(&mut *conn)
     .await?
     .into_iter()
-    .map(|r| (r.key, Timestamp(r.since)))
+    .map(|r| Waiting {
+        key: r.key,
+        since: Timestamp(r.since),
+        woken_by: r.woken_by,
+    })
+    .collect())
+}
+
+/// The events stored as inputs of `keys`: for each, the events its key
+/// function named it for, archived ones included.
+pub async fn stored_inputs(
+    conn: &mut PgConnection,
+    derivation: &str,
+    keys: &[Value],
+) -> Result<Vec<(Value, Uuid)>> {
+    Ok(sqlx::query!(
+        r#"SELECT k.key AS "key!", i.event_id FROM unnest($2::jsonb[]) AS k(key)
+           JOIN derivation.inputs i ON i.derivation = $1 AND i.key_hash = md5(k.key::text)::uuid"#,
+        derivation,
+        keys,
+    )
+    .fetch_all(&mut *conn)
+    .await?
+    .into_iter()
+    .map(|r| (r.key, r.event_id))
     .collect())
 }
 

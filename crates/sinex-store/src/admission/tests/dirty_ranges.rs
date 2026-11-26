@@ -135,6 +135,7 @@ async fn dirty_output_ranges_mark_overlapping_keys_and_their_boundaries(
     let marked = derived::mark_inputs_dirty(
         &mut tx,
         &[KeyInput {
+            id: uuid::Uuid::nil(),
             event_type: "synthetic.trigger",
             ts_orig: None,
             payload: &payload,
@@ -216,6 +217,7 @@ async fn dirty_ranges_page_compressed_members_and_keep_distinct_keys(db: devkit:
     let payload = json!({});
     let mut inputs: Vec<_> = (0..256)
         .map(|_| KeyInput {
+            id: uuid::Uuid::nil(),
             event_type: "synthetic.trigger",
             ts_orig: None,
             payload: &payload,
@@ -345,6 +347,7 @@ async fn dirty_ranges_page_compressed_members_and_keep_distinct_keys(db: devkit:
     .await
     .unwrap();
     let trigger = KeyInput {
+        id: uuid::Uuid::nil(),
         event_type: "synthetic.selected",
         ts_orig: None,
         payload: &payload,

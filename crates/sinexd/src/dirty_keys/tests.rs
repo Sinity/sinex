@@ -16,6 +16,7 @@ fn dirty_selection_uses_the_configured_activity_break() {
     let at = Timestamp::from_unix_secs(1_718_438_400).unwrap();
     let payload = json!({"scope":"host-a", "started_at":at, "ended_at":at});
     let selected = keys.nearby_inputs(&KeyInput {
+        id: uuid::Uuid::nil(),
         event_type: "activity.window",
         ts_orig: Some(at.0),
         payload: &payload,
@@ -40,6 +41,7 @@ fn dirty_keys_use_the_same_local_hour_as_the_runner() {
     let at = Timestamp::from_unix_secs(1_718_438_400).unwrap();
     let payload = json!({});
     let selected = keys.keys(&KeyInput {
+        id: uuid::Uuid::nil(),
         event_type: "key.pressed",
         ts_orig: Some(at.0),
         payload: &payload,

@@ -168,6 +168,7 @@ fn computed_commands(
             dirty_seq: position,
             waiting: false,
             refresh_at: None,
+            woken_by: None,
         });
         records.push(RecordOutcome::Events {
             location: None,

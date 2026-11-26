@@ -953,7 +953,7 @@ async fn apply(
             .execute(&mut *conn)
             .await?;
             let rows = sqlx::query!(
-                "SELECT event_type, ts_orig, payload FROM core.events WHERE id = ANY($1)",
+                "SELECT id, event_type, ts_orig, payload FROM core.events WHERE id = ANY($1)",
                 &members
             )
             .fetch_all(&mut *conn)
@@ -961,6 +961,7 @@ async fn apply(
             let inputs: Vec<KeyInput<'_>> = rows
                 .iter()
                 .map(|r| KeyInput {
+                    id: r.id,
                     event_type: &r.event_type,
                     ts_orig: r.ts_orig,
                     payload: &r.payload,

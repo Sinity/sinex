@@ -1234,8 +1234,7 @@ impl AnyKeyed for Fusion {
             Err(error) => {
                 return Computed {
                     error: Some(error),
-                    outputs: vec![],
-                    waiting: false,
+                    ..Computed::default()
                 };
             }
         };
