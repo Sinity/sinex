@@ -189,14 +189,10 @@ pub(super) fn run(events: u64, parent: &Path) -> Result<(), String> {
         "synthetic-cases",
         &format!("video-{events}"),
         &out,
-        &load,
-        &metrics,
+        &json!({"metrics": metrics, "load": load.to_json()}),
     )
     .map_err(|e| e.to_string())?;
-    println!(
-        "{}",
-        json!({"run": id, "load_checks_passed": load.checks_passed(), "metrics": metrics})
-    );
+    println!("{}", json!({"run": id, "metrics": metrics}));
     Ok(())
 }
 

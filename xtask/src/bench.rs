@@ -18,9 +18,10 @@
 //! starts its own PostgreSQL with TimescaleDB (on /realm for `disk`, on
 //! /dev/shm for `memory`), stages each input separately with a memory cap
 //! (one process per input, so each has its own peak memory), runs every
-//! derivation once, and records periodic host-load observations. Full-input
-//! estimates explicitly assume linear work per input byte; one sample does
-//! not calibrate staging or derivation. Failed commands remain in the output,
+//! derivation once, and records periodic host-load observations. Each stage
+//! and derivation process runs through devkit's measurement, in a systemd
+//! unit with the memory cap whose peak memory, CPU time and bytes read and
+//! written are kept with its result. Failed commands remain in the output,
 //! but only complete runs enter benchmark history, under `completed-stage`.
 //! Every command it runs runs inside its AgentCTL job and holds the real-data
 //! lock.
@@ -31,7 +32,7 @@
 mod cases;
 mod measurements;
 
-use devkit::bench::{self, Candidate, LoadMonitor, Manifest};
+use devkit::bench::{self, Candidate, Limit, LoadMonitor, Manifest, Process};
 use devkit::history::Store;
 use serde_json::{Value, json};
 use std::{
@@ -243,7 +244,7 @@ fn files_of(input: &Input) -> Vec<Candidate> {
                 path,
                 stratum: input.label.clone(),
                 size,
-                grows: false,
+                group: None,
             })
         })
         .collect()
@@ -271,7 +272,7 @@ fn sample(per_input: u64, seed: u64) -> Result<(), String> {
         }
         all.extend(files);
     }
-    let manifest = Manifest::build("sinex", &all, &chosen, per_input, seed, 1.0)
+    let manifest = Manifest::build("sinex", &all, &chosen, per_input, seed)
         .map_err(|e| format!("hash the sample: {e}"))?;
     manifest
         .write(&manifest_path())
@@ -520,39 +521,30 @@ fn sinexd_recorded(
     args: &[&std::ffi::OsStr],
     out: Option<&Path>,
 ) -> Result<Value, String> {
-    let mut command = Command::new("systemd-run");
-    command
-        .env("SINEX_BENCH_TIMINGS", "1")
-        .args(["--user", "--scope", "--quiet", "-p"])
-        .arg(format!("MemoryMax={memory_max}"))
-        .args(["-p", "MemorySwapMax=0", "--"]);
-    if out.is_none() {
-        command.args(["flock", "-o", LOCK]);
+    let process = if out.is_none() {
+        Process::new("flock").args(["-o", LOCK]).arg(binary)
+    } else {
+        Process::new(binary)
     }
-    let output = command
-        .arg(binary)
-        .args(args)
-        .output()
-        .map_err(|e| e.to_string())?;
+    .args(args)
+    .env("SINEX_BENCH_TIMINGS", "1");
+    let measured = bench::measure(&process, &Limit::memory(memory_max))?;
     if let Some(out) = out {
-        fs::write(out.join("stage.stdout"), &output.stdout).map_err(|e| e.to_string())?;
-        fs::write(out.join("stage.stderr"), &output.stderr).map_err(|e| e.to_string())?;
+        fs::write(out.join("stage.stdout"), &measured.stdout).map_err(|e| e.to_string())?;
+        fs::write(out.join("stage.stderr"), &measured.stderr).map_err(|e| e.to_string())?;
     }
-    let parsed = serde_json::from_slice::<Value>(&output.stdout).ok();
+    let parsed = serde_json::from_slice::<Value>(&measured.stdout).ok();
     match parsed {
-        Some(v) if output.status.success() => Ok(v),
+        Some(mut v) if measured.succeeded() => {
+            if let Some(object) = v.as_object_mut() {
+                object.insert("measured".into(), measured.to_json());
+            }
+            Ok(v)
+        }
         _ => Err(format!(
-            "{} ({}): {}",
-            output.status,
-            if output.status.code().is_none() {
-                "killed; over the memory cap?"
-            } else {
-                "failed"
-            },
-            String::from_utf8_lossy(&output.stderr)
-                .lines()
-                .last()
-                .unwrap_or_default()
+            "{}: {}",
+            measured.to_json(),
+            measured.last_error_line()
         )),
     }
 }
@@ -876,8 +868,7 @@ fn synthetic(options: SyntheticOptions) -> Result<(), String> {
                 },
                 &format!("{}-{events}", if mixed { "mixed" } else { "zsh" }),
                 &out,
-                &load,
-                &metrics,
+                &json!({"metrics": metrics, "load": load.to_json()}),
             )
             .map_err(|e| e.to_string())?,
         )
@@ -886,8 +877,7 @@ fn synthetic(options: SyntheticOptions) -> Result<(), String> {
     };
     println!(
         "{}",
-        json!({"run": id, "storage": bench::storage_of(&out),
-        "load_checks_passed": load.checks_passed(), "metrics": metrics})
+        json!({"run": id, "storage": bench::storage_of(&out), "metrics": metrics})
     );
     if complete {
         Ok(())
@@ -938,7 +928,6 @@ fn run(storage: &str, memory_max: &str) -> Result<(), String> {
             })
     };
     let mut inputs_out = serde_json::Map::new();
-    let mut estimates = Vec::new();
     for input in &inputs {
         let path = source_path(&home, input);
         let args: Vec<&std::ffi::OsStr> = [
@@ -955,24 +944,12 @@ fn run(storage: &str, memory_max: &str) -> Result<(), String> {
             "bench".as_ref(),
         ]
         .to_vec();
-        let scale = scale_of(&input.label);
         let result = match sinexd(&binary, memory_max, &args) {
             Ok(v) => {
-                let wall = source_wall_seconds(&v);
-                let estimate =
-                    bench::linear_estimate(wall, &std::collections::BTreeMap::new(), scale);
-                estimates.push(estimate.clone());
-                json!({"ok": true, "scale": scale, "wall_s": wall,
-                       "linear_estimate": estimate, "result": v})
+                json!({"ok": true, "scale": scale_of(&input.label),
+                       "wall_s": source_wall_seconds(&v), "result": v})
             }
-            Err(e) => {
-                estimates.push(bench::linear_estimate(
-                    None,
-                    &std::collections::BTreeMap::new(),
-                    scale,
-                ));
-                json!({"ok": false, "error": e})
-            }
+            Err(e) => json!({"ok": false, "error": e}),
         };
         eprintln!("{} {}", input.label, result);
         inputs_out.insert(input.label.clone(), result);
@@ -991,26 +968,8 @@ fn run(storage: &str, memory_max: &str) -> Result<(), String> {
             "bench".as_ref(),
         ],
     );
-    let scale = shape["scale"].as_f64();
     let derive_complete = derive.is_ok();
-    let derive = match derive {
-        Ok(value) => {
-            estimates.push(bench::linear_estimate(
-                value["wall_s"].as_f64(),
-                &std::collections::BTreeMap::new(),
-                scale,
-            ));
-            value
-        }
-        Err(error) => {
-            estimates.push(bench::linear_estimate(
-                None,
-                &std::collections::BTreeMap::new(),
-                scale,
-            ));
-            json!({"error": error})
-        }
-    };
+    let derive = derive.unwrap_or_else(|error| json!({"error": error}));
     let complete = benchmark_complete(&inputs_out, derive_complete);
     let mut metrics = json!({
         "complete": complete,
@@ -1020,7 +979,7 @@ fn run(storage: &str, memory_max: &str) -> Result<(), String> {
         "store_mb": dir_mb(&store_dir),
         "sample_input_file_bytes": manifest.bytes(),
         "memory_max": memory_max,
-        "linear_estimate": combined_estimate(&estimates),
+        "sample_scale": shape["scale"],
     });
     metrics["teardown_s"] = json!(cluster.stop()?);
     let load = load.finish()?;
@@ -1035,8 +994,7 @@ fn run(storage: &str, memory_max: &str) -> Result<(), String> {
                 "completed-stage",
                 &manifest.id(),
                 &out,
-                &load,
-                &metrics,
+                &json!({"metrics": metrics, "load": load.to_json()}),
             )
             .map_err(|e| e.to_string())?,
         )
@@ -1046,7 +1004,7 @@ fn run(storage: &str, memory_max: &str) -> Result<(), String> {
     println!(
         "{}",
         json!({"run": id, "storage": bench::storage_of(&out),
-               "load_checks_passed": load.checks_passed(), "load": load.to_json(), "metrics": metrics})
+               "load": load.to_json(), "metrics": metrics})
     );
     if storage == "memory" {
         let _ = fs::remove_dir_all(&out);
@@ -1075,22 +1033,6 @@ fn source_wall_seconds(result: &Value) -> Option<f64> {
         let next = total + seconds;
         next.is_finite().then_some(next)
     })
-}
-
-fn combined_estimate(parts: &[Value]) -> Value {
-    let seconds = if parts.is_empty() {
-        None
-    } else {
-        parts.iter().try_fold(0.0, |total, part| {
-            let seconds = part["estimate"]["seconds"].as_f64()?;
-            let next = total + seconds;
-            (next.is_finite() && seconds >= 0.0).then_some(next)
-        })
-    };
-    json!({"method": "sum_of_input_byte_linear_estimates", "calibrated": false,
-        "estimated_seconds": seconds, "components": parts,
-        "scope": "Source stage wall times plus derivation, excluding setup and teardown.",
-        "limitation": "A missing or failed component makes the total unknown; input bytes do not measure decoded, hashed or physically written bytes."})
 }
 
 #[cfg(test)]
