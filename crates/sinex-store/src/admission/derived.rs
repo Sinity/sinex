@@ -21,7 +21,7 @@ pub enum DerivedScope {
         /// would archive more is refused with [`Error::ArchiveFirst`] naming
         /// them, and the caller archives them in earlier transactions
         /// ([`DerivedScope::Archive`]). `None` archives any number.
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         replaces_at_most: Option<usize>,
     },
     /// A per-event derivation's outputs for committed events up to `position`.
