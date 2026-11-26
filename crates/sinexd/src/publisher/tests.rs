@@ -527,6 +527,7 @@ async fn publisher_resumes_at_its_position_after_the_upgrade(db: devkit::pg::Tes
          ALTER TABLE derivation.waiting DROP COLUMN woken_by;
          DROP TABLE core.live_intervals;
          DROP FUNCTION core.interval_end(text, timestamptz, jsonb);
+         ALTER TABLE registry.derivations ADD COLUMN build text NOT NULL DEFAULT '';
          UPDATE sinex_schema.applied SET version = 47",
     )
     .execute(&mut publisher_conn)
