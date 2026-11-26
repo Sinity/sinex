@@ -338,6 +338,61 @@ fn desktop_transitions_require_the_same_captured_scope() {
     assert!(output.iter().all(|interval| interval.ended_at.is_none()));
 }
 
+/// `event` as a record that names no scope.
+fn unnamed(mut event: Event) -> Event {
+    let payload = event.payload.as_object_mut().unwrap();
+    payload.remove("scope");
+    payload.remove("bucket");
+    event
+}
+
+#[devkit::test]
+fn a_transition_that_names_no_scope_opens_no_interval_and_its_day_does_not_wait() {
+    let env = Env::at(
+        at(100_000),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    );
+    let day_end = 18 * 3600;
+    // A day of focus changes recorded without a scope, then a named scope.
+    let mut inputs: Vec<Event> = (0..500)
+        .map(|n| unnamed(focus(n, &format!("0x{n}"), "unnamed")))
+        .collect();
+    let unnamed_only = StateIntervals.compute(&key("desktop.focus"), &inputs, &env);
+    assert!(unnamed_only.outputs.is_empty());
+    assert!(!unnamed_only.waiting, "nothing could close them");
+
+    inputs.extend([
+        focus(600, "0xa", "first"),
+        focus(700, "0xb", "second"),
+        focus(day_end + 50, "0xc", "tomorrow"),
+    ]);
+    let out = StateIntervals.compute(&key("desktop.focus"), &inputs, &env);
+    let lifted: Vec<StateInterval> = out
+        .outputs
+        .iter()
+        .map(|e| e.payload_as::<StateInterval>().unwrap())
+        .collect();
+    assert_eq!(lifted.len(), 2, "{lifted:?}");
+    assert_eq!(lifted[0].ended_at, Some(at(700)));
+    assert_eq!(lifted[1].ended_at, Some(at(day_end + 50)));
+    assert!(!out.waiting);
+}
+
+#[devkit::test]
+fn a_span_that_names_no_scope_is_still_its_own_interval() {
+    let out = lift(
+        "desktop.activitywatch.afk",
+        &[
+            unnamed(presence(0, 60, "not-afk")),
+            unnamed(presence(60, 90, "afk")),
+        ],
+    );
+    assert_eq!(out.len(), 2);
+    assert_eq!(out[0].ended_at, Some(at(60)));
+    assert_eq!(out[1].ended_at, Some(at(90)));
+}
+
 #[devkit::test]
 fn suspend_closes_open_focus_interval() {
     let mut focused = focus(0, "window-a", "editor");

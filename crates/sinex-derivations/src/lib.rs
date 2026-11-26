@@ -120,9 +120,8 @@ impl InputQuery {
                             || self.intervals.iter().any(|kind| {
                                 kind.event_type == event.event_type
                                     && kind
-                                        .end
-                                        .at(t, &event.payload)
-                                        .is_none_or(|end| end >= start)
+                                        .reaches_until(t, &event.payload)
+                                        .is_none_or(|until| until >= start)
                             }))
                 })
             }))

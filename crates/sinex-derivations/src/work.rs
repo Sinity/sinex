@@ -100,11 +100,22 @@ fn episode_kind(episode: &Value) -> Kind {
     kind
 }
 
+/// The state kinds whose intervals can mean the operator left: a locked
+/// session, a display off, a suspended machine. An episode reads these and
+/// no other state, so the runs of units and the focus history never reach it.
+const ABSENCE_STATES: &[&str] = &["desktop.lock", "desktop.display", "machine.suspend"];
+
+fn absence_states() -> impl Iterator<Item = Kind> {
+    ABSENCE_STATES
+        .iter()
+        .map(|state| Kind::only("state.interval", &[("state_kind", state)]))
+}
+
 pub struct WorkEpisodes;
 impl Keyed for WorkEpisodes {
     type Key = EpisodeKey;
     const NAME: &'static str = "work.episodes";
-    const VERSION: u32 = 5;
+    const VERSION: u32 = 6;
     const INPUTS: &'static [&'static str] = &["work.act", "state.interval", "health.record"];
     const OUTPUTS: &'static [&'static str] =
         &["work.episode", "work.suspension", "work.resumption"];
@@ -124,6 +135,11 @@ impl Keyed for WorkEpisodes {
             .unwrap_or_default()
     }
     fn affected_ranges(&self, input: &KeyView<'_>, _: &Env) -> Vec<AffectedRange> {
+        if input.event_type == "state.interval"
+            && !absence_states().any(|kind| kind.admits(input.event_type, input.payload))
+        {
+            return vec![];
+        }
         input
             .ts_orig
             .map(|at| {
@@ -150,7 +166,8 @@ impl Keyed for WorkEpisodes {
             .unwrap_or_default()
     }
     fn inputs(&self, key: &Self::Key, _: &Env) -> Option<InputQuery> {
-        let mut kinds = vec![Kind::all("work.act"), Kind::all("state.interval")];
+        let mut kinds = vec![Kind::all("work.act")];
+        kinds.extend(absence_states());
         kinds.extend(REST.kinds());
         let mut query = InputQuery::all(kinds);
         query.range = Some(InputRange::Extent {
@@ -169,8 +186,8 @@ impl Keyed for WorkEpisodes {
             lifetime: None,
         });
         query.after.push(crate::Neighbour {
-            kinds: ["desktop.lock", "desktop.display", "machine.suspend"]
-                .into_iter()
+            kinds: ABSENCE_STATES
+                .iter()
                 .flat_map(|state| {
                     ["locked", "off", "suspended"]
                         .into_iter()

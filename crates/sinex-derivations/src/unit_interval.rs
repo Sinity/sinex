@@ -12,6 +12,9 @@
 //! The one relation across keys is the boot fence: a later boot of the host
 //! bounds a run left open, leaving its end unknown. An open run waits and
 //! names its host's boots key, which a `boot.started` dirties.
+//!
+//! A unit record that names no host has no key and opens no interval: no
+//! stop could be matched to it and no boot could fence it.
 use crate::derived_event::derived;
 use crate::state_interval::{scalar, time_evidence};
 use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed, Kind};
@@ -43,20 +46,11 @@ pub struct BootsKey {
     pub boots_of: String,
 }
 
-/// A unit record that names no host, by its journal cursor: nothing can be
-/// matched to it.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct UnknownHostKey {
-    pub unknown_record: Option<String>,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(untagged)]
 pub enum UnitKey {
     Scope(ScopeKey),
     Boots(BootsKey),
-    UnknownHost(UnknownHostKey),
 }
 
 fn scope_of(payload: &Value) -> Option<ScopeKey> {
@@ -100,9 +94,6 @@ fn interval(
         if let Some(value) = scalar(&start.payload, field) {
             attributes.insert(field.into(), value);
         }
-    }
-    if start.payload["host"].is_null() {
-        attributes.insert("scope_quality".into(), "unknown".into());
     }
     let at = start.ts_orig.at.expect("folded events have a time");
     derived(
@@ -200,7 +191,7 @@ fn runs(scope: &ScopeKey, inputs: &[Event]) -> (Vec<Result<Event, sinex_model::B
 impl Keyed for UnitIntervals {
     type Key = UnitKey;
     const NAME: &'static str = "unit.intervals";
-    const VERSION: u32 = 1;
+    const VERSION: u32 = 2;
     const INPUTS: &'static [&'static str] = &["unit.started", "unit.stopped", "boot.started"];
     const OUTPUTS: &'static [&'static str] = &[StateInterval::EVENT_TYPE];
 
@@ -209,18 +200,10 @@ impl Keyed for UnitIntervals {
             return vec![];
         }
         match input.event_type {
-            "unit.started" | "unit.stopped" => vec![scope_of(input.payload).map_or_else(
-                || {
-                    UnitKey::UnknownHost(UnknownHostKey {
-                        unknown_record: input
-                            .payload
-                            .get("cursor")
-                            .and_then(Value::as_str)
-                            .map(str::to_owned),
-                    })
-                },
-                UnitKey::Scope,
-            )],
+            "unit.started" | "unit.stopped" => scope_of(input.payload)
+                .map(UnitKey::Scope)
+                .into_iter()
+                .collect(),
             "boot.started" => input
                 .payload
                 .get("host")
@@ -237,7 +220,7 @@ impl Keyed for UnitIntervals {
     }
 
     fn stores_inputs(&self, key: &Self::Key) -> bool {
-        !matches!(key, UnitKey::Boots(_))
+        matches!(key, UnitKey::Scope(_))
     }
 
     /// What no unit event names a scope for: the boots of its host, which
@@ -267,16 +250,6 @@ impl Keyed for UnitIntervals {
                 }
                 computed
             }
-            // Nothing can close a run whose host is unknown.
-            UnitKey::UnknownHost(_) => Computed::from_outputs(
-                inputs
-                    .iter()
-                    .filter(|event| {
-                        event.event_type == "unit.started" && event.ts_orig.at.is_some()
-                    })
-                    .map(|start| interval(start, None, None)),
-                false,
-            ),
             UnitKey::Boots(_) => Computed::default(),
         }
     }

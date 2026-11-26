@@ -1,10 +1,11 @@
-//! Where live intervals end. An interval kind's events last from `ts_orig`
-//! to an end their payload records; a window read wants the earlier ones
-//! that still reach it. Compressed event chunks carry no index over a
-//! payload value, so the end of every live interval that lasts longer than
-//! an instant is kept here, beside the events, under indexes that answer
-//! "which intervals of this kind contain this instant" and "which have no
-//! end" at the cost of the rows they return.
+//! How far live intervals reach. An interval kind's events last from
+//! `ts_orig` to an end their payload records; a window read wants the earlier
+//! ones that still reach it. Compressed event chunks carry no index over a
+//! payload value, so how far every live interval that lasts longer than an
+//! instant reaches is kept here, beside the events, under indexes that
+//! answer "which intervals of this kind contain this instant" and "which are
+//! open" at the cost of the rows they return. An interval reaches to its
+//! end, or, when its end is unknown, to the time its payload says bounds it.
 
 /// The end of an interval that started at `started_at`, from the value its
 /// payload records under its kind's end field. A missing or unreadable time
@@ -26,9 +27,12 @@ BEGIN
                   CASE WHEN rule = 'end_or_instant' THEN started_at END);
 END $$";
 
-/// One row per live interval: an open one (`ended_at` null) or one that ends
-/// after it starts. `narrowing` is the text of the payload field its kind's
-/// readers narrow by, null when the kind names none or the payload has none.
+/// One row per live interval: an open one (`ended_at` null) or one that
+/// reaches past its start. `ended_at` is how far the interval reaches: its
+/// end, or the bound of an end left unknown (the fence of a state interval),
+/// so it is not the interval's duration. `narrowing` is the text of the
+/// payload field its kind's readers narrow by, null when the kind names none
+/// or the payload has none.
 pub(crate) const TABLE: &str = "CREATE TABLE core.live_intervals (
   event_id uuid PRIMARY KEY,
   event_type text NOT NULL,
@@ -121,4 +125,26 @@ END IF; END $$"
     ];
     statements.extend(INDEXES.iter().map(|sql| (*sql).into()));
     statements
+}
+
+/// State intervals gained a bound: one whose end is unknown reaches only to
+/// its fence. Bring the rows of the stored fenced intervals up to date, as
+/// admission now writes them: the fence where it is after the start, no row
+/// where it is not. Only `state.interval` rows are read, by their segments
+/// in compressed chunks; no event row is written.
+pub(crate) fn bound_fenced_intervals() -> Vec<String> {
+    vec![
+        "WITH fenced AS MATERIALIZED (
+           SELECT e.id, core.payload_time(e.payload->>'fenced_at') AS fenced_at
+           FROM core.events e
+           WHERE e.event_type = 'state.interval' AND e.payload->>'fenced_at' IS NOT NULL
+         ), instants AS (
+           DELETE FROM core.live_intervals l USING fenced f
+           WHERE l.event_id = f.id AND l.ended_at IS NULL AND f.fenced_at <= l.started_at
+         )
+         UPDATE core.live_intervals l SET ended_at = f.fenced_at
+         FROM fenced f
+         WHERE l.event_id = f.id AND l.ended_at IS NULL AND f.fenced_at > l.started_at"
+            .into(),
+    ]
 }

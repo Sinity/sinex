@@ -19,13 +19,18 @@ pub(super) async fn events_before_live_intervals(conn: &mut PgConnection) {
 const START: i64 = 1_767_225_600_000_000;
 const MINUTE: i64 = 60_000_000;
 
+/// The instant `micros` after `START`.
+fn instant(micros: i64) -> sinex_model::Timestamp {
+    sinex_model::Timestamp::from_unix_ns(i128::from(START + micros) * 1000).unwrap()
+}
+
 /// The payload of an event that ends `micros` after it starts.
 fn lasting(end: IntervalEnd, micros: i64) -> Value {
     match end {
         IntervalEnd::AfterNs(field) => json!({ field: micros * 1000 }),
-        IntervalEnd::At(field) | IntervalEnd::EndOrInstant(field) => json!({
-            field: sinex_model::Timestamp::from_unix_ns(i128::from(START + micros) * 1000).unwrap()
-        }),
+        IntervalEnd::At(field) | IntervalEnd::EndOrInstant(field) => {
+            json!({ field: instant(micros) })
+        }
     }
 }
 
@@ -53,7 +58,8 @@ type Row = (Uuid, String, Option<String>, i64, Option<i64>);
 
 /// Every interval kind's stored events get their rows: the live ones that
 /// last or are open, with the end the window read used to compute from the
-/// payload, and none for an instant, an archived reading or an unknown time.
+/// payload or the bound of an unknown end, and none for an instant, an
+/// archived reading or an unknown time.
 #[devkit::test]
 async fn upgrade_fills_live_intervals_of_every_interval_kind(db: devkit::pg::TestDatabase) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
@@ -107,7 +113,40 @@ async fn upgrade_fills_live_intervals_of_every_interval_kind(db: devkit::pg::Tes
         store(&mut conn, event_type, lasting(kind.end, -MINUTE), true).await;
         archived.push(store(&mut conn, event_type, lasting(kind.end, MINUTE), true).await);
         store(&mut conn, event_type, lasting(kind.end, MINUTE), false).await;
+        // An unknown end reaches to its bound; a recorded end wins over it,
+        // a bound at or before the start leaves an instant, and an
+        // unreadable bound leaves the interval open.
+        let Some(bound) = kind.bounded_by else {
+            continue;
+        };
+        for (end, bounded_at, reaches) in [
+            (None, json!(instant(MINUTE)), Some(Some(START + MINUTE))),
+            (
+                Some(MINUTE),
+                json!(instant(2 * MINUTE)),
+                Some(Some(START + MINUTE)),
+            ),
+            (None, json!(instant(-MINUTE)), None),
+            (None, json!(instant(0)), None),
+            (None, json!("soon"), Some(None)),
+        ] {
+            let mut payload = end.map_or_else(|| json!({}), |end| lasting(kind.end, end));
+            payload[bound] = bounded_at;
+            let id = store(&mut conn, event_type, payload, true).await;
+            if let Some(reaches) = reaches {
+                expected.insert((id, event_type.into(), None, START, reaches));
+            }
+        }
     }
+    // A kind that declares no bound stays open whatever a field of that name says.
+    let id = store(
+        &mut conn,
+        "window.span",
+        json!({"fenced_at": instant(MINUTE)}),
+        true,
+    )
+    .await;
+    expected.insert((id, "window.span".into(), None, START, None));
     // A duration is whole microseconds, rounded up.
     let payload = json!({"duration_ns": 1500});
     let id = store(&mut conn, "command.executed", payload, true).await;

@@ -310,3 +310,102 @@ async fn snapshot_replacement_archives_omitted_calls_and_turns(db: devkit::pg::T
     assert_eq!(coverage[0].eligible_entries, Some(0));
     assert_eq!(w.count(LIVE_WITH_ARCHIVED_PARENT).await, 0);
 }
+
+/// A state interval as a derivation stores it, from `start`, open.
+fn open_state(state_kind: &str, label: &str, start: i64) -> Event {
+    let payload = sinex_model::event_types::StateInterval {
+        interval_id: format!("{state_kind}:{start}"),
+        state_kind: state_kind.into(),
+        subject_id: Some("box".into()),
+        label: Some(label.into()),
+        started_at: at(start),
+        ended_at: None,
+        started_at_evidence: None,
+        ended_at_evidence: None,
+        fenced_at: None,
+        start_event_type: "fixture.transition".into(),
+        end_event_type: None,
+        attributes: [("host".to_owned(), "box".to_owned())].into(),
+    };
+    record(
+        "state.interval",
+        serde_json::to_value(payload).unwrap(),
+        u64::try_from(start + 1_000_000).unwrap(),
+    )
+}
+
+/// An episode reads the states that can mean the operator left, by overlap,
+/// and no other state: a unit run is not among its inputs, whether it has
+/// been open since before the episode or started inside it.
+#[devkit::test]
+async fn an_episode_reads_absence_states_and_no_unit_run(db: devkit::pg::TestDatabase) {
+    let w = world(db).await;
+    w.admit(vec![
+        snapshot("a", "first", &[0, 1000], 1),
+        open_state("machine.unit", "a.service", -500),
+        open_state("machine.unit", "b.service", 500),
+        open_state("desktop.focus", "editor", -450),
+        open_state("machine.suspend", "suspended", -400),
+        open_state("machine.suspend", "suspended", 400),
+    ])
+    .await;
+    let mut runner = runner(&w).await;
+    runner.catch_up().await.unwrap();
+    let episodes = w.live::<WorkEpisode>().await;
+    assert_eq!(episodes.len(), 1);
+    let env = Env::at(
+        at(2_000_000),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0)
+            .expect("fixture day setting"),
+    );
+    let query = AnyKeyed::inputs(
+        &WorkEpisodes,
+        &json!({"episode": episodes[0].episode}),
+        &env,
+    )
+    .unwrap();
+    let mut conn = PgConnection::connect(&w.url).await.unwrap();
+    let states: Vec<(String, Timestamp)> =
+        derivations::read_window(&mut conn, &to_window(&query, env.now))
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|input| input.event.event_type == "state.interval")
+            .map(|input| {
+                (
+                    input.event.payload["state_kind"]
+                        .as_str()
+                        .unwrap()
+                        .to_owned(),
+                    input.event.ts_orig.at.unwrap(),
+                )
+            })
+            .collect();
+    assert_eq!(
+        states,
+        [
+            ("machine.suspend".to_owned(), at(-400)),
+            ("machine.suspend".to_owned(), at(400)),
+        ]
+    );
+    // A unit run or a focus admitted later marks no episode for recompute.
+    runner.catch_up().await.unwrap();
+    w.admit(vec![
+        open_state("machine.unit", "c.service", 600),
+        open_state("desktop.focus", "terminal", 650),
+    ])
+    .await;
+    assert_eq!(
+        w.count("SELECT count(*) FROM derivation.dirty WHERE derivation='work.episodes'")
+            .await,
+        0
+    );
+    w.admit(vec![open_state("machine.suspend", "suspended", 700)])
+        .await;
+    assert_eq!(
+        w.count("SELECT count(*) FROM derivation.dirty WHERE derivation='work.episodes'")
+            .await,
+        1
+    );
+    runner.end_runs().await.unwrap();
+}

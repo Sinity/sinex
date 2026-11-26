@@ -1,9 +1,11 @@
 -- The live intervals of the asked kinds that started before the window and
--- reach its start ($3), or have no end. Each asked kind is an event type and,
--- when the window fixes one, the value of its narrowing field. Ended
--- intervals are found by the range index and open ones by their own index,
--- so the read costs what it returns, however much history the kind has.
--- An open interval reaches every window that does not end before it starts.
+-- reach its start ($3), or are open. Each asked kind is an event type and,
+-- when the window fixes one, the value of its narrowing field. `ended_at` is
+-- how far an interval reaches: its end, or the bound of an end left unknown.
+-- Intervals that reach a known time are found by the range index and open
+-- ones by their own index, so the read costs what it returns, however much
+-- history the kind has. An open interval reaches every window that does not
+-- end before it starts.
 SELECT i.event_id AS "event_id!", i.event_type AS "event_type!", i.started_at AS "started_at!"
 FROM unnest($1::text[], $2::text[]) AS k(event_type, narrowing)
 CROSS JOIN LATERAL (

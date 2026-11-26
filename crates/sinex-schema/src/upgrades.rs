@@ -59,6 +59,10 @@ pub(crate) const STEPS: &[Step] = &[
         name: "live_intervals",
         statements: crate::live_intervals::upgrade,
     },
+    Step {
+        name: "fenced_interval_bounds",
+        statements: crate::live_intervals::bound_fenced_intervals,
+    },
 ];
 
 fn source_exclusions() -> Vec<String> {

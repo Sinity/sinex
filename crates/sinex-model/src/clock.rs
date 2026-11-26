@@ -57,7 +57,7 @@ impl IntervalEnd {
 
 /// An event type whose events last from `ts_orig` to an end their payload
 /// records. A window names the interval kinds it reads by overlap; the store
-/// keeps each live interval's end so that read is indexed.
+/// keeps how far each live interval reaches so that read is indexed.
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub struct IntervalKind {
     pub event_type: &'static str,
@@ -65,10 +65,15 @@ pub struct IntervalKind {
     /// The payload field whose text value readers narrow this type by. The
     /// store indexes it, so a read of one value never visits the others.
     pub narrowed_by: Option<&'static str>,
+    /// The payload field holding the time that bounds an end left unknown:
+    /// the state cannot have held after it (a later boot of its host), so
+    /// the interval reaches no window that starts later.
+    pub bounded_by: Option<&'static str>,
 }
 
-/// Every interval kind. The store keeps ends only for these; a kind added
-/// here needs a schema upgrade step that fills the ends of its stored events.
+/// Every interval kind. The store keeps how far these reach and no others; a
+/// kind added here, or given a bound, needs a schema upgrade step that
+/// brings the rows of its stored events up to date.
 pub static INTERVAL_KINDS: &[IntervalKind] = &[
     IntervalKind::until("activity.session", "ended_at"),
     IntervalKind::until("activity.span", "ended_at"),
@@ -77,9 +82,8 @@ pub static INTERVAL_KINDS: &[IntervalKind] = &[
     IntervalKind::lasting("command.fused", "duration_ns"),
     IntervalKind::lasting("command.reported", "duration_ns"),
     IntervalKind {
-        event_type: "health.record",
-        end: IntervalEnd::At("end"),
         narrowed_by: Some("category"),
+        ..IntervalKind::until("health.record", "end")
     },
     IntervalKind::until("input.coverage", "ended_at"),
     IntervalKind::until("music.played", "ended_at"),
@@ -87,15 +91,14 @@ pub static INTERVAL_KINDS: &[IntervalKind] = &[
     IntervalKind::until("presence.span", "ended_at"),
     IntervalKind::until("shell.session", "ended_at"),
     IntervalKind {
-        event_type: "state.interval",
-        end: IntervalEnd::At("ended_at"),
         narrowed_by: Some("state_kind"),
+        bounded_by: Some("fenced_at"),
+        ..IntervalKind::until("state.interval", "ended_at")
     },
     IntervalKind::until("window.span", "ended_at"),
     IntervalKind {
-        event_type: "work.act",
         end: IntervalEnd::EndOrInstant("ended_at"),
-        narrowed_by: None,
+        ..IntervalKind::until("work.act", "ended_at")
     },
 ];
 
@@ -105,14 +108,14 @@ impl IntervalKind {
             event_type,
             end: IntervalEnd::At(field),
             narrowed_by: None,
+            bounded_by: None,
         }
     }
 
     const fn lasting(event_type: &'static str, field: &'static str) -> Self {
         Self {
-            event_type,
             end: IntervalEnd::AfterNs(field),
-            narrowed_by: None,
+            ..Self::until(event_type, field)
         }
     }
 
@@ -121,6 +124,19 @@ impl IntervalKind {
         INTERVAL_KINDS
             .iter()
             .find(|kind| kind.event_type == event_type)
+    }
+
+    /// The last instant an interval starting at `start` can reach: its
+    /// recorded end, else the bound of an end left unknown. None while the
+    /// interval is open, when it reaches every later window.
+    pub fn reaches_until(
+        &self,
+        start: Timestamp,
+        payload: &serde_json::Value,
+    ) -> Option<Timestamp> {
+        self.end
+            .at(start, payload)
+            .or_else(|| serde_json::from_value(payload.get(self.bounded_by?)?.clone()).ok())
     }
 }
 

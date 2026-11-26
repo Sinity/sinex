@@ -46,14 +46,14 @@ pub fn subject(fields: &[SubjectField], payload: &Value) -> Option<String> {
     fields.iter().find_map(|field| field.read(payload))
 }
 
-/// Empty source strings are still captured scopes. Other JSON types do not
-/// invent a scope; use the next source field or the stable captured identity.
-pub fn scope(payload: &Value, captured: impl FnOnce() -> String) -> String {
+/// The scope a record names: the first of its scope fields that holds a
+/// string. An empty string is still a captured scope; other JSON types do
+/// not invent one. A record that names none can be matched to no other.
+pub fn scope(payload: &Value) -> Option<String> {
     SCOPE_FIELDS
         .iter()
         .find_map(|field| payload.get(*field).and_then(Value::as_str))
         .map(str::to_owned)
-        .unwrap_or_else(captured)
 }
 
 /// Project only the values needed by these keys and the existing record key.

@@ -13,6 +13,10 @@
 //!
 //! Going AFK is an interruption: it ends focus and workspace at its own time.
 //!
+//! A transition is ended by the next one in its scope. One that names no
+//! scope opens no interval: nothing could be matched to it, so its end could
+//! never be learned, and the transition itself records what was observed.
+//!
 //! The key is the rule and the logical day. A key emits the intervals that
 //! start inside its day; it reads the earliest transitions after the day to end
 //! them. An interval still open at the end of the inputs has no end yet and
@@ -388,20 +392,27 @@ fn fold_one<'a>(rule: &IntervalRule, events: &[&'a Event]) -> Vec<PendingInterva
     out
 }
 
-fn scope_key(event: &Event) -> String {
-    state_transition::scope(&event.payload, || sinex_model::record::stable(event))
+/// The scope `event` is folded in: the one it names. A span carries its own
+/// end, so one that names no scope still stands, alone; a transition that
+/// names none has no scope.
+fn scope_key(rule: &IntervalRule, event: &Event) -> Option<String> {
+    state_transition::scope(&event.payload).or_else(|| {
+        matches!(rule.shape, Shape::Span { .. }).then(|| sinex_model::record::stable(event))
+    })
 }
 
 fn fold<'a>(rule: &IntervalRule, events: &[&'a Event]) -> Vec<PendingInterval<'a>> {
     // Each captured scope contains its transitions and matching interruptions.
     let mut scopes = BTreeMap::<String, Vec<&Event>>::new();
     for &event in events {
-        if rule.event_types.contains(&event.event_type.as_str()) {
-            scopes.entry(scope_key(event)).or_default().push(event);
+        if rule.event_types.contains(&event.event_type.as_str())
+            && let Some(scope) = scope_key(rule, event)
+        {
+            scopes.entry(scope).or_default().push(event);
         }
     }
     for &interruption in events.iter().filter(|event| interrupts(rule, event)) {
-        let scope = scope_key(interruption);
+        let scope = state_transition::scope(&interruption.payload);
         let per = Interruption::of(&interruption.event_type, &interruption.payload)
             .and_then(|kind| kind.neighbour().per);
         for (name, scoped) in &mut scopes {
@@ -416,7 +427,7 @@ fn fold<'a>(rule: &IntervalRule, events: &[&'a Event]) -> Vec<PendingInterval<'a
                         })
                     })
             });
-            if (*name == scope || shared_value)
+            if (scope.as_ref() == Some(name) || shared_value)
                 && !scoped.iter().any(|event| event.id == interruption.id)
             {
                 scoped.push(interruption);
@@ -457,7 +468,7 @@ pub enum StateKey {
 impl Keyed for StateIntervals {
     type Key = StateKey;
     const NAME: &'static str = "state.intervals";
-    const VERSION: u32 = 6;
+    const VERSION: u32 = 7;
     const USES_TIME_SETTINGS: bool = true;
     const INPUTS: &'static [&'static str] = INPUT_TYPES;
     const OUTPUTS: &'static [&'static str] = &[StateInterval::EVENT_TYPE];

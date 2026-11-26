@@ -257,3 +257,126 @@ async fn interval_boundary_evidence_survives_derivation_admission_and_readback(
     assert_eq!(still_open.ended_at_evidence, None);
     runner.end_runs().await.unwrap();
 }
+
+fn focus_without_scope(window: &str, secs: i64) -> Event {
+    Event::build(
+        &sinex_model::event_types::desktop::WindowFocused {
+            scope: None,
+            host: None,
+            received_at: at(secs),
+            window: Some(window.into()),
+            class: Some("kitty".into()),
+            title: Some(window.into()),
+        },
+        "wm.hyprland",
+        location(u64::try_from(secs).unwrap()),
+        ReadingOrder(0),
+        *blake3::hash(format!("{window}{secs}").as_bytes()).as_bytes(),
+        Class::Open,
+    )
+    .unwrap()
+}
+
+/// A day key as an earlier fold left it: one open interval for each focus
+/// record that named no scope, and waiting. Its next computation keeps none
+/// of them, so the key stops waiting and no later window is handed them.
+#[devkit::test]
+async fn a_day_of_focus_records_without_a_scope_stops_waiting(db: devkit::pg::TestDatabase) {
+    let w = World::with_keys(db, state_keys()).await;
+    let mut runner = w.driver_with(state_keys(), vec![]).await;
+    runner.clock = Some(at(4 * 86400));
+    let unnamed: Vec<Event> = (1..=40)
+        .map(|n| focus_without_scope(&format!("window-{n}"), n))
+        .collect();
+    let mut records = unnamed.clone();
+    records.extend([focus("window-a", 50), focus("window-b", 100)]);
+    w.admit(records).await;
+    runner.catch_up().await.unwrap();
+    let day = json!({"state":"desktop.focus","day":"2024-06-15"});
+    let waiting = "SELECT count(*) FROM derivation.waiting WHERE derivation='state.intervals'";
+    let open = "SELECT count(*) FROM core.live_intervals WHERE ended_at IS NULL";
+    assert_eq!(w.live::<StateInterval>().await.len(), 2);
+    assert_eq!(w.count(waiting).await, 1, "the named scope's last focus");
+    assert_eq!(w.count(open).await, 1);
+
+    let stored: Vec<Event> = unnamed
+        .iter()
+        .map(|record| {
+            sinex_derivations::derived_event::derived(
+                &StateInterval {
+                    interval_id: format!("desktop.focus:{}", record.id.0),
+                    state_kind: "desktop.focus".into(),
+                    subject_id: record.payload["window"].as_str().map(str::to_owned),
+                    label: None,
+                    started_at: record.ts_orig.at.unwrap(),
+                    ended_at: None,
+                    started_at_evidence: None,
+                    ended_at_evidence: None,
+                    fenced_at: None,
+                    start_event_type: "window.focused".into(),
+                    end_event_type: None,
+                    attributes: Default::default(),
+                },
+                "state.intervals",
+                [record],
+            )
+            .unwrap()
+        })
+        .collect();
+    let batch = Batch {
+        run: runner.run_of("state.intervals").unwrap(),
+        kind: BatchKind::Derived {
+            derivation: "state.intervals".into(),
+            scope: DerivedScope::Keys {
+                keys: vec![ComputedKey {
+                    key: day.clone(),
+                    dirty_seq: 0,
+                    waiting: true,
+                    refresh_at: None,
+                    woken_by: None,
+                }],
+                read: Default::default(),
+            }
+            .to_value(),
+        },
+        records: vec![RecordOutcome::Events {
+            location: None,
+            events: stored,
+        }],
+        archive: vec![],
+    };
+    w.handle.submit(Priority::Derived, batch).await.unwrap();
+    assert_eq!(w.live::<StateInterval>().await.len(), 40);
+    assert_eq!(w.count(open).await, 40);
+    assert_eq!(w.count(waiting).await, 1);
+
+    // Any dirty key of the derivation recomputes a key that waits on nothing
+    // named: here the next day's first focus, in the named scope.
+    w.admit(vec![focus("window-c", 86400 + 10)]).await;
+    runner.catch_up().await.unwrap();
+    let intervals = w.live::<StateInterval>().await;
+    assert_eq!(
+        intervals
+            .iter()
+            .map(|interval| (interval.subject_id.as_deref().unwrap(), interval.ended_at))
+            .collect::<Vec<_>>(),
+        [
+            ("window-a", Some(at(100))),
+            ("window-b", Some(at(86400 + 10))),
+            ("window-c", None),
+        ]
+    );
+    let mut conn = PgConnection::connect(&w.url).await.unwrap();
+    let still_waiting: Vec<Value> =
+        sqlx::query_scalar("SELECT key FROM derivation.waiting WHERE derivation='state.intervals'")
+            .fetch_all(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(
+        still_waiting,
+        [json!({"state":"desktop.focus","day":"2024-06-16"})],
+        "the day of the records without a scope waits for nothing"
+    );
+    assert_eq!(w.count(open).await, 1);
+    runner.end_runs().await.unwrap();
+}

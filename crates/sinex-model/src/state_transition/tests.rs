@@ -44,12 +44,13 @@ fn subjects_keep_literal_fallback_and_json_scalar_meaning() {
     }
 }
 #[test]
-fn scopes_use_strings_then_bucket_then_the_captured_record() {
+fn a_scope_is_the_first_string_scope_field_and_absent_without_one() {
     for (payload, expected) in [
-        (json!({"scope":"","bucket":"b"}), ""),
-        (json!({"scope":false,"bucket":"b"}), "b"),
-        (json!({"scope":null,"bucket":3}), "captured"),
+        (json!({"scope":"","bucket":"b"}), Some("")),
+        (json!({"scope":false,"bucket":"b"}), Some("b")),
+        (json!({"scope":null,"bucket":3}), None),
+        (json!({"window":"w"}), None),
     ] {
-        assert_eq!(scope(&payload, || "captured".into()), expected);
+        assert_eq!(scope(&payload).as_deref(), expected);
     }
 }

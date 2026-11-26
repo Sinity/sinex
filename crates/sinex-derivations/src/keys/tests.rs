@@ -45,7 +45,6 @@ fn stored_keys_round_trip() {
         json!({"host":"box","boot":"boot-a","manager":"system","uid":0,"unit":"example.service"}),
     );
     round_trip::<crate::unit_interval::UnitIntervals>(json!({"boots_of":"box"}));
-    round_trip::<crate::unit_interval::UnitIntervals>(json!({"unknown_record":"record"}));
     round_trip::<crate::figures::HourlyMetrics>(metric.clone());
     round_trip::<crate::figures::DailyMetrics>(metric);
     round_trip::<crate::presence::Presence>(hour.clone());

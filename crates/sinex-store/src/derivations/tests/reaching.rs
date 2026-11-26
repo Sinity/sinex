@@ -59,6 +59,14 @@ fn state(name: &str, state: &str, start: i64, end: Option<i64>) -> Event {
     )
 }
 
+/// A state interval of `state` from `start` whose end is unknown and bounded
+/// at `fence`.
+fn fenced(name: &str, state_kind: &str, start: i64, fence: i64) -> Event {
+    let mut event = state(name, state_kind, start, None);
+    event.payload["fenced_at"] = json!(at(fence));
+    event
+}
+
 /// A command from `start` lasting `duration_ns`, an instant without one.
 fn command(name: &str, start: i64, duration_ns: Option<i64>) -> Event {
     event(
@@ -159,6 +167,11 @@ fn fixture() -> Vec<Event> {
             Some(2000),
         ),
         state("focus open but archived", "desktop.focus", 50, None),
+        fenced("focus fenced before the window", "desktop.focus", 60, 700),
+        fenced("focus fenced inside the window", "desktop.focus", 450, 1200),
+        fenced("unit fenced before the window", "systemd.unit", 20, 400),
+        fenced("unit fenced at the window start", "systemd.unit", 30, 1000),
+        fenced("unit fenced after the window", "systemd.unit", 40, 4800),
         state(
             "unit reaching into the window",
             "systemd.unit",
@@ -275,12 +288,18 @@ fn windows() -> Vec<(&'static str, Window)> {
     ]
 }
 
-/// The read as it was: one statement over every event of the window's kinds
-/// before its end, computing each interval's end from its payload.
-async fn former_read(conn: &mut PgConnection, w: &Window) -> Vec<Uuid> {
+/// The read as one statement over every event of the window's kinds before
+/// its end, computing how far each interval reaches from its payload: its
+/// end, else the bound its kind declares, else forever.
+async fn predicate_read(conn: &mut PgConnection, w: &Window) -> Vec<Uuid> {
     let (types, contains) = kind_arrays(&w.kinds);
     let interval_types: Vec<String> = w.intervals.iter().map(|k| k.event_type.into()).collect();
     let fields: Vec<String> = w.intervals.iter().map(|k| k.end.field().into()).collect();
+    let bounds: Vec<Option<String>> = w
+        .intervals
+        .iter()
+        .map(|k| k.bounded_by.map(str::to_owned))
+        .collect();
     let durations: Vec<bool> = w
         .intervals
         .iter()
@@ -296,11 +315,12 @@ async fn former_read(conn: &mut PgConnection, w: &Window) -> Vec<Uuid> {
          WHERE e.event_type = ANY($1) AND e.ts_orig IS NOT NULL
            AND ($3::timestamptz IS NULL OR e.ts_orig < $3)
            AND ($2::timestamptz IS NULL OR e.ts_orig >= $2 OR EXISTS (
-             SELECT 1 FROM unnest($5::text[], $6::text[], $7::bool[], $8::bool[]) AS i(event_type, field, duration, open)
+             SELECT 1 FROM unnest($5::text[], $6::text[], $7::bool[], $8::bool[], $9::text[]) AS i(event_type, field, duration, open, bound)
              WHERE i.event_type = e.event_type
                AND CASE WHEN i.duration THEN e.ts_orig + interval '1 microsecond' *
                      ceil(greatest(coalesce((e.payload->>i.field)::numeric, 0), 0) / 1000)::double precision
-                   ELSE coalesce((e.payload->>i.field)::timestamptz, CASE WHEN i.open THEN coalesce($3, 'infinity'::timestamptz) ELSE e.ts_orig END) END >= $2))
+                   ELSE coalesce((e.payload->>i.field)::timestamptz, (e.payload->>i.bound)::timestamptz,
+                                 CASE WHEN i.open THEN coalesce($3, 'infinity'::timestamptz) ELSE e.ts_orig END) END >= $2))
            AND EXISTS (SELECT 1 FROM unnest($1::text[], $4::jsonb[]) AS k(event_type, contains)
                        WHERE k.event_type = e.event_type AND e.payload @> k.contains)
            AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)
@@ -314,12 +334,13 @@ async fn former_read(conn: &mut PgConnection, w: &Window) -> Vec<Uuid> {
     .bind(&fields)
     .bind(&durations)
     .bind(&open)
+    .bind(&bounds)
     .fetch_all(conn)
     .await
     .unwrap()
 }
 
-/// Every window reads what the former read returns, in its order.
+/// Every window reads what the predicate returns, in its order.
 async fn assert_reads_agree(conn: &mut PgConnection, state: &str) {
     for (name, w) in windows() {
         let read: Vec<Uuid> = read_window(conn, &w)
@@ -328,7 +349,7 @@ async fn assert_reads_agree(conn: &mut PgConnection, state: &str) {
             .iter()
             .map(|c| c.event.id.0)
             .collect();
-        assert_eq!(read, former_read(conn, &w).await, "{name}, {state}");
+        assert_eq!(read, predicate_read(conn, &w).await, "{name}, {state}");
     }
 }
 
@@ -383,6 +404,7 @@ async fn window_reads_over_intervals_equal_the_predicate_over_every_event(
         .collect();
     let expected: Vec<EventId> = [
         "focus open since long ago",
+        "focus fenced inside the window",
         "focus reaching into the window",
         "focus ending at the window start",
         "focus spanning the window",
@@ -430,4 +452,74 @@ async fn window_reads_over_intervals_equal_the_predicate_over_every_event(
     assert!(!read.contains(&named("focus open since long ago")));
     assert!(!read.contains(&named("command running into the window")));
     assert_reads_agree(&mut conn, "after a restore and an archive").await;
+}
+
+/// The identities a window over unit runs reads, in order.
+async fn runs_read(conn: &mut PgConnection, kind: Kind, start: i64) -> Vec<EventId> {
+    let w = window(vec![kind], &["state.interval"], Some((start, start + 100)));
+    read_window(conn, &w)
+        .await
+        .unwrap()
+        .iter()
+        .map(|c| c.event.id)
+        .collect()
+}
+
+/// A fenced interval keeps its end unknown and reaches no window that starts
+/// after its fence; one with neither end nor fence reaches every later
+/// window. Admission and restore store the same reach.
+#[devkit::test]
+async fn a_fenced_interval_reaches_no_window_after_its_fence(db: devkit::pg::TestDatabase) {
+    let mut conn = AdmissionContext::connect(&db.url(None)).await.unwrap();
+    let fenced_run = fenced("run fenced by the next boot", "machine.unit", 100, 500);
+    let open_run = state("run still open", "machine.unit", 100, None);
+    assert_eq!(fenced_run.payload["ended_at"], Value::Null);
+    let (fenced_id, open_id) = (fenced_run.id, open_run.id);
+    let mut tx = conn.begin().await.unwrap();
+    tx.admit(
+        &Batch {
+            run: RunId::new(),
+            kind: BatchKind::Api {
+                actor: "fixture".into(),
+            },
+            records: vec![RecordOutcome::Events {
+                location: None,
+                events: vec![fenced_run, open_run],
+            }],
+            archive: vec![],
+        },
+        &NoDerivations,
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+
+    let narrowed: fn() -> Kind = || kind("state.interval", json!({"state_kind": "machine.unit"}));
+    let whole: fn() -> Kind = || kind("state.interval", json!({}));
+    for restored in [false, true] {
+        if restored {
+            let ids = vec![fenced_id];
+            crate::lifecycle::move_events(&mut conn, Act::Archive, ids.clone(), &NoDerivations)
+                .await;
+            assert_eq!(runs_read(&mut conn, whole(), 300).await, [open_id]);
+            crate::lifecycle::move_events(&mut conn, Act::Restore, ids, &NoDerivations).await;
+        }
+        for asked in [narrowed, whole] {
+            let both = runs_read(&mut conn, asked(), 300).await;
+            assert_eq!(both.len(), 2, "before the fence, restored: {restored}");
+            assert!(both.contains(&fenced_id) && both.contains(&open_id));
+            assert_eq!(
+                runs_read(&mut conn, asked(), 500).await.len(),
+                2,
+                "a window starting at the fence, restored: {restored}"
+            );
+            for later in [501, 90_000, 90_000_000] {
+                assert_eq!(
+                    runs_read(&mut conn, asked(), later).await,
+                    [open_id],
+                    "a window starting {later} s on, restored: {restored}"
+                );
+            }
+        }
+    }
 }
