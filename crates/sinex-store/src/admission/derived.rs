@@ -253,13 +253,15 @@ pub(super) async fn apply_derived(
             if let Some(operation) = switch {
                 crate::derivations::selection::unfinished(conn, derivation, operation).await?;
             }
-            // Only the derivation's own live outputs leave through its batch:
-            // events it made, or outputs of its keys.
+            // Only the derivation's own outputs leave through its batch:
+            // outputs of its keys, or events it made. The chain read passes
+            // over those no longer live.
             let live = sqlx::query_scalar!(
-                "SELECT l.event_id FROM core.live_equivalence l
-                 WHERE l.event_id = ANY($1)
-                   AND (l.source = $2 OR EXISTS (SELECT 1 FROM derivation.outputs o
-                          WHERE o.event_id = l.event_id AND o.derivation = $2))",
+                r#"SELECT p.id AS "id!" FROM unnest($1::uuid[]) AS p(id)
+                   WHERE EXISTS (SELECT 1 FROM derivation.outputs o
+                                 WHERE o.event_id = p.id AND o.derivation = $2)
+                      OR EXISTS (SELECT 1 FROM core.live_equivalence l
+                                 WHERE l.event_id = p.id AND l.source = $2)"#,
                 &outputs,
                 derivation,
             )
@@ -418,12 +420,13 @@ pub(super) async fn apply_derived(
             let all_keys: Vec<Value> = scoped.iter().map(|s| s.key.clone()).collect();
             refusals::clear_keys(conn, derivation, &all_keys).await?;
             // Previous outputs not produced again and still live go to the
-            // archive. Live as the archive of outputs reads it, so a batch
-            // told to archive them first finds none left when it returns.
+            // archive. Live as the chain read finds it, so a batch told to
+            // archive them first finds none of them left when it returns.
             let gone = sqlx::query_scalar!(
                 r#"SELECT o.event_id AS "event_id!" FROM derivation.outputs o
                    WHERE o.derivation = $1 AND o.key = ANY($2) AND NOT (o.event_id = ANY($3))
-                   AND EXISTS (SELECT 1 FROM core.live_equivalence l WHERE l.event_id = o.event_id)"#,
+                   AND (EXISTS (SELECT 1 FROM core.live_equivalence l WHERE l.event_id = o.event_id)
+                     OR EXISTS (SELECT 1 FROM core.live_locations l WHERE l.event_id = o.event_id))"#,
                 derivation,
                 &all_keys,
                 &out_ids,
