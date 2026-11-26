@@ -372,6 +372,7 @@ pub fn material_only_roots<'a>(
     op: &'a Operation,
     after: Option<Uuid>,
     event_type: &str,
+    record_field: &str,
     matches: fn(&serde_json::Value) -> bool,
 ) -> Result<futures::stream::BoxStream<'a, Result<Uuid>>> {
     use futures::TryStreamExt;
@@ -389,14 +390,15 @@ pub fn material_only_roots<'a>(
     let lower = after.unwrap_or(select::FIRST_V7);
     Ok(Box::pin(
         sqlx::query!(
-            r#"SELECT id, payload -> 'payload' AS "record" FROM core.events
+            r#"SELECT id, payload -> $3::text AS "record" FROM core.events
            WHERE source = $1 AND event_type = $2 AND material_id IS NOT NULL
-             AND id >= $3 AND pg_catalog.uuid_cmp(id, $3) > 0 AND commit_seq <= $4
-             AND ($5::timestamptz IS NULL OR ts_orig >= $5)
-             AND ($6::timestamptz IS NULL OR ts_orig < $6)
+             AND id >= $4 AND pg_catalog.uuid_cmp(id, $4) > 0 AND commit_seq <= $5
+             AND ($6::timestamptz IS NULL OR ts_orig >= $6)
+             AND ($7::timestamptz IS NULL OR ts_orig < $7)
            ORDER BY id"#,
             source,
             event_type,
+            record_field,
             lower,
             op.start_seq,
             from.map(|t| t.0),

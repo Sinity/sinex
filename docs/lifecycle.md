@@ -180,7 +180,7 @@ callers receive the preview and a line to hand the operator. A credential label
 alone does not isolate a token readable by same-user agents. This documentation
 does not grant new deletion authority or change the deployed access policy.
 
-Tombstone (archived → tombstoned) is irreversible and allowed only on archived chains. A live member refuses the whole request.
+Tombstone (archived → tombstoned) is irreversible and allowed only on archived chains. A live member refuses a plain tombstone request. The [material-only scope](#material-only-readings) archives its live members before tombstoning them.
 
 - **It drops payloads and keeps a skeleton forever**: event ID, source, type, `ts_orig` with its quality, tombstone time, reason, operation, and the record's place (material, record offset, output index; for a derived event, its key hash, never the key's fields). The skeleton keeps the provenance structure.
 - **A tombstone destroys one interpretation; it does not stop new ones.** Replay of a live material and a re-stage of identical bytes produce new readings with new IDs, admitted normally. Nothing in admission consults tombstones to refuse a record. (ruling 2026-10-27, cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:1b44f4a1-22ca-4107-9711-5b0311caa1fa).

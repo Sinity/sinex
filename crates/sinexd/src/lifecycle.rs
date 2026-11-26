@@ -96,6 +96,7 @@ fn source_roots<'a>(
                 op,
                 after,
                 rule.event_type,
+                rule.record_field,
                 rule.matches,
             )?)
         }

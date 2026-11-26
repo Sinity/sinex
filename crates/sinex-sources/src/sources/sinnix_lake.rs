@@ -28,6 +28,8 @@ pub struct LakeSource {
 #[derive(Clone, Copy, Debug)]
 pub struct MaterialOnly {
     pub event_type: &'static str,
+    /// Where this observation keeps the record in the stored payload.
+    pub record_field: &'static str,
     pub matches: fn(&Value) -> bool,
 }
 
@@ -194,6 +196,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
         lane_values: &["netflow"],
         material_only: Some(MaterialOnly {
             event_type: "lake.observed",
+            record_field: "payload",
             matches: lanes::local_flow,
         }),
     },
