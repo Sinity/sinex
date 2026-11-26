@@ -90,16 +90,7 @@ impl Keyed for MarkLinks {
             Timestamp::from_unix_ns(env.time_settings.day_end(day).ok()?.unix_ns() + margin)
                 .ok()?,
         );
-        query.intervals = vec![
-            (
-                "shell.session",
-                sinex_model::clock::IntervalEnd::At("ended_at"),
-            ),
-            (
-                "activity.session",
-                sinex_model::clock::IntervalEnd::At("ended_at"),
-            ),
-        ];
+        query.intervals = crate::overlapping(&["shell.session", "activity.session"]);
         query.intervals.extend(FOCUS.intervals());
         Some(query)
     }

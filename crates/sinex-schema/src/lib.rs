@@ -19,6 +19,7 @@ mod backups;
 mod blob_chunks;
 mod library_copy_fields;
 mod library_curation;
+mod live_intervals;
 mod query_cursors;
 mod read_boundary;
 mod source_declarations;
@@ -92,6 +93,7 @@ fn privileged() -> Vec<String> {
     [
         "CREATE EXTENSION IF NOT EXISTS timescaledb",
         "CREATE EXTENSION IF NOT EXISTS pg_trgm",
+        "CREATE EXTENSION IF NOT EXISTS btree_gist",
         "CREATE EXTENSION IF NOT EXISTS vector",
         "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='sinex_writer') THEN CREATE ROLE sinex_writer; END IF; IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='sinex_reader') THEN CREATE ROLE sinex_reader; END IF; END $$",
         read_boundary::HARDEN,

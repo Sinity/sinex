@@ -1,5 +1,5 @@
-//! Archived state, its history and the live count of each source are
-//! written together.
+//! Archived state, its history, the live count of each source and the live
+//! intervals are written together.
 use crate::Result;
 use sinex_model::{ArchiveReason, DbCheck};
 use sqlx::PgConnection;
@@ -48,6 +48,7 @@ pub(crate) async fn archive_at(
       WHERE c.source = left_live.source"#,
       ids,replacements,position,reason.as_db(),operation)
       .execute(&mut *conn).await?;
+    crate::live_intervals::archived(conn, ids).await?;
     // The input is no longer eligible for derivation. Its original reading
     // remains archived; the current-work diagnosis has no remaining owner.
     let inputs: Vec<String> = ids.iter().map(Uuid::to_string).collect();
@@ -68,7 +69,7 @@ pub(crate) async fn restore_at(
     position: i64,
     operation: Uuid,
 ) -> Result<Vec<Uuid>> {
-    Ok(sqlx::query_scalar!(r#"WITH restored AS (
+    let restored = sqlx::query_scalar!(r#"WITH restored AS (
         DELETE FROM audit.archived WHERE event_id = ANY($1) RETURNING event_id),
       changes AS (
         INSERT INTO audit.archive_changes(change_seq,event_id,commit_seq,archived,reason,operation_id)
@@ -79,5 +80,7 @@ pub(crate) async fn restore_at(
               WHERE e.id IN (SELECT event_id FROM restored) GROUP BY e.source) back
         WHERE c.source = back.source)
       SELECT event_id AS "event_id!" FROM restored"#,events,position,operation)
-      .fetch_all(conn).await?)
+      .fetch_all(&mut *conn).await?;
+    crate::live_intervals::restored(conn, &restored).await?;
+    Ok(restored)
 }

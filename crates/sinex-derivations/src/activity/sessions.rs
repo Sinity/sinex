@@ -157,12 +157,8 @@ impl Keyed for ActivitySessions {
         });
         query.intervals = Self::INPUTS
             .iter()
-            .filter_map(|kind| interval_end(kind).map(|end| (*kind, end)))
+            .filter_map(|kind| IntervalKind::of(kind))
             .collect();
-        query.intervals.extend([
-            ("activity.window", IntervalEnd::At("ended_at")),
-            ("activity.span", IntervalEnd::At("ended_at")),
-        ]);
         Some(query)
     }
 

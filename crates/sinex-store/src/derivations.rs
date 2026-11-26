@@ -70,7 +70,9 @@ pub struct Window {
     /// No end reads all later known times.
     pub end: Option<OffsetDateTime>,
     pub before: Vec<Nearest>,
-    pub intervals: Vec<(&'static str, sinex_model::clock::IntervalEnd)>,
+    /// The interval kinds read by overlap: their live events that started
+    /// before the window and reach its start, or have no end, are read too.
+    pub intervals: Vec<&'static sinex_model::clock::IntervalKind>,
     pub after: Vec<Nearest>,
 }
 
@@ -232,38 +234,24 @@ async fn resolve_range(conn: &mut PgConnection, w: &Window) -> Result<Option<(Wi
 }
 
 /// Live events in the window, sorted by `ts_orig` then commit order, with the
-/// neighbours appended (also sorted, without repeats).
+/// neighbours appended (also sorted, without repeats). Events that start in
+/// the window are a range of the kind and time index; earlier intervals that
+/// reach it come from the live intervals index.
 pub async fn read_window(conn: &mut PgConnection, w: &Window) -> Result<Vec<Committed>> {
     let Some((resolved, prior)) = resolve_range(conn, w).await? else {
         return Ok(Vec::new());
     };
     let w = &resolved;
     let (types, contains) = kind_arrays(&w.kinds);
-    let mut interval_types = Vec::new();
-    let mut end_fields = Vec::new();
-    let mut durations = Vec::new();
-    let mut open_ends = Vec::new();
-    for &(kind, end) in &w.intervals {
-        interval_types.push(kind.to_owned());
-        let (field, duration, open) = match end {
-            sinex_model::clock::IntervalEnd::At(field) => (field, false, true),
-            sinex_model::clock::IntervalEnd::EndOrInstant(field) => (field, false, false),
-            sinex_model::clock::IntervalEnd::AfterNs(field) => (field, true, false),
-        };
-        open_ends.push(open);
-        end_fields.push(field.to_owned());
-        durations.push(duration);
-    }
+    let reaching = match w.start {
+        Some(start) => crate::live_intervals::reaching(conn, w, start).await?,
+        None => Vec::new(),
+    };
     let rows = sqlx::query_as!(EventRow, r#"SELECT e.id AS "id!", e.event_type AS "event_type!", e.kind_version AS "kind_version!", e.validation AS "validation!", e.source AS "source!", e.run_id AS "run_id!", e.material_id, e.record_offset, e.output_index AS "output_index!", e.parents, e.ts_orig, e.ts_quality AS "ts_quality!", e.ts_coided, e.ts_persisted AS "ts_persisted!", e.payload AS "payload!", e.equivalence_key, e.reading_order AS "reading_order!", e.record_hash AS "record_hash!", e.record_state AS "record_state!", e.class AS "class!", e.commit_seq AS "commit_seq!", (SELECT replace_rule FROM registry.event_types k WHERE k.name=e.event_type AND k.version=e.kind_version) AS replace_rule
            FROM core.events e
-           WHERE e.event_type = ANY($1) AND (e.ts_orig IS NOT NULL OR $8)
+           WHERE e.event_type = ANY($1) AND (e.ts_orig IS NOT NULL OR $5)
              AND ($3::timestamptz IS NULL OR e.ts_orig < $3)
-             AND ($2::timestamptz IS NULL OR e.ts_orig >= $2 OR EXISTS (
-               SELECT 1 FROM unnest($5::text[], $6::text[], $7::bool[], $9::bool[]) AS i(event_type, field, duration, open)
-               WHERE i.event_type = e.event_type
-                 AND CASE WHEN i.duration THEN e.ts_orig + interval '1 microsecond' *
-                       ceil(greatest(coalesce((e.payload->>i.field)::numeric, 0), 0) / 1000)::double precision
-                     ELSE coalesce((e.payload->>i.field)::timestamptz, CASE WHEN i.open THEN coalesce($3, 'infinity'::timestamptz) ELSE e.ts_orig END) END >= $2))
+             AND ($2::timestamptz IS NULL OR e.ts_orig >= $2)
              AND EXISTS (SELECT 1 FROM unnest($1::text[], $4::jsonb[]) AS k(event_type, contains)
                          WHERE k.event_type = e.event_type AND e.payload @> k.contains)
              AND NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)
@@ -272,16 +260,13 @@ pub async fn read_window(conn: &mut PgConnection, w: &Window) -> Result<Vec<Comm
         w.start,
         w.end,
         &contains,
-        &interval_types,
-        &end_fields,
-        &durations,
         w.unknown_times,
-        &open_ends,
     )
     .fetch_all(&mut *conn)
     .await?;
-    let mut out = Vec::with_capacity(rows.len());
-    for r in rows {
+    // The reaching intervals start before the window, so they come first.
+    let mut out = Vec::with_capacity(reaching.len() + rows.len());
+    for r in reaching.into_iter().chain(rows) {
         out.push(Committed::try_from(r)?);
     }
     if !prior.is_empty() {

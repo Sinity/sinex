@@ -183,10 +183,7 @@ impl Keyed for WorkEpisodes {
             count: 1,
             lifetime: None,
         });
-        query.intervals = vec![(
-            "state.interval",
-            sinex_model::clock::IntervalEnd::At("ended_at"),
-        )];
+        query.intervals = crate::overlapping(&["state.interval"]);
         query.intervals.extend(REST.intervals());
         Some(query)
     }
@@ -549,13 +546,7 @@ impl Keyed for ActivityDays {
             kinds: sleep_kinds(),
             field: "end",
         });
-        query.intervals = vec![
-            ("health.record", sinex_model::clock::IntervalEnd::At("end")),
-            (
-                "activity.span",
-                sinex_model::clock::IntervalEnd::At("ended_at"),
-            ),
-        ];
+        query.intervals = crate::overlapping(&["health.record", "activity.span"]);
         Some(query)
     }
     fn key_state(&self, _: &Self::Key, _: &Env) -> KeyState {

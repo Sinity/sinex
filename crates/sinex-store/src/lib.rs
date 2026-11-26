@@ -21,6 +21,7 @@ pub mod failure;
 pub mod library_shown;
 pub mod lifecycle;
 pub mod live;
+mod live_intervals;
 pub mod material_bytes;
 pub mod payloads;
 pub mod positions;

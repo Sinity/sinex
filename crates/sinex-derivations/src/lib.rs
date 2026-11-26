@@ -13,6 +13,7 @@
 //! full current input set, sorted by `ts_orig`.
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
+use sinex_model::clock::IntervalKind;
 use sinex_model::time_settings::TimeSettings;
 use sinex_model::{Event, EventId, Timestamp};
 
@@ -57,8 +58,9 @@ pub struct InputQuery {
     pub window: Option<(Timestamp, Timestamp)>,
     /// The latest events before the window: the state a key starts in.
     pub before: Vec<Neighbour>,
-    /// Earlier intervals that still overlap the window.
-    pub intervals: Vec<(&'static str, sinex_model::clock::IntervalEnd)>,
+    /// The interval kinds read by overlap: their earlier events that still
+    /// reach the window.
+    pub intervals: Vec<&'static IntervalKind>,
     /// The earliest events after the window: what ends a state the key opened.
     pub after: Vec<Neighbour>,
 }
@@ -115,9 +117,10 @@ impl InputQuery {
                 self.window.is_none_or(|(start, end)| {
                     t < end
                         && (t >= start
-                            || self.intervals.iter().any(|(kind, interval)| {
-                                *kind == event.event_type
-                                    && interval
+                            || self.intervals.iter().any(|kind| {
+                                kind.event_type == event.event_type
+                                    && kind
+                                        .end
                                         .at(t, &event.payload)
                                         .is_none_or(|end| end >= start)
                             }))
@@ -139,6 +142,19 @@ impl InputQuery {
         }
         out
     }
+}
+
+/// The declarations of the interval kinds a window reads by overlap. The
+/// store keeps ends only for declared interval kinds, so naming any other
+/// type is a defect in the derivation.
+pub(crate) fn overlapping(event_types: &[&str]) -> Vec<&'static IntervalKind> {
+    event_types
+        .iter()
+        .map(|event_type| {
+            IntervalKind::of(event_type)
+                .unwrap_or_else(|| panic!("{event_type} is not a declared interval kind"))
+        })
+        .collect()
 }
 
 /// A semantic range, resolved against the same snapshot as the inputs.

@@ -11,7 +11,7 @@
 //! intervals, so overlapping records never count a second twice.
 use crate::Kind;
 use serde_json::{Map, Value, json};
-use sinex_model::clock::IntervalEnd;
+use sinex_model::clock::IntervalKind;
 use sinex_model::record::identity as record_identity;
 use sinex_model::{Event, RecordState, Timestamp};
 
@@ -20,9 +20,6 @@ pub struct Observed {
     pub event_type: &'static str,
     /// Payload fields a record must have these values in to belong.
     pub only: &'static [(&'static str, &'static str)],
-    /// Where the stored payload records the end, for overlap reads; `None`
-    /// when the record is read as an instant.
-    pub end: Option<IntervalEnd>,
     /// The family's fields and `ended_at`; `None` when the record does not
     /// describe an occurrence of the family.
     pub read: fn(&Event) -> Option<Map<String, Value>>,
@@ -53,13 +50,13 @@ impl Family {
     }
 
     /// The overlap reads of this family's interval kinds.
-    pub fn intervals(&self) -> Vec<(&'static str, IntervalEnd)> {
+    pub fn intervals(&self) -> Vec<&'static IntervalKind> {
         let mut out = Vec::new();
         for source in self.sources {
-            if let Some(end) = source.end
-                && !out.iter().any(|(kind, _)| *kind == source.event_type)
+            if let Some(kind) = IntervalKind::of(source.event_type)
+                && !out.contains(&kind)
             {
-                out.push((source.event_type, end));
+                out.push(kind);
             }
         }
         out
@@ -125,7 +122,6 @@ pub static FOCUS: Family = Family {
         Observed {
             event_type: "state.interval",
             only: &[("state_kind", "desktop.focus")],
-            end: Some(IntervalEnd::At("ended_at")),
             read: |e| {
                 let p = &e.payload;
                 Some(focus(
@@ -138,7 +134,6 @@ pub static FOCUS: Family = Family {
         Observed {
             event_type: "window.span",
             only: &[],
-            end: Some(IntervalEnd::At("ended_at")),
             read: |e| {
                 let p = &e.payload;
                 Some(focus(
@@ -166,19 +161,16 @@ pub static VISITS: Family = Family {
         Observed {
             event_type: "browser.visit",
             only: &[],
-            end: None,
             read: |e| Some(visit(text(&e.payload, "/url")?, text(&e.payload, "/title"))),
         },
         Observed {
             event_type: "browser.history_entry",
             only: &[],
-            end: None,
             read: |e| Some(visit(text(&e.payload, "/url")?, text(&e.payload, "/title"))),
         },
         Observed {
             event_type: "link.followed",
             only: &[],
-            end: None,
             read: |e| {
                 Some(visit(
                     text(&e.payload, "/to_url")?,
@@ -208,7 +200,6 @@ pub static PLAYS: Family = Family {
         Observed {
             event_type: "music.played",
             only: &[],
-            end: Some(IntervalEnd::At("ended_at")),
             read: |e| {
                 let p = &e.payload;
                 let title = text(p, "/track_name").or_else(|| text(p, "/episode_name"))?;
@@ -224,7 +215,6 @@ pub static PLAYS: Family = Family {
         Observed {
             event_type: "player.changed",
             only: &[],
-            end: None,
             read: |e| {
                 let p = &e.payload;
                 if matches!(text(p, "/status"), Some("Paused" | "Stopped")) {
@@ -254,7 +244,6 @@ const fn rest(only: &'static [(&'static str, &'static str)]) -> Observed {
     Observed {
         event_type: "health.record",
         only,
-        end: Some(IntervalEnd::At("end")),
         read: |e| {
             let nap = e.payload.get("category").and_then(Value::as_str) == Some(NAP_CATEGORY);
             Some(fields([

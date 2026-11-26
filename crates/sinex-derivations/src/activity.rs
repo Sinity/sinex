@@ -10,7 +10,7 @@ use crate::keys::HourKey;
 use crate::observed::{FOCUS, PLAYS, REST};
 use crate::{Computed, Env, InputQuery, KeyState, KeyView, Keyed};
 use serde_json::{Value, json};
-use sinex_model::clock::IntervalEnd;
+use sinex_model::clock::IntervalKind;
 use sinex_model::event_types::activity::{ActivityCounts, CitedReading};
 use sinex_model::record::stable;
 use sinex_model::{Event, Timestamp};
@@ -104,22 +104,9 @@ pub(crate) fn scope(payload: &Value, kind: &str) -> String {
     json!(["unknown", kind, subject]).to_string()
 }
 
-fn interval_end(kind: &str) -> Option<IntervalEnd> {
-    match kind {
-        "command.fused" | "command.reported" | "command.executed" => {
-            Some(IntervalEnd::AfterNs("duration_ns"))
-        }
-        "work.act" => Some(IntervalEnd::EndOrInstant("ended_at")),
-        "health.record" => Some(IntervalEnd::At("end")),
-        "input.coverage" | "presence.span" | "presence.interval" | "window.span"
-        | "music.played" | "state.interval" => Some(IntervalEnd::At("ended_at")),
-        _ => None,
-    }
-}
-
 fn geometry(kind: &str, payload: &Value, start: Timestamp) -> Option<(i128, i128)> {
-    let end = interval_end(kind)
-        .and_then(|end| end.at(start, payload))
+    let end = IntervalKind::of(kind)
+        .and_then(|kind| kind.end.at(start, payload))
         .unwrap_or(start);
     (end >= start).then_some((start.unix_ns(), end.unix_ns()))
 }
@@ -209,7 +196,7 @@ fn inputs(key: &HourKey, env: &Env) -> Option<InputQuery> {
     );
     query.intervals = INPUTS
         .iter()
-        .filter_map(|kind| interval_end(kind).map(|end| (*kind, end)))
+        .filter_map(|kind| IntervalKind::of(kind))
         .collect();
     Some(query)
 }

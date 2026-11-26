@@ -77,10 +77,7 @@ impl Keyed for InputWorkloads {
             Timestamp::from_unix_ns(start.unix_ns() - 30 * SECOND).ok()?,
             Timestamp::from_unix_ns(end.unix_ns() + 30 * SECOND).ok()?,
         );
-        query.intervals = vec![(
-            "input.coverage",
-            sinex_model::clock::IntervalEnd::At("ended_at"),
-        )];
+        query.intervals = crate::overlapping(&["input.coverage"]);
         Some(query)
     }
     fn key_state(&self, key: &Self::Key, env: &Env) -> KeyState {

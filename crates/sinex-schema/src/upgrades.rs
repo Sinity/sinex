@@ -55,6 +55,10 @@ pub(crate) const STEPS: &[Step] = &[
         name: "stored_key_inputs",
         statements: stored_key_inputs,
     },
+    Step {
+        name: "live_intervals",
+        statements: crate::live_intervals::upgrade,
+    },
 ];
 
 fn source_exclusions() -> Vec<String> {

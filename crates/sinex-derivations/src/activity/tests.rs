@@ -604,7 +604,7 @@ fn point_inputs_never_become_open_intervals_in_later_hour_queries() {
             !query
                 .intervals
                 .iter()
-                .any(|(interval_kind, _)| *interval_kind == kind),
+                .any(|interval_kind| interval_kind.event_type == kind),
             "{kind} is a point"
         );
     }

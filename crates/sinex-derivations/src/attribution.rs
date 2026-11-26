@@ -118,16 +118,7 @@ impl Keyed for ProjectSpans {
         let hour = key.hour;
         let mut query =
             InputQuery::window(Self::INPUTS, hour, env.time_settings.hour_end(hour).ok()?);
-        query.intervals = vec![
-            (
-                "activity.span",
-                sinex_model::clock::IntervalEnd::At("ended_at"),
-            ),
-            (
-                "work.act",
-                sinex_model::clock::IntervalEnd::EndOrInstant("ended_at"),
-            ),
-        ];
+        query.intervals = crate::overlapping(&["activity.span", "work.act"]);
         Some(query)
     }
     fn compute(&self, _: &Self::Key, inputs: &[Event], _: &Env) -> Computed {

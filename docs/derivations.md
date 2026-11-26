@@ -78,9 +78,20 @@ A keyed derivation reads outward until its semantic stop: a genuine gap, a match
 - Before clearing a key, the runner checks for changes since the read in the key's newly computed ranges, not only its former ones. A dirty mark raised during a computation survives that computation's commit.
 - There is no fixed lookback, neighbour count, day edge, event count or maximum duration. A polling horizon may stop periodic refresh, but it never makes a later closer irrelevant: a closer arriving a month late still changes the key.
 
+### Intervals that reach a window
+
+An event of an interval kind lasts from its event time to an end its payload records. A window that reads such a kind by overlap gets the events that start inside it and the earlier ones that still reach its start, however long ago they began.
+
+- **Interval kinds are declared once**, in the model: the event type, how its payload records the end, and the payload field readers narrow the type by, when there is one (`state_kind` for `state.interval`). The end is a time field whose absence leaves the interval open, a time field whose absence makes the event an instant, or a duration in nanoseconds. A window names the interval kinds it reads by overlap; a kind it leaves out is read by its start only.
+- **The store keeps the end of every live interval** that lasts longer than an instant (`core.live_intervals`): admission and restore add the row, archiving removes it, in the transaction that changes liveness ([liveness](admission.md#liveness)). The end is computed by one database function, at microsecond precision with durations rounded up, so the rows an upgrade filled and the rows admission writes agree.
+- **The read is two indexed reads.** Events that start in the window are a range of the kind and time index. Earlier intervals are found by a range index over ended intervals (which of this kind contain the window's start) and an index of open ones; their rows are then fetched by ID in groups bounded by ID, kind and time. The read visits the intervals it returns, not the kind's history: neither intervals that ended before the window, nor archived readings, nor compressed chunks that hold none of the selected rows.
+- **A narrowed kind is read by its value.** A window that fixes the narrowing field (focus intervals only) reads only that value's intervals from the index; every other condition of the kind is checked on the fetched row.
+- **An open interval reaches every later window.** An interval with no recorded end is returned to each window that starts after it, whatever its age. A fenced interval keeps its end unknown, so it stays open for these reads.
+- An event with no known time is never read by overlap.
+
 ### Keys read by their stored inputs
 
-Events are reachable by kind and event time, by ID, by commit position and by record location, never by a payload field. A key that is a time window reads its inputs as a range of the kind and time index. A key selected by a payload field (one unit in one boot, one episode) would read the whole time range of its kinds and filter, on every recompute.
+Events are reachable by kind and event time, by ID, by commit position and by record location; live intervals also by the time they span. No other payload field is an access path. A key that is a time window reads its inputs as a range of the kind and time index. A key selected by a payload field (one unit in one boot, one episode) would read the whole time range of its kinds and filter, on every recompute.
 
 - A derivation declares, per key shape, that a key's inputs are exactly the events its key function names that key for. Admission computes those keys for every admitted, archived and restored input to mark them dirty; for a declaring key it also stores the pair of key and event ID (`derivation.inputs`, the key by its hash) in the same transaction.
 - The runner reads a declaring key by those IDs and keeps the live readings. A row outlives its event's archival, so a restore finds it; a replay's new reading gets its own row.

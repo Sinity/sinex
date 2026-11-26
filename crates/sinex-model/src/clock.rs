@@ -36,6 +36,92 @@ impl IntervalEnd {
             .ok(),
         }
     }
+
+    /// The payload field the end is read from.
+    pub fn field(self) -> &'static str {
+        match self {
+            Self::At(field) | Self::EndOrInstant(field) | Self::AfterNs(field) => field,
+        }
+    }
+
+    /// The rule's name in the store, whose `core.interval_end` computes the
+    /// end it keeps for each live interval.
+    pub fn rule(self) -> &'static str {
+        match self {
+            Self::At(_) => "at",
+            Self::EndOrInstant(_) => "end_or_instant",
+            Self::AfterNs(_) => "after_ns",
+        }
+    }
+}
+
+/// An event type whose events last from `ts_orig` to an end their payload
+/// records. A window names the interval kinds it reads by overlap; the store
+/// keeps each live interval's end so that read is indexed.
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub struct IntervalKind {
+    pub event_type: &'static str,
+    pub end: IntervalEnd,
+    /// The payload field whose text value readers narrow this type by. The
+    /// store indexes it, so a read of one value never visits the others.
+    pub narrowed_by: Option<&'static str>,
+}
+
+/// Every interval kind. The store keeps ends only for these; a kind added
+/// here needs a schema upgrade step that fills the ends of its stored events.
+pub static INTERVAL_KINDS: &[IntervalKind] = &[
+    IntervalKind::until("activity.session", "ended_at"),
+    IntervalKind::until("activity.span", "ended_at"),
+    IntervalKind::until("activity.window", "ended_at"),
+    IntervalKind::lasting("command.executed", "duration_ns"),
+    IntervalKind::lasting("command.fused", "duration_ns"),
+    IntervalKind::lasting("command.reported", "duration_ns"),
+    IntervalKind {
+        event_type: "health.record",
+        end: IntervalEnd::At("end"),
+        narrowed_by: Some("category"),
+    },
+    IntervalKind::until("input.coverage", "ended_at"),
+    IntervalKind::until("music.played", "ended_at"),
+    IntervalKind::until("presence.interval", "ended_at"),
+    IntervalKind::until("presence.span", "ended_at"),
+    IntervalKind::until("shell.session", "ended_at"),
+    IntervalKind {
+        event_type: "state.interval",
+        end: IntervalEnd::At("ended_at"),
+        narrowed_by: Some("state_kind"),
+    },
+    IntervalKind::until("window.span", "ended_at"),
+    IntervalKind {
+        event_type: "work.act",
+        end: IntervalEnd::EndOrInstant("ended_at"),
+        narrowed_by: None,
+    },
+];
+
+impl IntervalKind {
+    const fn until(event_type: &'static str, field: &'static str) -> Self {
+        Self {
+            event_type,
+            end: IntervalEnd::At(field),
+            narrowed_by: None,
+        }
+    }
+
+    const fn lasting(event_type: &'static str, field: &'static str) -> Self {
+        Self {
+            event_type,
+            end: IntervalEnd::AfterNs(field),
+            narrowed_by: None,
+        }
+    }
+
+    /// The declaration of `event_type`, when it is an interval kind.
+    pub fn of(event_type: &str) -> Option<&'static Self> {
+        INTERVAL_KINDS
+            .iter()
+            .find(|kind| kind.event_type == event_type)
+    }
 }
 
 /// An instant with nanosecond precision, serialized as RFC 3339 in UTC.

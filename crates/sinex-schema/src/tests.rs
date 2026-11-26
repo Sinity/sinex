@@ -111,6 +111,7 @@ async fn a_forward_step_runs_from_its_version_and_records_the_next(db: devkit::p
 /// The waiting table before a key could name what wakes it, and no stored
 /// inputs.
 async fn waiting_before_wakers(conn: &mut PgConnection) {
+    live_intervals::events_before_live_intervals(&mut *conn).await;
     conn.execute(
         "DROP TABLE derivation.inputs; DROP TABLE derivation.waiting;
          CREATE TABLE derivation.waiting (
@@ -455,6 +456,7 @@ async fn copy_fields_upgrade_indexes_only_copy_payloads_including_archived_readi
     );
 }
 
+mod live_intervals;
 mod reading_orders;
 
 #[devkit::test]

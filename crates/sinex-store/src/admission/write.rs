@@ -1,6 +1,7 @@
 //! Writing what admission admitted: events with their commit positions, their
-//! source's and run's counts, the live side tables, archived readings, dirty
-//! keys and citations; then failures and the source position.
+//! source's and run's counts, the live side tables (readings and intervals),
+//! archived readings, dirty keys and citations; then failures and the source
+//! position.
 use super::classify::Classified;
 use super::derived::{mark_archived_dirty, mark_inputs_dirty};
 use super::{DirtyKeys, KeyInput, Outcome};
@@ -62,6 +63,15 @@ pub(super) async fn insert_admitted(
     .execute(&mut *conn)
     .await?;
     outcome.timings.insert("events", started.elapsed());
+
+    if admit_ords.iter().any(|&ord| {
+        let event = &events[usize::try_from(ord).expect("ord is an event index")];
+        sinex_model::clock::IntervalKind::of(&event.event_type).is_some()
+    }) {
+        let started = std::time::Instant::now();
+        crate::live_intervals::admitted(conn).await?;
+        outcome.timings.insert("live_intervals", started.elapsed());
+    }
 
     let copy_kind = sinex_schema::COPY_FIELDS_EVENT_TYPE;
     if admit_ords.iter().any(|&ord| {
