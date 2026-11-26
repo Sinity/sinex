@@ -150,25 +150,36 @@ fn report_page_timing(page: PageTiming) {
     );
 }
 
-/// Publish until `stop` is set, waking when `commits` changes.
+/// Publish until stopped. Return whether a publishing pass was interrupted.
 pub(crate) async fn run(
     mut conn: PgConnection,
     js: jetstream::Context,
     subjects: Subjects,
     mut commits: watch::Receiver<u64>,
     mut stop: watch::Receiver<bool>,
-) -> Result<()> {
-    ensure_stream(&mut conn, &js, &subjects).await?;
+) -> Result<bool> {
+    tokio::select! {
+        biased;
+        _ = stop.wait_for(|stopped| *stopped) => return Ok(true),
+        result = ensure_stream(&mut conn, &js, &subjects) => result?,
+    }
     loop {
         if *stop.borrow() {
-            return Ok(());
+            return Ok(false);
         }
         commits.borrow_and_update();
-        match publish_pending(&mut conn, &js, &subjects).await {
+        // Only an acknowledged completion marker can advance the durable
+        // position. Interruption leaves the normal restart path to finish it.
+        let published = tokio::select! {
+            biased;
+            _ = stop.wait_for(|stopped| *stopped) => return Ok(true),
+            result = publish_pending(&mut conn, &js, &subjects) => result,
+        };
+        match published {
             Ok(done) if done == Published::default() => {
                 tokio::select! {
                     _ = commits.changed() => {}
-                    _ = stop.changed() => {}
+                    _ = stop.wait_for(|stopped| *stopped) => return Ok(false),
                 }
             }
             Ok(_) => {}
@@ -176,7 +187,7 @@ pub(crate) async fn run(
                 eprintln!("sinexd: publisher: {error}");
                 tokio::select! {
                     _ = tokio::time::sleep(RETRY) => {}
-                    _ = stop.changed() => {}
+                    _ = stop.wait_for(|stopped| *stopped) => return Ok(true),
                 }
             }
         }
