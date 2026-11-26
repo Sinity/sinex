@@ -49,8 +49,12 @@ this shell on a host that uses managed targets.
 
 For local shared-crate development, run `cargo xtask link-common PATH`
 explicitly. Run `cargo xtask unlink-common` before committing either
-workspace lock, as described in the shared
-[dependency guide](https://github.com/Sinity/polylogue-sinex-common#depending-on-this-repository).
+workspace lock. Lock updates arrive as pull requests on the
+`update-polylogue-sinex-common` branch, opened by common's `Update product
+locks` workflow; when master's lock changes, `Update Polylogue` starts that
+workflow again to move Polylogue to this master. The shared
+[dependency guide](https://github.com/Sinity/polylogue-sinex-common#depending-on-this-repository)
+describes the route.
 
 A host may queue these commands through its own job runner.
 

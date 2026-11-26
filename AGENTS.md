@@ -396,8 +396,11 @@ of it (the path, else `$POLYLOGUE_SINEX_COMMON`, else
 `../polylogue-sinex-common`). Linking is explicit. It writes the git-ignored
 `.cargo/local.toml`, and the workspace lock then names the local crates, so
 that lock change is not committed.
-`cargo xtask unlink-common` restores the lock. Merge the common pull request
-first; its workflow then opens a pull request here that moves Cargo.lock to
-the new commit. Convert the callers on that branch, or run `cargo update -p
-devkit -p hashed-blobs` on the branch that converts
-them, so the lock change and the callers land together.
+`cargo xtask unlink-common` restores the lock. The common pull request's
+`products` jobs run this workspace's checks against its head. Merge the
+common pull request first; its `Update product locks` workflow then opens or
+updates the pull request here, on the `update-polylogue-sinex-common` branch,
+that moves every workspace lock to the new commit. Convert the callers on that
+branch, so the lock change and the callers land together. When master's lock
+changes, the `Update Polylogue` workflow starts the same common workflow,
+which moves Polylogue to this master.

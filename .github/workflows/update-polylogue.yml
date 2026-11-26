@@ -1,0 +1,26 @@
+# Polylogue pins a Sinex revision and resolves it against the same
+# polylogue-sinex-common commit that revision pins, so Polylogue can take a
+# newer common commit only after master here has adopted it. When master's
+# lock changes, this starts polylogue-sinex-common's `Update product locks`
+# workflow, which opens or updates Polylogue's pull request moving its Sinex
+# revision to this master and its common lock to the commit this master pins.
+#
+# Needs the repository secret COMMON_BUMP_TOKEN: a fine-grained token for
+# Sinity/polylogue-sinex-common with Actions set to read and write.
+name: Update Polylogue
+
+on:
+  push:
+    branches: [master]
+    paths: [Cargo.lock]
+
+permissions: {}
+
+jobs:
+  start:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Start polylogue-sinex-common's Update product locks
+        env:
+          GH_TOKEN: ${{ secrets.COMMON_BUMP_TOKEN }}
+        run: gh workflow run update-product-locks.yml -R Sinity/polylogue-sinex-common --ref master
