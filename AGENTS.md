@@ -186,8 +186,11 @@ pull request, since each costs a full CI run. Master requires the `check` and
 `test` statuses on the pull request's head; branches need not be up to date
 with master, so rebase only to resolve a conflict, taking master's names and
 structure and reapplying your change. Schema upgrade numbers are assigned when
-a change lands, in landing order. Merge with
-`gh pr merge --auto --squash --match-head-commit <sha>`. Development speed
+a change lands, in landing order. Land with `dev/land <n>`: it waits for
+`check` and `test` on the head, and when master has since changed a package
+the pull request changes it merges master into the branch and waits again;
+then it squash-merges the tested head. `dev/land --dry-run <n>` says whether
+a green result is still current. Development speed
 comes before a perfectly green master (operator, 2026-11-09): when two
 separately green changes combine into a failing master, whoever's change
 caused it fixes it next. Hooks stay enabled.
