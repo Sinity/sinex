@@ -150,7 +150,9 @@ async fn a_recompute_fills_the_lists_of_events_admitted_before_the_declaration(
 
 #[devkit::test]
 async fn ranged_recompute_marks_one_key_and_uses_its_older_inputs(db: devkit::pg::TestDatabase) {
-    let w = World::with_keys(db, vec![Box::new(ByLabel)]).await;
+    // Simulate inputs admitted before their stored-input declaration. One
+    // earlier range fills that part of the list; the next range extends it.
+    let w = World::with_keys(db, vec![]).await;
     let mut d = w.driver_with(vec![Box::new(ByLabel)], vec![]).await;
     w.admit(vec![
         entry_at("x", "old", 1, Some(at(-9 * 86_400))),
@@ -160,16 +162,11 @@ async fn ranged_recompute_marks_one_key_and_uses_its_older_inputs(db: devkit::pg
         entry_at("z", "upper boundary", 5, Some(at(3_600))),
     ])
     .await;
+    d.recompute_all(ByLabel::NAME, Some((at(-9 * 86_400), at(-8 * 86_400))))
+        .await
+        .unwrap();
     d.catch_up().await.unwrap();
-    assert_eq!(
-        by_label(&w).await,
-        [
-            "untimed=untimed",
-            "x=in window/old",
-            "y=other",
-            "z=upper boundary"
-        ]
-    );
+    assert_eq!(by_label(&w).await, ["x=old"]);
 
     let result = d
         .recompute_all(ByLabel::NAME, Some((at(0), at(3_600))))
@@ -185,15 +182,8 @@ async fn ranged_recompute_marks_one_key_and_uses_its_older_inputs(db: devkit::pg
     assert_eq!(dirty[0].key, json!({"label":"x"}));
 
     d.catch_up().await.unwrap();
-    assert_eq!(
-        by_label(&w).await,
-        [
-            "untimed=untimed",
-            "x=in window/old",
-            "y=other",
-            "z=upper boundary"
-        ]
-    );
+    assert_eq!(by_label(&w).await, ["x=in window/old"]);
+    assert_eq!(w.count("SELECT count(*) FROM derivation.inputs").await, 2);
 }
 
 /// Item keys wait and name the `wake` key; `other` is an unrelated key of the

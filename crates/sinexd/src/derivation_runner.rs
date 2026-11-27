@@ -343,8 +343,8 @@ impl DerivationRunner {
         let d = d.clone();
         let mut keys: Vec<Value> = Vec::new();
         let mut seen: HashSet<String> = HashSet::new();
-        // A whole-history operation fills lists for inputs that predate the
-        // declaration. A ranged operation uses the lists maintained at admission.
+        // Fill missing list entries for inputs this request reads. Only a
+        // whole-history operation can seed lists across the entire store.
         let mut stored: Vec<(Value, uuid::Uuid)> = Vec::new();
         let mut after_seq = 0i64;
         let mut after_time = None;
@@ -385,7 +385,7 @@ impl DerivationRunner {
                     payload: &c.event.payload,
                 };
                 for k in d.keys_for(&view, &env) {
-                    if range.is_none() && d.stores_inputs(&k) {
+                    if d.stores_inputs(&k) {
                         stored.push((k.clone(), c.event.id.0));
                     }
                     if seen.insert(k.to_string()) {
