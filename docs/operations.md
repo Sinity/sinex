@@ -51,14 +51,19 @@ After a successful drain, copy the stopped state with ownership, modes and bytes
 
 Before switching a producer whose saved state is plaintext, drain its pending frames through that installed build's producer client. Keep its original state frozen and select a fresh producer state directory for the current encoded checkpoints. Keep and stage any unread source bytes through their named input format; NDJSON capture segments remain supported source input.
 
-Daemon shutdown supervises startup and serving through the same writer boundary.
-Tasks first drain cooperatively. After the grace period, remaining tasks are
-cancelled and joined so their connections close. Writer sessions enable PostgreSQL's
-closed-client checks; these cancel work after a disconnected client without
-limiting a connected query. Shutdown then reacquires the writer claim and flushes
-pending admitted extents before returning success. Failure to establish that
-boundary is a shutdown error. Uncommitted admission and acknowledgments roll back;
-producers keep their saved frames and positions to retry the same frames.
+On SIGTERM or SIGINT the daemon stops within ten seconds, during startup
+or serving. The publisher stops waiting for the broker and resumes from its
+saved position on restart. The other tasks have seven seconds to finish
+cooperatively, then one second to join after cancellation. Runtime teardown
+has one second. The shutdown summary names tasks that completed, deferred
+publication, were cancelled, or were still running when task joining ended.
+
+Closing the writer connection leaves PostgreSQL to finish a commit already in
+progress or roll back uncommitted work. The daemon does not need a new database
+connection to exit. A subsequent start takes the writer claim and recovers
+the segment at its committed boundary before admitting input. Producers retain
+unacknowledged frames and source positions for retry. The publisher advances
+its position only after JetStream acknowledges the completion marker.
 
 Activating a new version does not change the schema. When a version brings a schema upgrade, `sinexd` refuses to start and names the command ([admission.md](admission.md#schema-evolution)). With `sinexd` stopped, run `systemctl start sinex-schema-upgrade` (`sinexd admin upgrade` as the Sinex user), which returns when the one upgrade transaction commits or rolls back, then start `sinexd`. Producers keep spooling while the daemon is stopped, so an upgrade pauses admission, not capture.
 
