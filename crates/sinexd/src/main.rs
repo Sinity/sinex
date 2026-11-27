@@ -338,9 +338,22 @@ fn api_options(
     })
 }
 
-#[tokio::main]
-async fn main() -> std::process::ExitCode {
+fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
+    let daemon = matches!(&cli.command, Command::Run { .. });
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("start the Tokio runtime");
+    let exit = runtime.block_on(run(cli));
+    if daemon {
+        // Tokio otherwise waits indefinitely for blocking jobs already running.
+        runtime.shutdown_timeout(daemon::RUNTIME_STOP_GRACE);
+    }
+    exit
+}
+
+async fn run(cli: Cli) -> std::process::ExitCode {
     let configured = (|| -> Result<_> {
         let recipient = cli
             .class_key_file

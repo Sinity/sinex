@@ -37,6 +37,7 @@ impl Process {
     }
 
     pub(crate) async fn stop(mut self) {
+        let started = Instant::now();
         assert!(
             Command::new("kill")
                 .args(["-TERM", &self.child.id().to_string()])
@@ -44,9 +45,10 @@ impl Process {
                 .unwrap()
                 .success()
         );
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = started + Duration::from_secs(10);
         loop {
             if let Some(status) = self.child.try_wait().unwrap() {
+                eprintln!("SIGTERM to reaped exit: {:?}", started.elapsed());
                 assert!(
                     status.success(),
                     "process stopped unsuccessfully: {}",
