@@ -344,6 +344,8 @@ Family F16.
 
 **Imported speech.** JSON, Whisper, WebVTT, SRT and plain-text transcripts keep each cue or segment, exact decimal relative offsets, speaker, language, model, run, confidence and unknown fields, linked to the media material when known. External run IDs are never turned into Sinex parent IDs. New speech recognition, voice-activity detection and diarization are model work in [derivations](derivations.md), off while model features are off, and never replace the audio.
 
+JSON transcript imports index cues by their original byte ranges in each retained document. A cue with invalid fields fails at its own byte range and adjacent cues remain readable. Invalid document syntax is a failure of the whole document. Whisper defaults are read from indexed ranges in the material bytes during import and replay, including fields written after the segment array. Older materials indexed as whole documents keep those original record locations during replay.
+
 ## Operator records and source health
 
 Family F17: the operator's journal, moment marks, self-reports, requests made through the interfaces, steering, and source status.

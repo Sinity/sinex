@@ -474,6 +474,34 @@ impl Context<'_, '_> {
         indices: &[usize],
         framing: Framing,
     ) -> Result<(), DriverError> {
+        if let Framing::IndexedDocument { index, .. } = framing {
+            let mut bytes = Vec::new();
+            if let Err(error) = reader.read_to_end(&mut bytes) {
+                return self.refuse_member(name, indices, error.into());
+            }
+            if self.stop.load(Ordering::Relaxed) {
+                return Err(DriverError::Cancelled);
+            }
+            if !bytes.is_empty() {
+                let mut details = serde_json::Map::new();
+                let ranges = match index(&bytes) {
+                    Ok(document) => {
+                        if !document.metadata.is_empty() {
+                            details.insert("file_metadata_ranges".into(), json!(document.metadata));
+                        }
+                        document.records
+                    }
+                    Err(_) => {
+                        details.insert("file_framing_failed".into(), json!(true));
+                        vec![(0, bytes.len())]
+                    }
+                };
+                if !ranges.is_empty() {
+                    self.part(member, name, indices, 0, 0, &bytes, &ranges, Some(&details))?;
+                }
+            }
+            return self.complete_member(member, indices, bytes.len() as u64);
+        }
         let budget = indices
             .iter()
             .map(|&i| self.routes[i].driver.part_bytes.max(1))
@@ -497,7 +525,16 @@ impl Context<'_, '_> {
             ranges.push((begin, bytes.len()));
             ordinal += 1;
             if bytes.len() >= budget || ranges.len() >= crate::Limits::default().max_events {
-                self.part(member, name, indices, start, part_offset, &bytes, &ranges)?;
+                self.part(
+                    member,
+                    name,
+                    indices,
+                    start,
+                    part_offset,
+                    &bytes,
+                    &ranges,
+                    None,
+                )?;
                 bytes.clear();
                 ranges.clear();
                 start = ordinal;
@@ -506,21 +543,48 @@ impl Context<'_, '_> {
             Ok(())
         });
         if let Err(error) = result {
-            if matches!(error, DriverError::Cancelled) {
-                return Err(error);
-            }
-            let reason = error.to_string();
-            for &index in indices {
-                if self.routes[index].active {
-                    (self.emit)(index, Err(DriverError::Read(format!("{name}: {reason}"))))?;
-                    self.routes[index].active = false;
-                }
-            }
-            return Ok(());
+            return self.refuse_member(name, indices, error);
         }
         if !ranges.is_empty() {
-            self.part(member, name, indices, start, part_offset, &bytes, &ranges)?;
+            self.part(
+                member,
+                name,
+                indices,
+                start,
+                part_offset,
+                &bytes,
+                &ranges,
+                None,
+            )?;
         }
+        self.complete_member(member, indices, byte_position)
+    }
+
+    fn refuse_member(
+        &mut self,
+        name: &str,
+        indices: &[usize],
+        error: DriverError,
+    ) -> Result<(), DriverError> {
+        if matches!(error, DriverError::Cancelled) {
+            return Err(error);
+        }
+        let reason = error.to_string();
+        for &index in indices {
+            if self.routes[index].active {
+                (self.emit)(index, Err(DriverError::Read(format!("{name}: {reason}"))))?;
+                self.routes[index].active = false;
+            }
+        }
+        Ok(())
+    }
+
+    fn complete_member(
+        &mut self,
+        member: usize,
+        indices: &[usize],
+        byte_position: u64,
+    ) -> Result<(), DriverError> {
         for &index in indices {
             if self.routes[index].active {
                 self.routes[index].cursor.order_offset = self.routes[index]
@@ -547,6 +611,7 @@ impl Context<'_, '_> {
         part_offset: u64,
         bytes: &[u8],
         ranges: &[(usize, usize)],
+        details: Option<&serde_json::Map<String, Value>>,
     ) -> Result<(), DriverError> {
         let eligible: Vec<usize> = indices
             .iter()
@@ -588,10 +653,13 @@ impl Context<'_, '_> {
             } else {
                 name.to_owned()
             };
-            let manifest = sinex_model::Manifest::from_json(json!({"role": "records",
+            let mut manifest = sinex_model::Manifest::from_json(json!({"role": "records",
                 "source_container": self.capture.container, "path": state.driver.path, "host": state.driver.host,
                 "framing": state.driver.framing.name(), "records": records, "order_base": after.capture.reading_order_base.saturating_add(i64::try_from(after.order_offset.saturating_add(part_offset)).unwrap_or(i64::MAX)),
                 "members": [{"path": path, "member_index": member, "member_duplicate": self.member_duplicate, "stream_offset": 0, "length": bytes.len(), "record_start": after.part_start}]}));
+            if let Some(details) = details {
+                manifest.details.extend(details.clone());
+            }
             let acquired = Acquired {
                 memory: None,
                 input: state.driver.input(),

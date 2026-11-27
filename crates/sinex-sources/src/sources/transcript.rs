@@ -1,7 +1,7 @@
 //! Explicit transcript imports. Relative offsets are never receipt timestamps.
 use query_language::number::Decimal;
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, value::RawValue};
 use sinex_model::event_types::imported_text::TranscriptCue;
 use sinex_model::{Class, Timestamp};
 use sinex_source_core::binding::{Binding, Settings};
@@ -32,7 +32,14 @@ pub const CUE_FRAMING: Framing = Framing::Custom {
     name: "cue-blocks",
     frame: framing::frame,
 };
-pub const JSON_FRAMING: Framing = Framing::Whole;
+const JSON_FRAMING: Framing = Framing::IndexedDocument {
+    name: "transcript-cues",
+    index: framing::json,
+};
+const WHISPER_FRAMING: Framing = Framing::IndexedDocument {
+    name: "whisper-segments",
+    index: framing::whisper,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Format {
@@ -58,16 +65,14 @@ pub const fn spec(parser: &'static str, framing: Framing, frame: Frame) -> Sourc
         ..SourceSpec::DEFAULT
     }
 }
-pub const JSON: SourceSpec = spec(
-    "transcript-json",
-    Framing::Whole,
-    sinex_source_core::drivers::export_archive::frame_whole,
-);
-pub const WHISPER: SourceSpec = spec(
-    "whisper-json",
-    Framing::Whole,
-    sinex_source_core::drivers::export_archive::frame_whole,
-);
+pub const JSON: SourceSpec = SourceSpec {
+    parser_version: 2,
+    ..spec("transcript-json", JSON_FRAMING, framing::frame_json)
+};
+pub const WHISPER: SourceSpec = SourceSpec {
+    parser_version: 2,
+    ..spec("whisper-json", WHISPER_FRAMING, framing::frame_whisper)
+};
 pub const TEXT: SourceSpec = spec(
     "transcript-text",
     Framing::Lines,
@@ -104,6 +109,14 @@ pub struct TranscriptParser {
     pub format: Format,
     pub input: String,
 }
+const DOCUMENT_DEFAULTS: &[&str] = &[
+    "language",
+    "model",
+    "external_run",
+    "recording_started_at",
+    "confidence_scale",
+];
+
 impl TranscriptParser {
     fn parse_item(
         &self,
@@ -137,13 +150,7 @@ impl TranscriptParser {
                     }
                 }
                 let defaults = context.manifest.detail("file_metadata").as_object();
-                for key in [
-                    "language",
-                    "model",
-                    "external_run",
-                    "recording_started_at",
-                    "confidence_scale",
-                ] {
+                for &key in DOCUMENT_DEFAULTS {
                     if !object.contains_key(key)
                         && let Some(value) = defaults.and_then(|m| m.get(key))
                     {
@@ -390,7 +397,7 @@ input_format! { pub JSON_FORMAT = "transcript-json" {
     discovery: discovery::spec(true),
     discover: discovery::discover,
     plan: |input, settings| plan(&JSON, input, settings),
-    reader: |b| Ok(archive(b, Framing::Whole)),
+    reader: |b| Ok(archive(b, JSON_FRAMING)),
 } }
 
 input_format! { pub WHISPER_FORMAT = "whisper-json" {
@@ -399,7 +406,7 @@ input_format! { pub WHISPER_FORMAT = "whisper-json" {
     discovery: discovery::spec(true),
     discover: discovery::discover,
     plan: |input, settings| plan(&WHISPER, input, settings),
-    reader: |b| Ok(archive(b, JSON_FRAMING)),
+    reader: |b| Ok(archive(b, WHISPER_FRAMING)),
 } }
 
 input_format! { pub TEXT_FORMAT = "transcript-text" {
@@ -437,15 +444,52 @@ impl Parser for TranscriptParser {
     type Carry = Carry;
     type Payload = TranscriptCue;
 
+    fn record_hash(&self, raw: &[u8], context: &RecordContext<'_>) -> [u8; 32] {
+        let hash = blake3::hash(raw);
+        let defaults = context.manifest.detail("file_metadata");
+        if !matches!(self.format, Format::Json | Format::Whisper) || defaults.is_null() {
+            return *hash.as_bytes();
+        }
+        let mut reading = blake3::Hasher::new();
+        reading.update(hash.as_bytes());
+        reading.update(defaults.to_string().as_bytes());
+        *reading.finalize().as_bytes()
+    }
+
     fn parse(
         &self,
         record: &&[u8],
         carry: &Carry,
         context: &RecordContext<'_>,
     ) -> Result<(Vec<TranscriptCue>, Carry), RecordError> {
-        if !matches!(self.format, Format::Json | Format::Whisper) {
-            return self.parse_item(record, carry, context);
+        if matches!(self.format, Format::Json | Format::Whisper) {
+            if context.manifest.detail("file_framing_failed").as_bool() == Some(true) {
+                let index = if self.format == Format::Whisper {
+                    framing::whisper(record)
+                } else {
+                    framing::json(record)
+                };
+                return Err(index.err().unwrap_or_else(|| {
+                    RecordError::new("stored document has no usable cue index")
+                }));
+            }
+            // Version 1 material has one stored location and several output
+            // ordinals. Keep those locations when replaying it.
+            if context.manifest.detail("framing").as_str() == Some("whole") {
+                return self.parse_whole_document(record, carry, context);
+            }
         }
+        self.parse_item(record, carry, context)
+    }
+}
+
+impl TranscriptParser {
+    fn parse_whole_document(
+        &self,
+        record: &[u8],
+        carry: &Carry,
+        context: &RecordContext<'_>,
+    ) -> Result<(Vec<TranscriptCue>, Carry), RecordError> {
         let (records, defaults) = json_records(record, self.format == Format::Whisper)?;
         let mut manifest = context.manifest.clone();
         manifest.details.insert("file_metadata".into(), defaults);
@@ -454,7 +498,7 @@ impl Parser for TranscriptParser {
             member: context.member,
         };
         let mut output = Vec::with_capacity(records.len());
-        for record in &records {
+        for record in records {
             let carry = Carry {
                 member: Carry::default().at(&context).member,
                 header: None,
@@ -465,34 +509,22 @@ impl Parser for TranscriptParser {
     }
 }
 
-/// JSON members remain one record, so output indexes and defaults replay together.
 pub(super) fn json_records(
     bytes: &[u8],
     nested: bool,
 ) -> Result<(Vec<Vec<u8>>, Value), RecordError> {
-    use serde_json::value::RawValue;
-    let (rows, defaults) = if nested {
-        let mut object: Map<String, Value> = Map::new();
-        let mut raw: std::collections::BTreeMap<String, Box<RawValue>> =
-            serde_json::from_slice(bytes).record("imported JSON")?;
-        let rows = raw
-            .remove("segments")
-            .record("imported JSON needs segments")?;
-        for (key, value) in raw {
+    let (rows, defaults) = borrowed_json_records(bytes, nested)?;
+    let defaults = if nested {
+        let mut object = Map::new();
+        for (key, value) in defaults {
             object.insert(
                 key,
                 serde_json::from_str(value.get()).record("imported JSON")?,
             );
         }
-        (
-            serde_json::from_str::<Vec<Box<RawValue>>>(rows.get()).record("imported JSON")?,
-            Value::Object(object),
-        )
+        Value::Object(object)
     } else {
-        (
-            serde_json::from_slice::<Vec<Box<RawValue>>>(bytes).record("imported JSON")?,
-            Value::Null,
-        )
+        Value::Null
     };
     Ok((
         rows.into_iter()
@@ -500,6 +532,30 @@ pub(super) fn json_records(
             .collect(),
         defaults,
     ))
+}
+
+type RawFields<'a> = std::collections::BTreeMap<String, &'a RawValue>;
+
+fn borrowed_json_records(
+    bytes: &[u8],
+    nested: bool,
+) -> Result<(Vec<&RawValue>, RawFields<'_>), RecordError> {
+    let (rows, defaults) = if nested {
+        let mut defaults: RawFields<'_> = serde_json::from_slice(bytes).record("imported JSON")?;
+        let rows = defaults
+            .remove("segments")
+            .record("imported JSON needs segments")?;
+        (
+            serde_json::from_str::<Vec<&RawValue>>(rows.get()).record("imported JSON")?,
+            defaults,
+        )
+    } else {
+        (
+            serde_json::from_slice::<Vec<&RawValue>>(bytes).record("imported JSON")?,
+            RawFields::new(),
+        )
+    };
+    Ok((rows, defaults))
 }
 
 fn decimal_text(value: Option<&str>) -> Result<Option<String>, RecordError> {

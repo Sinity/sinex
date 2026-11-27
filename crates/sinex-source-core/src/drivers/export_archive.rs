@@ -14,6 +14,13 @@ use std::path::PathBuf;
 /// Complete record ranges and the decided byte end, given true EOF or a buffer prefix.
 pub type RecordFramer = fn(&[u8], bool) -> (Vec<(usize, usize)>, usize);
 
+/// Records and defaults read from one complete document. Ranges refer to
+/// the retained document bytes, including any wrapper and metadata.
+pub struct DocumentIndex {
+    pub records: Vec<(usize, usize)>,
+    pub metadata: std::collections::BTreeMap<&'static str, (usize, usize)>,
+}
+
 /// How records are framed inside one member (or a plain file).
 #[derive(Clone, Copy, Debug)]
 pub enum Framing {
@@ -34,6 +41,11 @@ pub enum Framing {
     Mbox,
     /// The whole member is one record.
     Whole,
+    /// Keep the exact member and index its records without packing them.
+    IndexedDocument {
+        name: &'static str,
+        index: fn(&[u8]) -> Result<DocumentIndex, crate::RecordError>,
+    },
     /// A record starts at each occurrence of this byte pattern and runs to the
     /// next (an HTML export's repeated cell); bytes before the first are not a
     /// record.
@@ -50,6 +62,9 @@ impl PartialEq for Framing {
             (Self::JsonArray(a), Self::JsonArray(b)) => a == b,
             (Self::Delimited(a), Self::Delimited(b)) => a == b,
             (Self::Custom { name: a, .. }, Self::Custom { name: b, .. }) => a == b,
+            (Self::IndexedDocument { name: a, .. }, Self::IndexedDocument { name: b, .. }) => {
+                a == b
+            }
             _ => false,
         }
     }
@@ -62,6 +77,7 @@ impl Framing {
     fn name(self) -> String {
         match self {
             Self::Custom { name, .. } => name.into(),
+            Self::IndexedDocument { name, .. } => name.into(),
             Self::Lines => "lines".into(),
             Self::JsonArray(p) => format!("json-array:{p}"),
             Self::Csv => "csv".into(),
@@ -88,6 +104,11 @@ impl Framing {
             Self::Mbox => mbox(bytes, eof),
             Self::Whole if bytes.is_empty() => (vec![], 0),
             Self::Whole => (vec![(0, bytes.len())], bytes.len()),
+            Self::IndexedDocument { .. } if !eof || bytes.is_empty() => (vec![], 0),
+            Self::IndexedDocument { index, .. } => (
+                index(bytes).map_or_else(|_| vec![(0, bytes.len())], |doc| doc.records),
+                bytes.len(),
+            ),
             Self::Delimited(delimiter) => delimited(bytes, delimiter, eof),
         }
     }

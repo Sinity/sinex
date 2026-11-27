@@ -263,6 +263,7 @@ struct Pending<C> {
 pub struct Drainer<'a, P: Parser> {
     parser: &'a P,
     input: DrainInput<'a>,
+    manifest: std::borrow::Cow<'a, Manifest>,
     next: usize,
     carry: P::Carry,
     pending: Option<Pending<P::Carry>>,
@@ -291,9 +292,11 @@ impl<'a, P: Parser> Drainer<'a, P> {
             serde_json::from_value(input.carry.clone())
                 .record("stored parser carry does not decode")?
         };
+        let manifest = document_metadata(input.manifest, &input.bytes)?;
         Ok(Self {
             parser,
             input,
+            manifest,
             next: 0,
             carry,
             pending: None,
@@ -305,8 +308,8 @@ impl<'a, P: Parser> Drainer<'a, P> {
     /// Parse one record into its outcome, advancing the carry on success.
     fn outcome(&mut self, raw: &[u8], start: usize) -> RecordOutcome {
         let context = RecordContext {
-            manifest: self.input.manifest,
-            member: self.input.manifest.member_at(start),
+            manifest: &self.manifest,
+            member: self.manifest.member_at(start),
         };
         let parsed = parse_one(self.parser, raw, &self.carry, &context);
         let hash = record_hash(self.parser, raw, &context);
@@ -319,8 +322,8 @@ impl<'a, P: Parser> Drainer<'a, P> {
         end: usize,
     ) -> std::io::Result<Option<RecordOutcome>> {
         let context = RecordContext {
-            manifest: self.input.manifest,
-            member: self.input.manifest.member_at(start),
+            manifest: &self.manifest,
+            member: self.manifest.member_at(start),
         };
         let mut reader = std::io::BufReader::with_capacity(
             (end - start).clamp(1, 65536),
@@ -423,6 +426,32 @@ impl<'a, P: Parser> Drainer<'a, P> {
             }
         }
     }
+}
+
+/// Defaults are read from the opened material, so a sealed member's contents
+/// never have to be copied into its stored manifest.
+fn document_metadata<'a>(
+    manifest: &'a Manifest,
+    bytes: &RecordBytes<'_>,
+) -> Result<std::borrow::Cow<'a, Manifest>, RecordError> {
+    let Some(ranges) = manifest.details.get("file_metadata_ranges") else {
+        return Ok(std::borrow::Cow::Borrowed(manifest));
+    };
+    let ranges: std::collections::BTreeMap<String, (usize, usize)> =
+        serde_json::from_value(ranges.clone()).record("invalid document metadata index")?;
+    let mut defaults = serde_json::Map::new();
+    for (key, (start, end)) in ranges {
+        let raw = bytes
+            .record(start, end)
+            .record("read document metadata range")?;
+        let value = serde_json::from_slice(&raw).record("read document metadata")?;
+        defaults.insert(key, value);
+    }
+    let mut opened = manifest.clone();
+    opened
+        .details
+        .insert("file_metadata".into(), Value::Object(defaults));
+    Ok(std::borrow::Cow::Owned(opened))
 }
 
 pub(crate) fn record_hash<P: Parser>(

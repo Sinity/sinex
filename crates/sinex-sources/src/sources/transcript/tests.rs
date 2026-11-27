@@ -1,19 +1,42 @@
 use super::*;
 use sinex_model::{EventPayload, KeyKind, Manifest, RecordOutcome};
 fn read(format: Format, text: &[u8]) -> Result<Vec<TranscriptCue>, RecordError> {
-    TranscriptParser {
+    let parser = TranscriptParser {
         format,
         input: "example-input".into(),
+    };
+    let index = match format {
+        Format::Json => framing::json(text)?,
+        Format::Whisper => framing::whisper(text)?,
+        _ => {
+            return parser
+                .parse(&text, &Carry::default(), &RecordContext::none())
+                .map(|p| p.0);
+        }
+    };
+    let metadata: Map<String, Value> = index
+        .metadata
+        .into_iter()
+        .map(|(key, (start, end))| {
+            (
+                key.to_owned(),
+                serde_json::from_slice(&text[start..end]).unwrap(),
+            )
+        })
+        .collect();
+    let manifest = Manifest::from_json(serde_json::json!({"file_metadata":metadata}));
+    let context = RecordContext {
+        manifest: &manifest,
+        member: None,
+    };
+    let mut rows = Vec::new();
+    let mut carry = Carry::default();
+    for (start, end) in index.records {
+        let (parsed, next) = parser.parse(&&text[start..end], &carry, &context)?;
+        rows.extend(parsed);
+        carry = next;
     }
-    .parse(
-        &text,
-        &Carry::default(),
-        &RecordContext {
-            manifest: &Manifest::default(),
-            member: None,
-        },
-    )
-    .map(|p| p.0)
+    Ok(rows)
 }
 #[devkit::test]
 fn whisper_keeps_written_decimals_and_supplied_defaults() {
@@ -48,7 +71,7 @@ fn decimal_millisecond_estimates_are_checked() {
     assert!(decimal_ms("1.5", 0).is_err());
 }
 #[devkit::test]
-fn malformed_json_is_a_whole_record_failure() {
+fn malformed_transcript_records_are_refused() {
     for text in [
         br#"[{"text":5}]"#.as_slice(),
         br#"[{"start_ms":0}]"#,
@@ -224,13 +247,14 @@ fn every_import_format_reads_stored_bytes_with_its_registered_parser() {
             assert!(events.iter().all(|e| e.payload["model"] == "example-model"));
             let (first, index) = events[0].location().unwrap();
             let (second, next) = events[1].location().unwrap();
-            assert_eq!(first, second);
-            assert_eq!((index, next), (0, 1));
+            assert_eq!(first.material, second.material);
+            assert!(first.record_offset < second.record_offset);
+            assert_eq!((index, next), (0, 0));
         }
     }
 }
 #[devkit::test]
-fn whole_json_supports_sealed_routes_and_completed_cursor_restart() {
+fn indexed_json_supports_sealed_routes_and_completed_cursor_restart() {
     use sinex_source_core::{MaterialSink, shared_pass::SharedPass};
     let bytes = include_bytes!("../../../tests/sources/imported-text/whisper.json");
     let sink = Sink::default();
@@ -239,7 +263,7 @@ fn whole_json_supports_sealed_routes_and_completed_cursor_restart() {
         path: "/example/whisper.json".into(),
         host: "example".into(),
         select: |_| true,
-        framing: Framing::Whole,
+        framing: WHISPER_FRAMING,
         part_bytes: 1,
     };
     let mut cursor = Value::Null;
@@ -261,17 +285,20 @@ fn whole_json_supports_sealed_routes_and_completed_cursor_restart() {
                 {
                     deliveries += 1;
                     cursor = (material.cursor_at)(material.records.last().unwrap().1)?;
+                    assert_eq!(material.records.len(), 2);
+                    let (start, end): (usize, usize) = serde_json::from_value(
+                        material.manifest.detail("file_metadata_ranges")["model"].clone(),
+                    )
+                    .unwrap();
+                    assert_eq!(&bytes[start..end], br#""example-model""#);
+                    assert!(material.manifest.detail("file_metadata").is_null());
                     assert_eq!(
-                        read(
-                            Format::Whisper,
-                            &material
-                                .record_bytes()
-                                .record(material.records[0].0, material.records[0].1)
-                                .unwrap()
-                        )
-                        .unwrap()
-                        .len(),
-                        2
+                        material
+                            .record_bytes()
+                            .record(0, bytes.len())
+                            .unwrap()
+                            .as_ref(),
+                        bytes
                     );
                 }
                 Ok(true)
@@ -370,7 +397,7 @@ fn archived_provider_ids_are_scoped_to_the_member_path() {
     let read = |path: &str| {
         parser
             .parse(
-                &br#"[{"id":"same","text":"same"}]"#.as_slice(),
+                &br#"{"id":"same","text":"same"}"#.as_slice(),
                 &Carry::default(),
                 &RecordContext {
                     manifest: &manifest,

@@ -260,6 +260,15 @@ async fn malformed_transcript_cue_leaves_neighboring_cues_at_their_original_offs
         assert_eq!(report.events_read, 2);
         assert_eq!(report.failures, 1);
         assert_eq!(readings(&mut ctx.read_conn, locator).await, before);
+        let failed_offsets: Vec<i64> = sqlx::query_scalar(
+            "SELECT DISTINCT f.record_offset FROM raw.failures f \
+             JOIN raw.materials m ON m.id=f.material_id WHERE m.manifest->>'path'=$1",
+        )
+        .bind(locator)
+        .fetch_all(&mut ctx.read_conn)
+        .await
+        .unwrap();
+        assert_eq!(failed_offsets, [bad]);
     }
     ctx.close().await.unwrap();
 }
