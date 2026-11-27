@@ -233,6 +233,8 @@ impl ShutdownFixture {
     fn new(database: String) -> Self {
         let root = tempfile::tempdir().unwrap();
         std::fs::create_dir(root.path().join("tokens")).unwrap();
+        let history = root.path().join("history");
+        std::fs::File::create(&history).unwrap();
         let excluded: serde_json::Map<String, serde_json::Value> = sinex_sources::sources::specs()
             .iter()
             .filter(|source| source.name != "terminal.zsh-history")
@@ -243,11 +245,17 @@ impl ShutdownFixture {
                 )
             })
             .collect();
+        // Only the history readings belong in the expected confirmed stream.
+        let mut derivations = crate::support::daemon::derivations();
+        for enabled in derivations.values_mut() {
+            *enabled = false.into();
+        }
         std::fs::write(
             root.path().join("sources.json"),
             serde_json::to_vec(&serde_json::json!({
                 "exclude": excluded,
-                "discovery": {"inputs": {"zsh": [root.path().join("history")]}}
+                "discovery": {"inputs": {"zsh": [history]}},
+                "derivations": derivations
             }))
             .unwrap(),
         )
@@ -259,7 +267,6 @@ impl ShutdownFixture {
         use std::io::Write;
 
         std::fs::OpenOptions::new()
-            .create(true)
             .append(true)
             .open(self.root.path().join("history"))
             .unwrap()
@@ -376,18 +383,12 @@ async fn sigterm_during_nats_outage_preserves_confirmed_progress() {
     });
 
     let mut conn = PgConnection::connect(&fixture.database).await.unwrap();
+    let js = async_nats::jetstream::new(async_nats::connect(nats.url()).await.unwrap());
+    let subjects = Subjects::new(nats.prefix());
+    let stream_name = subjects.confirmed_stream();
     let daemon = fixture.start(&proxy_url, nats.prefix(), "outage").await;
     tokio::time::timeout(Duration::from_secs(15), async {
-        loop {
-            let initialized: bool = sqlx::query_scalar(
-                "SELECT EXISTS (SELECT 1 FROM core.consumer_positions WHERE consumer LIKE 'publisher/%')",
-            )
-            .fetch_one(&mut conn)
-            .await
-            .unwrap();
-            if initialized {
-                break;
-            }
+        while js.get_stream(&stream_name).await.is_err() {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     })
@@ -442,9 +443,7 @@ async fn sigterm_during_nats_outage_preserves_confirmed_progress() {
     .await
     .expect("publisher advanced after restart");
 
-    let js = async_nats::jetstream::new(async_nats::connect(nats.url()).await.unwrap());
-    let subjects = Subjects::new(nats.prefix());
-    let stream = js.get_stream(subjects.confirmed_stream()).await.unwrap();
+    let stream = js.get_stream(&stream_name).await.unwrap();
     let state = &stream.cached_info().state;
     let mut seen = Vec::new();
     for seq in state.first_sequence..=state.last_sequence {
