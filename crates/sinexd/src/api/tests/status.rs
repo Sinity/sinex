@@ -91,7 +91,10 @@ async fn status_runs_no_count_over_events(db: devkit::pg::TestDatabase) {
     .unwrap();
     let populated = observed_statements(&world).await;
     assert_eq!(populated, empty);
-    for relation in ["core.coverage_readings", "core.visible_fusion_counts"] {
+    for relation in [
+        "core.visible_coverage_readings",
+        "core.visible_fusion_counts",
+    ] {
         assert!(
             populated.iter().any(|sql| sql.contains(relation)),
             "{relation}"
