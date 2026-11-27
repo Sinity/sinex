@@ -9,16 +9,31 @@ use sqlx::PgConnection;
 /// The search read model's consumer name.
 pub const SEARCH_TEXT: &str = "read.search_text";
 
-/// Serialize search writes and tombstone deletion for the caller's transaction.
-pub(crate) async fn lock_search_updates(conn: &mut PgConnection) -> Result<()> {
-    // Distinct from the database writer's advisory lock. Maintenance does
-    // not need this lock because it cannot reinsert a deleted event.
-    const SEARCH_UPDATE_LOCK: i64 = 0x7369_6e65_7853_5243;
-    sqlx::query("SELECT pg_advisory_xact_lock($1)")
-        .bind(SEARCH_UPDATE_LOCK)
+// Distinct from the database writer's advisory lock. Index maintenance
+// does not need this lock because it cannot reinsert a deleted event.
+const SEARCH_UPDATE_LOCK: i64 = 0x7369_6e65_7853_5243;
+
+/// Reserve the indexes whose readers could restore deleted data. A busy
+/// index never makes the writer wait. The caller rolls back on false;
+/// PostgreSQL aborts the transaction if the vector table lock is busy.
+pub(crate) async fn try_lock_for_tombstone(conn: &mut PgConnection) -> Result<bool> {
+    if !sqlx::query_scalar!(
+        r#"SELECT pg_try_advisory_xact_lock($1) AS "locked!""#,
+        SEARCH_UPDATE_LOCK,
+    )
+    .fetch_one(&mut *conn)
+    .await?
+    {
+        return Ok(false);
+    }
+    match sqlx::query("LOCK TABLE core.embedding_vectors IN SHARE ROW EXCLUSIVE MODE NOWAIT")
         .execute(conn)
-        .await?;
-    Ok(())
+        .await
+    {
+        Ok(_) => Ok(true),
+        Err(sqlx::Error::Database(error)) if error.code().as_deref() == Some("55P03") => Ok(false),
+        Err(error) => Err(error.into()),
+    }
 }
 
 /// How far search has indexed. The position lives in `core.search_position`,
@@ -89,7 +104,10 @@ pub async fn apply_search_text(conn: &mut PgConnection, events: &[Committed]) ->
         return Ok(());
     }
     // Serialize with tombstoning so a delayed page cannot restore removed text.
-    lock_search_updates(conn).await?;
+    sqlx::query("SELECT pg_advisory_xact_lock($1)")
+        .bind(SEARCH_UPDATE_LOCK)
+        .execute(&mut *conn)
+        .await?;
     sqlx::query!(
         r#"INSERT INTO core.search_text AS stored (event_id, part, text, trigram)
            SELECT input.event_id, input.part, input.text, input.trigram

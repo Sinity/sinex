@@ -1748,7 +1748,7 @@ async fn lifecycle_step(
         }
     };
     match &step {
-        Step::Refused { .. } => tx.rollback().await?,
+        Step::ReadModelsBusy | Step::Refused { .. } => tx.rollback().await?,
         Step::Moved { remove, .. } => {
             if let Err(error) = refresh_read_models(&mut tx, since).await {
                 tx.rollback().await?;

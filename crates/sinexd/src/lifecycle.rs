@@ -268,15 +268,18 @@ async fn drive(
             }
             result => result?,
         };
-        pending.drain(..pending.len().min(roots as usize));
         let held = completed.held;
         match completed.step {
+            Step::ReadModelsBusy => {
+                tokio::time::sleep(lifecycle::READ_MODEL_RETRY_INTERVAL).await;
+            }
             Step::Moved {
                 progress: saved,
                 counts,
                 done,
                 ..
             } => {
+                pending.drain(..pending.len().min(roots as usize));
                 total.add(&counts);
                 progress = saved;
                 if done {

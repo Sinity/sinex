@@ -113,13 +113,14 @@ async fn a_search_page_does_not_hold_the_writer_behind_a_tombstone(db: devkit::p
 
     // Keep the real search transaction open until the writer has processed
     // the attempted tombstone and then admitted an unrelated live event.
-    tokio::time::timeout(
+    let attempt = tokio::time::timeout(
         std::time::Duration::from_secs(5),
         writer.lifecycle_step(&operation, lifecycle::Roots::Query(1)),
     )
     .await
     .expect("the writer waited on the search transaction")
     .unwrap();
+    assert!(matches!(attempt.step, Step::ReadModelsBusy));
     assert!(
         lifecycle::recorded(&mut read, operation.id)
             .await
@@ -132,6 +133,34 @@ async fn a_search_page_does_not_hold_the_writer_behind_a_tombstone(db: devkit::p
         .unwrap();
     assert_eq!(live(&mut read).await, 1);
     updating.commit().await.unwrap();
+    let search_rows: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM core.search_text WHERE event_id = $1")
+            .bind(id.0)
+            .fetch_one(&mut read)
+            .await
+            .unwrap();
+    assert!(search_rows > 0);
+
+    let mut vectors = search.begin().await.unwrap();
+    sqlx::query("LOCK TABLE core.embedding_vectors IN SHARE ROW EXCLUSIVE MODE")
+        .execute(&mut *vectors)
+        .await
+        .unwrap();
+    let attempt = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        writer.lifecycle_step(&operation, lifecycle::Roots::Query(1)),
+    )
+    .await
+    .expect("the writer waited on the embedding transaction")
+    .unwrap();
+    assert!(matches!(attempt.step, Step::ReadModelsBusy));
+    assert!(
+        lifecycle::recorded(&mut read, operation.id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    vectors.rollback().await.unwrap();
 
     let report = retry(&mut read, &writer, &operation).await.unwrap();
     assert!(

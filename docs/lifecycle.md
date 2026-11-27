@@ -211,7 +211,9 @@ Each bulk writer transaction archives the live members of the selected chains
 and tombstones the entire chains at the same commit position. Live admission
 can run between the transactions. Batch size follows writer hold time, and a
 database statement timeout rolls back a slow batch so it can retry with fewer
-roots. The write reports both transitions and leaves the materials readable.
+roots. When a search or embedding index update holds a conflicting lock, the
+request retries the same roots outside the writer without advancing its saved
+position. The write reports both transitions and leaves the materials readable.
 It keeps the usual tombstone skeletons and provenance edges so earlier
 citations still resolve. PostgreSQL may retain freed space for reuse, so file
 sizes need not fall when the rows leave.

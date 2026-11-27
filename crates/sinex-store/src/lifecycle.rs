@@ -35,6 +35,7 @@ use sinex_model::lifecycle::{Act, OperationResult, Scope};
 use sinex_model::{ArchiveReason, DbCheck, OperationId};
 use sqlx::PgConnection;
 use std::collections::{BTreeMap, HashSet};
+use std::time::Duration;
 use uuid::Uuid;
 
 mod bytes;
@@ -43,6 +44,9 @@ mod owned_blobs;
 mod select;
 pub use bytes::remove_unreferenced;
 pub(crate) use owned_blobs::respect_released_blobs;
+
+/// Retry a batch outside the writer after an index update has held it back.
+pub const READ_MODEL_RETRY_INTERVAL: Duration = Duration::from_millis(250);
 pub use owned_blobs::{OwnedBlobRelease, owned_blob_removed, release_owned_blob};
 
 /// An operation as the engine runs it.
@@ -115,6 +119,9 @@ pub struct Refusal {
 /// What one batch did.
 #[derive(Debug)]
 pub enum Step {
+    /// An index update holds a conflicting lock. Roll back and resubmit the
+    /// same roots. No progress or refusal is recorded.
+    ReadModelsBusy,
     Moved {
         progress: Progress,
         counts: Counts,
@@ -413,10 +420,7 @@ pub fn material_only_roots<'a>(
 }
 
 /// Limit each statement in the current writer transaction.
-pub async fn set_batch_statement_timeout(
-    conn: &mut PgConnection,
-    timeout: std::time::Duration,
-) -> Result<()> {
+pub async fn set_batch_statement_timeout(conn: &mut PgConnection, timeout: Duration) -> Result<()> {
     sqlx::query!(
         "SELECT set_config('statement_timeout', $1, true)",
         format!("{}ms", timeout.as_millis()),
@@ -427,7 +431,7 @@ pub async fn set_batch_statement_timeout(
 }
 
 /// Run one batch of `op` inside the caller's transaction: at most `roots`
-/// roots and their chains. On a refusal the caller rolls back.
+/// roots and their chains. On a refusal or busy read model the caller rolls back.
 pub async fn step(
     conn: &mut PgConnection,
     op: &Operation,
@@ -444,6 +448,9 @@ pub async fn step(
                 refusals,
             });
         }
+    }
+    if op.act == Act::Tombstone && !crate::read_models::try_lock_for_tombstone(conn).await? {
+        return Ok(Step::ReadModelsBusy);
     }
     let material_only = matches!(op.scope, Scope::MaterialOnly { .. });
     let seq = position(conn).await?;
@@ -683,6 +690,10 @@ pub async fn run_on(
     loop {
         let mut tx = conn.begin().await?;
         match step(&mut tx, op, progress, Roots::Query(roots), keys).await? {
+            Step::ReadModelsBusy => {
+                tx.rollback().await?;
+                tokio::time::sleep(READ_MODEL_RETRY_INTERVAL).await;
+            }
             Step::Moved {
                 progress: saved,
                 counts,
