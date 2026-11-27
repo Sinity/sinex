@@ -63,6 +63,7 @@ pub struct Member {
 /// second, which is why the record, not the text and time, identifies it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(version = 3, type = "command.fused",
+    index_text = words_and_trigram,
     key = ["record"],
     replace = newer,
     time = started_at,
@@ -96,6 +97,7 @@ pub struct CommandFused {
 /// identify it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(version = 4, type = "mail.fused",
+    index_text = words_and_trigram,
     key = ["record"],
     replace = newer,
     time = sent_at,

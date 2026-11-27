@@ -935,13 +935,23 @@ pub(super) fn stored_bytes(before: &Value, after: &Value, events: u64) -> Value 
 pub(super) fn query_probes(cluster: &Cluster, out: &Path) -> Result<Value, String> {
     let mut observations = Vec::new();
     for (kind, shape, pattern) in [
-        ("command", "prefix", "(^| )echo synthetic 12345"),
-        ("journal", "prefix", "(^| )synthetic café record 12345"),
+        ("command", "prefix", "echo <-> synthetic <-> 1234:*"),
+        (
+            "journal",
+            "prefix",
+            "synthetic <-> café <-> record <-> 1234:*",
+        ),
         ("command", "regex", "synthetic (12|34)[0-9]+$"),
         ("journal", "regex", "café record (12|34)[0-9]+ "),
     ] {
-        let from = "SELECT s.event_id FROM core.visible_search_trigram s WHERE s.text ~ $1::text UNION ALL SELECT s.event_id FROM core.visible_search_text s WHERE s.text ~ $1::text AND NOT EXISTS (SELECT 1 FROM core.visible_search_trigram t WHERE t.event_id=s.event_id)";
-        let sql = format!("SELECT count(*) FROM ({from}) matches");
+        let predicate = if shape == "prefix" {
+            "s.tsv @@ to_tsquery('simple', $1::text)"
+        } else {
+            "s.trigram AND s.text ~ $1::text"
+        };
+        let sql = format!(
+            "SELECT count(DISTINCT s.event_id) FROM core.visible_search_text s WHERE {predicate}"
+        );
         let literal = sql.replace("$1::text", &format!("'{pattern}'::text"));
         let prefix =
             "BEGIN READ ONLY; SET LOCAL ROLE sinex_reader; SET LOCAL sinex.grants='guarded'; ";
@@ -972,7 +982,7 @@ pub(super) fn query_probes(cluster: &Cluster, out: &Path) -> Result<Value, Strin
         );
     }
     let result = json!({"observations": observations,
-        "scope": "Protected search-view prefix and regex branches after consumer completion; planning is non-executing and latency uses read-only execution plans."});
+        "scope": "Protected search-view word prefixes and trigram regex after consumer completion; planning is non-executing and latency uses read-only execution plans."});
     save(out, "query-probes.json", &result)?;
     Ok(result)
 }

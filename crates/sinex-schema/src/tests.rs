@@ -92,7 +92,7 @@ async fn a_version_without_steps_to_this_one_is_refused_unchanged(db: devkit::pg
 async fn a_forward_step_runs_from_its_version_and_records_the_next(db: devkit::pg::TestDatabase) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     let mut steps = upgrades::STEPS.to_vec();
-    steps.push(upgrades::Step {
+    steps.push(upgrades::Step::Sql {
         name: "synthetic",
         statements: || vec!["CREATE TABLE core.synthetic_step (value integer NOT NULL)".into()],
     });
@@ -459,6 +459,7 @@ async fn copy_fields_upgrade_indexes_only_copy_payloads_including_archived_readi
 mod live_intervals;
 mod output_ranges;
 mod reading_orders;
+mod search_text;
 mod selection;
 
 #[devkit::test]

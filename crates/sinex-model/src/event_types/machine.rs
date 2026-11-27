@@ -9,7 +9,9 @@ use serde_json::{Map, Value};
 /// entry read again (after a capture restart overlaps, or from an export) is
 /// a repeat.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 3, type = "journal.entry", search = words, key = ["cursor"], replace = repeat, time = logged_at, quality = intrinsic)]
+#[event(version = 3, type = "journal.entry", search = words,
+    index_text = words, text_fields = ["message", "unit", "user_unit"],
+    key = ["cursor"], replace = repeat, time = logged_at, quality = intrinsic)]
 pub struct JournalEntry {
     /// `__CURSOR`.
     pub cursor: String,

@@ -231,7 +231,7 @@ pub struct FrameCaptured {
 /// Text read from a screen segment by a local OCR engine. Derived from the
 /// segment's event; recomputed when the engine version changes.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
-#[event(version = 2, type = "screen.text", key = ["segment"], replace = newer, time = started_at, quality = captured)]
+#[event(version = 2, type = "screen.text", index_text = words_and_trigram, key = ["segment"], replace = newer, time = started_at, quality = captured)]
 pub struct ScreenText {
     /// The `media.segment` event this text was read from.
     pub segment: String,

@@ -128,6 +128,10 @@ pub struct NoteDocument {
 
 impl crate::EventPayload for NoteDocument {
     const VERSION: u64 = 4;
+    const SEARCH_FIELDS: Option<crate::kinds::SearchFields> = Some(crate::kinds::SearchFields {
+        mode: crate::kinds::Search::WordsAndTrigram,
+        fields: &[],
+    });
     const EVENT_TYPE: &'static str = "note.document";
     const KEY: crate::KeyKind = crate::KeyKind::Fields(&[
         "host",

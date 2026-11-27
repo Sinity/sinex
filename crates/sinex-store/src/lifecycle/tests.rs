@@ -1491,7 +1491,7 @@ async fn replay_archives_replaced_readings_of_a_material(db: devkit::pg::TestDat
 async fn copies(conn: &mut PgConnection, events: &[uuid::Uuid]) -> (i64, i64, i64, i64, i64) {
     sqlx::query_as(
         "SELECT (SELECT count(*) FROM core.search_text WHERE event_id = ANY($1)),
-                (SELECT count(*) FROM core.search_trigram WHERE event_id = ANY($1)),
+                (SELECT count(*) FROM core.search_text WHERE event_id = ANY($1) AND trigram),
                 (SELECT count(*) FROM core.embedding_vectors WHERE target_id = ANY($1)),
                 (SELECT count(*) FROM derivation.outputs WHERE event_id = ANY($1)),
                 (SELECT count(*) FROM core.library_copy_fields WHERE event_id = ANY($1))",

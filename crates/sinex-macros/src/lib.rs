@@ -11,7 +11,9 @@
 //!     quality = intrinsic,         // TimeQuality variant, snake_case
 //!     removed_when = deleted_at,   // optional `Option<_>` field: Some means removed at source
 //!     keep_known = ["title"],      // optional fields a newer reading does not erase
-//!     search = words,              // optional: none, words or words_and_trigram
+//!     search = words,              // immutable request in the kind registration
+//!     index_text = words,          // opt into the local index
+//!     text_fields = ["command"],   // optional: otherwise all string values
 //!     owns(field = content, size = size, when = stored), // optional: stored bytes the event owns
 //! )]
 //! ```
@@ -167,6 +169,8 @@ fn expand_event_payload(input: &DeriveInput) -> syn::Result<proc_macro2::TokenSt
     let mut event_type: Option<LitStr> = None;
     let mut version: Option<syn::LitInt> = None;
     let mut search: Option<Ident> = None;
+    let mut index_text: Option<Ident> = None;
+    let mut text_fields: Vec<LitStr> = Vec::new();
     let mut key: Option<Key> = None;
     let mut replace: Option<Ident> = None;
     let mut time: Option<Ident> = None;
@@ -184,6 +188,15 @@ fn expand_event_payload(input: &DeriveInput) -> syn::Result<proc_macro2::TokenSt
                 version = Some(value);
             } else if meta.path.is_ident("search") {
                 search = Some(meta.value()?.parse()?);
+            } else if meta.path.is_ident("index_text") {
+                index_text = Some(meta.value()?.parse()?);
+            } else if meta.path.is_ident("text_fields") {
+                let fields;
+                syn::bracketed!(fields in meta.value()?);
+                text_fields = fields
+                    .parse_terminated(|p| p.parse::<LitStr>(), syn::Token![,])?
+                    .into_iter()
+                    .collect();
             } else if meta.path.is_ident("type") {
                 event_type = Some(meta.value()?.parse()?);
             } else if meta.path.is_ident("key") {
@@ -243,6 +256,15 @@ fn expand_event_payload(input: &DeriveInput) -> syn::Result<proc_macro2::TokenSt
     let event_type = event_type.ok_or_else(|| syn::Error::new_spanned(name, "missing `type`"))?;
     let key = key.ok_or_else(|| syn::Error::new_spanned(name, "missing `key`"))?;
     let replace = replace.ok_or_else(|| syn::Error::new_spanned(name, "missing `replace`"))?;
+    if index_text.is_none() && !text_fields.is_empty() {
+        return Err(syn::Error::new_spanned(
+            name,
+            "`text_fields` needs `index_text`",
+        ));
+    }
+    for field in &text_fields {
+        field_type(&Ident::new(&field.value(), field.span()))?;
+    }
 
     let key_tokens = match &key {
         Key::Location => quote!(::sinex_model::KeyKind::Location),
@@ -405,10 +427,33 @@ fn expand_event_payload(input: &DeriveInput) -> syn::Result<proc_macro2::TokenSt
             )
         }
     };
+    let search_fields = match index_text {
+        Some(mode) => {
+            let variant = match mode.to_string().as_str() {
+                "words" => quote!(Words),
+                "words_and_trigram" => quote!(WordsAndTrigram),
+                _ => {
+                    return Err(syn::Error::new_spanned(
+                        mode,
+                        "index_text is `words` or `words_and_trigram`",
+                    ));
+                }
+            };
+            quote! {
+                const SEARCH_FIELDS: Option<::sinex_model::kinds::SearchFields> =
+                    Some(::sinex_model::kinds::SearchFields {
+                        mode: ::sinex_model::kinds::Search::#variant,
+                        fields: &[#(#text_fields),*],
+                    });
+            }
+        }
+        None => quote!(),
+    };
     Ok(quote! {
         impl ::sinex_model::EventPayload for #name {
             #version
             #search
+            #search_fields
             const EVENT_TYPE: &'static str = #event_type;
             const KEY: ::sinex_model::KeyKind = #key_tokens;
             const REPLACE: ::sinex_model::ReplaceRule = #replace_tokens;

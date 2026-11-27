@@ -23,6 +23,7 @@ mod live_intervals;
 mod output_ranges;
 mod query_cursors;
 mod read_boundary;
+mod search_text;
 mod source_declarations;
 mod source_expectations;
 pub use library_copy_fields::EVENT_TYPE as COPY_FIELDS_EVENT_TYPE;
@@ -231,13 +232,8 @@ const VISIBLE_EVENTS: &str = "CREATE VIEW core.visible_events AS SELECT
 FROM core.events e";
 
 const VISIBLE_SEARCH_TEXT: &str =
-    "CREATE VIEW core.visible_search_text AS SELECT s.event_id, s.text, s.tsv
+    "CREATE VIEW core.visible_search_text AS SELECT s.event_id, s.text, s.tsv, s.part, s.trigram
 FROM core.search_text s JOIN core.events e ON e.id = s.event_id
-WHERE core.class_visible(e.class)";
-
-const VISIBLE_SEARCH_TRIGRAM: &str =
-    "CREATE VIEW core.visible_search_trigram AS SELECT s.event_id, s.text
-FROM core.search_trigram s JOIN core.events e ON e.id=s.event_id
 WHERE core.class_visible(e.class)";
 
 /// A vector is readable when both the embedding event and its target are.
@@ -338,7 +334,6 @@ fn grants() -> Vec<String> {
         &[
             "core.visible_events",
             "core.visible_search_text",
-            "core.visible_search_trigram",
             "core.visible_embedding_vectors",
             "core.counters",
             "core.source_counts",
@@ -510,11 +505,7 @@ async fn run_steps(
     let start = usize::try_from(from - upgrades::LANDED_VERSION)
         .expect("an upgrade starts at or after the landed version");
     for (version, step) in (from..).zip(&steps[start..]) {
-        for statement in (step.statements)() {
-            connection.execute(statement.as_str()).await.map_err(|e| {
-                sqlx::Error::Protocol(format!("{e}\nin upgrade step {}: {statement}", step.name))
-            })?;
-        }
+        step.run(connection).await?;
         sqlx::query("INSERT INTO sinex_schema.applied (version) VALUES ($1)")
             .bind(version + 1)
             .execute(&mut *connection)

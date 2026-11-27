@@ -67,7 +67,7 @@ Each source has one declaration in Rust, with its parser and event kinds beside 
 | `expires_after` | where the provider expires its own records (Chromium history: 90 days; recently-played windows; CI logs); drives the [expiry race](#completeness) |
 | `coverage_note` | which periods, accounts or products a material can and cannot contain, beyond `expect` |
 | `required_fields`, `probe`, `runaway_bytes_per_day` | fields every record must carry; an optional probe that checks the input is reachable; the volume above which a day is reported as a runaway |
-| search | `none`, `words` or `words_and_trigram` per event kind; a kind is kept out of the text index by declaring `search: none`, never by matching its name |
+| search | bundled kinds opt in with `index_text` and may name the fields to index. Outside declarations default to `none` and may request `words` or `words_and_trigram` |
 | settings | a typed struct of what a deployment varies: accounts, capture devices and regions, poll intervals; never where the input is |
 | acceptance query | at least one question the source answers, written in the [query language](query.md); it is the source's acceptance test |
 

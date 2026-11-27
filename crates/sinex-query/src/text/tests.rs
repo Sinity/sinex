@@ -12,7 +12,10 @@ fn words_fold_case_and_normalize() {
 #[devkit::test]
 fn payload_text_takes_strings_not_keys() {
     let p = json!({"command": "Cargo test", "cwd": "/src/tide", "exit_code": 1, "tags": ["Fast"]});
-    assert_eq!(payload_text(&p), "cargo test src tide fast");
+    assert_eq!(
+        sinex_model::search_text::text(&p, &[]),
+        "cargo test src tide fast"
+    );
 }
 
 #[devkit::test]

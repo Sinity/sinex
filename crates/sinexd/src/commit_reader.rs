@@ -174,8 +174,7 @@ pub(crate) fn read_models() -> Vec<Box<dyn ReadModel>> {
     vec![Box::new(SearchText), Box::new(EmbeddingVectors)]
 }
 
-/// The full-text read model `core.search_text`: every event's payload text,
-/// normalized, for the query language's words.
+/// The text index of events whose kind is searchable.
 struct SearchText;
 
 impl ReadModel for SearchText {
@@ -183,8 +182,8 @@ impl ReadModel for SearchText {
         sinex_store::read_models::SEARCH_TEXT
     }
 
-    fn wants(&self, _event_type: &str) -> bool {
-        true
+    fn wants(&self, event_type: &str) -> bool {
+        sinex_model::event_types::find(event_type).is_none_or(|kind| kind.search_fields.is_some())
     }
 
     fn apply<'a>(

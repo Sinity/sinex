@@ -66,7 +66,11 @@ pub struct OwnedBlob {
 
 pub trait EventPayload: Serialize + DeserializeOwned + Send + Sync + 'static {
     const VERSION: u64 = 1;
+    /// Immutable request saved with the kind and its source registrations.
     const SEARCH: crate::kinds::Search = crate::kinds::Search::WordsAndTrigram;
+    /// The running store's text index for this bundled kind. An empty field
+    /// list includes every string in the payload.
+    const SEARCH_FIELDS: Option<crate::kinds::SearchFields> = None;
     /// The stored event type, such as `command.executed`.
     const EVENT_TYPE: &'static str;
     /// The declared equivalence key. A record that lacks those fields is

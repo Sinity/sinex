@@ -34,7 +34,7 @@ fn required_words(filter: &Expr) -> Option<&Words> {
     let mut remaining = vec![filter];
     while let Some(filter) = remaining.pop() {
         match filter {
-            Expr::Words(words) if !words.prefix => return Some(words),
+            Expr::Words(words) => return Some(words),
             Expr::And(left, right) => remaining.extend([right.as_ref(), left.as_ref()]),
             _ => {}
         }
@@ -640,10 +640,6 @@ impl<'c> Compiler<'c> {
             internal.push("_rank".into());
         }
 
-        if self.indexed_words {
-            internal.push("_search_tsv".into());
-        }
-
         Ok(CompileState {
             table,
             ranked,
@@ -698,12 +694,6 @@ impl<'c> Compiler<'c> {
             renamed.insert("snippet".into(), alias.clone());
             snippet.push(format!(" AS {}", quote(&alias)));
             select.push(snippet);
-        }
-        if self.indexed_words {
-            select.push(SqlFragment::text(Self::template(
-                base,
-                "{t}._search_tsv AS \"_search_tsv\"",
-            )));
         }
         Ok((select, renamed))
     }
@@ -761,40 +751,32 @@ impl<'c> Compiler<'c> {
         if let Some(words) = search.indexed {
             let hits = self.alias("words");
             let event = self.alias("event");
-            let predicate = if words.phrase {
-                "phraseto_tsquery('simple', "
-            } else {
-                "plainto_tsquery('simple', "
+            let first = Words {
+                words: words.words.iter().take(1).cloned().collect(),
+                phrase: false,
+                prefix: words.prefix && words.words.len() == 1,
             };
-            let lookup = format!(
-                " FROM core.visible_events {event} WHERE {event}.id={hits}.event_id AND core.class_visible({event}.class) OFFSET 0)"
-            );
+            let visible = self.alias("visible");
+            // The first word is necessary on every selected row. Use the
+            // index to find those events, choose one piece for ranking, then
+            // let the complete filter examine the visible event and its text.
+            from = SqlFragment::text(format!(
+                "(SELECT {visible}.*, {hits}.rank AS _search_rank, {hits}.text AS _search_text FROM ("
+            ));
             if search.order_candidates {
-                let visible = self.alias("visible");
-                // Expose the rank directly from the ordered side of the join
-                // so the final sort can resolve only the equal-rank groups.
-                from = SqlFragment::text(format!(
-                    "(SELECT {visible}.*, {hits}.tsv AS _search_tsv, {hits}.rank AS _search_rank, {hits}.text AS _search_text FROM (SELECT event_id, text, tsv, ts_rank(tsv, plainto_tsquery('simple', "
-                ));
-                from.param(search.words.join(" "))
-                    .push(")) AS rank FROM core.search_text WHERE tsv @@ ")
-                    .push(predicate)
-                    .param(words.words.join(" "))
-                    .push(format!(") ORDER BY rank DESC NULLS LAST OFFSET 0) {hits} CROSS JOIN LATERAL (SELECT {event}.*"))
-                    .push(lookup)
-                    .push(format!(" {visible}) "));
-            } else {
-                from = SqlFragment::text(
-                    "(SELECT event_id, text, tsv FROM core.search_text WHERE tsv @@ ",
-                );
-                from.push(predicate)
-                    .param(words.words.join(" "))
-                    .push(format!(")) {hits} CROSS JOIN LATERAL (SELECT {event}.*, {hits}.tsv AS _search_tsv, ts_rank({hits}.tsv, plainto_tsquery('simple', "))
-                    .param(search.words.join(" "))
-                    .push(format!(")) AS _search_rank, {hits}.text AS _search_text"))
-                    .push(lookup)
-                    .push(" ");
+                from.push("SELECT * FROM (");
             }
+            from.push("SELECT DISTINCT ON (event_id) event_id, text, ts_rank(tsv, plainto_tsquery('simple', ")
+                .param(search.words.join(" "))
+                .push(")) AS rank FROM core.search_text WHERE tsv @@ (")
+                .append(Self::word_query(&first))
+                .push(") ORDER BY event_id, rank DESC, part");
+            if search.order_candidates {
+                from.push(") pieces ORDER BY rank DESC NULLS LAST");
+            }
+            from.push(format!(
+                " OFFSET 0) {hits} CROSS JOIN LATERAL (SELECT {event}.* FROM core.visible_events {event} WHERE {event}.id={hits}.event_id AND core.class_visible({event}.class) OFFSET 0) {visible}) "
+            ));
             from.push(Self::template(base, "{t}"));
         }
         from

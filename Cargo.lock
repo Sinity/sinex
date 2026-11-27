@@ -4447,6 +4447,7 @@ dependencies = [
  "authored",
  "blake3",
  "canonical-json",
+ "caseless",
  "devkit",
  "jiff",
  "query-language",
@@ -4458,6 +4459,8 @@ dependencies = [
  "sinex-macros",
  "thiserror 2.0.21",
  "time",
+ "unicode-normalization",
+ "unicode-segmentation",
  "uuid",
 ]
 
@@ -4489,7 +4492,6 @@ dependencies = [
 name = "sinex-query"
 version = "0.1.0"
 dependencies = [
- "caseless",
  "command-surface",
  "devkit",
  "jiff",
@@ -4500,8 +4502,6 @@ dependencies = [
  "serde_json",
  "sinex-model",
  "thiserror 2.0.21",
- "unicode-normalization",
- "unicode-segmentation",
  "uuid",
 ]
 

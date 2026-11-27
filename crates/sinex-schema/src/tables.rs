@@ -210,14 +210,18 @@ const FRAMES_BY_MATERIAL: &str = "CREATE INDEX ingress_frames_material ON core.i
 const FRAMES_REFUSED_AT: &str = "CREATE INDEX ingress_frames_refused_at ON core.ingress_frames (received_at) WHERE refusal IS NOT NULL";
 const FRAMES_MALFORMED_BY_PRODUCER: &str = "CREATE INDEX ingress_frames_malformed_producer ON core.ingress_frames (producer, number DESC) WHERE refusal IS NOT NULL AND outcome->>'kind' = 'malformed'";
 
-/// Trigram text is kept apart from the full-text table, so a kind's search
-/// mode decides whether its text is here without rewriting the full-text heap.
-const SEARCH_TRIGRAM: &str = "CREATE TABLE core.search_trigram (
-  event_id uuid PRIMARY KEY,
-  text text NOT NULL
+/// Text pieces keep one normalized copy and bound each word vector.
+pub(crate) const SEARCH_TEXT: &str = "CREATE TABLE core.search_text (
+  event_id uuid NOT NULL,
+  part integer NOT NULL DEFAULT 0 CHECK (part >= 0),
+  text text NOT NULL,
+  trigram boolean NOT NULL DEFAULT false,
+  tsv tsvector GENERATED ALWAYS AS (to_tsvector('simple', text)) STORED,
+  PRIMARY KEY (event_id, part)
 )";
-const SEARCH_TRIGRAM_TEXT: &str =
-    "CREATE INDEX search_trigram_text ON core.search_trigram USING gin (text gin_trgm_ops)";
+pub(crate) const SEARCH_WORDS: &str =
+    "CREATE INDEX search_text_tsv ON core.search_text USING gin (tsv)";
+pub(crate) const SEARCH_TRIGRAM: &str = "CREATE INDEX search_text_trigram ON core.search_text USING gin (text gin_trgm_ops) WHERE trigram";
 
 /// A material staged before any parser recognises it has no parser: its
 /// bytes are kept and a later replay assigns one. A parser and its version
@@ -615,19 +619,9 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
   wrapped_key bytea NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 )".into(),
-        // Full-text search read model: each event's payload text, normalized
-        // (case-folded, NFC, words separated by single spaces), kept
-        // uncompressed apart from the hypertable. Rebuildable from the events;
-        // maintained from the commit log by its reader, never by a trigger.
-        "CREATE TABLE core.search_text (
-  event_id uuid PRIMARY KEY,
-  text text NOT NULL,
-  tsv tsvector GENERATED ALWAYS AS (to_tsvector('simple', text)) STORED
-)".into(),
-        "CREATE INDEX search_text_tsv ON core.search_text USING gin (tsv)".into(),
+        SEARCH_TEXT.into(),
+        SEARCH_WORDS.into(),
         SEARCH_TRIGRAM.into(),
-        SEARCH_TRIGRAM_TEXT.into(),
-        SEARCH_REFUSALS.into(),
         SEARCH_POSITION.into(),
         // Admission's declared layout for checked SQL and logical restore.
         // The writer clones it into its session's temporary schema; batch
@@ -770,16 +764,6 @@ const REVISIONS_BY_INPUT: &str = "CREATE INDEX IF NOT EXISTS revisions_input_lat
 /// wholly before it.
 const EVENTS_COMMIT_SEQ_SKIPPING: &str =
     "SELECT enable_chunk_skipping('core.events', 'commit_seq', if_not_exists => true)";
-
-/// Events whose text the search index refused (for example a full-text
-/// vector over PostgreSQL's size limit). The search reader records the event
-/// here and moves on, so one event never stops search, `follow` or the
-/// vector index; status counts these rows.
-const SEARCH_REFUSALS: &str = "CREATE TABLE core.search_refusals (
-  event_id uuid PRIMARY KEY,
-  reason text NOT NULL,
-  refused_at timestamptz NOT NULL DEFAULT now()
-)";
 
 /// How far the search reader has indexed. It is kept apart from
 /// `core.consumer_positions` so that a backup leaving out the rebuilt search

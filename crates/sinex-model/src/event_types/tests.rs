@@ -126,36 +126,38 @@ fn decoder_errors_name_fields_without_echoing_payload_values() {
 }
 
 #[devkit::test]
-fn search_policy_keeps_full_text_for_high_volume_kinds() {
-    let excluded: Vec<_> = ALL
+fn search_policy_indexes_only_declared_text() {
+    use crate::kinds::{Search, SearchFields};
+    let indexed: std::collections::BTreeSet<_> = ALL
         .iter()
-        .filter(|kind| kind.search != crate::kinds::Search::WordsAndTrigram)
+        .filter(|kind| kind.search_fields.is_some())
         .map(|kind| kind.event_type)
         .collect();
     assert_eq!(
-        excluded,
+        indexed,
         [
+            "chat.message",
+            "command.executed",
+            "command.fused",
+            "command.imported",
+            "command.reported",
+            "conversation.message",
+            "document.text",
             "journal.entry",
-            "lake.observed",
-            "embedding.supplied",
-            "text.embedding"
+            "mail.fused",
+            "mail.message",
+            "note.document",
+            "ocr.text",
+            "screen.text",
         ]
+        .into()
     );
-    for name in ["journal.entry", "lake.observed"] {
-        assert_eq!(
-            (find(name).unwrap().declaration)().search,
-            crate::kinds::Search::Words
-        );
-    }
-    for name in ["embedding.supplied", "text.embedding"] {
-        assert_eq!(
-            (find(name).unwrap().declaration)().search,
-            crate::kinds::Search::None
-        );
-    }
     assert_eq!(
-        find("command.imported").unwrap().search,
-        crate::kinds::Search::WordsAndTrigram
+        find("journal.entry").unwrap().search_fields,
+        Some(SearchFields {
+            mode: Search::Words,
+            fields: &["message", "unit", "user_unit"],
+        })
     );
 }
 

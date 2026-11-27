@@ -40,7 +40,7 @@ pub struct BoundingBox {
 #[derive(
     Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload,
 )]
-#[event(version = 2, type = "ocr.text", key = location, replace = newer)]
+#[event(version = 2, type = "ocr.text", index_text = words_and_trigram, key = location, replace = newer)]
 pub struct OcrText {
     pub input: String,
     pub provider_id: Option<String>,

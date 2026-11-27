@@ -60,7 +60,7 @@ async fn search_updates_can_run_during_vacuum(db: devkit::pg::TestDatabase) {
     let mut vacuum_lock = maintenance.begin().await.unwrap();
     // Plain VACUUM holds this relation lock. Hold it deterministically
     // while the real search writer attempts to index a committed event.
-    sqlx::query("LOCK TABLE core.search_trigram IN SHARE UPDATE EXCLUSIVE MODE")
+    sqlx::query("LOCK TABLE core.search_text IN SHARE UPDATE EXCLUSIVE MODE")
         .execute(&mut *vacuum_lock)
         .await
         .unwrap();
@@ -91,6 +91,11 @@ pub(crate) async fn admit_search_kinds(
             json!({"command": message, "hostname": "h", "n": 0}),
         ),
         ("journal.entry", json!({"cursor": "c1", "message": message})),
+        (
+            "chat.message",
+            json!({"buffer": "test", "sent_at": "2026-09-14T08:00:00Z",
+            "kind": "message", "text": message}),
+        ),
         (
             "lake.observed",
             json!({"observed_at": "2026-09-14T08:00:00Z", "lane": "test",
@@ -145,7 +150,7 @@ async fn writes_kind_policy_and_skips_unchanged_rows(db: devkit::pg::TestDatabas
     admit_search_kinds(&mut conn, sinex_model::Class::Open).await;
     catch_up_search_text(&mut conn).await.unwrap();
     let before: Vec<(String, String, String, bool)> = sqlx::query_as(
-        "SELECT e.event_type, s.text, s.ctid::text, (t.event_id IS NOT NULL) FROM core.search_text s JOIN core.events e ON e.id=s.event_id LEFT JOIN core.search_trigram t ON t.event_id=s.event_id ORDER BY e.event_type")
+        "SELECT e.event_type, s.text, s.ctid::text, s.trigram FROM core.search_text s JOIN core.events e ON e.id=s.event_id ORDER BY e.event_type")
         .fetch_all(&mut conn).await.unwrap();
     assert_eq!(
         before
@@ -153,9 +158,9 @@ async fn writes_kind_policy_and_skips_unchanged_rows(db: devkit::pg::TestDatabas
             .map(|r| (r.0.as_str(), r.3))
             .collect::<Vec<_>>(),
         [
+            ("chat.message", true),
             ("command.imported", true),
-            ("journal.entry", false),
-            ("lake.observed", false)
+            ("journal.entry", false)
         ]
     );
     assert!(
@@ -170,14 +175,14 @@ async fn writes_kind_policy_and_skips_unchanged_rows(db: devkit::pg::TestDatabas
     apply_search_text(&mut tx, &page.events).await.unwrap();
     tx.commit().await.unwrap();
     let after: Vec<(String, String, String, bool)> = sqlx::query_as(
-        "SELECT e.event_type, s.text, s.ctid::text, (t.event_id IS NOT NULL) FROM core.search_text s JOIN core.events e ON e.id=s.event_id LEFT JOIN core.search_trigram t ON t.event_id=s.event_id ORDER BY e.event_type")
+        "SELECT e.event_type, s.text, s.ctid::text, s.trigram FROM core.search_text s JOIN core.events e ON e.id=s.event_id ORDER BY e.event_type")
         .fetch_all(&mut conn).await.unwrap();
     assert_eq!(
         after, before,
         "recovery must leave unchanged heap rows in place"
     );
     // A policy change is meaningful even when normalized text is identical.
-    sqlx::query("INSERT INTO core.search_trigram(event_id,text) SELECT event_id,text FROM core.search_text ON CONFLICT DO NOTHING")
+    sqlx::query("UPDATE core.search_text SET trigram = true")
         .execute(&mut conn)
         .await
         .unwrap();
@@ -185,11 +190,65 @@ async fn writes_kind_policy_and_skips_unchanged_rows(db: devkit::pg::TestDatabas
     apply_search_text(&mut tx, &page.events).await.unwrap();
     tx.commit().await.unwrap();
     let excluded: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM core.search_text s WHERE NOT EXISTS(SELECT 1 FROM core.search_trigram t WHERE t.event_id=s.event_id)")
+        sqlx::query_scalar("SELECT count(*) FROM core.search_text WHERE NOT trigram")
             .fetch_one(&mut conn)
             .await
             .unwrap();
-    assert_eq!(excluded, 2);
+    assert_eq!(excluded, 1);
+}
+
+#[devkit::test]
+async fn older_versions_follow_the_current_declaration(db: devkit::pg::TestDatabase) {
+    use sinex_model::{DbCheck, KindDeclaration};
+
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    admit_search_kinds(&mut conn, sinex_model::Class::Open).await;
+    let mut historical = KindDeclaration::historical("lake.observed".into());
+    historical.search = Search::WordsAndTrigram;
+    sqlx::query(
+        "INSERT INTO registry.event_types (name, version, declaring_producer, normalization,
+          field_hints, keep_known, owned_blobs, search, definition_hash)
+         VALUES ($1, 1, 'sinex', 'json', '[]', '{}', '[]', $2, $3)",
+    )
+    .bind(&historical.kind.name)
+    .bind(historical.search.as_db())
+    .bind(historical.definition_hash())
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    // This fixture represents a reading already stored by the earlier parser.
+    let mut tx = conn.begin().await.unwrap();
+    sqlx::raw_sql(
+        "SET LOCAL session_replication_role = replica;
+         UPDATE core.events SET kind_version = 1, validation = 'unvalidated'
+         WHERE event_type = 'lake.observed'",
+    )
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let page = crate::commit_log::after(&mut conn, 0, 10, i64::MAX)
+        .await
+        .unwrap();
+    let old = page
+        .events
+        .iter()
+        .find(|event| event.row.event_type == "lake.observed")
+        .unwrap();
+    assert_eq!(old.search, Search::WordsAndTrigram);
+    catch_up_search_text(&mut conn).await.unwrap();
+    let indexed: Vec<String> = sqlx::query_scalar(
+        "SELECT e.event_type FROM core.search_text s JOIN core.events e ON e.id=s.event_id ORDER BY 1",
+    )
+    .fetch_all(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(
+        indexed,
+        ["chat.message", "command.imported", "journal.entry"]
+    );
 }
 
 #[devkit::test]
@@ -304,11 +363,10 @@ async fn sealed_and_empty_text_still_advance_search_position(db: devkit::pg::Tes
     );
 }
 
-/// A text whose full-text vector exceeds PostgreSQL's size limit is recorded
-/// as refused; the other events of the page are indexed and the position
-/// advances past it.
+/// A reading whose complete word vector would exceed PostgreSQL's limit can
+/// still be found by its last word. Several matching pieces give one result.
 #[devkit::test]
-async fn search_refused_text_passes(db: devkit::pg::TestDatabase) {
+async fn long_text_is_indexed_in_pieces(db: devkit::pg::TestDatabase) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
@@ -328,6 +386,7 @@ async fn search_refused_text_passes(db: devkit::pg::TestDatabase) {
         .map(|n| format!("w{n:05}x{}", uuid::Uuid::from_u128(n as u128).simple()))
         .collect::<Vec<_>>()
         .join(" ");
+    let oversized = format!("needle {oversized} needle endtag");
     let events: Vec<sinex_model::Event> = [oversized, "after the large text".to_owned()]
         .into_iter()
         .enumerate()
@@ -370,23 +429,19 @@ async fn search_refused_text_passes(db: devkit::pg::TestDatabase) {
     tx.commit().await.unwrap();
     let up_to = crate::query::current_seq(&mut conn).await.unwrap();
     assert_eq!(catch_up_search_text(&mut conn).await.unwrap(), up_to);
-    let indexed: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT event_id FROM core.search_text")
-        .fetch_all(&mut conn)
-        .await
-        .unwrap();
-    assert_eq!(indexed, vec![small.0]);
-    let refused: Vec<(uuid::Uuid, String)> =
-        sqlx::query_as("SELECT event_id, reason FROM core.search_refusals")
-            .fetch_all(&mut conn)
+    let context = sinex_query::Context::utc("2026-09-15T00:00:00Z".parse().unwrap());
+    for (query, expected) in [
+        ("events where endtag", large),
+        ("events where needle", large),
+        ("events where needle AND endtag", large),
+        ("events where aft*", small),
+    ] {
+        let answer = crate::query::run(&mut conn, query, None, &context, &Default::default())
             .await
             .unwrap();
-    assert_eq!(refused.len(), 1);
-    assert_eq!(refused[0].0, large.0);
-    assert!(
-        refused[0].1.contains("too long for tsvector"),
-        "{}",
-        refused[0].1
-    );
+        assert_eq!(answer.total, 1, "{query}");
+        assert_eq!(answer.rows[0]["id"], expected.to_string());
+    }
 }
 
 async fn failed_search_batch_keeps_its_page(db: devkit::pg::TestDatabase, sqlstate: &str) {
@@ -419,15 +474,11 @@ async fn failed_search_batch_keeps_its_page(db: devkit::pg::TestDatabase, sqlsta
     };
     assert_eq!(error.code().as_deref(), Some(sqlstate));
     assert_eq!(search_position(&mut conn).await.unwrap(), before);
-    let counts: (i64, i64, i64) = sqlx::query_as(
-        "SELECT (SELECT count(*) FROM core.search_text),
-                (SELECT count(*) FROM core.search_trigram),
-                (SELECT count(*) FROM core.search_refusals)",
-    )
-    .fetch_one(&mut conn)
-    .await
-    .unwrap();
-    assert_eq!(counts, (0, 0, 0), "the whole search page must roll back");
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM core.search_text")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(count, 0, "the whole search page must roll back");
     sqlx::raw_sql(
         "DROP TRIGGER fail_search_batch ON core.search_text;
                    DROP FUNCTION public.fail_search_batch()",
@@ -441,11 +492,6 @@ async fn failed_search_batch_keeps_its_page(db: devkit::pg::TestDatabase, sqlsta
         .await
         .unwrap();
     assert_eq!(indexed, 3, "normal retry indexes every offered row");
-    let refused: i64 = sqlx::query_scalar("SELECT count(*) FROM core.search_refusals")
-        .fetch_one(&mut conn)
-        .await
-        .unwrap();
-    assert_eq!(refused, 0, "a transient failure is not a row refusal");
 }
 
 #[devkit::test]

@@ -807,10 +807,9 @@ decides which prompts may be sent (default; open operator question).
   commit cursor. A matching commit admitted after that notice is beyond the initial
   cursor position and is delivered once.
 - Event follows wait for the search read model's saved position, including queries
-  without an explicit text predicate. Read-model lag delays delivery. An event whose
-  text the search index refuses (a full-text vector over PostgreSQL's size limit) is
-  recorded in `core.search_refusals` and passed; it never holds the position. Read-model
-  completion wakes subscriptions, and each captured batch stays within its lower
+  without an explicit text predicate. Read-model lag delays delivery. Long text is
+  indexed in pieces, each with a bounded word vector. Read-model completion
+  wakes subscriptions, and each captured batch stays within its lower
   exclusive and upper inclusive commit positions across every page.
 - Each message carries its commit position as the SSE `id`. A reconnect with
   `Last-Event-ID` receives everything after it, read from PostgreSQL, including

@@ -17,9 +17,6 @@ serde_json.workspace = true
 schemars.workspace = true
 uuid.workspace = true
 thiserror.workspace = true
-caseless.workspace = true
-unicode-normalization.workspace = true
-unicode-segmentation.workspace = true
 
 [dev-dependencies]
 devkit.workspace = true

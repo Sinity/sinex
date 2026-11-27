@@ -498,6 +498,7 @@ pub fn item_id(key: &str) -> String {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(version = 2,
     type = "document.text",
+    index_text = words_and_trigram,
     key = ["record", "part"],
     replace = newer,
     time = modified_at,

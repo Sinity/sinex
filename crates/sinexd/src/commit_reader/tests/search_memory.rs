@@ -55,7 +55,7 @@ async fn assert_search(conn: &mut PgConnection, up_to: i64) {
         "SELECT count(*),
           count(*) FILTER (WHERE tsv @@ to_tsquery('simple','coast:*')),
           count(*) FILTER (WHERE tsv @@ phraseto_tsquery('simple','bright meadow')),
-          (SELECT count(*) FROM core.search_trigram WHERE text LIKE '%meadow%')
+          count(*) FILTER (WHERE trigram AND text LIKE '%meadow%')
          FROM core.search_text WHERE tsv @@ plainto_tsquery('simple','coastline')",
     )
     .fetch_one(&mut *conn)
@@ -70,7 +70,7 @@ async fn assert_search(conn: &mut PgConnection, up_to: i64) {
     );
 }
 
-async fn check_budget_at_both_indexes(conn: &mut PgConnection) {
+async fn check_budget_at_search_write(conn: &mut PgConnection) {
     sqlx::raw_sql(
         "CREATE FUNCTION public.check_search_memory() RETURNS trigger LANGUAGE plpgsql AS $$
          BEGIN
@@ -81,8 +81,6 @@ async fn check_budget_at_both_indexes(conn: &mut PgConnection) {
            RETURN NULL;
          END $$;
          CREATE TRIGGER check_search_memory AFTER INSERT ON core.search_text
-          FOR EACH STATEMENT EXECUTE FUNCTION public.check_search_memory();
-         CREATE TRIGGER check_search_memory AFTER INSERT ON core.search_trigram
           FOR EACH STATEMENT EXECUTE FUNCTION public.check_search_memory()",
     )
     .execute(conn)
@@ -98,7 +96,7 @@ async fn maintenance_budget_is_capped_only_for_search_and_restored_on_commit(
         .await
         .unwrap();
     let page = search_page(&mut conn).await;
-    check_budget_at_both_indexes(&mut conn).await;
+    check_budget_at_search_write(&mut conn).await;
     sqlx::query("SET work_mem='4MB'")
         .execute(&mut conn)
         .await
@@ -134,7 +132,7 @@ async fn transient_failure_restores_memory(db: devkit::pg::TestDatabase, code: &
         .execute(&mut conn)
         .await
         .unwrap();
-    check_budget_at_both_indexes(&mut conn).await;
+    check_budget_at_search_write(&mut conn).await;
     // A bulk-only transient failure would vanish under an incorrect row retry.
     sqlx::raw_sql(&format!(
         "CREATE FUNCTION public.fail_search_memory_page() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -144,7 +142,7 @@ async fn transient_failure_restores_memory(db: devkit::pg::TestDatabase, code: &
            END IF;
            RETURN NULL;
          END $$;
-         CREATE TRIGGER fail_search_memory_page AFTER INSERT ON core.search_trigram
+         CREATE TRIGGER fail_search_memory_page AFTER INSERT ON core.search_text
            REFERENCING NEW TABLE AS proposed FOR EACH STATEMENT
            EXECUTE FUNCTION public.fail_search_memory_page()"
     ))
@@ -162,16 +160,12 @@ async fn transient_failure_restores_memory(db: devkit::pg::TestDatabase, code: &
     assert_eq!(error.code().as_deref(), Some(code));
     assert_eq!(work_bytes(&mut conn).await, 4 * 1024 * 1024);
     assert_eq!(worker.position(&mut conn).await.unwrap(), 0);
-    let counts: (i64, i64, i64) = sqlx::query_as(
-        "SELECT (SELECT count(*) FROM core.search_text),
-          (SELECT count(*) FROM core.search_trigram),
-          (SELECT count(*) FROM core.search_refusals)",
-    )
-    .fetch_one(&mut conn)
-    .await
-    .unwrap();
-    assert_eq!(counts, (0, 0, 0));
-    sqlx::query("DROP TRIGGER fail_search_memory_page ON core.search_trigram")
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM core.search_text")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+    sqlx::query("DROP TRIGGER fail_search_memory_page ON core.search_text")
         .execute(&mut conn)
         .await
         .unwrap();

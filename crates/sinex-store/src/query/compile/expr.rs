@@ -658,51 +658,73 @@ impl Compiler<'_> {
 
     pub(super) fn words(&self, cols: &Cols, w: &Words) -> Result<SqlFragment> {
         let id = Self::id_of(cols)?;
-        let mut out = SqlFragment::new();
-        if w.prefix {
-            let mut pattern = String::from("(^| )");
-            let escaped: Vec<String> = w.words.iter().map(|x| regex_escape(x)).collect();
-            pattern.push_str(&escaped.join(" "));
-            // Eligible kinds read their own trigram table; words-only kinds
-            // keep prefix answers through the protected full-text view.
-            out.push("(")
-                .append(id)
-                .push(" IN (SELECT s.event_id FROM core.visible_search_trigram s WHERE s.text ~ ")
-                .param(pattern.clone())
-                .push(" UNION ALL SELECT s.event_id FROM core.visible_search_text s WHERE NOT EXISTS (SELECT 1 FROM core.visible_search_trigram t WHERE t.event_id=s.event_id) AND s.text ~ ")
-                .param(pattern)
+        if w.phrase || w.prefix {
+            let mut out = SqlFragment::text(
+                "(EXISTS (SELECT 1 FROM core.visible_search_text s WHERE s.event_id = ",
+            );
+            out.append(id.clone())
+                .push(" AND s.tsv @@ ")
+                .append(Self::word_query(w))
+                .push(")");
+            // Only split text can contain a match across two pieces. Match
+            // against the same normalized words joined in their stored order.
+            if w.words.len() > 1 {
+                let phrase = w
+                    .words
+                    .iter()
+                    .map(|word| regex_escape(word))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let end = if w.prefix { "" } else { "( |$)" };
+                out.push(" OR EXISTS (SELECT 1 FROM core.visible_search_text s WHERE s.event_id = ")
+                    .append(id)
+                    .push(" GROUP BY s.event_id HAVING max(s.part) > 0 AND string_agg(s.text, ' ' ORDER BY s.part) ~ ")
+                    .param(format!("(^| ){phrase}{end}"))
+                    .push(")");
+            }
+            out.push(")");
+            return Ok(out);
+        }
+        let mut out = SqlFragment::text("(");
+        for (index, word) in w.words.iter().enumerate() {
+            if index != 0 {
+                out.push(" AND ");
+            }
+            out.push("EXISTS (SELECT 1 FROM core.visible_search_text s WHERE s.event_id = ")
+                .append(id.clone())
+                .push(" AND s.tsv @@ plainto_tsquery('simple', ")
+                .param(word.clone())
                 .push("))");
-            return Ok(out);
-        }
-        if self.indexed_words {
-            let tsv = match cols {
-                Cols::Base { .. } => Self::template(cols, "{t}._search_tsv"),
-                Cols::Named { r, .. } => format!("{r}.\"_search_tsv\""),
-            };
-            out.push(format!("{tsv} @@ "))
-                .push(if w.phrase {
-                    "phraseto_tsquery('simple', "
-                } else {
-                    "plainto_tsquery('simple', "
-                })
-                .param(w.words.join(" "))
-                .push(")");
-            return Ok(out);
-        }
-        out.push("EXISTS (SELECT 1 FROM core.visible_search_text s WHERE s.event_id = ")
-            .append(id)
-            .push(" AND ");
-        if w.phrase {
-            out.push("s.tsv @@ phraseto_tsquery('simple', ")
-                .param(w.words.join(" "))
-                .push(")");
-        } else {
-            out.push("s.tsv @@ plainto_tsquery('simple', ")
-                .param(w.words.join(" "))
-                .push(")");
         }
         out.push(")");
         Ok(out)
+    }
+
+    pub(super) fn word_query(w: &Words) -> SqlFragment {
+        let mut out = SqlFragment::new();
+        if w.prefix {
+            let mut words = w.words.iter();
+            if let Some(last) = words.next_back() {
+                for word in words {
+                    out.push("plainto_tsquery('simple', ")
+                        .param(word.clone())
+                        .push(") <-> ");
+                }
+                let quoted = last.replace('\\', "\\\\").replace('\'', "''");
+                out.push("to_tsquery('simple', ")
+                    .param(format!("'{quoted}':*"))
+                    .push(")");
+            }
+        } else {
+            out.push(if w.phrase {
+                "phraseto_tsquery('simple', "
+            } else {
+                "plainto_tsquery('simple', "
+            })
+            .param(w.words.join(" "))
+            .push(")");
+        }
+        out
     }
 
     pub(super) fn expr(&self, cols: &Cols, e: &Expr) -> Result<SqlFragment> {
@@ -1090,11 +1112,11 @@ impl Compiler<'_> {
         }
         let mut f = SqlFragment::text(Self::template(
             cols,
-            "(SELECT ts_rank(s.tsv, plainto_tsquery('simple', ",
+            "(SELECT max(ts_rank(s.tsv, plainto_tsquery('simple', ",
         ));
         f.param(words.join(" ")).push(Self::template(
             cols,
-            ")) FROM core.visible_search_text s WHERE s.event_id = {t}.id)",
+            "))) FROM core.visible_search_text s WHERE s.event_id = {t}.id)",
         ));
         f
     }
@@ -1110,7 +1132,7 @@ impl Compiler<'_> {
         } else {
             (
                 "(SELECT ts_headline('simple', s.text, plainto_tsquery('simple', ",
-                " FROM core.visible_search_text s WHERE s.event_id = {t}.id)",
+                " FROM core.visible_search_text s WHERE s.event_id = {t}.id ORDER BY s.part LIMIT 1)",
             )
         };
         let mut f = SqlFragment::text(Self::template(cols, start));

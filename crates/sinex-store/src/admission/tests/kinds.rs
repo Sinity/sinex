@@ -351,9 +351,9 @@ async fn search_modes_apply_to_live_indexing_and_its_rebuild(db: devkit::pg::Tes
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
-    let mut excluded = declared("example.raw", 9);
-    excluded.search = sinex_model::kinds::Search::None;
-    let searchable = declared("example.typed", 9);
+    let excluded = declared("example.raw", 9);
+    let mut searchable = declared("example.typed", 9);
+    searchable.search = sinex_model::kinds::Search::WordsAndTrigram;
     let mut words = declared("example.words", 9);
     words.search = sinex_model::kinds::Search::Words;
     let mut tx = conn.begin().await.unwrap();

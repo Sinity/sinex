@@ -57,7 +57,7 @@ pub use shell::{CommandExecuted, CommandImported, CommandReported, ShellSession}
 #[derive(Clone, Debug)]
 pub struct RegisteredEventType {
     /// Search read models maintained for this bundled kind.
-    pub search: crate::kinds::Search,
+    pub search_fields: Option<crate::kinds::SearchFields>,
     pub event_type: &'static str,
     /// Declared natural key; `build` applies the typed payload's per-record choice.
     pub key: crate::KeyKind,
@@ -86,7 +86,7 @@ pub type Build = fn(
 
 const fn info<P: EventPayload>() -> RegisteredEventType {
     RegisteredEventType {
-        search: P::SEARCH,
+        search_fields: P::SEARCH_FIELDS,
         event_type: P::EVENT_TYPE,
         key: P::KEY,
         replace: P::REPLACE,

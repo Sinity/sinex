@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 /// the record location is the identity.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(version = 2, type = "chat.message",
+    index_text = words_and_trigram,
     key = location,
     replace = repeat,
     time = sent_at,
@@ -72,6 +73,10 @@ pub struct MailMessage {
 
 impl crate::EventPayload for MailMessage {
     const VERSION: u64 = 3;
+    const SEARCH_FIELDS: Option<crate::kinds::SearchFields> = Some(crate::kinds::SearchFields {
+        mode: crate::kinds::Search::WordsAndTrigram,
+        fields: &[],
+    });
     const EVENT_TYPE: &'static str = "mail.message";
     const KEY: crate::KeyKind = crate::KeyKind::Fields(&["account", "message_id"]);
     const REPLACE: crate::ReplaceRule = crate::ReplaceRule::ReplaceWhenNewer;
@@ -181,6 +186,7 @@ pub struct MailAttachment {
 /// given the same identity.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(version = 2, type = "conversation.message",
+    index_text = words_and_trigram,
     key = ["service", "thread", "sent_at", "sender"],
     replace = newer,
     time = sent_at,

@@ -8,9 +8,34 @@
 
 /// One named forward step and the statements that make it.
 #[derive(Clone, Copy)]
-pub(crate) struct Step {
-    pub name: &'static str,
-    pub statements: fn() -> Vec<String>,
+pub(crate) enum Step {
+    Sql {
+        name: &'static str,
+        statements: fn() -> Vec<String>,
+    },
+    SearchText,
+}
+
+impl Step {
+    pub async fn run(self, connection: &mut sqlx::PgConnection) -> Result<(), crate::Error> {
+        use sqlx::Executor;
+        match self {
+            Self::Sql { name, statements } => {
+                for statement in statements() {
+                    connection
+                        .execute(statement.as_str())
+                        .await
+                        .map_err(|error| {
+                            sqlx::Error::Protocol(format!(
+                                "{error}\nin upgrade step {name}: {statement}"
+                            ))
+                        })?;
+                }
+                Ok(())
+            }
+            Self::SearchText => crate::search_text::upgrade(connection).await,
+        }
+    }
 }
 
 /// The oldest version this build upgrades from: the version of every
@@ -19,58 +44,59 @@ pub(crate) const LANDED_VERSION: i32 = 40;
 
 /// The steps after [`LANDED_VERSION`], in landing order.
 pub(crate) const STEPS: &[Step] = &[
-    Step {
+    Step::Sql {
         name: "plain_names",
         statements: plain_names,
     },
-    Step {
+    Step::Sql {
         name: "source_exclusions",
         statements: source_exclusions,
     },
-    Step {
+    Step::Sql {
         name: "request_outcomes",
         statements: request_outcomes,
     },
-    Step {
+    Step::Sql {
         name: "derivation_reading_orders",
         statements: derivation_reading_orders,
     },
-    Step {
+    Step::Sql {
         name: "owned_blob_releases",
         statements: || vec![crate::tables::OWNED_BLOB_RELEASES.into()],
     },
-    Step {
+    Step::Sql {
         name: "library_copy_fields",
         statements: crate::library_copy_fields::upgrade,
     },
-    Step {
+    Step::Sql {
         name: "derivation_refusals",
         statements: derivation_refusals,
     },
-    Step {
+    Step::Sql {
         name: "stream_references",
         statements: stream_references,
     },
-    Step {
+    Step::Sql {
         name: "stored_key_inputs",
         statements: stored_key_inputs,
     },
-    Step {
+    Step::Sql {
         name: "live_intervals",
         statements: crate::live_intervals::upgrade,
     },
-    Step {
+    Step::Sql {
         name: "selection_by_version",
         statements: selection_by_version,
     },
-    Step {
+    Step::Sql {
         name: "fenced_interval_bounds",
         statements: crate::live_intervals::bound_fenced_intervals,
     },
-    Step {
+    Step::Sql {
         name: "output_ranges",
         statements: crate::output_ranges::upgrade,
     },
+    Step::SearchText,
 ];
 
 /// A derivation's selection is its version. The build that ran it is on each

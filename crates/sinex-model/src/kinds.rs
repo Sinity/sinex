@@ -148,6 +148,12 @@ pub enum Search {
     WordsAndTrigram,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SearchFields {
+    pub mode: Search,
+    pub fields: &'static [&'static str],
+}
+
 /// A payload field's default class. Operator rules can raise or lower it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -196,7 +202,7 @@ impl KindDeclaration {
             removed_rule: None,
             keep_known: vec![],
             owned_blobs: vec![],
-            search: crate::kinds::Search::WordsAndTrigram,
+            search: Search::None,
         }
     }
 
@@ -213,7 +219,7 @@ impl KindDeclaration {
             removed_rule: Some(RemovedRule::Never),
             keep_known: vec![],
             owned_blobs: vec![],
-            search: crate::kinds::Search::WordsAndTrigram,
+            search: Search::None,
         }
     }
 

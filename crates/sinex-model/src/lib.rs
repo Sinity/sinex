@@ -20,6 +20,7 @@ pub mod privacy;
 pub mod query_definition;
 pub mod query_reply;
 pub mod record;
+pub mod search_text;
 pub mod source;
 pub mod stage;
 pub mod state_transition;

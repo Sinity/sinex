@@ -80,7 +80,7 @@ pub(crate) fn field(id: FieldId) -> Option<String> {
             }
             EventField::Run => "{t}.run_id",
             EventField::Text => {
-                "(SELECT s.text FROM core.visible_search_text s WHERE s.event_id = {t}.id)"
+                "(SELECT string_agg(s.text, ' ' ORDER BY s.part) FROM core.visible_search_text s WHERE s.event_id = {t}.id)"
             }
             EventField::Key => "{t}.equivalence_key",
             EventField::Class => "{t}.class",

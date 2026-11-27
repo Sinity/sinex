@@ -168,7 +168,7 @@ The stores are the backup unit, and the deployment chooses the backup tool; Sine
 
 ### What a backup contains
 
-- a consistent PostgreSQL custom-format dump with native zstd compression at level 3, without the rows of the search tables (`core.search_text`, `core.search_refusals`, `core.search_position`), which are rebuilt from the events;
+- a consistent PostgreSQL custom-format dump with native zstd compression at level 3, without the search index and its position (`core.search_text` and `core.search_position`), which are rebuilt from the events;
 - the segment log;
 - the wrapped data keys, through their protected route ([privacy.md](privacy.md));
 - configuration and credentials, through their owners (the deployment's secret store);

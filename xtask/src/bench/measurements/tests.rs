@@ -61,16 +61,14 @@ fn query_probes_include_trigram_and_words_only_results() {
     cluster
         .psql(
             "CREATE ROLE sinex_reader; CREATE SCHEMA core;
-             CREATE TABLE core.search_text(event_id uuid PRIMARY KEY,text text NOT NULL);
-             INSERT INTO core.search_text VALUES
-               ('00000000-0000-0000-0000-000000000001','echo synthetic 12345'),
-               ('00000000-0000-0000-0000-000000000002','synthetic café record 12345 ');
+             CREATE TABLE core.search_text(
+               event_id uuid PRIMARY KEY, text text NOT NULL, trigram boolean NOT NULL,
+               tsv tsvector GENERATED ALWAYS AS (to_tsvector('simple', text)) STORED
+             );
+             INSERT INTO core.search_text(event_id,text,trigram) VALUES
+               ('00000000-0000-0000-0000-000000000001','echo synthetic 12345',true),
+               ('00000000-0000-0000-0000-000000000002','synthetic café record 12345 ',false);
              CREATE VIEW core.visible_search_text AS SELECT * FROM core.search_text;
-             CREATE TABLE core.search_trigram(event_id uuid PRIMARY KEY,text text NOT NULL);
-             INSERT INTO core.search_trigram SELECT * FROM core.search_text
-               WHERE event_id='00000000-0000-0000-0000-000000000001';
-             CREATE VIEW core.visible_search_trigram AS SELECT * FROM core.search_trigram;
-             GRANT SELECT ON core.visible_search_trigram TO sinex_reader;
              GRANT USAGE ON SCHEMA core TO sinex_reader;
              GRANT SELECT ON core.visible_search_text TO sinex_reader;",
         )
@@ -79,7 +77,12 @@ fn query_probes_include_trigram_and_words_only_results() {
     let observations = result["observations"].as_array().unwrap();
     assert_eq!(observations.len(), 4);
     for observation in observations {
-        assert_eq!(observation["matches"], json!({"count": 1}));
+        let expected = if observation["kind"] == "journal" && observation["shape"] == "regex" {
+            0
+        } else {
+            1
+        };
+        assert_eq!(observation["matches"], json!({"count": expected}));
         assert_eq!(observation["samples"].as_array().unwrap().len(), 3);
     }
     cluster.stop().unwrap();

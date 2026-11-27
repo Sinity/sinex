@@ -85,6 +85,7 @@ impl crate::EventPayload for StateInterval {
             field: "started_at".into(),
             evidence_field: "started_at_evidence".into(),
         });
+        declaration.search = Self::SEARCH;
         declaration
     }
 }

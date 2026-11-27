@@ -41,7 +41,7 @@ async fn every_search_kind_keeps_words_phrases_prefixes_text_and_snippets(
 }
 
 #[devkit::test]
-async fn both_prefix_branches_obey_class_grants(db: devkit::pg::TestDatabase) {
+async fn word_phrase_and_prefix_obey_class_grants(db: devkit::pg::TestDatabase) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
@@ -101,10 +101,7 @@ async fn prefix_search_selects_matches_among_unrelated_readings(db: devkit::pg::
            SELECT uuidv7(),'command.imported','synthetic-unrelated',uuidv7(),uuidv7(),n,'unknown',
              1,'{}',1,decode(repeat('01',32),'hex'),'open' FROM generate_series(1,5000)n
            RETURNING id
-         ), words AS (
-           INSERT INTO core.search_text(event_id,text)
-           SELECT id,'unrelated synthetic reading '||id::text FROM events
-         ) INSERT INTO core.search_trigram(event_id,text)
+         ) INSERT INTO core.search_text(event_id,text)
            SELECT id,'unrelated synthetic reading '||id::text FROM events",
     )
     .execute(&mut conn)

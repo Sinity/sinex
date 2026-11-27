@@ -12,6 +12,7 @@ use serde_json::{Map, Value};
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(version = 2,
     type = "command.executed",
+    index_text = words_and_trigram,
     key = ["native_id"],
     replace = newer,
     time = started_at,
@@ -50,6 +51,7 @@ pub struct CommandExecuted {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, crate::EventPayload)]
 #[event(version = 2,
     type = "command.reported",
+    index_text = words_and_trigram,
     key = ["host", "execution"],
     replace = repeat,
     time = started_at,
@@ -108,6 +110,10 @@ pub struct CommandImported {
 
 impl crate::EventPayload for CommandImported {
     const VERSION: u64 = 2;
+    const SEARCH_FIELDS: Option<crate::kinds::SearchFields> = Some(crate::kinds::SearchFields {
+        mode: crate::kinds::Search::WordsAndTrigram,
+        fields: &[],
+    });
     const EVENT_TYPE: &'static str = "command.imported";
     const KEY: crate::KeyKind = crate::KeyKind::Fields(&["hostname", "started_at", "command", "n"]);
     const REPLACE: crate::ReplaceRule = crate::ReplaceRule::SuppressRepeat;

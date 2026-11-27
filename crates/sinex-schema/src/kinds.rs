@@ -332,6 +332,7 @@ pub fn check(d: &KindDeclaration) -> Result<(), String> {
     {
         let mut historical = KindDeclaration::historical(d.kind.name.clone());
         historical.declaring_producer = d.declaring_producer.clone();
+        historical.search = d.search;
         if *d == historical {
             return Ok(());
         }
