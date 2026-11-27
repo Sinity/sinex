@@ -145,7 +145,11 @@ async fn data_refusal_marks_key_failed_and_runner_continues(db: devkit::pg::Test
         .count("SELECT value FROM core.counters WHERE name='commit_seq'")
         .await;
     assert_eq!(
-        runner.recompute_all("test.refusing", None).await.unwrap(),
+        runner
+            .recompute_all("test.refusing", None)
+            .await
+            .unwrap()
+            .keys_marked,
         2
     );
     assert_eq!(
@@ -592,7 +596,13 @@ async fn keep_history_switch_preserves_refusals_until_explicit_recompute(
         "keep-history does not replay a failed old population"
     );
     assert_eq!(diagnosis(&world).await[0].failed, 1);
-    assert_eq!(next.recompute_all("test.refusing", None).await.unwrap(), 1);
+    assert_eq!(
+        next.recompute_all("test.refusing", None)
+            .await
+            .unwrap()
+            .keys_marked,
+        1
+    );
     next.catch_up().await.unwrap();
     assert!(diagnosis(&world).await.is_empty());
     assert_eq!(products(&world).await, ["bad=1"]);

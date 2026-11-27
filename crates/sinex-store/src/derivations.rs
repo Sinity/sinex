@@ -813,6 +813,53 @@ pub async fn after_seq(
     events.into_iter().map(Committed::try_from).collect()
 }
 
+/// Live inputs that start in this time range, without overlapping intervals
+/// or neighbours. Continue from the last returned event's time and position.
+pub async fn inputs_in_time_range(
+    conn: &mut PgConnection,
+    event_types: &[String],
+    range: (Timestamp, Timestamp),
+    after: Option<(Timestamp, i64)>,
+    limit: i64,
+    bytes: i64,
+) -> Result<Vec<Committed>> {
+    let (from, after_seq) = after.unwrap_or((range.0, i64::MIN));
+    // PostgreSQL event times lie on microseconds. Both inclusive lower and
+    // exclusive upper bounds round up, preserving their meaning for a
+    // request whose timestamp is between two stored instants.
+    let ceiling = |bound: Timestamp| {
+        let fractional = i64::from(bound.0.nanosecond() % 1_000);
+        bound
+            .0
+            .checked_add(time::Duration::nanoseconds((1_000 - fractional) % 1_000))
+    };
+    let Some(from) = ceiling(from) else {
+        return Ok(Vec::new());
+    };
+    let selected: Vec<_> = sqlx::query_file!(
+        "src/derivations/sql/inputs_in_time_range.sql",
+        event_types,
+        from,
+        ceiling(range.1),
+        after_seq,
+        limit,
+    )
+    .fetch_all(&mut *conn)
+    .await?
+    .into_iter()
+    .map(|row| crate::commit_log::Selected {
+        commit_seq: row.commit_seq,
+        event: Some(crate::commit_log::SelectedEvent {
+            id: row.id,
+            event_type: row.event_type,
+            ts_orig: Some(row.ts_orig),
+        }),
+    })
+    .collect();
+    let (events, _) = crate::commit_log::fetch_selected(conn, &selected, bytes).await?;
+    events.into_iter().map(Committed::try_from).collect()
+}
+
 /// The live readings at these record locations, of any event type and output
 /// number.
 pub(crate) async fn live_at(

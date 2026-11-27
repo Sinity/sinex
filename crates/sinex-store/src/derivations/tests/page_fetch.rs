@@ -155,6 +155,30 @@ async fn bounded_payload_pages_equal_window_and_keep_exact_membership(
         feed.iter().map(|r| r.event.id).collect::<Vec<_>>(),
         vec![ids[0], ids[1], ids[3], ids[4], ids[5]]
     );
+    // Inclusive/exclusive request bounds fall between stored microseconds.
+    // With a one-byte budget the second result must be read on a later page.
+    let bound = |secs| {
+        Timestamp(Timestamp::from_unix_secs(secs).unwrap().0 + time::Duration::nanoseconds(1))
+    };
+    let mut ids_in_range = Vec::new();
+    let mut after = None;
+    loop {
+        let rows = inputs_in_time_range(
+            &mut conn,
+            &[LogEntry::EVENT_TYPE.into()],
+            (bound(1_800_000_001), bound(1_800_000_004)),
+            after,
+            3,
+            1,
+        )
+        .await
+        .unwrap();
+        let Some(last) = rows.last() else { break };
+        assert_eq!(rows.len(), 1);
+        after = Some((last.event.ts_orig.at.unwrap(), last.commit_seq));
+        ids_in_range.push(last.event.id);
+    }
+    assert_eq!(ids_in_range, [ids[3], ids[4]]);
     let page = crate::commit_log::after(&mut conn, 0, 100, i64::MAX)
         .await
         .unwrap();

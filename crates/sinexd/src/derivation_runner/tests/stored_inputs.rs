@@ -5,9 +5,13 @@ use sinex_model::event_types::operator::LogEntry;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 fn entry(label: &str, text: &str, record_offset: u64) -> Event {
+    entry_at(label, text, record_offset, None)
+}
+
+fn entry_at(label: &str, text: &str, record_offset: u64, written_at: Option<Timestamp>) -> Event {
     Event::build(
         &LogEntry {
-            written_at: None,
+            written_at,
             label: Some(label.into()),
             text: text.into(),
         },
@@ -132,10 +136,54 @@ async fn a_recompute_fills_the_lists_of_events_admitted_before_the_declaration(
     );
     assert!(by_label(&w).await.is_empty(), "a comparison admits nothing");
 
-    assert_eq!(d.recompute_all(ByLabel::NAME, None).await.unwrap(), 2);
+    assert_eq!(
+        d.recompute_all(ByLabel::NAME, None)
+            .await
+            .unwrap()
+            .keys_marked,
+        2
+    );
     d.catch_up().await.unwrap();
     assert_eq!(by_label(&w).await, ["x=a/b", "y=c"]);
     assert_eq!(w.count("SELECT count(*) FROM derivation.inputs").await, 3);
+}
+
+#[devkit::test]
+async fn ranged_recompute_marks_one_key_and_uses_its_older_inputs(db: devkit::pg::TestDatabase) {
+    // Simulate inputs admitted before their stored-input declaration. One
+    // earlier range fills that part of the list; the next range extends it.
+    let w = World::with_keys(db, vec![]).await;
+    let mut d = w.driver_with(vec![Box::new(ByLabel)], vec![]).await;
+    w.admit(vec![
+        entry_at("x", "old", 1, Some(at(-9 * 86_400))),
+        entry_at("y", "other", 2, Some(at(-2 * 86_400))),
+        entry("untimed", "untimed", 3),
+        entry_at("x", "in window", 4, Some(at(0))),
+        entry_at("z", "upper boundary", 5, Some(at(3_600))),
+    ])
+    .await;
+    d.recompute_all(ByLabel::NAME, Some((at(-9 * 86_400), at(-8 * 86_400))))
+        .await
+        .unwrap();
+    d.catch_up().await.unwrap();
+    assert_eq!(by_label(&w).await, ["x=old"]);
+
+    let result = d
+        .recompute_all(ByLabel::NAME, Some((at(0), at(3_600))))
+        .await
+        .unwrap();
+    assert_eq!(result.inputs_read, 1);
+    assert_eq!(result.keys_marked, 1);
+    let mut conn = PgConnection::connect(&w.url).await.unwrap();
+    let dirty = derivations::dirty(&mut conn, &[ByLabel::NAME.to_owned()], 10)
+        .await
+        .unwrap();
+    assert_eq!(dirty.len(), 1);
+    assert_eq!(dirty[0].key, json!({"label":"x"}));
+
+    d.catch_up().await.unwrap();
+    assert_eq!(by_label(&w).await, ["x=in window/old"]);
+    assert_eq!(w.count("SELECT count(*) FROM derivation.inputs").await, 2);
 }
 
 /// Item keys wait and name the `wake` key; `other` is an unrelated key of the

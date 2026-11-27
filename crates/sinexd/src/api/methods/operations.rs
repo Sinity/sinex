@@ -455,10 +455,13 @@ impl Api {
                 .await
                 .map(|cmp| json!({ "comparison": cmp.id, "summary": cmp.to_string() }))
         } else {
-            driver
-                .recompute_all(derivation, range)
-                .await
-                .map(|n| json!({ "derivation": derivation, "keys_marked": n }))
+            driver.recompute_all(derivation, range).await.map(|r| {
+                json!({
+                    "derivation": derivation,
+                    "keys_marked": r.keys_marked,
+                    "inputs_read": r.inputs_read,
+                })
+            })
         };
         let ended = driver.end_runs().await;
         let result = result?;
