@@ -63,6 +63,97 @@ async fn live(read: &mut PgConnection) -> i64 {
 }
 
 #[devkit::test]
+async fn a_search_page_does_not_hold_the_writer_behind_a_tombstone(db: devkit::pg::TestDatabase) {
+    let url = db.url(None);
+    let connection = PgConnection::connect(&url).await.unwrap();
+    let mut read = PgConnection::connect(&url).await.unwrap();
+    let mut search = PgConnection::connect(&url).await.unwrap();
+    let (writer, queues) = channels();
+    let task = tokio::spawn(writer_run(
+        url,
+        claim(connection).await.unwrap(),
+        queues,
+        Arc::new(sinex_store::NoDerivations),
+        None,
+    ));
+    let event = reading(1, 1);
+    let id = event.id;
+    writer
+        .submit(Priority::Live, batch(vec![event]))
+        .await
+        .unwrap();
+    let scope = Scope::Events {
+        events: vec![id],
+        query: None,
+    };
+    assert!(matches!(
+        run(
+            &mut read,
+            &writer,
+            Act::Archive,
+            "operator",
+            scope.clone(),
+            false
+        )
+        .await
+        .unwrap(),
+        Answer::Done(_)
+    ));
+
+    let operation = lifecycle::begin(&mut read, Act::Tombstone, "operator", scope)
+        .await
+        .unwrap();
+    let page = sinex_store::commit_log::after(&mut search, 0, 64, i64::MAX)
+        .await
+        .unwrap();
+    let mut updating = search.begin().await.unwrap();
+    sinex_store::read_models::apply_search_text(&mut updating, &page.events)
+        .await
+        .unwrap();
+
+    // Keep the real search transaction open until the writer has processed
+    // the attempted tombstone and then admitted an unrelated live event.
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        writer.lifecycle_step(&operation, lifecycle::Roots::Query(1)),
+    )
+    .await
+    .expect("the writer waited on the search transaction")
+    .unwrap();
+    assert!(
+        lifecycle::recorded(&mut read, operation.id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    writer
+        .submit(Priority::Live, batch(vec![reading(2, 2)]))
+        .await
+        .unwrap();
+    assert_eq!(live(&mut read).await, 1);
+    updating.commit().await.unwrap();
+
+    let report = retry(&mut read, &writer, &operation).await.unwrap();
+    assert!(
+        matches!(report, Answer::Done(ref r) if r["cascade"]["tombstoned"]["command.executed"] == 1),
+        "{report:?}"
+    );
+    let repeated = retry(&mut read, &writer, &operation).await.unwrap();
+    assert!(matches!((report, repeated), (Answer::Done(a), Answer::Done(b)) if a == b));
+    let mut delayed = search.begin().await.unwrap();
+    sinex_store::read_models::apply_search_text(&mut delayed, &page.events)
+        .await
+        .unwrap();
+    delayed.commit().await.unwrap();
+    let state: (bool, bool, bool) = sqlx::query_as(
+        "SELECT EXISTS(SELECT 1 FROM core.event_tombstones WHERE event_id = $1),\n                EXISTS(SELECT 1 FROM core.events WHERE id = $1),\n                EXISTS(SELECT 1 FROM core.search_text WHERE event_id = $1)",
+    ).bind(id.0).fetch_one(&mut read).await.unwrap();
+    assert_eq!(state, (true, false, false));
+    drop(writer);
+    task.await.unwrap();
+}
+
+#[devkit::test]
 async fn queued_lifecycle_retry_uses_committed_progress_and_completed_counts(
     db: devkit::pg::TestDatabase,
 ) {
