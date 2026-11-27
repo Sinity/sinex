@@ -157,6 +157,17 @@ const LAKE_SOURCES: &[LakeSource] = &[
         material_only: None,
     },
     LakeSource {
+        spec: spec(
+            "browser.chromium-history-api",
+            "sinnix-lake:browser.chromium-history-api",
+            "visits reported by the Chromium history API",
+            &["lake.observed", "capture.gap"],
+        ),
+        dirs: &["activity/browser/chromium-history-api"],
+        lane_values: &["chromium-history-api"],
+        material_only: None,
+    },
+    LakeSource {
         spec: SourceSpec {
             // Written only when it changes, which can be weeks apart.
             expect: Expectation::continuous_days(30),

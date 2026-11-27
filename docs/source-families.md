@@ -61,6 +61,8 @@ Materials acquired before the generation was recorded keep an unknown generation
 
 **The extension** captures visits, navigation, tabs, frames, downloads and the page content and resources observed, with browser, profile and document IDs and ordering. Its state is acknowledged producer state ([producers](producers.md)); the stream itself is in [streams](streams.md).
 
+The Sinnix Chromium extension keeps the visits reported by `chrome.history.getVisits` in the `browser.chromium-history-api` source as `lake.observed` records. It resolves the URL ID and visit time from each `onVisited` notification, retains the matching API records before sending them, and retries pending work after a worker or browser restart. The lane's timestamp is the provider visit time. The receiver identifies a visit by the extension's profile installation ID, native URL and visit IDs, URL and visit time, and acknowledges only a successful durable write. The installation ID persists in browser extension storage. Reinstalling the extension starts a new identity. API records preserve the provider's transition label and locality flag. Physical database generation, transition flags and durations belong to the SQLite row source. Visits missed before the extension queues a notification require separate reconciliation.
+
 **Page content** is a captured file, HTTP or WARC record with request and response metadata, exact body, redirects, encoding, frame and URL and capture time, not merely a URL row.
 - Existing HTML, PDF and WARC page corpora are acquired before anything is recrawled.
 - Fetching a URL again is a new response observation; it cannot reconstruct what was displayed earlier.

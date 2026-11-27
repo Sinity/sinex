@@ -52,8 +52,18 @@ pub(super) fn events(envelope: &Envelope) -> Result<Vec<LakeEvent>, RecordError>
     let payload = &envelope.payload;
     let at = envelope.observed_at;
     Ok(match lane {
-        "clipboard" | "primary" | "notifications" | "mpris" | "a11y" | "idle-inhibitors"
-        | "screen-frames" | "audio-devices" | "audio-topology" | "audio-index" | "netflow" => {
+        "clipboard"
+        | "primary"
+        | "notifications"
+        | "mpris"
+        | "a11y"
+        | "idle-inhibitors"
+        | "screen-frames"
+        | "audio-devices"
+        | "audio-topology"
+        | "audio-index"
+        | "netflow"
+        | "chromium-history-api" => {
             vec![LakeEvent::Observation(LakeObservation {
                 observed_at: at,
                 lane: envelope.lane.clone(),

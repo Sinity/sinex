@@ -104,6 +104,28 @@ fn browsing_lanes_become_links_and_reading_changes() {
 }
 
 #[devkit::test]
+fn chromium_api_visits_preserve_the_reported_ids_and_transition() {
+    let payload = json!({
+        "capture_id": "fixture-visit",
+        "source": "chrome.history.getVisits",
+        "profile": "fixture-profile-installation",
+        "url": "https://example.test/",
+        "visit": {"id": "17", "visitId": "41", "referringVisitId": "39",
+                  "visitTime": 1_760_000_000_250.0, "transition": "link", "isLocal": true}
+    });
+    let LakeEvent::Observation(visit) = one(
+        "browser.chromium-history-api",
+        "chromium-history-api",
+        payload.clone(),
+    ) else {
+        panic!("expected browser API observation")
+    };
+    assert_eq!(visit.payload, payload);
+    assert_eq!(visit.observed_at, envelope_time());
+    assert_eq!(visit.lane, "chromium-history-api");
+}
+
+#[devkit::test]
 fn a_device_sample_is_one_event_per_device() {
     let batteries = parse(
         "machine.peripheral",

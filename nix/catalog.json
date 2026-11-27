@@ -4004,6 +4004,45 @@
         }
       ],
       "eventTypes": [
+        "lake.observed",
+        "capture.gap"
+      ],
+      "expect": {
+        "everySeconds": null,
+        "kind": "continuous",
+        "silentAfterSeconds": 172800
+      },
+      "expiresAfterSeconds": null,
+      "formats": [
+        "sinnix-lake"
+      ],
+      "name": "browser.chromium-history-api",
+      "purpose": "visits reported by the Chromium history API",
+      "shapes": [
+        "append-file"
+      ]
+    },
+    {
+      "class": "open",
+      "discovery": [
+        {
+          "capture": false,
+          "description": {
+            "capabilities": [],
+            "captured_by": "system",
+            "credentials": [],
+            "locations": [
+              {
+                "path": "realm",
+                "root": "declared"
+              }
+            ],
+            "streams": []
+          },
+          "format": "sinnix-lake"
+        }
+      ],
+      "eventTypes": [
         "reading_stack.changed",
         "capture.gap"
       ],
