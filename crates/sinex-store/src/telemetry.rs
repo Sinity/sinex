@@ -7,6 +7,9 @@ use sqlx::{Connection, PgConnection};
 use std::collections::BTreeMap;
 use std::time::Duration;
 
+/// Per-event derivations count eligible inputs, not global commit positions.
+pub const WAITING_INPUTS: &str = "waiting_inputs";
+
 /// One part's numbers, as a sample records them.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Reading {
@@ -30,7 +33,11 @@ fn reading(component: &'static str, name: &str, measures: &[(&str, i64)]) -> Rea
 }
 
 /// Every part's numbers now.
-pub async fn read(conn: &mut PgConnection, publisher: Option<&str>) -> Result<Vec<Reading>> {
+pub async fn read(
+    conn: &mut PgConnection,
+    publisher: Option<&str>,
+    per_event: &[(&str, &[&str])],
+) -> Result<Vec<Reading>> {
     let mut tx = conn.begin().await?;
     sqlx::query!("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *tx)
@@ -77,25 +84,34 @@ pub async fn read(conn: &mut PgConnection, publisher: Option<&str>) -> Result<Ve
             ],
         ),
     ];
-    let keyed = sqlx::query!(
-        r#"SELECT d.name AS "name!", d.kind,
+    let derivations = sqlx::query!(
+        r#"SELECT d.name AS "name!",
              (SELECT count(*) FROM derivation.dirty k WHERE k.derivation = d.name) AS "dirty!",
              (SELECT count(*) FROM derivation.waiting w WHERE w.derivation = d.name) AS "waiting!",
              (SELECT count(*) FROM derivation.refusals f WHERE f.derivation = d.name) AS "refused!",
-             (SELECT p.commit_seq FROM derivation.positions p WHERE p.derivation = d.name) AS position
-           FROM registry.derivations d ORDER BY d.name"#,
+             coalesce(p.commit_seq, 0) AS "position!"
+           FROM registry.derivations d LEFT JOIN derivation.positions p ON p.derivation = d.name
+           ORDER BY d.name"#,
     )
     .fetch_all(&mut *tx)
     .await?;
-    for d in keyed {
+    for d in derivations {
         let mut measures = vec![
             ("dirty_keys", d.dirty),
             ("waiting_keys", d.waiting),
             ("refused_work", d.refused),
         ];
-        if let Some(position) = d.position.or((d.kind == "per_event").then_some(0)) {
-            measures.push(("position", position));
-            measures.push(("behind", head.commit_seq - position));
+        if let Some((_, kinds)) = per_event.iter().find(|(name, _)| *name == d.name.as_str()) {
+            let kinds: Vec<String> = kinds.iter().map(|kind| (*kind).to_owned()).collect();
+            // The kind and position let PostgreSQL skip irrelevant event chunks
+            // and use their indexes. A generic plan cannot see these values.
+            let waiting_inputs =
+                sqlx::query_file_scalar!("src/telemetry/waiting_inputs.sql", &kinds, d.position)
+                    .persistent(false)
+                    .fetch_one(&mut *tx)
+                    .await?;
+            measures.push(("position", d.position));
+            measures.push((WAITING_INPUTS, waiting_inputs));
         }
         out.push(reading("derivation", &d.name, &measures));
     }

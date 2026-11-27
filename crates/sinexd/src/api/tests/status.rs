@@ -1,17 +1,7 @@
 use super::*;
 use sinex_model::event_types::telemetry::SinexTelemetry;
 
-fn sample(at: Timestamp, position: i64, behind: i64) -> Event {
-    let sample = SinexTelemetry {
-        component: "search index".into(),
-        name: String::new(),
-        sampled_at: at,
-        measures: [
-            ("position".into(), position as f64),
-            ("behind".into(), behind as f64),
-        ]
-        .into(),
-    };
+fn sample_event(sample: SinexTelemetry) -> Event {
     Event::build(
         &sample,
         "sinex.telemetry",
@@ -27,6 +17,19 @@ fn sample(at: Timestamp, position: i64, behind: i64) -> Event {
         Class::Open,
     )
     .unwrap()
+}
+
+fn sample(at: Timestamp, position: i64, behind: i64) -> Event {
+    sample_event(SinexTelemetry {
+        component: "search index".into(),
+        name: String::new(),
+        sampled_at: at,
+        measures: [
+            ("position".into(), position as f64),
+            ("behind".into(), behind as f64),
+        ]
+        .into(),
+    })
 }
 
 async fn status(w: &World) -> Value {
@@ -138,6 +141,151 @@ async fn status_degraded_when_search_position_stalls(db: devkit::pg::TestDatabas
         "{reason}"
     );
     assert_eq!(status["reasons"][0], reason);
+}
+
+#[devkit::test]
+async fn status_derivation_backlog_counts_only_unprocessed_inputs(db: devkit::pg::TestDatabase) {
+    use sinex_model::{EventPayload, event_types::CommandImported};
+    const NAME: &str = "synthetic.per-event";
+    let world = world(db).await;
+    let mut connection = world.reads.acquire().await.unwrap();
+    sinex_store::registry::register_derivation(
+        &mut connection,
+        &sinex_store::registry::Derivation {
+            name: NAME.into(),
+            kind: "per_event",
+            version: 1,
+            inputs: vec![CommandExecuted::EVENT_TYPE.into()],
+            outputs: vec![],
+        },
+    )
+    .await
+    .unwrap();
+    let input = |text: &str| {
+        Event::build(
+            &CommandImported {
+                command: text.into(),
+                hostname: "fixture".into(),
+                started_at: None,
+                header_elapsed: None,
+                paths: vec![],
+                n: 0,
+            },
+            "synthetic.history",
+            Origin::Record {
+                location: RecordLocation {
+                    material: MaterialId::new(),
+                    record_offset: 0,
+                },
+                output_index: 0,
+            },
+            ReadingOrder(1),
+            *blake3::hash(text.as_bytes()).as_bytes(),
+            Class::Open,
+        )
+        .unwrap()
+    };
+    let processed = input("processed input");
+    let id = processed.id.0;
+    admit_events(&world, vec![processed]).await;
+    let position: i64 = sqlx::query_scalar("SELECT commit_seq FROM core.events WHERE id = $1")
+        .bind(id)
+        .fetch_one(&mut *connection)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO derivation.positions (derivation, commit_seq) VALUES ($1, $2)")
+        .bind(NAME)
+        .bind(position)
+        .execute(&mut *connection)
+        .await
+        .unwrap();
+    admit(&world, &["unrelated reading"], 0).await;
+
+    let now = Timestamp::now();
+    let legacy = sample_event(SinexTelemetry {
+        component: "derivation".into(),
+        name: NAME.into(),
+        sampled_at: Timestamp(now.0 - time::Duration::minutes(12)),
+        measures: [
+            ("position".into(), position as f64),
+            ("behind".into(), 99.0),
+        ]
+        .into(),
+    });
+    admit_events(&world, vec![legacy]).await;
+    let sample_series = |reading: sinex_store::telemetry::Reading, seconds: &[i64]| {
+        seconds
+            .iter()
+            .map(|seconds| {
+                sample_event(SinexTelemetry {
+                    component: reading.component.into(),
+                    name: reading.name.clone(),
+                    sampled_at: Timestamp(now.0 - time::Duration::seconds(*seconds)),
+                    measures: reading.measures.clone(),
+                })
+            })
+            .collect()
+    };
+    let derivation = |readings: Vec<sinex_store::telemetry::Reading>| {
+        readings
+            .into_iter()
+            .find(|reading| reading.name == NAME)
+            .unwrap()
+    };
+    let running = [(NAME, &[CommandImported::EVENT_TYPE][..])];
+    let caught_up = derivation(
+        sinex_store::telemetry::read(&mut connection, None, &running)
+            .await
+            .unwrap(),
+    );
+    admit_events(&world, sample_series(caught_up, &[710, 700])).await;
+    let consumer = |status: &Value| {
+        status["consumers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|consumer| consumer["name"] == format!("derivation {NAME}"))
+            .unwrap()
+            .clone()
+    };
+    let current = consumer(&status(&world).await);
+    assert_eq!(current["position"], position);
+    assert_eq!(current["behind"], 0);
+    assert_eq!(current["state"], "current");
+
+    admit_events(
+        &world,
+        vec![
+            input("waiting input"),
+            command("another unrelated reading", 2),
+        ],
+    )
+    .await;
+    let waiting = derivation(
+        sinex_store::telemetry::read(&mut connection, None, &running)
+            .await
+            .unwrap(),
+    );
+    admit_events(&world, sample_series(waiting, &[600, 300, 1])).await;
+    let report = status(&world).await;
+    let stalled = consumer(&report);
+    assert_eq!(stalled["behind"], 1);
+    assert_eq!(stalled["state"], "stalled");
+    assert!(report["reasons"].as_array().unwrap().iter().any(|reason| {
+        reason
+            .as_str()
+            .unwrap()
+            .starts_with(&format!("derivation {NAME}: 1 behind, not advanced since "))
+    }));
+    let paused = derivation(
+        sinex_store::telemetry::read(&mut connection, None, &[])
+            .await
+            .unwrap(),
+    );
+    admit_events(&world, sample_series(paused, &[0])).await;
+    let paused = consumer(&status(&world).await);
+    assert_eq!(paused["behind"], Value::Null);
+    assert_eq!(paused["state"], "unknown");
 }
 
 #[devkit::test]

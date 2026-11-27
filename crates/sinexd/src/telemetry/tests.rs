@@ -31,7 +31,7 @@ async fn spooled_publisher_position_belongs_to_the_current_confirmed_stream(
         .unwrap();
     js.delete_stream(&confirmed).await.unwrap();
 
-    let written = sample(&mut conn, &mut writer, broker).await.unwrap();
+    let written = sample(&mut conn, &mut writer, broker, &[]).await.unwrap();
     assert!(
         js.get_stream(&confirmed).await.is_err(),
         "sampling created the missing stream"
@@ -51,14 +51,14 @@ async fn spooled_publisher_position_belongs_to_the_current_confirmed_stream(
         .await
         .unwrap();
     assert_eq!(
-        sample(&mut conn, &mut writer, broker).await.unwrap(),
+        sample(&mut conn, &mut writer, broker, &[]).await.unwrap(),
         written
     );
     sinex_store::commit_log::set_consumer_position(&mut conn, &active, 7, 0)
         .await
         .unwrap();
     assert_eq!(
-        sample(&mut conn, &mut writer, broker).await.unwrap(),
+        sample(&mut conn, &mut writer, broker, &[]).await.unwrap(),
         written
     );
     drop(writer);
@@ -123,7 +123,7 @@ async fn sampling_reconnects_after_its_database_connection_dies(db: devkit::pg::
     let dir = tempfile::tempdir().unwrap();
     let mut writer = SpoolWriter::open(dir.path(), Rotation::default()).unwrap();
     assert_eq!(
-        sample_reconnecting(&mut conn, &database, &mut writer, broker)
+        sample_reconnecting(&mut conn, &database, &mut writer, broker, &[])
             .await
             .unwrap(),
         3
@@ -134,7 +134,7 @@ async fn sampling_reconnects_after_its_database_connection_dies(db: devkit::pg::
         .unwrap();
     assert_ne!(replacement, pid);
     assert_eq!(
-        sample_reconnecting(&mut conn, &database, &mut writer, broker)
+        sample_reconnecting(&mut conn, &database, &mut writer, broker, &[])
             .await
             .unwrap(),
         3

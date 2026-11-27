@@ -25,7 +25,7 @@ async fn a_sample_keeps_one_snapshot_while_admission_commits(db: devkit::pg::Tes
         .execute("LOCK TABLE core.source_counts IN ACCESS EXCLUSIVE MODE")
         .await
         .unwrap();
-    let sample = tokio::spawn(async move { read(&mut reader, None).await.unwrap() });
+    let sample = tokio::spawn(async move { read(&mut reader, None, &[]).await.unwrap() });
 
     // Admission changes the counts after the sample read its commit position.
     tokio::time::timeout(Duration::from_secs(10), async {
@@ -68,7 +68,7 @@ async fn a_sample_keeps_one_snapshot_while_admission_commits(db: devkit::pg::Tes
     };
     assert_eq!(measures(&sample, "writer", "")["commit_seq"], 1.0);
     assert_eq!(measures(&sample, "source", "test.source")["events"], 1.0);
-    let next = read(&mut writer, None).await.unwrap();
+    let next = read(&mut writer, None, &[]).await.unwrap();
     assert_eq!(measures(&next, "writer", "")["commit_seq"], 2.0);
     assert_eq!(measures(&next, "source", "test.source")["events"], 2.0);
 }
@@ -161,7 +161,9 @@ async fn recent_samples_keep_history_within_the_window(db: devkit::pg::TestDatab
         .await
         .unwrap();
     }
-    let readings = read(&mut conn, None).await.unwrap();
+    let readings = read(&mut conn, None, &[("example.per_event", &[])])
+        .await
+        .unwrap();
     let search = readings
         .iter()
         .find(|reading| reading.component == "search index")
@@ -178,7 +180,7 @@ async fn recent_samples_keep_history_within_the_window(db: devkit::pg::TestDatab
         .find(|reading| reading.name == "example.per_event")
         .unwrap();
     assert_eq!(initial.measures["position"], 0.0);
-    assert_eq!(initial.measures["behind"], 3.0);
+    assert_eq!(initial.measures[WAITING_INPUTS], 0.0);
     let keyed = readings
         .iter()
         .find(|reading| reading.name == "example.keyed")
@@ -192,6 +194,47 @@ async fn recent_samples_keep_history_within_the_window(db: devkit::pg::TestDatab
         ]
         .into()
     );
+
+    // An input already below the cursor is work again at its restore position.
+    let id: uuid::Uuid = sqlx::query_scalar("SELECT id FROM core.events WHERE commit_seq = 1")
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+    conn.execute(
+        "INSERT INTO derivation.positions (derivation, commit_seq) VALUES ('example.per_event', 3)",
+    )
+    .await
+    .unwrap();
+    let mut tx = conn.begin().await.unwrap();
+    let archived = crate::admission::position(&mut tx).await.unwrap();
+    crate::admission::archive_at(
+        &mut tx,
+        &[id],
+        archived,
+        sinex_model::ArchiveReason::Archive,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let restored = crate::admission::position(&mut tx).await.unwrap();
+    crate::admission::restore_at(&mut tx, &[id], restored, uuid::Uuid::now_v7())
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let readings = read(
+        &mut conn,
+        None,
+        &[("example.per_event", &["sinex.telemetry"])],
+    )
+    .await
+    .unwrap();
+    let per_event = readings
+        .iter()
+        .find(|reading| reading.name == "example.per_event")
+        .unwrap();
+    assert_eq!(per_event.measures["position"], 3.0);
+    assert_eq!(per_event.measures[WAITING_INPUTS], 1.0);
 }
 
 #[devkit::test]
