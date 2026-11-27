@@ -65,6 +65,12 @@ const ROWS_PER_PAGE: i64 = 10_000;
 /// A key and the dirty mark it was computed for (0 when only refreshed).
 type KeyWork = (Value, i64);
 
+#[derive(Debug)]
+pub(crate) struct RecomputedKeys {
+    pub keys_marked: usize,
+    pub inputs_read: usize,
+}
+
 /// Keys marked dirty per recompute request.
 const KEYS_PER_REQUEST: usize = 5_000;
 /// One pass in this many works every rank, not only the lowest with work.
@@ -322,11 +328,11 @@ impl DerivationRunner {
     /// derivation has outputs under: a version that keys differently
     /// computes an old key to nothing, so its outputs are archived and no
     /// input stays counted under both versions.
-    async fn all_keys(
+    async fn find_keys(
         &mut self,
         name: &str,
         range: Option<(Timestamp, Timestamp)>,
-    ) -> Result<Vec<Value>> {
+    ) -> Result<(Vec<Value>, usize)> {
         let env = self.env();
         let d = self
             .keyed
@@ -337,36 +343,52 @@ impl DerivationRunner {
         let d = d.clone();
         let mut keys: Vec<Value> = Vec::new();
         let mut seen: HashSet<String> = HashSet::new();
-        // Inputs of keys read by their stored lists. Events admitted before
-        // a key shape declared its list are added here, for every input
-        // paged through: a key in the range reads all of its inputs.
+        // Fill missing list entries for inputs this request reads. Only a
+        // whole-history operation can seed lists across the entire store.
         let mut stored: Vec<(Value, uuid::Uuid)> = Vec::new();
-        let mut after = 0i64;
+        let mut after_seq = 0i64;
+        let mut after_time = None;
+        let mut inputs_read = 0;
         loop {
-            let page = derivations::after_seq(
-                &mut self.read,
-                &types,
-                after,
-                10_000,
-                sinex_store::PAGE_BYTES,
-            )
-            .await?;
+            let page = if let Some(range) = range {
+                let mut snapshot = self.read.begin().await?;
+                sinex_store::query::read_one_snapshot(&mut snapshot).await?;
+                let page = derivations::inputs_in_time_range(
+                    &mut snapshot,
+                    &types,
+                    range,
+                    after_time,
+                    ROWS_PER_PAGE,
+                    sinex_store::PAGE_BYTES,
+                )
+                .await?;
+                snapshot.commit().await?;
+                page
+            } else {
+                derivations::after_seq(
+                    &mut self.read,
+                    &types,
+                    after_seq,
+                    ROWS_PER_PAGE,
+                    sinex_store::PAGE_BYTES,
+                )
+                .await?
+            };
             let Some(last) = page.last() else { break };
-            after = last.commit_seq;
+            after_seq = last.commit_seq;
+            after_time = last.event.ts_orig.at.map(|at| (at, last.commit_seq));
+            inputs_read += page.len();
             for c in &page {
-                let t = c.event.ts_orig.at;
                 let view = KeyView {
                     event_type: &c.event.event_type,
-                    ts_orig: t,
+                    ts_orig: c.event.ts_orig.at,
                     payload: &c.event.payload,
                 };
-                let in_range =
-                    range.is_none_or(|(from, to)| t.is_some_and(|t| t >= from && t < to));
                 for k in d.keys_for(&view, &env) {
                     if d.stores_inputs(&k) {
                         stored.push((k.clone(), c.event.id.0));
                     }
-                    if in_range && seen.insert(k.to_string()) {
+                    if seen.insert(k.to_string()) {
                         keys.push(k);
                     }
                 }
@@ -383,7 +405,7 @@ impl DerivationRunner {
                 }
             }
         }
-        Ok(keys)
+        Ok((keys, inputs_read))
     }
 
     /// Add to the stored inputs of keys, through the writer.
@@ -480,7 +502,7 @@ impl DerivationRunner {
         &mut self,
         name: &str,
         range: Option<(Timestamp, Timestamp)>,
-    ) -> Result<usize> {
+    ) -> Result<RecomputedKeys> {
         let _lock = self.writer.lock_derivations().await;
         let d = self
             .keyed
@@ -495,8 +517,7 @@ impl DerivationRunner {
                 "{name}: version {selected} is selected and this build runs version {version}; compare it and switch using its comparison ID"
             )));
         }
-        let keys = self.all_keys(name, range).await?;
-        let total = keys.len();
+        let (keys, inputs_read) = self.find_keys(name, range).await?;
         let run = self.run_of(name)?;
         for chunk in keys.chunks(KEYS_PER_REQUEST) {
             let batch = Batch {
@@ -513,7 +534,10 @@ impl DerivationRunner {
             };
             self.writer.submit(Priority::Derived, batch).await?;
         }
-        Ok(total)
+        Ok(RecomputedKeys {
+            keys_marked: keys.len(),
+            inputs_read,
+        })
     }
 
     fn run_of(&self, name: &str) -> Result<RunId> {
@@ -1099,7 +1123,7 @@ impl DerivationRunner {
             .map(|kind| (*kind).to_owned())
             .collect();
         let from = derivations::head(&mut self.read).await?;
-        let keys = self.all_keys(name, range).await?;
+        let (keys, _) = self.find_keys(name, range).await?;
         let env = self.env();
         let mut cmp = Comparison {
             keys: keys.len(),
@@ -1193,7 +1217,7 @@ impl DerivationRunner {
             kind: kind.into(),
         };
         let keys = if kind == "keyed" && history == sinex_model::DerivationHistory::Recompute {
-            self.all_keys(name, None).await?
+            self.find_keys(name, None).await?.0
         } else {
             vec![]
         };

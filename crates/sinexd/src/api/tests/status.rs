@@ -48,6 +48,71 @@ fn search(status: &Value) -> &Value {
 }
 
 #[devkit::test]
+async fn status_runs_no_count_over_events(db: devkit::pg::TestDatabase) {
+    use sqlx::Connection as _;
+
+    async fn observed_statements(world: &World) -> Vec<String> {
+        world
+            .reads
+            .acquire()
+            .await
+            .unwrap()
+            .clear_cached_statements()
+            .await
+            .unwrap();
+        status(world).await;
+        sqlx::query_scalar("SELECT lower(statement) FROM pg_prepared_statements ORDER BY statement")
+            .persistent(false)
+            .fetch_all(&mut *world.reads.acquire().await.unwrap())
+            .await
+            .unwrap()
+    }
+
+    // Observe the prepared statements on the same connection the API uses.
+    let world = world_with_reads(
+        db,
+        Default::default(),
+        PgPoolOptions::new().max_connections(1),
+    )
+    .await;
+    let empty = observed_statements(&world).await;
+    sqlx::query(
+        "WITH added AS (
+             INSERT INTO core.events
+             (id,event_type,source,run_id,material_id,record_offset,ts_quality,
+              commit_seq,payload,reading_order,record_hash,class)
+             SELECT uuidv7(),'fixture.unrelated','fixture.history',uuidv7(),uuidv7(),
+                    0,'unknown',n,'{}'::jsonb,1,decode(repeat('01',32),'hex'),'open'
+             FROM generate_series(1,4096) AS n
+             RETURNING commit_seq
+         )
+         UPDATE core.counters SET value=(SELECT max(commit_seq) FROM added)
+         WHERE name='commit_seq'",
+    )
+    .execute(&world.reads)
+    .await
+    .unwrap();
+    let populated = observed_statements(&world).await;
+    assert_eq!(populated, empty);
+    for relation in [
+        "core.visible_coverage_readings",
+        "core.visible_fusion_counts",
+    ] {
+        assert!(
+            populated.iter().any(|sql| sql.contains(relation)),
+            "{relation}"
+        );
+    }
+    for sql in populated {
+        let counts = ["count(", "count ("].iter().any(|term| sql.contains(term));
+        let reads_events = ["core.events", "core.visible_events"]
+            .iter()
+            .any(|relation| sql.contains(relation));
+        assert!(!(counts && reads_events), "{sql}");
+    }
+}
+
+#[devkit::test]
 async fn status_degraded_when_search_position_stalls(db: devkit::pg::TestDatabase) {
     let world = world(db).await;
     let now = Timestamp::now();

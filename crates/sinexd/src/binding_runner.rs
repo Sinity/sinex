@@ -5,11 +5,13 @@ use crate::binding_reader::{self, BindingReader};
 use crate::material_access::Sink;
 use crate::writer::WriterHandle;
 use crate::{Error, Result};
+use sinex_source_core::discovery::DiscoveredInput;
 use sinex_source_core::{Binding, InputFormat, Settings};
 use sinex_sources::sources;
 use sinex_store::Blobs;
 use sqlx::{Connection, PgConnection};
 use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::watch;
 
@@ -23,18 +25,23 @@ pub(crate) struct ReadFailure {
     pub since: String,
 }
 
-/// Every binding whose latest read attempt failed, by binding name. The binding
-/// runner keeps it and status shows it: a binding that cannot read admits
-/// nothing and has no record to count as failed, so without this status shows
-/// an input that fails every round as a quiet source with zero failures.
-pub(crate) type ReadFailures = std::sync::Arc<std::sync::Mutex<BTreeMap<String, ReadFailure>>>;
+/// The plan actually used by the binding runner and the failures that cannot
+/// appear in admitted records because the binding could not read them.
+#[derive(Clone, Default)]
+pub(crate) struct SourceObservation {
+    pub discovery: Option<Arc<[DiscoveredInput]>>,
+    pub failures: BTreeMap<String, ReadFailure>,
+}
+
+pub(crate) type SourceStatus = Arc<Mutex<SourceObservation>>;
 
 /// Record the outcome of one read attempt of `binding`.
-fn note(failures: &ReadFailures, binding: &str, error: Option<&str>) {
-    let mut failures = failures.lock().unwrap();
+fn note(status: &SourceStatus, binding: &str, error: Option<&str>) {
+    let mut status = status.lock().unwrap();
     match error {
         Some(error) => {
-            failures
+            status
+                .failures
                 .entry(binding.to_owned())
                 .and_modify(|failure| error.clone_into(&mut failure.error))
                 .or_insert_with(|| ReadFailure {
@@ -43,7 +50,7 @@ fn note(failures: &ReadFailures, binding: &str, error: Option<&str>) {
                 });
         }
         None => {
-            failures.remove(binding);
+            status.failures.remove(binding);
         }
     }
 }
@@ -352,7 +359,7 @@ async fn saved(conn: &mut PgConnection, database: &str, host: &str) -> Result<Ve
 struct Bindings {
     readers: Vec<BindingReader>,
     said: BTreeMap<String, String>,
-    failures: ReadFailures,
+    status: SourceStatus,
 }
 
 impl Bindings {
@@ -368,15 +375,16 @@ impl Bindings {
         saved: &[Binding],
         coverage: &mut binding_reader::coverage::Coverage,
     ) {
-        let inputs = match discovery::status(&config.context(host)) {
-            Ok(inputs) => inputs,
+        let inputs: Arc<[DiscoveredInput]> = match discovery::status(&config.context(host)) {
+            Ok(inputs) => inputs.into(),
             Err(error) => {
                 self.say("plan", format!("sinexd: sources: {error}"));
                 return;
             }
         };
+        self.status.lock().unwrap().discovery = Some(inputs.clone());
         let mut proposed = Vec::new();
-        for input in inputs {
+        for input in inputs.iter() {
             let key = format!(
                 "input {} {} {} {}",
                 input.source,
@@ -442,14 +450,20 @@ impl Bindings {
             }
             let format = sources::format(&input.format).expect("discovered format");
             if !input.capture {
-                proposed.extend(input.bindings.into_iter().map(|binding| (format, binding)));
+                proposed.extend(
+                    input
+                        .bindings
+                        .iter()
+                        .cloned()
+                        .map(|binding| (format, binding)),
+                );
             }
         }
         let planned = discovery::reconcile(proposed, saved);
         for (binding, error) in planned.unavailable {
             self.readers
                 .retain(|reader| reader.binding.name != binding.name);
-            note(&self.failures, &binding.name, Some(&error.to_string()));
+            note(&self.status, &binding.name, Some(&error.to_string()));
             self.say(
                 &format!("binding {}", binding.name),
                 format!("sinexd: {}: unavailable: {error}", binding.input.display()),
@@ -472,11 +486,11 @@ impl Bindings {
             match BindingReader::new(format, binding) {
                 Ok(reader) => {
                     self.said.remove(&format!("binding {name}"));
-                    note(&self.failures, &name, None);
+                    note(&self.status, &name, None);
                     self.readers.push(reader);
                 }
                 Err(error) => {
-                    note(&self.failures, &name, Some(&error.to_string()));
+                    note(&self.status, &name, Some(&error.to_string()));
                     self.say(
                         &format!("binding {name}"),
                         format!("sinexd: binding {name}: {error}"),
@@ -498,7 +512,7 @@ impl Bindings {
 const PLAN_EVERY: Duration = Duration::from_secs(60);
 
 /// Read the bindings `config` enables, in rounds every `interval`, until
-/// `stop`, keeping each binding's current read failure in `failures`.
+/// `stop`, sharing the most recent plan and read outcomes in `status`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run(
     connection: (PgConnection, String),
@@ -507,7 +521,7 @@ pub(crate) async fn run(
     host: String,
     config: Config,
     interval: Duration,
-    failures: ReadFailures,
+    status: SourceStatus,
     mut stop: watch::Receiver<bool>,
 ) -> Result<()> {
     let (mut read_conn, database) = connection;
@@ -515,7 +529,7 @@ pub(crate) async fn run(
     let sink = Sink(blobs.clone());
     let mut rounds = binding_reader::Rounds::resume(&mut read_conn, &host).await?;
     let mut bindings = Bindings {
-        failures: failures.clone(),
+        status: status.clone(),
         ..Bindings::default()
     };
     let mut planned_at: Option<std::time::Instant> = None;
@@ -554,7 +568,7 @@ pub(crate) async fn run(
             &mut |binding, result| {
                 let key = format!("binding {binding}");
                 note(
-                    &failures,
+                    &status,
                     binding,
                     result.as_ref().err().map(ToString::to_string).as_deref(),
                 );

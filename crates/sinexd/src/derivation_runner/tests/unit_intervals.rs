@@ -251,7 +251,8 @@ async fn a_recompute_leaves_nothing_under_the_day_keys_unit_runs_had(db: devkit:
         runner
             .recompute_all(StateIntervals::NAME, None)
             .await
-            .unwrap(),
+            .unwrap()
+            .keys_marked,
         1,
         "the stored day key is the one key: unit events name none in this derivation"
     );

@@ -56,6 +56,7 @@ pub(crate) async fn archive_at(
       .execute(&mut *conn).await?;
     crate::live_intervals::archived(conn, ids).await?;
     crate::output_ranges::archived(conn, ids).await?;
+    crate::status_readings::set_live(conn, ids, false).await?;
     // The input is no longer eligible for derivation. Its original reading
     // remains archived; the current-work diagnosis has no remaining owner.
     let inputs: Vec<String> = ids.iter().map(Uuid::to_string).collect();
@@ -89,5 +90,6 @@ pub(crate) async fn restore_at(
       SELECT event_id AS "event_id!" FROM restored"#,events,position,operation)
       .fetch_all(&mut *conn).await?;
     crate::live_intervals::restored(conn, &restored).await?;
+    crate::status_readings::set_live(conn, &restored, true).await?;
     Ok(restored)
 }

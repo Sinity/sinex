@@ -137,17 +137,21 @@ async fn status_shows_a_pending_switch_only_for_another_version(db: devkit::pg::
 #[devkit::test]
 async fn public_recompute_marks_the_keys_of_a_time_range(db: devkit::pg::TestDatabase) {
     let w = world(db).await;
-    // 2026-09-14T08:00:00Z and the minute after.
-    admit(&w, &["pwd", "ls"], 0).await;
+    // Admit the final boundary before either in-range row, then an older
+    // command and finally the inclusive lower boundary.
+    admit(&w, &["ls"], 60).await;
+    admit(&w, &["pwd"], -3 * 24 * 60).await;
+    admit(&w, &["git status", "git diff"], 0).await;
     let recompute = |since: &str, until: &str| json!({"method":"recompute","derivation":"shell.sessions","since":since,"until":until});
     let (status, body) = call_unbounded(
         &w,
         Some(AGENT),
-        recompute("2026-09-14T00:00:00Z", "2026-09-15T00:00:00Z"),
+        recompute("2026-09-14T08:00:00Z", "2026-09-14T09:00:00Z"),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["outcome"], "ok", "{body}");
+    assert_eq!(body["result"]["inputs_read"], 2, "{body}");
     let marked = body["result"]["keys_marked"].as_u64().unwrap();
     assert!(marked >= 1, "{body}");
     let dirty: i64 = sqlx::query_scalar(
@@ -165,4 +169,5 @@ async fn public_recompute_marks_the_keys_of_a_time_range(db: devkit::pg::TestDat
     .await;
     assert_eq!(body["outcome"], "ok", "{body}");
     assert_eq!(body["result"]["keys_marked"], 0, "{body}");
+    assert_eq!(body["result"]["inputs_read"], 0, "{body}");
 }
