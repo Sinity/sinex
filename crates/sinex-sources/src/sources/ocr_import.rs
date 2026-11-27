@@ -253,12 +253,7 @@ input_format! { pub JSON_FORMAT = "ocr-json" {
     discovery: super::transcript::discovery::spec(false),
     discover: super::transcript::discovery::discover,
     plan: |input, settings| super::transcript::plan(&JSON, input, settings),
-    reader: |b| {
-        Ok(super::transcript::archive(
-            b,
-            super::transcript::JSON_FRAMING,
-        ))
-    },
+    reader: |b| Ok(super::transcript::archive(b, Framing::Whole)),
 } }
 
 input_format! { pub TSV_FORMAT = "ocr-tsv" {
