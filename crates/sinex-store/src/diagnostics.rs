@@ -143,13 +143,11 @@ pub struct FusionAmbiguity {
 
 /// Ambiguity per fusion family over the live records the caller can see.
 /// `families` pairs each family with its fused kind, so fused records with
-/// `ambiguous > 1` count under their family; `pair_type` is the kind of the
-/// pairs a fusion pass considered. Results sort by family name, keeping each
+/// `ambiguous > 1` count under their family. Results sort by family name, keeping each
 /// requested row, including duplicates and families with zero counts.
 pub async fn fusion_ambiguity(
     conn: &mut PgConnection,
     families: &[(String, String)],
-    pair_type: &str,
 ) -> Result<Vec<FusionAmbiguity>> {
     let (names, fused_types): (Vec<String>, Vec<String>) = families.iter().cloned().unzip();
     Ok(sqlx::query_file_as!(
@@ -157,7 +155,6 @@ pub async fn fusion_ambiguity(
         "src/diagnostics/fusion_ambiguity.sql",
         &names,
         &fused_types,
-        pair_type,
     )
     .fetch_all(&mut *conn)
     .await?)

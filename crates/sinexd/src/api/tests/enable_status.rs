@@ -8,7 +8,12 @@ async fn status_lists_exclusions_and_reasons_without_source_runs(db: devkit::pg:
         "desktop.hyprland": null
     }}))
     .unwrap();
-    let world = world_with_config(db, config).await;
+    let world = world_with_api(db, config, PgPoolOptions::new(), |api| {
+        let discovery =
+            sinex_sources::discovery::status(&api.source_config.context(&api.host)).unwrap();
+        api.source_status.lock().unwrap().discovery = Some(discovery.into());
+    })
+    .await;
     let (status, body) = call_unbounded(&world, Some(READ), json!({"method":"status"})).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let result = &body["result"];

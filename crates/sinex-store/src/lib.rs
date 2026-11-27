@@ -40,6 +40,7 @@ pub mod snapshot;
 pub mod source_declarations;
 mod stage;
 pub mod stages;
+mod status_readings;
 pub mod store_secret;
 pub mod telemetry;
 pub mod vectors;

@@ -664,15 +664,15 @@ fn project_registry_reaches_the_versioned_derivation() {
 
 #[devkit::test]
 fn read_failures_keep_their_start_until_a_read_succeeds() {
-    let failures = ReadFailures::default();
-    note(&failures, "b", Some("database is locked"));
-    let since = failures.lock().unwrap()["b"].since.clone();
-    note(&failures, "b", Some("attempt to write a readonly database"));
-    let failure = failures.lock().unwrap()["b"].clone();
+    let status = SourceStatus::default();
+    note(&status, "b", Some("database is locked"));
+    let since = status.lock().unwrap().failures["b"].since.clone();
+    note(&status, "b", Some("attempt to write a readonly database"));
+    let failure = status.lock().unwrap().failures["b"].clone();
     assert_eq!(failure.error, "attempt to write a readonly database");
     assert_eq!(failure.since, since);
-    note(&failures, "b", None);
-    assert!(failures.lock().unwrap().is_empty());
+    note(&status, "b", None);
+    assert!(status.lock().unwrap().failures.is_empty());
 }
 
 /// Plan `configuration` once, admit the coverage it observed, and return the
@@ -738,6 +738,23 @@ async fn an_input_not_present_yet_is_not_missing_coverage(db: devkit::pg::TestDa
     };
     let live = admit(&mut context, &mut bindings, &mut coverage, &configuration).await;
     assert_eq!(live, [(key(&blocked), "missing".to_owned())]);
+    let status = bindings.status.clone();
+    let availability = || {
+        status
+            .lock()
+            .unwrap()
+            .discovery
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|input| input.input.as_ref() == Some(&blocked))
+            .unwrap()
+            .availability
+            .clone()
+    };
+    assert!(
+        matches!(availability(), Availability::Unavailable(cause) if cause != Cause::NotPresent)
+    );
     // Planned again a minute later, nothing changed and nothing is written.
     admit(&mut context, &mut bindings, &mut coverage, &configuration).await;
     let readings: i64 = sqlx::query_scalar(
@@ -755,6 +772,10 @@ async fn an_input_not_present_yet_is_not_missing_coverage(db: devkit::pg::TestDa
         live,
         [(key(&blocked), "recorded_unknown_coverage".to_owned())]
     );
+    assert!(matches!(
+        availability(),
+        Availability::Unavailable(Cause::NotPresent)
+    ));
     coverage.end(&mut context.read_conn).await.unwrap();
     context.close().await.unwrap();
 }

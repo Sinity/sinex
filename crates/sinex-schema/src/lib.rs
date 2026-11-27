@@ -30,6 +30,7 @@ pub use read_boundary::require as require_read_boundary;
 mod description;
 pub mod kinds;
 mod sparse_indexes;
+mod status_readings;
 mod tables;
 mod tombstone_history;
 mod upgrades;
@@ -217,6 +218,11 @@ $$"
         VISIBLE_SEARCH_TEXT.into(),
         VISIBLE_SEARCH_TRIGRAM.into(),
         VISIBLE_EMBEDDING_VECTORS.into(),
+        status_readings::COVERAGE_VIEW.into(),
+        status_readings::FUSION_VIEW.into(),
+        status_readings::COVERAGE_FIELDS.into(),
+        status_readings::FUSION_FIGURE.into(),
+        status_readings::CHANGE_FUSION_COUNT.into(),
     ]
 }
 
@@ -342,6 +348,8 @@ fn grants() -> Vec<String> {
             "core.visible_embedding_vectors",
             "core.counters",
             "core.source_counts",
+            "core.visible_coverage_readings",
+            "core.visible_fusion_counts",
         ][..],
     ] {
         out.push(format!(

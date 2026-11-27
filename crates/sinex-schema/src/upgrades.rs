@@ -71,6 +71,10 @@ pub(crate) const STEPS: &[Step] = &[
         name: "output_ranges",
         statements: crate::output_ranges::upgrade,
     },
+    Step {
+        name: "status_readings",
+        statements: crate::status_readings::upgrade,
+    },
 ];
 
 /// A derivation's selection is its version. The build that ran it is on each

@@ -78,6 +78,18 @@ fn old_id() -> Uuid {
     ))
 }
 
+async fn project_coverage(conn: &mut PgConnection) {
+    conn.execute(
+        "INSERT INTO core.coverage_readings (event_id, source, kind_version, class, commit_seq, seen_at, ended_at, missing, reason, live)
+         SELECT e.id, f.source, e.kind_version, e.class, e.commit_seq, e.ts_coided, f.ended_at, f.missing, f.reason,
+                NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)
+         FROM core.events e CROSS JOIN LATERAL core.coverage_fields(e.payload) f WHERE e.event_type = 'source.coverage';
+         ANALYZE core.coverage_readings",
+    )
+    .await
+    .unwrap();
+}
+
 async fn insert_coverage(
     conn: &mut PgConnection,
     source: &str,
@@ -102,7 +114,7 @@ async fn insert_coverage(
 }
 
 #[devkit::test]
-async fn grouped_source_coverage_preserves_visibility_history_and_latest_nulls(
+async fn current_and_historical_coverage_keep_the_same_visibility_and_latest_nulls(
     db: devkit::pg::TestDatabase,
 ) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
@@ -198,6 +210,7 @@ async fn grouped_source_coverage_preserves_visibility_history_and_latest_nulls(
     conn.execute("UPDATE core.counters SET value=40 WHERE name='commit_seq'")
         .await
         .unwrap();
+    project_coverage(&mut conn).await;
     // Status uses its configured database connection and caller grants. The
     // restricted sinex_reader role belongs only to the raw-SQL surface.
     for grants in ["", "guarded"] {
@@ -261,13 +274,11 @@ async fn grouped_source_coverage_preserves_visibility_history_and_latest_nulls(
     }
 }
 
-fn event_rows(node: &Json) -> f64 {
+fn rows_read(node: &Json, relation: impl Fn(&str) -> bool + Copy) -> f64 {
     let scan = matches!(
         node["Node Type"].as_str(),
         Some("Seq Scan" | "Index Scan" | "Index Only Scan" | "Bitmap Heap Scan")
-    ) && node["Relation Name"]
-        .as_str()
-        .is_some_and(|name| name.starts_with("_hyper_") || name == "events");
+    ) && node["Relation Name"].as_str().is_some_and(relation);
     let own = if scan {
         (node["Actual Rows"].as_f64().unwrap()
             + node["Rows Removed by Filter"].as_f64().unwrap_or(0.0))
@@ -279,14 +290,12 @@ fn event_rows(node: &Json) -> f64 {
         .as_array()
         .into_iter()
         .flatten()
-        .map(event_rows)
+        .map(|node| rows_read(node, relation))
         .sum::<f64>()
 }
 
 #[devkit::test]
-async fn source_coverage_scans_once_and_filtered_queries_keep_the_source_predicate(
-    db: devkit::pg::TestDatabase,
-) {
+async fn coverage_plan_does_not_scan_every_source_event(db: devkit::pg::TestDatabase) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     let catalog: Vec<_> = (0..16)
         .map(|n| source(&format!("test.work-{n:02}"), Expectation::OnDemand))
@@ -299,6 +308,7 @@ async fn source_coverage_scans_once_and_filtered_queries_keep_the_source_predica
        1,decode(repeat('01',32),'hex'),'open' FROM generate_series(1,6144)n;
        ANALYZE core.events;
        UPDATE core.counters SET value=6144 WHERE name='commit_seq'").await.unwrap();
+    project_coverage(&mut conn).await;
     set_grants(&mut conn, "").await.unwrap();
     conn.execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .await
@@ -322,12 +332,15 @@ async fn source_coverage_scans_once_and_filtered_queries_keep_the_source_predica
         .unwrap();
         plans.push(plan);
     }
-    let repeated = event_rows(&plans[0][0]["Plan"]);
-    let grouped = event_rows(&plans[1][0]["Plan"]);
-    assert!(grouped >= 4096.0, "positive work control: {grouped}");
+    let event = |relation: &str| relation.starts_with("_hyper_") || relation == "events";
+    let baseline = rows_read(&plans[0][0]["Plan"], event);
+    let current = &plans[1][0]["Plan"];
+    assert!(baseline >= 4096.0, "positive work control: {baseline}");
+    assert_eq!(rows_read(current, event), 0.0);
+    let coverage = |relation: &str| relation == "coverage_readings";
     assert!(
-        repeated >= 4.0 * grouped,
-        "repeated={repeated}, grouped={grouped}"
+        rows_read(current, coverage) <= (16 * 3 * 3) as f64,
+        "{current}"
     );
     let blocks = |p: &Json| {
         p[0]["Plan"]["Shared Hit Blocks"].as_f64().unwrap()
@@ -335,14 +348,12 @@ async fn source_coverage_scans_once_and_filtered_queries_keep_the_source_predica
     };
     assert!(
         blocks(&plans[1]) < blocks(&plans[0]),
-        "grouped={}, repeated={}",
+        "indexed={}, baseline={}",
         blocks(&plans[1]),
         blocks(&plans[0])
     );
 
-    // Compile the public query, including its bound parameter. Checking the
-    // actual event scan filters distinguishes pushdown from filtering the
-    // result of an all-source aggregate.
+    // Restricting the public query to one source reduces the same seeks.
     let context = ctx();
     let query = bind(
         "sources where source = test.work-07 | fields source,state",
@@ -364,25 +375,7 @@ async fn source_coverage_scans_once_and_filtered_queries_keep_the_source_predica
         Some(1.0),
         "one selected source"
     );
-    fn filtered_scans(node: &Json) -> usize {
-        let own = usize::from(
-            node["Relation Name"]
-                .as_str()
-                .is_some_and(|name| name.starts_with("_hyper_") || name == "events")
-                && node["Filter"].as_str().is_some_and(|filter| {
-                    filter.contains("observed_source") && filter.contains("test.work-07")
-                }),
-        );
-        own + node["Plans"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .map(filtered_scans)
-            .sum::<usize>()
-    }
-    assert!(
-        filtered_scans(&plan[0]["Plan"]) > 0,
-        "source predicate must reach the event scans: {plan}"
-    );
+    let reads = rows_read(&plan[0]["Plan"], coverage);
+    assert!(reads > 0.0 && reads <= 9.0, "one source's seeks: {plan}");
     conn.execute("COMMIT").await.unwrap();
 }
