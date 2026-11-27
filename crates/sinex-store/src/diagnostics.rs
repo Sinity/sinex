@@ -152,7 +152,7 @@ pub async fn fusion_ambiguity(
     let (names, fused_types): (Vec<String>, Vec<String>) = families.iter().cloned().unzip();
     Ok(sqlx::query_file_as!(
         FusionAmbiguity,
-        "src/diagnostics/fusion_ambiguity.sql",
+        "src/diagnostics/fusion_counts.sql",
         &names,
         &fused_types,
     )

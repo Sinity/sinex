@@ -218,7 +218,7 @@ async fn fusion_status_reads_counts_without_visiting_event_history(db: devkit::p
     let mut plans = Vec::new();
     for (query, baseline) in [
         (REPEATED_COUNTS, true),
-        (include_str!("fusion_ambiguity.sql"), false),
+        (include_str!("fusion_counts.sql"), false),
     ] {
         let explain = format!("EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON,TIMING OFF) {query}");
         let mut query = sqlx::query_scalar(&explain).bind(&names).bind(&kinds);
