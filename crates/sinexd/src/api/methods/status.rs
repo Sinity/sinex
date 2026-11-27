@@ -3,7 +3,7 @@ use super::*;
 use command_surface::Verdict;
 use sinex_model::Timestamp;
 use sinex_model::event_types::telemetry::SinexTelemetry;
-use sinex_store::telemetry::Sample;
+use sinex_store::telemetry::{Sample, WAITING_INPUTS};
 use std::collections::BTreeMap;
 use std::time::Duration;
 
@@ -44,8 +44,14 @@ pub(crate) fn status_fields(
             format!("{component} {name}")
         };
         samples.sort_by_key(|sample| sample.sampled_at);
+        let backlog_measure = if component == "derivation" {
+            WAITING_INPUTS
+        } else {
+            "behind"
+        };
         let has_position = |sample: &&Sample| {
-            sample.measures.contains_key("position") && sample.measures.contains_key("behind")
+            sample.measures.contains_key("position")
+                && sample.measures.contains_key(backlog_measure)
         };
         if component == "publisher" {
             // Only a continuous run of samples for the latest confirmed stream
@@ -71,11 +77,11 @@ pub(crate) fn status_fields(
         let first = samples[0];
         let last = samples[samples.len() - 1];
         let position = last.measures["position"] as i64;
-        let behind = last.measures["behind"] as i64;
+        let behind = last.measures[backlog_measure] as i64;
         let elapsed = (last.sampled_at.unix_ns() - first.sampled_at.unix_ns()) as f64 / 1e9;
         let rate = (elapsed > 0.0)
             .then(|| (last.measures["position"] - first.measures["position"]) / elapsed);
-        let gain = first.measures["behind"] - last.measures["behind"];
+        let gain = first.measures[backlog_measure] - last.measures[backlog_measure];
         let estimate_seconds = if behind == 0 {
             Some(0.0)
         } else if elapsed > 0.0 && gain > 0.0 {
@@ -97,7 +103,7 @@ pub(crate) fn status_fields(
                 samples[*index..].len() >= 3
                     && samples[*index..].iter().all(|sample| {
                         sample.measures["position"] == last.measures["position"]
-                            && sample.measures["behind"] > 0.0
+                            && sample.measures[backlog_measure] > 0.0
                     })
             })
             .map(|index| samples[index].sampled_at);

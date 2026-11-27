@@ -557,7 +557,11 @@ show an unchanged position with work remaining, and `unknown` with fewer
 than two usable position samples or an observation span too short to classify.
 Keyed derivations track dirty and waiting keys rather than a commit cursor; their
 position, backlog and progress estimates are unknown. Per-event derivations start
-at position zero until they save their first cursor. Estimates are unknown when the samples cannot establish a
+at position zero until they save their first cursor. For them, `behind` counts
+live input entries of their own kinds beyond that cursor, including restored
+inputs at their restore position. Status reads this as `waiting_inputs` in
+telemetry. Earlier samples measured whole-store positions and do not
+describe a derivation's backlog. Estimates are unknown when the samples cannot establish a
 positive catch-up rate. `last_advanced` is unknown until a sample shows an increase;
 a stalled reason can instead name the start of the observed unchanged span. The
 rate window smooths short bursts; the shorter stall window exposes a stopped

@@ -7,6 +7,9 @@ use sqlx::{Connection, PgConnection};
 use std::collections::BTreeMap;
 use std::time::Duration;
 
+/// Per-event derivations count eligible inputs, not global commit positions.
+pub const WAITING_INPUTS: &str = "waiting_inputs";
+
 /// One part's numbers, as a sample records them.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Reading {
@@ -77,25 +80,18 @@ pub async fn read(conn: &mut PgConnection, publisher: Option<&str>) -> Result<Ve
             ],
         ),
     ];
-    let keyed = sqlx::query!(
-        r#"SELECT d.name AS "name!", d.kind,
-             (SELECT count(*) FROM derivation.dirty k WHERE k.derivation = d.name) AS "dirty!",
-             (SELECT count(*) FROM derivation.waiting w WHERE w.derivation = d.name) AS "waiting!",
-             (SELECT count(*) FROM derivation.refusals f WHERE f.derivation = d.name) AS "refused!",
-             (SELECT p.commit_seq FROM derivation.positions p WHERE p.derivation = d.name) AS position
-           FROM registry.derivations d ORDER BY d.name"#,
-    )
-    .fetch_all(&mut *tx)
-    .await?;
-    for d in keyed {
+    let derivations = sqlx::query_file!("src/telemetry/derivations.sql")
+        .fetch_all(&mut *tx)
+        .await?;
+    for d in derivations {
         let mut measures = vec![
             ("dirty_keys", d.dirty),
             ("waiting_keys", d.waiting),
             ("refused_work", d.refused),
         ];
-        if let Some(position) = d.position.or((d.kind == "per_event").then_some(0)) {
-            measures.push(("position", position));
-            measures.push(("behind", head.commit_seq - position));
+        if let Some(waiting_inputs) = d.waiting_inputs {
+            measures.push(("position", d.position));
+            measures.push((WAITING_INPUTS, waiting_inputs));
         }
         out.push(reading("derivation", &d.name, &measures));
     }

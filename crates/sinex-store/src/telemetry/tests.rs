@@ -178,7 +178,7 @@ async fn recent_samples_keep_history_within_the_window(db: devkit::pg::TestDatab
         .find(|reading| reading.name == "example.per_event")
         .unwrap();
     assert_eq!(initial.measures["position"], 0.0);
-    assert_eq!(initial.measures["behind"], 3.0);
+    assert_eq!(initial.measures[WAITING_INPUTS], 0.0);
     let keyed = readings
         .iter()
         .find(|reading| reading.name == "example.keyed")
