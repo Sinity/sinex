@@ -34,8 +34,8 @@ fn run(database: &str, store: &Path, args: &[&str]) -> Command {
 }
 async fn source_rows(
     conn: &mut PgConnection,
-) -> Vec<(uuid::Uuid, serde_json::Value, uuid::Uuid, i64)> {
-    sqlx::query_as("SELECT id,payload,material_id,record_offset FROM core.events WHERE source='terminal.zsh-history' ORDER BY record_offset")
+) -> Vec<(uuid::Uuid, serde_json::Value, uuid::Uuid, i64, i64)> {
+    sqlx::query_as("SELECT id,payload,material_id,record_offset,commit_seq FROM core.events WHERE source='terminal.zsh-history' ORDER BY record_offset")
         .fetch_all(conn).await.unwrap()
 }
 
@@ -332,14 +332,27 @@ async fn publisher_position(conn: &mut PgConnection) -> i64 {
     .unwrap()
 }
 
-async fn wait_for_history(conn: &mut PgConnection, count: usize) {
+async fn wait_for_history(conn: &mut PgConnection, count: usize) -> i64 {
     tokio::time::timeout(Duration::from_secs(25), async {
-        while source_rows(conn).await.len() < count {
+        loop {
+            if let Some(row) = source_rows(conn).await.get(count - 1) {
+                break row.4;
+            }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     })
     .await
-    .expect("daemon admitted the synthetic history");
+    .expect("daemon admitted the synthetic history")
+}
+
+async fn wait_for_publication(conn: &mut PgConnection, commit_seq: i64) {
+    tokio::time::timeout(Duration::from_secs(15), async {
+        while publisher_position(conn).await < commit_seq {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("publisher saved the position of the history reading");
 }
 
 #[devkit::test]
@@ -395,26 +408,18 @@ async fn sigterm_during_nats_outage_preserves_confirmed_progress() {
     .await
     .expect("publisher initialized the stream before any history was admitted");
     fixture.append_history(": 1600000000:0;first synthetic command\n");
-    wait_for_history(&mut conn, 1).await;
-    let position = tokio::time::timeout(Duration::from_secs(15), async {
-        loop {
-            let position = publisher_position(&mut conn).await;
-            if position > 0 {
-                break position;
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .expect("publisher saved its first confirmed position");
+    let first = wait_for_history(&mut conn, 1).await;
+    wait_for_publication(&mut conn, first).await;
 
     disconnect.send(()).unwrap();
     fixture.append_history(": 1600000001:0;second synthetic command\n");
-    wait_for_history(&mut conn, 2).await;
+    let second = wait_for_history(&mut conn, 2).await;
     tokio::time::timeout(Duration::from_secs(5), requested)
         .await
         .expect("publisher reached the unresponsive broker")
         .unwrap();
+    let position = publisher_position(&mut conn).await;
+    assert!((first..second).contains(&position));
     daemon.stop().await;
     relay.abort();
     let _ = relay.await;
@@ -435,20 +440,16 @@ async fn sigterm_during_nats_outage_preserves_confirmed_progress() {
         .map(|row| row.0)
         .collect();
     let daemon = fixture.start(nats.url(), nats.prefix(), "restarted").await;
-    tokio::time::timeout(Duration::from_secs(15), async {
-        while publisher_position(&mut conn).await <= position {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .expect("publisher advanced after restart");
+    wait_for_publication(&mut conn, second).await;
 
     let stream = js.get_stream(&stream_name).await.unwrap();
     let state = &stream.cached_info().state;
     let mut seen = Vec::new();
     for seq in state.first_sequence..=state.last_sequence {
         let message = stream.get_raw_message(seq).await.unwrap();
-        if let Confirmed::Event(event) = serde_json::from_slice(&message.payload).unwrap() {
+        if let Confirmed::Event(event) = serde_json::from_slice(&message.payload).unwrap()
+            && event.event_type == "command.imported"
+        {
             seen.push(event.event.0);
         }
     }
