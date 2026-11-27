@@ -66,16 +66,6 @@ LANGUAGE sql IMMUTABLE AS $$
     AND CASE WHEN btrim(p->>'ambiguous') ~ '^[+-]?[0-9]+$' THEN (p->>'ambiguous')::numeric > 1 END
 $$";
 
-/// Write an aggregated change to one visible class's figure.
-pub(crate) const CHANGE_FUSION_COUNT: &str =
-    "CREATE OR REPLACE FUNCTION core.change_fusion_count(bucket text, metric text, visibility text, delta bigint)
-RETURNS boolean LANGUAGE sql AS $$
-  INSERT INTO core.fusion_counts AS counts (name, figure, class, count)
-  VALUES (bucket, metric, visibility, delta)
-  ON CONFLICT (name, figure, class) DO UPDATE SET count = counts.count + EXCLUDED.count
-  RETURNING true
-$$";
-
 pub(crate) fn upgrade() -> Vec<String> {
     let mut statements = [
         COVERAGE_TABLE,

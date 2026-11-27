@@ -222,7 +222,6 @@ $$"
         status_readings::FUSION_VIEW.into(),
         status_readings::COVERAGE_FIELDS.into(),
         status_readings::FUSION_FIGURE.into(),
-        status_readings::CHANGE_FUSION_COUNT.into(),
     ]
 }
 

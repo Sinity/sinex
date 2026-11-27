@@ -49,8 +49,9 @@ pub(crate) async fn admitted(
                  WHERE p.event_type = ANY($1::text[])
                  RETURNING name, figure, class
              )
-             SELECT core.change_fusion_count(name, figure, class, count(*))
-             FROM added GROUP BY name, figure, class",
+             INSERT INTO core.fusion_counts AS counts (name, figure, class, count)
+             SELECT name, figure, class, count(*) FROM added GROUP BY name, figure, class
+             ON CONFLICT (name, figure, class) DO UPDATE SET count = counts.count + EXCLUDED.count",
             &FUSION_KINDS.map(str::to_owned),
         )
         .execute(&mut *conn)
@@ -64,21 +65,18 @@ pub(crate) async fn set_live(conn: &mut PgConnection, events: &[Uuid], live: boo
         return Ok(());
     }
     sqlx::query!(
-        "UPDATE core.coverage_readings SET live = $2
-         WHERE event_id = ANY($1) AND live <> $2",
-        events,
-        live,
-    )
-    .execute(&mut *conn)
-    .await?;
-    sqlx::query!(
-        "WITH moved AS (
+        "WITH coverage AS (
+             UPDATE core.coverage_readings SET live = $2
+             WHERE event_id = ANY($1) AND live <> $2
+         ), moved AS (
              UPDATE core.fusion_readings SET live = $2
              WHERE event_id = ANY($1) AND live <> $2
              RETURNING name, figure, class
          )
-         SELECT core.change_fusion_count(name, figure, class, count(*) * CASE WHEN $2 THEN 1 ELSE -1 END)
-         FROM moved GROUP BY name, figure, class",
+         INSERT INTO core.fusion_counts AS counts (name, figure, class, count)
+         SELECT name, figure, class, count(*) * CASE WHEN $2 THEN 1 ELSE -1 END
+         FROM moved GROUP BY name, figure, class
+         ON CONFLICT (name, figure, class) DO UPDATE SET count = counts.count + EXCLUDED.count",
         events,
         live,
     )
@@ -90,13 +88,8 @@ pub(crate) async fn set_live(conn: &mut PgConnection, events: &[Uuid], live: boo
 /// Tombstoning removes only archived rows, whose live counts have already fallen.
 pub(crate) async fn tombstoned(conn: &mut PgConnection, events: &[Uuid]) -> Result<()> {
     sqlx::query!(
-        "DELETE FROM core.coverage_readings WHERE event_id = ANY($1)",
-        events
-    )
-    .execute(&mut *conn)
-    .await?;
-    sqlx::query!(
-        "DELETE FROM core.fusion_readings WHERE event_id = ANY($1)",
+        "WITH coverage AS (DELETE FROM core.coverage_readings WHERE event_id = ANY($1))
+         DELETE FROM core.fusion_readings WHERE event_id = ANY($1)",
         events
     )
     .execute(&mut *conn)

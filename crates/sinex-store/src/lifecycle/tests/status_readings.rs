@@ -48,7 +48,7 @@ async fn status_readings_follow_admission_archive_restore_and_replay(db: devkit:
         },
         output_index: 0,
     };
-    let pair = |state, hash| {
+    let pair = |state, hash: u8| {
         Event::build(
             &ConsideredPair {
                 family: "command".into(),
@@ -73,7 +73,7 @@ async fn status_readings_follow_admission_archive_restore_and_replay(db: devkit:
         )
         .unwrap()
     };
-    let coverage = |state, hash| {
+    let coverage = |state, hash: u8| {
         Event::build(
             &SourceCoverage {
                 observed_run: None,
