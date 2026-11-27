@@ -195,7 +195,7 @@ async fn two_authenticated_hosts_share_family_definitions_and_preserve_raw_copie
         "read rights do not allow registration"
     );
     let mut conflicting = raw.clone();
-    conflicting.search = sinex_model::kinds::Search::None;
+    conflicting.search = sinex_model::kinds::Search::Words;
     assert!(
         h.send(
             "host-b",

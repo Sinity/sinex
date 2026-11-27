@@ -1,6 +1,5 @@
 use super::*;
 use sinex_model::event_types::machine::LakeObservation;
-use uuid::Uuid;
 
 fn flow(seq: u64, src: &str, dst: &str) -> Event {
     Event::build(
@@ -37,6 +36,7 @@ async fn material_only_tombstone_removes_old_local_flow_readings(db: devkit::pg:
     let remote = flow(33, "192.0.2.1", "192.0.2.2");
     let remote_id = remote.id.0;
     let local_ids: Vec<_> = local.iter().map(|event| event.id.0).collect();
+    let all_ids: Vec<_> = local_ids.iter().copied().chain([remote_id]).collect();
     admit_events(&w, local.into_iter().chain([remote]).collect()).await;
     let (_, archived) = surface::rows_as(
         &w,
@@ -51,13 +51,16 @@ async fn material_only_tombstone_removes_old_local_flow_readings(db: devkit::pg:
         .execute(&mut *conn)
         .await
         .unwrap();
-    let indexed: Vec<Uuid> =
-        sqlx::query_scalar("SELECT event_id FROM core.search_text WHERE event_id = ANY($1)")
-            .bind(&local_ids)
-            .fetch_all(&mut *conn)
-            .await
-            .unwrap();
-    assert_eq!(indexed.len(), local_ids.len());
+    // Flows have no search declaration. Seed search entries to exercise the
+    // cascade against every table that can hold data for a reading.
+    sqlx::query(
+        "INSERT INTO core.search_text(event_id, text)
+         SELECT id, 'fixture text' FROM unnest($1::uuid[]) AS ids(id)",
+    )
+    .bind(&all_ids)
+    .execute(&mut *conn)
+    .await
+    .unwrap();
 
     let request = json!({"method":"tombstone","source":"network.netflow","material-only":true});
     let mut preview = request.clone();

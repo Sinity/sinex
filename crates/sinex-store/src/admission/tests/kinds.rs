@@ -152,7 +152,7 @@ async fn immutable_registration_checks_the_whole_frame_and_exact_versions(
     );
     tx.commit().await.unwrap();
     let mut changed = d.clone();
-    changed.search = sinex_model::kinds::Search::None;
+    changed.search = sinex_model::kinds::Search::Words;
     let tenth = declared("example.reading", 10);
     let mut tx = conn.begin().await.unwrap();
     assert!(
