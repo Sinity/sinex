@@ -194,6 +194,47 @@ async fn recent_samples_keep_history_within_the_window(db: devkit::pg::TestDatab
         ]
         .into()
     );
+
+    // An input already below the cursor is work again at its restore position.
+    let id: uuid::Uuid = sqlx::query_scalar("SELECT id FROM core.events WHERE commit_seq = 1")
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+    conn.execute(
+        "INSERT INTO derivation.positions (derivation, commit_seq) VALUES ('example.per_event', 3)",
+    )
+    .await
+    .unwrap();
+    let mut tx = conn.begin().await.unwrap();
+    let archived = crate::admission::position(&mut tx).await.unwrap();
+    crate::admission::archive_at(
+        &mut tx,
+        &[id],
+        archived,
+        sinex_model::ArchiveReason::Archive,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let restored = crate::admission::position(&mut tx).await.unwrap();
+    crate::admission::restore_at(&mut tx, &[id], restored, uuid::Uuid::now_v7())
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let readings = read(
+        &mut conn,
+        None,
+        &[("example.per_event", &["sinex.telemetry"])],
+    )
+    .await
+    .unwrap();
+    let per_event = readings
+        .iter()
+        .find(|reading| reading.name == "example.per_event")
+        .unwrap();
+    assert_eq!(per_event.measures["position"], 3.0);
+    assert_eq!(per_event.measures[WAITING_INPUTS], 1.0);
 }
 
 #[devkit::test]

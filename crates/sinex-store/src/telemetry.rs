@@ -84,19 +84,14 @@ pub async fn read(
             ],
         ),
     ];
-    let mut names = Vec::new();
-    let mut inputs = Vec::new();
-    for (name, kinds) in per_event {
-        for input in std::iter::once(None).chain(kinds.iter().map(|kind| Some((*kind).to_owned())))
-        {
-            names.push((*name).to_owned());
-            inputs.push(input);
-        }
-    }
-    let derivations = sqlx::query_file!(
-        "src/telemetry/derivations.sql",
-        &names,
-        &inputs as &[Option<String>],
+    let derivations = sqlx::query!(
+        r#"SELECT d.name AS "name!",
+             (SELECT count(*) FROM derivation.dirty k WHERE k.derivation = d.name) AS "dirty!",
+             (SELECT count(*) FROM derivation.waiting w WHERE w.derivation = d.name) AS "waiting!",
+             (SELECT count(*) FROM derivation.refusals f WHERE f.derivation = d.name) AS "refused!",
+             coalesce(p.commit_seq, 0) AS "position!"
+           FROM registry.derivations d LEFT JOIN derivation.positions p ON p.derivation = d.name
+           ORDER BY d.name"#,
     )
     .fetch_all(&mut *tx)
     .await?;
@@ -106,7 +101,15 @@ pub async fn read(
             ("waiting_keys", d.waiting),
             ("refused_work", d.refused),
         ];
-        if let Some(waiting_inputs) = d.waiting_inputs {
+        if let Some((_, kinds)) = per_event.iter().find(|(name, _)| *name == d.name.as_str()) {
+            let kinds: Vec<String> = kinds.iter().map(|kind| (*kind).to_owned()).collect();
+            // The kind and position let PostgreSQL skip irrelevant event chunks
+            // and use their indexes. A generic plan cannot see these values.
+            let waiting_inputs =
+                sqlx::query_file_scalar!("src/telemetry/waiting_inputs.sql", &kinds, d.position)
+                    .persistent(false)
+                    .fetch_one(&mut *tx)
+                    .await?;
             measures.push(("position", d.position));
             measures.push((WAITING_INPUTS, waiting_inputs));
         }

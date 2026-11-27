@@ -102,15 +102,17 @@ pub(crate) fn status_fields(
         let cutoff = context.now.as_nanosecond() - STALL_WINDOW.as_nanos() as i128;
         let stalled_since = samples
             .iter()
-            .rposition(|sample| sample.sampled_at.unix_ns() <= cutoff)
-            .filter(|index| {
-                samples[*index..].len() >= 3
-                    && samples[*index..].iter().all(|sample| {
-                        sample.measures["position"] == last.measures["position"]
-                            && sample.measures[backlog_measure] > 0.0
-                    })
+            .enumerate()
+            .rev()
+            .take_while(|(_, sample)| {
+                sample.measures["position"] == last.measures["position"]
+                    && sample.measures[backlog_measure] > 0.0
             })
-            .map(|index| samples[index].sampled_at);
+            .last()
+            .filter(|(index, sample)| {
+                samples.len() - *index >= 3 && sample.sampled_at.unix_ns() <= cutoff
+            })
+            .map(|(_, sample)| sample.sampled_at);
         let state = if samples.len() < 2 {
             "unknown"
         } else if behind == 0 {
