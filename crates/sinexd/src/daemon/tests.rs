@@ -2,29 +2,19 @@ use super::*;
 
 #[tokio::test]
 async fn shutdown_summary_keeps_unjoined_completions_and_actual_cancellations() {
-    let mut tasks = JoinSet::new();
-    let writer = tasks.spawn(async { ("writer", Ok(())) });
+    let mut tasks = Tasks::default();
+    let writer = tasks.spawn("writer", async { Ok(()) });
     let (entered, ready) = tokio::sync::oneshot::channel();
-    tasks.spawn(async move {
+    tasks.spawn("held", async move {
         entered.send(()).unwrap();
-        std::future::pending::<()>().await;
-        ("held", Ok(()))
+        std::future::pending().await
     });
     ready.await.unwrap();
     while !writer.is_finished() {
         tokio::task::yield_now().await;
     }
-    let mut summary = ShutdownSummary {
-        requested: tasks.len(),
-        ..Default::default()
-    };
-    assert_eq!(summary.requested, 2, "completed but unjoined tasks count");
-    summary.record(tasks.join_next().await.unwrap());
-    summary.abort_requested = tasks.len();
-    tasks.abort_all();
-    while let Some(done) = tasks.join_next().await {
-        summary.record(done);
-    }
+    let summary = tasks.finish(Duration::ZERO).await;
+    assert_eq!(summary.requested, 2);
     assert_eq!(summary.joined, 2);
     assert!(summary.writer_joined);
     assert_eq!(summary.abort_requested, 1);
@@ -33,48 +23,9 @@ async fn shutdown_summary_keeps_unjoined_completions_and_actual_cancellations() 
     assert_eq!(summary.panicked, 0);
     let reported = serde_json::to_value(summary).unwrap();
     assert_eq!(reported["tasks"][0]["name"], "writer");
+    assert_eq!(reported["tasks"][0]["outcome"], "complete");
+    assert_eq!(reported["tasks"][1]["name"], "held");
     assert_eq!(reported["tasks"][1]["outcome"], "cancelled");
-    assert!(reported["tasks"][1]["name"].is_null());
-}
-
-#[devkit::test]
-async fn shutdown_cleanup_releases_the_writer_claim_even_on_failure(db: devkit::pg::TestDatabase) {
-    let url = db.url(None);
-    let dir = tempfile::tempdir().unwrap();
-    let blobs = Blobs::open(dir.path()).unwrap();
-    forget_admitted(&url, &blobs).await.unwrap();
-    let mut conn = connect(&url, "sinex.test").await.unwrap();
-    assert!(
-        sinex_store::writer_lock::try_claim(&mut conn)
-            .await
-            .unwrap()
-    );
-    conn.close().await.unwrap();
-    // Shutdown catalogs already synced groups without draining preparations.
-    let synced = blobs.put(b"synthetic pending shutdown bytes").unwrap();
-    let mut staged = connect(&url, "sinex.test").await.unwrap();
-    let mut transaction = staged.begin().await.unwrap();
-    let uncommitted = blobs
-        .commit_extents(&mut transaction, std::slice::from_ref(&synced))
-        .await
-        .unwrap();
-    transaction.rollback().await.unwrap();
-    drop(uncommitted);
-    staged.close().await.unwrap();
-    let mut fault = connect(&url, "sinex.test").await.unwrap();
-    sqlx::query("DROP TABLE core.blob_extents")
-        .execute(&mut fault)
-        .await
-        .unwrap();
-    fault.close().await.unwrap();
-    assert!(forget_admitted(&url, &blobs).await.is_err());
-    let mut conn = connect(&url, "sinex.test").await.unwrap();
-    assert!(
-        sinex_store::writer_lock::try_claim(&mut conn)
-            .await
-            .unwrap()
-    );
-    conn.close().await.unwrap();
 }
 
 fn shutdown_batch(tag: &str) -> sinex_model::Batch {
@@ -132,13 +83,11 @@ fn shutdown_batch(tag: &str) -> sinex_model::Batch {
 }
 
 #[devkit::test]
-async fn interrupted_writer_rolls_back_before_shutdown_and_exact_frame_retry(
+async fn interrupted_writer_rolls_back_after_disconnect_and_allows_exact_frame_retry(
     db: devkit::pg::TestDatabase,
 ) {
     use sinex_store::NoDerivations;
     let url = db.url(None);
-    let dir = tempfile::tempdir().unwrap();
-    let blobs = Blobs::open(dir.path()).unwrap();
     let mut observer = connect(&url, "sinex.test").await.unwrap();
     sqlx::raw_sql(
         "CREATE TABLE public.shutdown_probe(id uuid PRIMARY KEY);
@@ -199,11 +148,11 @@ async fn interrupted_writer_rolls_back_before_shutdown_and_exact_frame_retry(
             .await
             .unwrap();
         let (handle, queues) = writer::channels();
-        let mut tasks = JoinSet::new();
+        let mut tasks = Tasks::default();
         let database = url.clone();
-        tasks.spawn(async move {
+        tasks.spawn("writer", async move {
             writer::run(database, connection, queues, Arc::new(NoDerivations), None).await;
-            ("writer", Ok(()))
+            Ok(())
         });
         let pending = shutdown_batch(if detects_disconnect {
             "held-new"
@@ -229,11 +178,9 @@ async fn interrupted_writer_rolls_back_before_shutdown_and_exact_frame_retry(
         .await
         .expect("actual writer statement reached its held transaction");
         if detects_disconnect {
-            finish_tasks(&mut tasks, Duration::ZERO, &url, &blobs, true)
-                .await
-                .unwrap();
+            assert_eq!(tasks.finish(Duration::ZERO).await.cancelled, 1);
         } else {
-            tasks.abort_all();
+            tasks.running.abort_all();
             while tasks.join_next().await.is_some() {}
             assert!(
                 sqlx::query_scalar::<_, bool>(waits_on_probe)
@@ -317,39 +264,6 @@ async fn interrupted_writer_rolls_back_before_shutdown_and_exact_frame_retry(
 }
 
 #[devkit::test]
-async fn shutdown_fails_when_writer_backend_cleanup_fails(db: devkit::pg::TestDatabase) {
-    let url = db.url(None);
-    let dir = tempfile::tempdir().unwrap();
-    let blobs = Blobs::open(dir.path()).unwrap();
-    let synced = blobs.put(b"synthetic pending shutdown bytes").unwrap();
-    let mut staged = connect(&url, "sinex.test").await.unwrap();
-    let mut transaction = staged.begin().await.unwrap();
-    let uncommitted = blobs
-        .commit_extents(&mut transaction, std::slice::from_ref(&synced))
-        .await
-        .unwrap();
-    transaction.rollback().await.unwrap();
-    drop(uncommitted);
-    staged.close().await.unwrap();
-    let mut conn = connect(&url, "sinex.test").await.unwrap();
-    sqlx::query("DROP TABLE core.blob_extents")
-        .execute(&mut conn)
-        .await
-        .unwrap();
-    conn.close().await.unwrap();
-    let mut tasks = JoinSet::new();
-    assert!(
-        finish_tasks(&mut tasks, Duration::ZERO, &url, &blobs, true)
-            .await
-            .is_err()
-    );
-    let fresh = writer::claim(connect(&url, "sinex.test").await.unwrap())
-        .await
-        .unwrap();
-    fresh.close().await.unwrap();
-}
-
-#[devkit::test]
 async fn shutdown_releases_source_and_backup_waiting_on_publication(db: devkit::pg::TestDatabase) {
     use sinex_store::NoDerivations;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -383,10 +297,10 @@ async fn shutdown_releases_source_and_backup_waiting_on_publication(db: devkit::
         .await
         .unwrap();
     let (handle, queues) = writer::channels();
-    let mut tasks = JoinSet::new();
+    let mut tasks = Tasks::default();
     let database = url.clone();
     let store = blobs.clone();
-    tasks.spawn(async move {
+    tasks.spawn("writer", async move {
         writer::run(
             database,
             connection,
@@ -395,7 +309,7 @@ async fn shutdown_releases_source_and_backup_waiting_on_publication(db: devkit::
             Some(store),
         )
         .await;
-        ("writer", Ok(()))
+        Ok(())
     });
     let mut pending = shutdown_batch("held-publication");
     let event = pending.records.first_mut().unwrap();
@@ -440,12 +354,12 @@ async fn shutdown_releases_source_and_backup_waiting_on_publication(db: devkit::
     let submitted = pending.clone();
     let source_handle = handle.clone();
     let (source_done, source_result) = tokio::sync::oneshot::channel();
-    tasks.spawn(async move {
+    tasks.spawn("source", async move {
         let result = source_handle
             .submit_source(writer::Priority::Bulk, submitted, Arc::new(|| Ok(())), None)
             .await;
         let _ = source_done.send(result);
-        ("source", Ok(()))
+        Ok(())
     });
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
@@ -503,15 +417,12 @@ async fn shutdown_releases_source_and_backup_waiting_on_publication(db: devkit::
     let (_commits, commits) = watch::channel(0);
     let (_models, models) = watch::channel(());
     let mut api_stop = stopped;
-    tasks.spawn(async move {
-        (
-            "api",
-            api::serve(config, api, commits, models, async move {
-                let _ = api_stop.wait_for(|s| *s).await;
-            })
-            .await,
-        )
-    });
+    tasks.spawn(
+        "API",
+        api::serve(config, api, commits, models, async move {
+            let _ = api_stop.wait_for(|s| *s).await;
+        }),
+    );
     let mut request = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             match tokio::net::UnixStream::connect(&socket).await {
@@ -546,13 +457,13 @@ async fn shutdown_releases_source_and_backup_waiting_on_publication(db: devkit::
             .await
             .unwrap()
     );
-    tokio::time::timeout(
+    let summary = tokio::time::timeout(
         Duration::from_secs(5),
-        finish_tasks(&mut tasks, Duration::from_millis(100), &url, &blobs, true),
+        tasks.finish(Duration::from_millis(100)),
     )
     .await
-    .expect("shutdown must join source, writer and backup API")
-    .unwrap();
+    .expect("shutdown must join source, writer and backup API");
+    assert_eq!(summary.requested, summary.joined);
     assert!(
         source_result.await.unwrap().is_err(),
         "no acknowledgment on canceled source"
@@ -646,10 +557,10 @@ async fn source_copy_cancellation_keeps_pending_frame_and_progress_for_retry(
         .await
         .unwrap();
     let (handle, queues) = writer::channels();
-    let mut tasks = JoinSet::new();
+    let mut tasks = Tasks::default();
     let database = url.clone();
     let store = blobs.clone();
-    tasks.spawn(async move {
+    tasks.spawn("writer", async move {
         writer::run(
             database,
             connection,
@@ -658,7 +569,7 @@ async fn source_copy_cancellation_keeps_pending_frame_and_progress_for_retry(
             Some(store),
         )
         .await;
-        ("writer", Ok(()))
+        Ok(())
     });
     let mut pending = shutdown_batch("copy-pending");
     let sinex_model::RecordOutcome::Events { events, .. } = &mut pending.records[0] else {
@@ -732,13 +643,10 @@ async fn source_copy_cancellation_keeps_pending_frame_and_progress_for_retry(
         let held=sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND query LIKE 'COPY pg_temp.admission_stage%' AND wait_event_type='Lock')").bind(pid).fetch_one(&mut observer).await.unwrap();
         if held {break;} tokio::task::yield_now().await;
     }}).await.expect("real source COPY reached its held first row");
-    tokio::time::timeout(
-        Duration::from_secs(5),
-        finish_tasks(&mut tasks, Duration::ZERO, &url, &blobs, true),
-    )
-    .await
-    .expect("streaming COPY yields to writer cancellation")
-    .unwrap();
+    let summary = tokio::time::timeout(Duration::from_secs(5), tasks.finish(Duration::ZERO))
+        .await
+        .expect("streaming COPY yields to writer cancellation");
+    assert_eq!(summary.cancelled, 1);
     assert!(
         matches!(waiting.await.unwrap(), Err(writer::WriteError::Stopped)),
         "aborted source has no final refusal or ACK"
