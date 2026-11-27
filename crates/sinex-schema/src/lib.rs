@@ -31,6 +31,7 @@ pub use read_boundary::require as require_read_boundary;
 mod description;
 pub mod kinds;
 mod sparse_indexes;
+mod status_readings;
 mod tables;
 mod tombstone_history;
 mod upgrades;
@@ -217,6 +218,10 @@ $$"
         VISIBLE_EVENTS.into(),
         VISIBLE_SEARCH_TEXT.into(),
         VISIBLE_EMBEDDING_VECTORS.into(),
+        status_readings::COVERAGE_VIEW.into(),
+        status_readings::FUSION_VIEW.into(),
+        status_readings::COVERAGE_FIELDS.into(),
+        status_readings::FUSION_FIGURE.into(),
     ]
 }
 

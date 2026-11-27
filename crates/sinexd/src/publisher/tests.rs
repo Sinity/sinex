@@ -514,14 +514,20 @@ async fn publisher_resumes_at_its_position_after_the_upgrade(db: devkit::pg::Tes
     assert_eq!(saved, 1);
     // An upgrade runs with no writer holding the database.
     drop(conn);
+    // The shape before the step that drops the table of published copies
+    // (version 47), without what the later steps add.
     sqlx::raw_sql(include_str!(
         "../../../sinex-schema/tests/fixtures/search-before-pieces.sql"
     ))
     .execute(&mut publisher_conn)
     .await
     .unwrap();
-    // The shape before the step that drops the table of published copies
-    // (version 47), without what the later steps add.
+    sqlx::raw_sql(include_str!(
+        "../../../sinex-schema/src/tests/before_status_readings.sql"
+    ))
+    .execute(&mut publisher_conn)
+    .await
+    .unwrap();
     sqlx::raw_sql(
         "CREATE TABLE core.published (
            event_id uuid NOT NULL,

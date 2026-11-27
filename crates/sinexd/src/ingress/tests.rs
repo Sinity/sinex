@@ -2057,7 +2057,7 @@ async fn daemon_status_counts_refusals_by_producer_source_and_event_type(
         backup_producers: None,
         derivations: crate::derivation_runner::Catalog::new(&Default::default()).unwrap(),
         source_config: Default::default(),
-        read_failures: Default::default(),
+        source_status: Default::default(),
         running_stages: Default::default(),
         sql_cursors: Default::default(),
         stop,

@@ -571,6 +571,13 @@ the failure detail points to `sinex 'failures where since:24h'`.
 The informational `located_files` doctor check counts retained live located
 contents with no current recorded file path available on this machine. It
 does not add a counter or filesystem walk to ordinary status.
+The `discovery` field shows the binding runner's latest plan. It is unknown
+until the runner has planned its first read. `sources-discover` runs discovery
+on demand to see inputs that appeared since that plan.
+For current source rows, coverage uses a fixed set of indexed lookups per
+source and visible class. Earlier saved read positions use the coverage
+readings and their recorded archive and restore positions. Fusion's ambiguity
+counts are recorded with the events they count, per visibility class.
 
 The wider status design covers:
 

@@ -96,6 +96,10 @@ pub(crate) const STEPS: &[Step] = &[
         name: "output_ranges",
         statements: crate::output_ranges::upgrade,
     },
+    Step::Sql {
+        name: "status_readings",
+        statements: crate::status_readings::upgrade,
+    },
     Step::SearchText,
 ];
 

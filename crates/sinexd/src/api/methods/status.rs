@@ -254,25 +254,14 @@ impl Api {
             .iter()
             .map(|f| (f.name.to_owned(), f.output.to_owned()))
             .collect();
-        let fusion = sinex_store::diagnostics::fusion_ambiguity(
-            &mut conn,
-            &fusion_families,
-            sinex_model::event_types::fused::ConsideredPair::EVENT_TYPE,
-        )
-        .await?;
+        let fusion =
+            sinex_store::diagnostics::fusion_ambiguity(&mut conn, &fusion_families).await?;
         let signals = json!({"configured":self.source_config.signals.is_some(),"rules":rule_rows.into_iter().map(|(id,payload)|json!({"citation":format!("sinex:ev/{id}"),"rule":payload})).collect::<Vec<_>>()});
         let sources = sinex_store::query::source_rows(&mut conn, &context).await?;
         drop(conn);
         let mut result = status_fields(&telemetry, &sources, &context)?;
-        let context = self.source_config.context(&self.host);
-        let discovery =
-            tokio::task::spawn_blocking(move || sinex_sources::discovery::status(&context))
-                .await?
-                .map_err(Error::internal)?;
-        let read_failures: Vec<_> = self
-            .read_failures
-            .lock()
-            .unwrap()
+        let observation = self.source_status.lock().unwrap().clone();
+        let read_failures: Vec<_> = observation.failures
             .iter()
             .map(|(binding, failure)| {
                 json!({"binding": binding, "error": failure.error, "since": failure.since})
@@ -301,7 +290,7 @@ impl Api {
            "producer_versions": producer_versions,
            "signals":signals,
            "fusion":fusion,
-           "discovery": discovery,
+           "discovery": observation.discovery.as_deref(),
            "exclusions": exclusions,
         });
         result

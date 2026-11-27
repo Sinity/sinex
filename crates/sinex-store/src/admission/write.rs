@@ -7,7 +7,7 @@ use super::derived::{archive_chains, computed_keys, mark_inputs_dirty};
 use super::{DirtyKeys, KeyInput, Outcome};
 use crate::Error;
 use crate::Result;
-use sinex_model::{Batch, Event, RecordOutcome, SourceProgress};
+use sinex_model::{Batch, Event, EventPayload, RecordOutcome, SourceProgress};
 use sqlx::PgConnection;
 use uuid::Uuid;
 
@@ -63,6 +63,21 @@ pub(super) async fn insert_admitted(
     .execute(&mut *conn)
     .await?;
     outcome.timings.insert("events", started.elapsed());
+
+    let mut coverage = false;
+    let mut fusion = false;
+    for &ord in admit_ords {
+        let kind = events[usize::try_from(ord).expect("ord is an event index")]
+            .event_type
+            .as_str();
+        coverage |= kind == sinex_model::event_types::coverage::SourceCoverage::EVENT_TYPE;
+        fusion |= crate::status_readings::FUSION_KINDS.contains(&kind);
+    }
+    if coverage || fusion {
+        let started = std::time::Instant::now();
+        crate::status_readings::admitted(conn, first, coverage, fusion).await?;
+        outcome.timings.insert("status_readings", started.elapsed());
+    }
 
     if admit_ords.iter().any(|&ord| {
         let event = &events[usize::try_from(ord).expect("ord is an event index")];

@@ -49,8 +49,7 @@ pub(crate) struct Api {
     /// This machine's name, for library requests and scans.
     pub host: String,
     pub source_config: std::sync::Arc<crate::binding_runner::Config>,
-    /// The bindings whose latest read attempt failed, kept by the binding runner.
-    pub read_failures: crate::binding_runner::ReadFailures,
+    pub source_status: crate::binding_runner::SourceStatus,
     /// The stages this daemon is reading now, so one is never read twice
     /// at once.
     pub running_stages: crate::stage::Running,

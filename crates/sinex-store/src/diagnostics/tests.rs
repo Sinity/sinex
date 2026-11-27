@@ -28,6 +28,20 @@ fn counts(family: &str, undecided: i64, decided: i64, ambiguous_fused: i64) -> F
     }
 }
 
+async fn project_fusion_readings(conn: &mut PgConnection) {
+    conn.execute(
+        "INSERT INTO core.fusion_readings (event_id, name, figure, class, live)
+         SELECT e.id, f.name, f.figure, e.class,
+                NOT EXISTS (SELECT 1 FROM audit.archived a WHERE a.event_id = e.id)
+         FROM core.events e CROSS JOIN LATERAL core.fusion_figure(e.event_type, e.payload) f;
+         INSERT INTO core.fusion_counts (name, figure, class, count)
+         SELECT name, figure, class, count(*) FROM core.fusion_readings WHERE live
+         GROUP BY name, figure, class",
+    )
+    .await
+    .unwrap();
+}
+
 #[devkit::test]
 async fn fusion_counts_preserve_duplicates_zeros_unknown_states_and_visibility(
     db: devkit::pg::TestDatabase,
@@ -113,11 +127,10 @@ async fn fusion_counts_preserve_duplicates_zeros_unknown_states_and_visibility(
     .into_iter()
     .map(|(name, kind)| (name.into(), kind.into()))
     .collect();
+    project_fusion_readings(&mut conn).await;
     crate::query::set_grants(&mut conn, "").await.unwrap();
     assert_eq!(
-        fusion_ambiguity(&mut conn, &families, "fusion.considered_pair")
-            .await
-            .unwrap(),
+        fusion_ambiguity(&mut conn, &families).await.unwrap(),
         [
             counts("command", 2, 3, 2),
             counts("command", 2, 3, 2),
@@ -126,19 +139,12 @@ async fn fusion_counts_preserve_duplicates_zeros_unknown_states_and_visibility(
             counts("mail", 1, 1, 1)
         ]
     );
-    assert!(
-        fusion_ambiguity(&mut conn, &[], "fusion.considered_pair")
-            .await
-            .unwrap()
-            .is_empty()
-    );
+    assert!(fusion_ambiguity(&mut conn, &[]).await.unwrap().is_empty());
     crate::query::set_grants(&mut conn, "guarded")
         .await
         .unwrap();
     assert_eq!(
-        fusion_ambiguity(&mut conn, &families, "fusion.considered_pair")
-            .await
-            .unwrap(),
+        fusion_ambiguity(&mut conn, &families).await.unwrap(),
         [
             counts("command", 3, 3, 3),
             counts("command", 3, 3, 3),
@@ -181,12 +187,10 @@ fn visited_event_rows(node: &Value) -> f64 {
 }
 
 #[devkit::test]
-async fn fusion_counts_visit_selected_history_once_instead_of_per_family(
-    db: devkit::pg::TestDatabase,
-) {
+async fn fusion_status_reads_counts_without_visiting_event_history(db: devkit::pg::TestDatabase) {
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     conn.execute("INSERT INTO core.events(id,event_type,source,run_id,material_id,record_offset,ts_quality,commit_seq,payload,reading_order,record_hash,class)
-      SELECT uuidv7(),CASE WHEN n<=8192 THEN 'fusion.considered_pair' WHEN n<=10240 THEN 'fixture.fused' ELSE 'fixture.unrelated' END,
+      SELECT uuidv7(),CASE WHEN n<=8192 THEN 'fusion.considered_pair' WHEN n<=10240 THEN 'command.fused' ELSE 'fixture.unrelated' END,
        'fixture.fusion',uuidv7(),uuidv7(),0,'unknown',n,
        jsonb_build_object('family',CASE WHEN n%3=0 THEN 'alpha' WHEN n%3=1 THEN 'beta' ELSE 'gamma' END,'state',CASE WHEN n%2=0 THEN 'undecided' ELSE 'same' END,'ambiguous',2),
        1,decode(repeat('01',32),'hex'),'open' FROM generate_series(1,14336)n;
@@ -196,15 +200,14 @@ async fn fusion_counts_visit_selected_history_once_instead_of_per_family(
         .into_iter()
         .map(String::from)
         .collect();
-    let kinds = vec!["fixture.fused".to_owned(); names.len()];
+    project_fusion_readings(&mut conn).await;
+    let kinds = vec!["command.fused".to_owned(); names.len()];
     let families = names
         .iter()
         .cloned()
         .zip(kinds.iter().cloned())
         .collect::<Vec<_>>();
-    let actual = fusion_ambiguity(&mut conn, &families, "fusion.considered_pair")
-        .await
-        .unwrap();
+    let actual = fusion_ambiguity(&mut conn, &families).await.unwrap();
     assert_eq!(
         actual
             .iter()
@@ -213,35 +216,32 @@ async fn fusion_counts_visit_selected_history_once_instead_of_per_family(
         vec![2048; names.len()]
     );
     let mut plans = Vec::new();
-    for query in [REPEATED_COUNTS, include_str!("fusion_ambiguity.sql")] {
-        let plan: Value = sqlx::query_scalar(&format!(
-            "EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON,TIMING OFF) {query}"
-        ))
-        .bind(&names)
-        .bind(&kinds)
-        .bind("fusion.considered_pair")
-        .fetch_one(&mut conn)
-        .await
-        .unwrap();
+    for (query, baseline) in [
+        (REPEATED_COUNTS, true),
+        (include_str!("fusion_counts.sql"), false),
+    ] {
+        let explain = format!("EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON,TIMING OFF) {query}");
+        let mut query = sqlx::query_scalar(&explain).bind(&names).bind(&kinds);
+        if baseline {
+            query = query.bind("fusion.considered_pair");
+        }
+        let plan: Value = query.fetch_one(&mut conn).await.unwrap();
         plans.push(plan);
     }
     let repeated = visited_event_rows(&plans[0][0]["Plan"]);
-    let grouped = visited_event_rows(&plans[1][0]["Plan"]);
+    let current = visited_event_rows(&plans[1][0]["Plan"]);
     assert!(
-        grouped >= 10240.0,
-        "oracle must observe selected rows: {grouped}"
+        repeated >= 10240.0,
+        "oracle must observe selected rows: {repeated}"
     );
-    assert!(
-        repeated >= 4.0 * grouped,
-        "repeated={repeated},grouped={grouped}"
-    );
+    assert_eq!(current, 0.0);
     let blocks = |plan: &Value| {
         plan[0]["Plan"]["Shared Hit Blocks"].as_f64().unwrap()
             + plan[0]["Plan"]["Shared Read Blocks"].as_f64().unwrap()
     };
     assert!(
         blocks(&plans[1]) < blocks(&plans[0]),
-        "grouped={},repeated={}",
+        "current={},baseline={}",
         blocks(&plans[1]),
         blocks(&plans[0])
     );

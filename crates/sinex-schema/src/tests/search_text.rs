@@ -45,7 +45,7 @@ async fn search_upgrade_keeps_indexed_text_and_resumes_from_its_saved_position(
     let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
     let fresh = catalog(&mut conn).await.unwrap();
     search_before_pieces(&mut conn).await;
-    conn.execute("UPDATE sinex_schema.applied SET version = 53")
+    conn.execute("UPDATE sinex_schema.applied SET version = 54")
         .await
         .unwrap();
     let journal = store(
@@ -93,7 +93,7 @@ async fn search_upgrade_keeps_indexed_text_and_resumes_from_its_saved_position(
     assert_eq!(
         apply(&mut conn).await.unwrap(),
         Applied::Upgraded {
-            from: 53,
+            from: 54,
             to: VERSION
         }
     );

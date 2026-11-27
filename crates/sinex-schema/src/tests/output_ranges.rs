@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 
 /// The schema before output ranges were kept.
 pub(super) async fn outputs_before_ranges(conn: &mut PgConnection) {
-    super::search_text::search_before_pieces(&mut *conn).await;
+    super::status_readings::before_status_readings(conn).await;
     conn.execute("DROP TABLE derivation.output_ranges")
         .await
         .unwrap();

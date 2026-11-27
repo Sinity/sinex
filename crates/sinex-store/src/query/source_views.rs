@@ -6,8 +6,9 @@ use std::sync::LazyLock;
 pub(super) static SOURCES: LazyLock<String> =
     LazyLock::new(|| SOURCES_SQL.replace("{coverage_kind}", SourceCoverage::EVENT_TYPE));
 
-// Group coverage once for all sources. A source equality can still be pushed
-// into this aggregate, so selective source reads keep their narrow input.
+// Current source rows seek the newest boundary, the newest missing reading and
+// the newest sighting in each visible class. An older saved position uses the
+// same records, with the visibility that held at that position.
 const SOURCES_SQL: &str = r#"(
     SELECT s.*,
       CASE
@@ -34,19 +35,43 @@ const SOURCES_SQL: &str = r#"(
       WHERE NOT EXISTS (SELECT 1 FROM registry.sources r WHERE r.name = sc.source)
     ) s
     LEFT JOIN core.source_counts sc ON sc.source = s.name
-    LEFT JOIN (
-      SELECT e.payload->>'observed_source' AS source, count(*) AS readings,
-        bool_or(e.payload->>'state' = 'missing') AS missing,
-        (array_agg((e.payload->>'ended_at')::timestamptz ORDER BY e.commit_seq DESC))[1] AS ended_at,
-        max(e.ts_coided) AS last_seen,
-        (array_agg(e.payload->>'reason' ORDER BY e.commit_seq DESC)
-          FILTER (WHERE e.payload->>'state' = 'missing'))[1] AS last_error
-      FROM core.visible_events e
-      WHERE e.event_type = '{coverage_kind}'
-        AND e.kind_version = (SELECT max(version) FROM registry.event_types WHERE name = '{coverage_kind}')
-        AND e.commit_seq <= {seq} AND NOT audit.is_archived_at(e.id, {seq})
-      GROUP BY e.payload->>'observed_source'
-    ) c ON c.source = s.name
+    CROSS JOIN (
+      SELECT (SELECT max(version) FROM registry.event_types WHERE name = '{coverage_kind}') AS version,
+             (SELECT value FROM core.counters WHERE name = 'commit_seq') = {seq} AS current
+    ) snapshot
+    LEFT JOIN LATERAL (
+      SELECT count(boundary.commit_seq) AS readings, count(failed.commit_seq) > 0 AS missing,
+        (array_agg(boundary.ended_at ORDER BY boundary.commit_seq DESC NULLS LAST))[1] AS ended_at,
+        max(sighting.seen_at) AS last_seen,
+        (array_agg(failed.reason ORDER BY failed.commit_seq DESC NULLS LAST))[1] AS last_error
+      FROM (VALUES ('open'), ('guarded'), ('sealed')) allowed(class)
+      LEFT JOIN LATERAL (
+        SELECT commit_seq, ended_at FROM core.visible_coverage_readings
+        WHERE source = s.name AND kind_version = snapshot.version AND class = allowed.class AND live
+        ORDER BY commit_seq DESC LIMIT 1
+      ) boundary ON true
+      LEFT JOIN LATERAL (
+        SELECT commit_seq, reason FROM core.visible_coverage_readings
+        WHERE source = s.name AND kind_version = snapshot.version AND class = allowed.class AND live AND missing
+        ORDER BY commit_seq DESC LIMIT 1
+      ) failed ON true
+      LEFT JOIN LATERAL (
+        SELECT seen_at FROM core.visible_coverage_readings
+        WHERE source = s.name AND kind_version = snapshot.version AND class = allowed.class AND live
+        ORDER BY seen_at DESC NULLS LAST LIMIT 1
+      ) sighting ON true
+      WHERE snapshot.current AND core.class_visible(allowed.class)
+      HAVING snapshot.current
+      UNION ALL
+      SELECT count(*) AS readings, bool_or(e.missing) AS missing,
+        (array_agg(e.ended_at ORDER BY e.commit_seq DESC))[1] AS ended_at,
+        max(e.seen_at) AS last_seen,
+        (array_agg(e.reason ORDER BY e.commit_seq DESC) FILTER (WHERE e.missing))[1] AS last_error
+      FROM core.visible_coverage_readings e
+      WHERE NOT snapshot.current AND e.source = s.name AND e.kind_version = snapshot.version
+        AND e.commit_seq <= {seq} AND NOT audit.is_archived_at(e.event_id, {seq})
+      HAVING NOT snapshot.current
+    ) c ON true
     CROSS JOIN LATERAL (
       SELECT
         s.expectation = 'continuous' AND sc.last_seen < now() - s.silent_after AS silent,

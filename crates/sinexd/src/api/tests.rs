@@ -213,7 +213,7 @@ async fn world_with_api(
         backup_copy: Default::default(),
         backup_producers: None,
         source_config: Arc::new(source_config),
-        read_failures: Default::default(),
+        source_status: Default::default(),
         running_stages: Default::default(),
         sql_cursors: Default::default(),
         stop: stopped.clone(),

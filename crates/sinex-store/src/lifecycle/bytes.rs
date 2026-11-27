@@ -70,6 +70,7 @@ pub(super) async fn tombstone_events(
     )
     .execute(&mut *conn)
     .await?;
+    crate::status_readings::tombstoned(conn, events).await?;
     sqlx::query!(
         r#"UPDATE core.runs r SET events = r.events - gone.n
            FROM (SELECT run_id, count(*) AS n FROM core.events

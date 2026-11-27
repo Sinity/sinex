@@ -461,6 +461,7 @@ mod output_ranges;
 mod reading_orders;
 mod search_text;
 mod selection;
+mod status_readings;
 
 #[devkit::test]
 async fn refusal_upgrade_keeps_existing_derivation_work_and_positions(
