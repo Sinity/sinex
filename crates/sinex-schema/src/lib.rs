@@ -216,7 +216,6 @@ $$"
         .to_string(),
         VISIBLE_EVENTS.into(),
         VISIBLE_SEARCH_TEXT.into(),
-        VISIBLE_SEARCH_TRIGRAM.into(),
         VISIBLE_EMBEDDING_VECTORS.into(),
     ]
 }
