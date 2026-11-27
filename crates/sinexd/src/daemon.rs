@@ -329,6 +329,10 @@ async fn serve(
         .filter(|d| sources.runs(d.name()) == Some(true))
         .cloned()
         .collect();
+    let sampled_derivations = per_event
+        .iter()
+        .map(|d| (d.name(), d.inputs_types()))
+        .collect();
     for (name, _) in sources.derivations.iter().filter(|(_, runs)| !**runs) {
         eprintln!("sinexd: derivation {name} is turned off by the configuration");
     }
@@ -511,6 +515,7 @@ async fn serve(
             telemetry_spool,
             telemetry_js,
             confirmed,
+            sampled_derivations,
             s,
         ),
     );
