@@ -12,7 +12,9 @@ use sinex_analysis::coverage::Coverage;
 use sinex_analysis::panel::{self, DayFigure};
 use sinex_derivations::derived_event::derived;
 use sinex_derivations::figures::{METRICS, Metric};
-use sinex_derivations::{AffectedRange, Computed, Env, InputQuery, KeyView, Keyed, Kind};
+use sinex_derivations::{
+    AffectedRange, Computed, Env, InputQuery, KeyView, Keyed, Kind, OutputRange,
+};
 use sinex_model::Event;
 use sinex_model::event_types::analysis::*;
 use sinex_model::event_types::coverage::{CoverageState, SourceCoverage};
@@ -32,6 +34,13 @@ impl Keyed for StoredProducts {
         "analysis.finding",
         "context.pack",
     ];
+    const OUTPUT_RANGES: &'static [OutputRange] = &[OutputRange {
+        output_type: "analysis.panel",
+        start_field: "started_at",
+        end_field: "ended_at",
+        open_field: None,
+        fence_field: None,
+    }];
     fn version(&self) -> u32 {
         let mut hash = blake3::Hasher::new();
         hash.update(&Self::VERSION.to_le_bytes());
@@ -111,12 +120,7 @@ impl Keyed for StoredProducts {
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or(start);
         vec![AffectedRange {
-            key_match: None,
-            open_field: None,
-            fence_field: None,
             output_type: "analysis.panel",
-            start_field: "started_at",
-            end_field: "ended_at",
             start,
             end,
         }]

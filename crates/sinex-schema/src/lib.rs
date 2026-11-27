@@ -20,6 +20,7 @@ mod blob_chunks;
 mod library_copy_fields;
 mod library_curation;
 mod live_intervals;
+mod output_ranges;
 mod query_cursors;
 mod read_boundary;
 mod source_declarations;

@@ -293,3 +293,110 @@ async fn complete_keys_yield_the_writer_to_live_admission(db: devkit::pg::TestDa
     compute.submit(by_bytes, usize::MAX, bytes).await.unwrap();
     assert_eq!(w.count("SELECT count(DISTINCT xmin::text) FROM core.events WHERE payload->>'command' IN ('byte-first','byte-last')").await, 2);
 }
+
+/// A key that no longer produces most of its outputs has them archived in
+/// transactions of their own before its batch, so the writer admits a live
+/// batch between two of them instead of after the whole replacement. Until
+/// the batch commits the key stays dirty, so a stop in between computes it
+/// again.
+#[devkit::test]
+async fn a_large_replacement_archives_in_transactions_with_live_admission_between(
+    db: devkit::pg::TestDatabase,
+) {
+    // The test runtime uses one thread: a submitting future queues its next
+    // job only when polled, and a Bulk acknowledgement follows the Derived
+    // job queued before it.
+    let w = World::with_keys(db, vec![Box::new(Paused { pause: None })]).await;
+    let parent = zsh("parent", 0, 1);
+    w.admit(vec![parent.clone()]).await;
+    let mut runner = w
+        .driver_with(vec![Box::new(Paused { pause: None })], vec![])
+        .await;
+    let run = runner.run_of("test.paused").unwrap();
+    let head = "SELECT value FROM core.counters WHERE name='commit_seq'";
+    let dirty_mark = "SELECT last_dirty_seq FROM derivation.dirty WHERE derivation='test.paused' AND key='\"all\"'::jsonb";
+    let mut counts = Counts::default();
+    let derivation = Paused { pause: None };
+    let mut compute = KeyComputation {
+        read: &mut runner.read,
+        writer: &w.handle,
+        derivation: &derivation,
+        time_settings: runner.time_settings.clone(),
+        run,
+        counts: &mut counts,
+    };
+    let read = ReadMark::now(&mut *compute.read).await.unwrap();
+    let seed = computed_commands(
+        &[(
+            "all",
+            &["old-1", "old-2", "old-3", "old-4", "old-5", "old-6"],
+        )],
+        &parent,
+        w.count(head).await,
+        read,
+    );
+    compute.submit(seed, usize::MAX, usize::MAX).await.unwrap();
+    assert_eq!(
+        w.count("SELECT count(*) FROM derivation.dirty WHERE derivation='test.paused'")
+            .await,
+        0
+    );
+
+    let after_queued_work = || async {
+        w.handle
+            .submit(
+                Priority::Bulk,
+                Batch {
+                    run: RunId::new(),
+                    kind: BatchKind::Api {
+                        actor: "test".into(),
+                    },
+                    records: vec![],
+                    archive: vec![],
+                },
+            )
+            .await
+            .unwrap();
+    };
+    let read = ReadMark::now(&mut *compute.read).await.unwrap();
+    let computed_at = w.count(head).await;
+    let replacement = computed_commands(&[("all", &["new"])], &parent, computed_at, read);
+    // One transaction archives at most two previous outputs here.
+    let mut writing = Box::pin(compute.submit(replacement, 2, usize::MAX));
+    assert!(futures::poll!(tokio::task::unconstrained(writing.as_mut())).is_pending());
+    // The batch is refused whole: nothing of the key changed.
+    after_queued_work().await;
+    assert_eq!(live_commands(&w).await.len(), 6);
+    assert!(futures::poll!(tokio::task::unconstrained(writing.as_mut())).is_pending());
+    // The first two outputs are archived; the key waits to be completed.
+    after_queued_work().await;
+    assert_eq!(live_commands(&w).await.len(), 4);
+    assert_eq!(w.count(dirty_mark).await, computed_at);
+    assert!(futures::poll!(tokio::task::unconstrained(writing.as_mut())).is_pending());
+    let mut live = Box::pin(w.admit(vec![zsh("incoming", 10, 2)]));
+    assert!(futures::poll!(tokio::task::unconstrained(live.as_mut())).is_pending());
+    let (written, ()) = tokio::join!(writing, live);
+    written.unwrap();
+    assert_eq!(live_commands(&w).await, ["new"]);
+    let (first, last, transactions): (i64, i64, i64) = sqlx::query_as(
+        "SELECT min(a.archived_seq), max(a.archived_seq), count(DISTINCT a.archived_seq)
+         FROM audit.archived a JOIN core.events e ON e.id = a.event_id
+         WHERE e.source = 'test.paused' AND a.reason = 'recomputed'",
+    )
+    .fetch_one(&mut *compute.read)
+    .await
+    .unwrap();
+    let incoming = w
+        .count("SELECT commit_seq FROM core.events WHERE payload->>'command'='incoming'")
+        .await;
+    let new = w
+        .count("SELECT commit_seq FROM core.events WHERE payload->>'command'='new'")
+        .await;
+    assert_eq!(transactions, 3, "six outputs, two in each transaction");
+    assert!(
+        first < incoming && incoming < last && last < new,
+        "{first} < {incoming} < {last} < {new}"
+    );
+    // The live input dirtied the key after it was computed; that mark stays.
+    assert_eq!(w.count(dirty_mark).await, incoming);
+}

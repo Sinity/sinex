@@ -10,6 +10,7 @@ use sinex_model::event_types::machine::LakeObservation;
 use sinex_model::event_types::peripheral::{BatterySampled, BluetoothAudioSampled, DisplaySampled};
 use sinex_source_core::RecordError;
 use sinex_source_core::RecordResult;
+use std::net::IpAddr;
 
 sinex_model::payload_enum! {
     #[derive(Clone, Debug, PartialEq)]
@@ -82,6 +83,25 @@ pub(super) fn events(envelope: &Envelope) -> Result<Vec<LakeEvent>, RecordError>
         "awair" | "environment" => vec![LakeEvent::Air(air(at, decode(lane, payload)?))],
         other => return Err(RecordError::new(format!("lane {other:?} has no mapping"))),
     })
+}
+
+/// A flow between loopback addresses, or from an address to itself.
+pub(super) fn local_flow(payload: &Value) -> bool {
+    let address = |field: &str| {
+        payload[field]
+            .as_str()?
+            .parse::<IpAddr>()
+            .ok()
+            .map(|ip| ip.to_canonical())
+    };
+    let (Some(src), Some(dst)) = (address("src"), address("dst")) else {
+        return false;
+    };
+    (src.is_loopback() && dst.is_loopback())
+        || (src == dst
+            && !src.is_unspecified()
+            && !src.is_multicast()
+            && !matches!(src, IpAddr::V4(ip) if ip.is_broadcast()))
 }
 
 // Browsing.

@@ -190,6 +190,68 @@ async fn a_version_that_keys_differently_never_counts_an_input_twice(db: devkit:
     assert_eq!(w.count(COUNTED_TWICE).await, 0);
 }
 
+/// A switch selects its version in one transaction and archives the previous
+/// outputs in later ones. A daemon stopped in between leaves the switch
+/// unfinished with its keys held, so nothing is computed beside outputs of
+/// the version it replaced; the next start archives them and ends it.
+#[devkit::test]
+async fn a_switch_stopped_before_its_archive_ends_at_the_next_start(db: devkit::pg::TestDatabase) {
+    let w = World::with_keys(db, vec![Box::new(Days::<1>)]).await;
+    w.admit(vec![
+        zsh("early", -7 * 3_600, 1),
+        zsh("morning", 0, 2),
+        zsh("next day", 20 * 3_600, 3),
+    ])
+    .await;
+    let mut v1 = w.driver_with(vec![Box::new(Days::<1>)], vec![]).await;
+    v1.catch_up().await.unwrap();
+    drop(v1);
+    let mut v2 = w.driver_with(vec![Box::new(Days::<2>)], vec![]).await;
+    let comparison = v2.compare("test.days", None, 10).await.unwrap();
+    assert_eq!(
+        v2.select("test.days", comparison.id.unwrap(), "test")
+            .await
+            .unwrap(),
+        5
+    );
+    let one = |c: &str| (c.to_owned(), "1".to_owned());
+    assert_eq!(days_by_version(&w).await, [one("v1:2"), one("v1:1")]);
+    let unfinished =
+        "SELECT count(*) FROM core.operations WHERE kind = 'producer_switch' AND result IS NULL";
+    assert_eq!(w.count(unfinished).await, 1);
+    assert_eq!(
+        v2.catch_up().await.map(|()| 0).unwrap(),
+        w.count(
+            "SELECT count(*) FROM core.events e JOIN core.runs r ON r.id = e.run_id
+             JOIN core.manifests m ON m.id = r.manifest_id
+             WHERE e.source = 'test.days' AND m.version = '2'"
+        )
+        .await,
+        "the held keys are not computed while the previous outputs are live"
+    );
+    drop(v2);
+
+    let mut again = w.driver_with(vec![Box::new(Days::<2>)], vec![]).await;
+    assert!(days_by_version(&w).await.is_empty());
+    assert_eq!(w.count(unfinished).await, 0);
+    assert_eq!(
+        w.count(
+            "SELECT count(*) FROM audit.archived a JOIN core.operations o ON o.id = a.operation_id
+             WHERE a.reason = 'version_change' AND o.kind = 'producer_switch' AND o.result = 'ok'
+               AND o.end_seq >= o.start_seq"
+        )
+        .await,
+        2
+    );
+    again.catch_up().await.unwrap();
+    let two = |c: &str| (c.to_owned(), "2".to_owned());
+    assert_eq!(
+        days_by_version(&w).await,
+        [two("v2:1"), two("v2:1"), two("v2:1")]
+    );
+    assert_eq!(w.count(COUNTED_TWICE).await, 0);
+}
+
 /// Every live derived event: its ID, type and payload.
 async fn derived_dump(w: &World) -> Vec<(uuid::Uuid, String, String)> {
     let mut conn = PgConnection::connect(&w.url).await.unwrap();

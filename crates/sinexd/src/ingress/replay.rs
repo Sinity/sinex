@@ -398,13 +398,17 @@ impl Ingest {
                     | WriteError::StorageRefused(_)
                     | WriteError::Stopped
                     | WriteError::ReadDeadline
+                    | WriteError::LifecycleBatchTimeout
                     | WriteError::Internal(_)
                     | WriteError::RequestConflict),
                 ) => {
                     return Err(error.into());
                 }
                 // Only signal steps compute from inputs that can move under them.
-                Err(error @ WriteError::Stale(_)) => return Err(error.into()),
+                // Only a batch of computed keys is told to archive outputs first.
+                Err(error @ (WriteError::Stale(_) | WriteError::ArchiveFirst(_))) => {
+                    return Err(error.into());
+                }
                 Err(error @ (WriteError::Refused(_) | WriteError::InvalidData(_))) => {
                     let reason = error.content_refusal().expect("matched a content refusal");
                     self.writer

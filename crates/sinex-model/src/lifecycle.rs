@@ -43,6 +43,13 @@ pub enum Scope {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         before: Option<Timestamp>,
     },
+    /// Readings the named parser version deliberately leaves in material.
+    MaterialOnly {
+        source: String,
+        parser_version: u32,
+        after: Option<Timestamp>,
+        before: Option<Timestamp>,
+    },
     /// The chains an earlier operation moved: for restore, those it archived;
     /// for undo, everything it changed.
     Operation { operation: OperationId },
@@ -64,4 +71,10 @@ pub enum MaterialStatus {
     Live,
     Archived,
     Tombstoned,
+}
+
+impl Scope {
+    pub fn streamed_source(&self) -> bool {
+        matches!(self, Self::Source { .. } | Self::MaterialOnly { .. })
+    }
 }

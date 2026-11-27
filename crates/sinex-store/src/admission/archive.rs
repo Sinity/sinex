@@ -51,7 +51,7 @@ pub(super) async fn replay_scope(
         })
         .collect::<Result<_>>()?;
     let types: Option<Vec<String>> = scope.event_types.clone();
-    let live: Vec<Uuid> = sqlx::query_scalar!(
+    let chain = sqlx::query!(
         r#"WITH RECURSIVE read_here AS (
              SELECT e.id FROM core.events e
              WHERE e.material_id = ANY($1)
@@ -66,9 +66,12 @@ pub(super) async fn replay_scope(
              SELECT id FROM read_here
              UNION
              SELECT edge.child FROM descendants p CROSS JOIN LATERAL core.event_children_of(p.id) edge)
-           SELECT x.id AS "id!" FROM descendants x
-           WHERE EXISTS (SELECT 1 FROM core.live_equivalence l WHERE l.event_id = x.id)
-              OR EXISTS (SELECT 1 FROM core.live_locations l WHERE l.event_id = x.id)"#,
+           SELECT live.event_id AS "id!", live.event_type AS "event_type!"
+           FROM descendants x CROSS JOIN LATERAL (
+             SELECT event_id, event_type FROM core.live_locations WHERE event_id = x.id
+             UNION
+             SELECT event_id, event_type FROM core.live_equivalence WHERE event_id = x.id
+             OFFSET 0) live"#,
         &materials,
         types.as_deref(),
         scope.from.map(|t| t.0),
@@ -78,16 +81,14 @@ pub(super) async fn replay_scope(
     )
     .fetch_all(&mut *conn)
     .await?;
+    let live: Vec<Uuid> = chain.iter().map(|member| member.id).collect();
+    let selected: Vec<(Uuid, &str)> = chain
+        .iter()
+        .map(|member| (member.id, member.event_type.as_str()))
+        .collect();
     let seq = position(conn).await?;
-    let dirty = mark_archived_dirty(
-        conn,
-        &live,
-        seq,
-        keys,
-        None,
-        (ArchiveReason::Replay, Some(operation.0)),
-    )
-    .await?;
+    // The selection is already whole chains, so nothing further descends.
+    let dirty = mark_selected_dirty(conn, &selected, seq, keys, None).await?;
     archive_at(
         conn,
         &live,
@@ -107,6 +108,38 @@ pub(super) async fn replay_scope(
         .await?;
     }
     Ok((live.len(), dirty))
+}
+
+/// The live readings among `roots` and everything derived from them, each
+/// with its event type. Recursive cardinality estimates grow independently of
+/// a chain's real size, so every lookup is parameterized by a discovered ID;
+/// the live tables carry the type, so no event row is read.
+pub(crate) async fn live_chain(
+    conn: &mut PgConnection,
+    roots: &[Uuid],
+) -> Result<Vec<(Uuid, String)>> {
+    if roots.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(sqlx::query!(
+        r#"WITH RECURSIVE chain(id) AS (
+             SELECT unnest($1::uuid[])
+             UNION
+             SELECT c.child FROM chain CROSS JOIN LATERAL (
+               SELECT child FROM core.event_children_of(chain.id) OFFSET 0) c)
+           SELECT live.event_id AS "id!", live.event_type AS "event_type!"
+           FROM chain CROSS JOIN LATERAL (
+             SELECT event_id, event_type FROM core.live_locations WHERE event_id = chain.id
+             UNION
+             SELECT event_id, event_type FROM core.live_equivalence WHERE event_id = chain.id
+             OFFSET 0) live"#,
+        roots
+    )
+    .fetch_all(&mut *conn)
+    .await?
+    .into_iter()
+    .map(|member| (member.id, member.event_type))
+    .collect())
 }
 
 pub(crate) async fn remove_live(conn: &mut PgConnection, ids: &[Uuid]) -> Result<()> {

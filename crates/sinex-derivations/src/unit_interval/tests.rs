@@ -177,19 +177,28 @@ fn each_unit_host_manager_and_user_is_its_own_key() {
 }
 
 #[devkit::test]
-fn a_unit_record_without_a_host_keeps_its_own_open_interval() {
+fn a_unit_record_without_a_host_has_no_key_and_opens_no_interval() {
     let mut start = unit("unit.started", 0, "boot-a", "run-a");
     start.payload["host"] = Value::Null;
-    assert_eq!(key_of(&start), json!({"unknown_record": "unit.started/0"}));
-    let computed = computed(std::slice::from_ref(&start));
-    assert!(!computed.waiting, "nothing can close it");
-    let interval: StateInterval = computed.outputs[0].payload_as().unwrap();
-    assert_eq!(interval.ended_at, None);
-    assert_eq!(interval.attributes["scope_quality"], "unknown");
+    let keys = AnyKeyed::keys_for(
+        &UnitIntervals,
+        &KeyView {
+            event_type: &start.event_type,
+            ts_orig: start.ts_orig.at,
+            payload: &start.payload,
+        },
+        &env(),
+    );
+    assert_eq!(keys, Vec::<Value>::new());
+    // Read beside a named scope's events, it adds no run to that scope.
+    let named = unit("unit.started", 5, "boot-a", "run-b");
+    let runs = runs_of(&[named, start]);
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].started_at, at(5));
 }
 
 #[devkit::test]
-fn only_scope_and_unknown_host_keys_read_stored_inputs() {
+fn only_scope_keys_read_stored_inputs() {
     let start = unit("unit.started", 0, "boot-a", "run-a");
     let boot = journal_event("boot.started", 9, json!({"boot_id":"boot-b"}));
     assert!(AnyKeyed::stores_inputs(&UnitIntervals, &key_of(&start)));

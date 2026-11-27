@@ -57,6 +57,13 @@ impl Keyed for ActivitySessions {
         "journal.entry",
     ];
     const OUTPUTS: &'static [&'static str] = &["activity.session"];
+    const OUTPUT_RANGES: &'static [crate::OutputRange] = &[crate::OutputRange {
+        output_type: "activity.session",
+        start_field: "started_at",
+        end_field: "ended_at",
+        open_field: None,
+        fence_field: None,
+    }];
     fn version(&self) -> u32 {
         let mut hash = blake3::Hasher::new();
         hash.update(&Self::VERSION.to_le_bytes());
@@ -119,12 +126,7 @@ impl Keyed for ActivitySessions {
                     .and_then(|value| serde_json::from_value::<Timestamp>(value.clone()).ok())
                     .unwrap_or(start);
                 vec![crate::AffectedRange {
-                    key_match: None,
-                    open_field: None,
-                    fence_field: None,
                     output_type: "activity.session",
-                    start_field: "started_at",
-                    end_field: "ended_at",
                     start: selection_time(start.unix_ns() - gap),
                     end: selection_time(end.unix_ns() + gap),
                 }]

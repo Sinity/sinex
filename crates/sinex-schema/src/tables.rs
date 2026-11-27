@@ -662,6 +662,7 @@ pub(crate) fn tables(c: &Checks) -> Vec<String> {
     tables.extend([
         crate::live_intervals::INTERVAL_END.into(),
         crate::live_intervals::TABLE.into(),
+        crate::output_ranges::TABLE.into(),
     ]);
     tables.extend(crate::backups::tables());
     tables.extend(crate::blob_chunks::tables());
@@ -679,6 +680,7 @@ pub(crate) fn after_tables() -> Vec<String> {
         crate::library_copy_fields::INDEXES
             .iter()
             .chain(crate::live_intervals::INDEXES)
+            .chain(crate::output_ranges::INDEXES)
             .map(|sql| (*sql).into()),
     );
     out.extend(crate::query_cursors::triggers());

@@ -50,6 +50,23 @@ impl DirtyKeys for Registered {
             .iter()
             .any(|d| d.name() == derivation && d.stores_inputs(key))
     }
+    fn output_ranges(&self) -> Vec<sinex_store::OutputRange> {
+        self.derivations
+            .iter()
+            .flat_map(|d| {
+                d.output_ranges()
+                    .iter()
+                    .map(move |range| sinex_store::OutputRange {
+                        derivation: d.name(),
+                        output_type: range.output_type,
+                        start_field: range.start_field,
+                        end_field: range.end_field,
+                        open_field: range.open_field,
+                        fence_field: range.fence_field,
+                    })
+            })
+            .collect()
+    }
     fn affected_ranges(&self, event: &KeyInput<'_>) -> Vec<sinex_store::AffectedRange> {
         let view = KeyView {
             event_type: event.event_type,
@@ -68,13 +85,8 @@ impl DirtyKeys for Registered {
                 d.affected_ranges(&view, &env)
                     .into_iter()
                     .map(move |range| sinex_store::AffectedRange {
-                        key_match: range.key_match,
                         derivation: d.name(),
                         output_type: range.output_type,
-                        open_field: range.open_field,
-                        fence_field: range.fence_field,
-                        start_field: range.start_field,
-                        end_field: range.end_field,
                         start: range.start.0,
                         end: range.end.0,
                     })

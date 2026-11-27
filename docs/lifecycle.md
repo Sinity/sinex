@@ -180,7 +180,7 @@ callers receive the preview and a line to hand the operator. A credential label
 alone does not isolate a token readable by same-user agents. This documentation
 does not grant new deletion authority or change the deployed access policy.
 
-Tombstone (archived → tombstoned) is irreversible and allowed only on archived chains. A live member refuses the whole request.
+Tombstone (archived → tombstoned) is irreversible and allowed only on archived chains. A live member refuses a plain tombstone request. The [material-only scope](#material-only-readings) archives its live members before tombstoning them.
 
 - **It drops payloads and keeps a skeleton forever**: event ID, source, type, `ts_orig` with its quality, tombstone time, reason, operation, and the record's place (material, record offset, output index; for a derived event, its key hash, never the key's fields). The skeleton keeps the provenance structure.
 - **A tombstone destroys one interpretation; it does not stop new ones.** Replay of a live material and a re-stage of identical bytes produce new readings with new IDs, admitted normally. Nothing in admission consults tombstones to refuse a record. (ruling 2026-10-27, cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:1b44f4a1-22ca-4107-9711-5b0311caa1fa).
@@ -189,6 +189,32 @@ Tombstone (archived → tombstoned) is irreversible and allowed only on archived
 - **Every place that held the payload is cleared**, in the same transaction or by its consumer at its position: the search read model, detector hits, annotations and embeddings of the readings, and every outside consumer, which the confirmed stream's tombstone notice tells to drop what it kept; the stream itself holds only references, which keep no more than the skeleton, so nothing on it is erased ([the confirmed stream](producers.md#the-confirmed-stream)). Backups made before the tombstone are outside Sinex's reach, and the answer says how many backup sets predate it.
 
 Tombstoning is the only irreversible deletion Sinex has.
+
+### Material-only readings
+
+When a source narrows what it reads into events, the operator can remove the
+superseded readings with the parser's declared material-only rule:
+
+```sh
+sinexctl --deadline none tombstone --source network.netflow --material-only --dry-run
+sinexctl --deadline none tombstone --source network.netflow --material-only
+```
+
+The preview counts matching stored readings, including archived readings.
+`--since` and `--until` can restrict original event time to a half-open interval
+for both commands. The write streams IDs from the read connection, up to the
+operation's recorded start position. It records the source and parser version
+so a continuation cannot switch rules midway. A reading without a classifiable
+payload stays in place.
+
+Each bulk writer transaction archives the live members of the selected chains
+and tombstones the entire chains at the same commit position. Live admission
+can run between the transactions. Batch size follows writer hold time, and a
+database statement timeout rolls back a slow batch so it can retry with fewer
+roots. The write reports both transitions and leaves the materials readable.
+It keeps the usual tombstone skeletons and provenance edges so earlier
+citations still resolve. PostgreSQL may retain freed space for reuse, so file
+sizes need not fall when the rows leave.
 
 ## Archive reasons
 

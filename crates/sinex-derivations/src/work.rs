@@ -3,7 +3,10 @@
 use crate::activity::{SECOND, cite, union_seconds};
 use crate::derived_event::derived;
 use crate::observed::{REST, is_sleep, sleep_kinds};
-use crate::{AffectedRange, Computed, Env, InputQuery, InputRange, KeyState, KeyView, Keyed, Kind};
+use crate::{
+    AffectedRange, Computed, Env, InputQuery, InputRange, KeyState, KeyView, Keyed, Kind,
+    OutputRange,
+};
 use serde_json::{Value, json};
 use sinex_model::event_types::{activity::Agency, work::*};
 use sinex_model::record::stable;
@@ -100,14 +103,32 @@ fn episode_kind(episode: &Value) -> Kind {
     kind
 }
 
+/// The state kinds whose intervals can mean the operator left: a locked
+/// session, a display off, a suspended machine. An episode reads these and
+/// no other state, so the runs of units and the focus history never reach it.
+const ABSENCE_STATES: &[&str] = &["desktop.lock", "desktop.display", "machine.suspend"];
+
+fn absence_states() -> impl Iterator<Item = Kind> {
+    ABSENCE_STATES
+        .iter()
+        .map(|state| Kind::only("state.interval", &[("state_kind", state)]))
+}
+
 pub struct WorkEpisodes;
 impl Keyed for WorkEpisodes {
     type Key = EpisodeKey;
     const NAME: &'static str = "work.episodes";
-    const VERSION: u32 = 5;
+    const VERSION: u32 = 6;
     const INPUTS: &'static [&'static str] = &["work.act", "state.interval", "health.record"];
     const OUTPUTS: &'static [&'static str] =
         &["work.episode", "work.suspension", "work.resumption"];
+    const OUTPUT_RANGES: &'static [OutputRange] = &[OutputRange {
+        output_type: "work.episode",
+        start_field: "started_at",
+        end_field: "last_activity",
+        open_field: None,
+        fence_field: None,
+    }];
     fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Self::Key> {
         if input.event_type != "work.act" {
             return vec![];
@@ -124,16 +145,20 @@ impl Keyed for WorkEpisodes {
             .unwrap_or_default()
     }
     fn affected_ranges(&self, input: &KeyView<'_>, _: &Env) -> Vec<AffectedRange> {
+        // Admission asks this for every state interval it stores, and nearly
+        // all of them are unit runs.
+        if input.event_type == "state.interval"
+            && !input.payload["state_kind"]
+                .as_str()
+                .is_some_and(|state| ABSENCE_STATES.contains(&state))
+        {
+            return vec![];
+        }
         input
             .ts_orig
             .map(|at| {
                 vec![AffectedRange {
-                    key_match: None,
-                    open_field: None,
-                    fence_field: None,
                     output_type: "work.episode",
-                    start_field: "started_at",
-                    end_field: "last_activity",
                     start: Timestamp::from_unix_ns(at.unix_ns() - 14 * 86_400 * SECOND)
                         .unwrap_or(Timestamp(time::PrimitiveDateTime::MIN.assume_utc())),
                     end: input
@@ -150,7 +175,8 @@ impl Keyed for WorkEpisodes {
             .unwrap_or_default()
     }
     fn inputs(&self, key: &Self::Key, _: &Env) -> Option<InputQuery> {
-        let mut kinds = vec![Kind::all("work.act"), Kind::all("state.interval")];
+        let mut kinds = vec![Kind::all("work.act")];
+        kinds.extend(absence_states());
         kinds.extend(REST.kinds());
         let mut query = InputQuery::all(kinds);
         query.range = Some(InputRange::Extent {
@@ -169,8 +195,8 @@ impl Keyed for WorkEpisodes {
             lifetime: None,
         });
         query.after.push(crate::Neighbour {
-            kinds: ["desktop.lock", "desktop.display", "machine.suspend"]
-                .into_iter()
+            kinds: ABSENCE_STATES
+                .iter()
                 .flat_map(|state| {
                     ["locked", "off", "suspended"]
                         .into_iter()
@@ -498,6 +524,13 @@ impl Keyed for ActivityDays {
     const VERSION: u32 = 2;
     const INPUTS: &'static [&'static str] = &["health.record", "activity.span"];
     const OUTPUTS: &'static [&'static str] = &["activity.day"];
+    const OUTPUT_RANGES: &'static [OutputRange] = &[OutputRange {
+        output_type: "activity.day",
+        start_field: "started_at",
+        end_field: "ended_at",
+        open_field: Some("provisional"),
+        fence_field: None,
+    }];
     fn keys_for(&self, input: &KeyView<'_>, _: &Env) -> Vec<Self::Key> {
         if !is_sleep(input.event_type, input.payload) {
             return vec![];
@@ -523,12 +556,7 @@ impl Keyed for ActivityDays {
             .ts_orig
             .map(|start| {
                 vec![AffectedRange {
-                    key_match: None,
-                    open_field: Some("provisional"),
-                    fence_field: None,
                     output_type: "activity.day",
-                    start_field: "started_at",
-                    end_field: "ended_at",
                     start,
                     end: end.unwrap_or(start),
                 }]

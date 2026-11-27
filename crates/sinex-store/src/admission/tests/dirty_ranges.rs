@@ -1,30 +1,47 @@
-//! Existing output ranges are checked by event identity, independently of history size.
+//! The stored outputs an input's range touches are found from the range each
+//! live output covers, kept when it is admitted and dropped when it is
+//! archived, independently of how much a derivation has stored.
 use super::*;
 use std::collections::BTreeSet;
 
 const NAME: &str = "fixture.dirty_ranges";
+const OTHER: &str = "fixture.other_ranges";
 const KIND: &str = "synthetic.interval";
 
 fn at(second: i64) -> Timestamp {
     Timestamp::from_unix_secs(1_700_000_000 + second).unwrap()
 }
 
+/// `NAME`'s outputs of `KIND` cover `start` to `end`, and stay open while
+/// `open` is true; an input asks about 12 to 15, twice.
 struct Ranges;
 impl DirtyKeys for Ranges {
     fn keys(&self, _: &KeyInput<'_>) -> Vec<(String, Value)> {
         vec![]
     }
-    fn affected_ranges(&self, input: &KeyInput<'_>) -> Vec<AffectedRange> {
-        let range = AffectedRange {
-            key_match: (input.event_type == "synthetic.selected").then_some(("label", "selected")),
+    fn output_ranges(&self) -> Vec<crate::OutputRange> {
+        vec![crate::OutputRange {
             derivation: NAME,
             output_type: KIND,
             start_field: "start",
             end_field: "end",
             open_field: Some("open"),
-            fence_field: None,
-            start: at(12).0,
-            end: at(15).0,
+            fence_field: Some("fence"),
+        }]
+    }
+    fn affected_ranges(&self, input: &KeyInput<'_>) -> Vec<AffectedRange> {
+        let (start, end) = match input.payload.get("asked") {
+            Some(asked) => (
+                at(asked[0].as_i64().unwrap()).0,
+                at(asked[1].as_i64().unwrap()).0,
+            ),
+            None => (at(12).0, at(15).0),
+        };
+        let range = AffectedRange {
+            derivation: NAME,
+            output_type: KIND,
+            start,
+            end,
         };
         vec![range.clone(), range]
     }
@@ -51,13 +68,50 @@ fn event(kind: &str, payload: Value) -> Event {
     )
 }
 
-#[devkit::test]
-async fn dirty_output_ranges_mark_overlapping_keys_and_their_boundaries(
-    db: devkit::pg::TestDatabase,
-) {
-    let mut conn = crate::AdmissionContext::connect(&db.url(None))
-        .await
-        .unwrap();
+/// A batch of `derivation` that computes each key to its outputs.
+fn computed(derivation: &str, keys: Vec<(Value, Vec<Event>)>) -> Batch {
+    let (scopes, records) = keys
+        .into_iter()
+        .map(|(key, events)| {
+            (
+                ComputedKey {
+                    key,
+                    dirty_seq: 0,
+                    waiting: false,
+                    refresh_at: None,
+                    woken_by: None,
+                },
+                RecordOutcome::Events {
+                    location: None,
+                    events,
+                },
+            )
+        })
+        .unzip();
+    Batch {
+        run: RunId::new(),
+        kind: BatchKind::Derived {
+            derivation: derivation.into(),
+            scope: DerivedScope::Keys {
+                keys: scopes,
+                read: ReadMark::default(),
+                replaces_at_most: None,
+            }
+            .to_value(),
+        },
+        records,
+        archive: vec![],
+    }
+}
+
+async fn admit_computed(conn: &mut crate::AdmissionContext, batch: &Batch) -> Outcome {
+    let mut tx = conn.begin().await.unwrap();
+    let out = tx.admit(batch, &Ranges).await.unwrap();
+    tx.commit().await.unwrap();
+    out
+}
+
+async fn declare_kinds(conn: &mut crate::AdmissionContext) {
     let declarations: Vec<_> = [KIND, "synthetic.other_interval"]
         .into_iter()
         .map(|name| {
@@ -70,69 +124,24 @@ async fn dirty_output_ranges_mark_overlapping_keys_and_their_boundaries(
             )
         })
         .collect();
-    sinex_schema::kinds::register(&mut conn, "synthetic", &declarations)
+    sinex_schema::kinds::register(conn, "synthetic", &declarations)
         .await
         .unwrap();
-    let mut events: Vec<_> = (0..8192)
-        .map(|n| event(KIND, json!({"n":n,"start":at(0),"end":at(30),"open":false})))
-        .collect();
-    let mut outputs = Vec::new();
-    for (label, start, end, open) in [
-        ("overlap", 10, Some(20), false),
-        ("before", 0, Some(5), false),
-        ("after", 30, Some(40), false),
-        ("no_end", 11, None, false),
-        ("open", 0, Some(1), true),
-        ("closed", 0, Some(1), false),
-        ("archived", 11, Some(13), false),
-        ("wrong_kind", 11, Some(13), false),
-        ("other_derivation", 11, Some(13), false),
-        ("start_boundary", 15, Some(20), false),
-        ("end_boundary", 0, Some(12), false),
-        ("future_open", 20, Some(21), true),
-        ("overlap", 11, Some(14), false),
-    ] {
-        let reading = event(
-            if label == "wrong_kind" {
-                "synthetic.other_interval"
-            } else {
-                KIND
-            },
-            json!({"label":label,"start":at(start),"end":end.map(at),"open":open}),
-        );
-        outputs.push((label, reading.id));
-        events.push(reading);
-    }
-    admit_one(&mut conn, &batch(events)).await;
-    let archived = outputs
-        .iter()
-        .find(|(label, _)| *label == "archived")
-        .unwrap()
-        .1;
-    crate::lifecycle::move_events(
-        &mut conn,
-        sinex_model::lifecycle::Act::Archive,
-        vec![archived],
-        &NoDerivations,
-    )
-    .await;
-    for (label, id) in &outputs {
-        sqlx::query("INSERT INTO derivation.outputs(derivation,key,event_id) VALUES($1,$2,$3)")
-            .bind(if *label == "other_derivation" {
-                "fixture.other_ranges"
-            } else {
-                NAME
-            })
-            .bind(json!({"label":label}))
-            .bind(id.0)
-            .execute(&mut *conn)
-            .await
-            .unwrap();
-    }
-    let position = crate::query::current_seq(&mut conn).await.unwrap();
-    let mut probe = PgConnection::connect(&db.url(None)).await.unwrap();
-    let mut tx = probe.begin().await.unwrap();
-    let payload = json!({});
+}
+
+/// The labels of `NAME`'s keys an input asking about `asked` marks dirty.
+async fn dirtied(conn: &mut PgConnection, asked: Option<(i64, i64)>) -> BTreeSet<String> {
+    let mut tx = conn.begin().await.unwrap();
+    // Marks left by the fixture's own writes are not the input's.
+    sqlx::query("DELETE FROM derivation.dirty")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let position = crate::query::current_seq(&mut tx).await.unwrap();
+    let payload = match asked {
+        Some((start, end)) => json!({"asked": [start, end]}),
+        None => json!({}),
+    };
     let marked = derived::mark_inputs_dirty(
         &mut tx,
         &[KeyInput {
@@ -146,427 +155,293 @@ async fn dirty_output_ranges_mark_overlapping_keys_and_their_boundaries(
     )
     .await
     .unwrap();
-    let expected: BTreeSet<String> = [
-        "overlap",
-        "no_end",
-        "open",
-        "start_boundary",
-        "end_boundary",
-    ]
-    .into_iter()
-    .map(str::to_owned)
-    .collect();
     let dirty: Vec<String> =
         sqlx::query_scalar("SELECT key->>'label' FROM derivation.dirty WHERE derivation=$1")
             .bind(NAME)
             .fetch_all(&mut *tx)
             .await
             .unwrap();
-    assert_eq!(marked, expected.len());
-    assert_eq!(dirty.into_iter().collect::<BTreeSet<_>>(), expected);
     tx.rollback().await.unwrap();
+    assert_eq!(marked, dirty.len(), "each affected key is offered once");
+    dirty.into_iter().collect()
+}
+
+fn labels(labels: &[&str]) -> BTreeSet<String> {
+    labels.iter().map(|label| (*label).to_owned()).collect()
 }
 
 #[devkit::test]
-async fn dirty_ranges_page_compressed_members_and_keep_distinct_keys(db: devkit::pg::TestDatabase) {
-    use sqlx::Executor;
+async fn dirty_output_ranges_mark_overlapping_keys_and_their_boundaries(
+    db: devkit::pg::TestDatabase,
+) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
-    let mut competing = PgConnection::connect(&db.url(None)).await.unwrap();
-    assert!(!crate::writer_lock::try_claim(&mut competing).await.unwrap());
-    sqlx::query("INSERT INTO core.events(id,event_type,source,run_id,material_id,record_offset,ts_quality,commit_seq,payload,reading_order,record_hash,class)
-      SELECT ('01800000-0000-7000-8000-'||lpad(to_hex(n),12,'0'))::uuid,
-        CASE WHEN n=8793 THEN 'synthetic.other_interval' ELSE $1 END,
-        'synthetic-ranges',uuidv7(),uuidv7(),n,'unknown',1,
-        jsonb_build_object('start',$2::timestamptz,'end',$3::timestamptz,'open',false),
-        1,decode(repeat('01',32),'hex'),'open' FROM generate_series(1,8794)n")
-        .bind(KIND).bind(at(10).0).bind(at(20).0).execute(&mut *conn).await.unwrap();
-    sqlx::query(
-        "INSERT INTO derivation.outputs(derivation,key,event_id)
-      SELECT $1,jsonb_build_object('label',(n-8193)%300),
-        ('01800000-0000-7000-8000-'||lpad(to_hex(n),12,'0'))::uuid
-      FROM generate_series(8193,8792)n",
-    )
-    .bind(NAME)
-    .execute(&mut *conn)
-    .await
-    .unwrap();
-    sqlx::query(
-        r#"INSERT INTO derivation.outputs(derivation,key,event_id) VALUES
-      ($1,'{"label":1.5}','01800000-0000-7000-8000-000000002002'),
-      ($1,'{"wrong_kind":true}','01800000-0000-7000-8000-000000002259'),
-      ($1,'{"missing":true}','01800000-0000-7000-8000-00000000dead'),
-      ('fixture.other_ranges','{"other_key":true}','01800000-0000-7000-8000-00000000225a')"#,
-    )
-    .bind(NAME)
-    .execute(&mut *conn)
-    .await
-    .unwrap();
-    sqlx::query(
-        "INSERT INTO audit.archived(event_id,archived_seq,reason)
-      SELECT ('01800000-0000-7000-8000-'||lpad(to_hex(n),12,'0'))::uuid,2,'archive'
-      FROM unnest(ARRAY[8193,8493])n",
-    )
-    .execute(&mut *conn)
-    .await
-    .unwrap();
-    conn.execute("SELECT compress_chunk(c) FROM show_chunks('core.events')c")
-        .await
-        .unwrap();
-    let mut tx = sqlx::Connection::begin(&mut *conn).await.unwrap();
-    let payload = json!({});
-    let mut inputs: Vec<_> = (0..256)
-        .map(|_| KeyInput {
-            id: uuid::Uuid::nil(),
-            event_type: "synthetic.trigger",
-            ts_orig: None,
-            payload: &payload,
-        })
+    declare_kinds(&mut conn).await;
+    // Events of the kind that are no key's output never reach the lookup.
+    let unrelated: Vec<_> = (0..64)
+        .map(|n| event(KIND, json!({"n":n,"start":at(0),"end":at(30),"open":false})))
         .collect();
-    for _ in 0..8 {
-        assert_eq!(
-            derived::mark_inputs_dirty(&mut tx, &inputs, 2, &Ranges)
-                .await
-                .unwrap(),
-            300
+    admit_one(&mut conn, &batch(unrelated)).await;
+    let mut keys: BTreeMap<&str, Vec<Event>> = BTreeMap::new();
+    let mut archived = None;
+    for (label, start, end, open) in [
+        ("overlap", 10, Some(20), false),
+        ("before", 0, Some(5), false),
+        ("after", 30, Some(40), false),
+        ("no_end", 11, None, false),
+        ("open", 0, Some(1), true),
+        ("closed", 0, Some(1), false),
+        ("archived", 11, Some(13), false),
+        ("wrong_kind", 11, Some(13), false),
+        ("start_boundary", 15, Some(20), false),
+        ("end_boundary", 0, Some(12), false),
+        ("future_open", 20, Some(21), true),
+        ("overlap", 11, Some(14), false),
+    ] {
+        let reading = event(
+            if label == "wrong_kind" {
+                "synthetic.other_interval"
+            } else {
+                KIND
+            },
+            json!({"label":label,"start":at(start),"end":end.map(at),"open":open}),
         );
-        let keys: Vec<Value> =
-            sqlx::query_scalar("SELECT key FROM derivation.dirty WHERE derivation=$1 ORDER BY key")
-                .bind(NAME)
-                .fetch_all(&mut *tx)
-                .await
-                .unwrap();
-        assert_eq!(
-            keys.into_iter().collect::<std::collections::HashSet<_>>(),
-            (1..300)
-                .map(|n| json!({"label":n}))
-                .chain([json!({"label":1.5})])
-                .collect()
-        );
+        if label == "archived" {
+            archived = Some(reading.id);
+        }
+        keys.entry(label).or_default().push(reading);
     }
-    // Run the page queries on another connection so this writer's
-    // transaction stays untouched.
-    let mut checked = PgConnection::connect(&db.url(None)).await.unwrap();
-    let first = sqlx::query_file!(
-        "src/admission/affected_output_page.sql",
-        NAME,
-        None::<&Value>,
-        None::<&Value>,
-        None::<Uuid>
-    )
-    .fetch_all(&mut checked)
-    .await
-    .unwrap();
-    assert_eq!(first.len(), 256);
-    let last = first.last().unwrap();
-    let second = sqlx::query_file!(
-        "src/admission/affected_output_page.sql",
-        NAME,
-        None::<&Value>,
-        Some(&last.key),
-        Some(last.event_id)
-    )
-    .fetch_all(&mut checked)
-    .await
-    .unwrap();
-    assert_eq!(second.len(), 256);
-    assert!(second.iter().all(|row| {
-        !first
-            .iter()
-            .any(|prior| prior.key == row.key && prior.event_id == row.event_id)
-    }));
-    // The page holds 256 members whatever their archive state; the two
-    // archived members of the first key stay out of the payload lookup.
-    assert_eq!(first.iter().filter(|row| row.archived).count(), 2);
-    let first: Vec<_> = first.into_iter().filter(|row| !row.archived).collect();
-    let ids: Vec<_> = first.iter().map(|row| row.event_id).collect();
-    assert!(
-        ids.len()
-            > ids
-                .iter()
-                .copied()
-                .collect::<std::collections::HashSet<_>>()
-                .len(),
-        "one event is a member of two keys in one page"
+    let outputs = keys
+        .into_iter()
+        .map(|(label, events)| (json!({"label": label}), events))
+        .collect();
+    admit_computed(&mut conn, &computed(NAME, outputs)).await;
+    // Another derivation's output of the same kind covers nothing asked of this one.
+    let other = event(
+        KIND,
+        json!({"label":"other_derivation","start":at(11),"end":at(13),"open":false}),
     );
-    let output_derivations: Vec<_> = first.iter().map(|row| row.derivation.clone()).collect();
-    let page_keys: Vec<_> = first.iter().map(|row| row.key.clone()).collect();
-    let output_types = vec![KIND.to_owned()];
-    let names = vec![NAME.to_owned(); 2];
-    let types = vec![KIND.to_owned(); 2];
-    let starts = vec!["start".to_owned(); 2];
-    let ends = vec!["end".to_owned(); 2];
-    let from = vec![at(12).0; 2];
-    let until = vec![at(15).0; 2];
-    let open = vec![Some("open".to_owned()); 2];
-    let mut checked_tx = checked.begin().await.unwrap();
-    let checked_keys = sqlx::query_file!(
-        "src/admission/affected_outputs.sql",
-        &ids,
-        &output_derivations,
-        &page_keys,
-        &output_types,
-        &names,
-        &types,
-        &starts,
-        &ends,
-        &from,
-        &until,
-        &open as &[Option<String>],
-        &[None::<String>, None] as &[Option<String>]
+    let other = vec![(json!({"label":"other_derivation"}), vec![other])];
+    admit_computed(&mut conn, &computed(OTHER, other)).await;
+    crate::lifecycle::move_events(
+        &mut conn,
+        sinex_model::lifecycle::Act::Archive,
+        vec![archived.unwrap()],
+        &NoDerivations,
     )
-    .fetch_all(&mut *checked_tx)
-    .await
-    .unwrap();
-    assert!(checked_keys.iter().all(|row| row.derivation == NAME));
-    assert_eq!(
-        checked_keys
-            .into_iter()
-            .map(|row| row.key)
-            .collect::<std::collections::HashSet<_>>(),
-        page_keys.into_iter().collect()
-    );
-    checked_tx.rollback().await.unwrap();
-    checked.close().await.unwrap();
+    .await;
 
-    // The matching keys follow the first 300 one-field keys. One member is
-    // live and the others are archived or the wrong event type.
-    let selected = json!({"label":"selected","case":1});
-    let archived = json!({"label":"selected","case":2});
-    let wrong_kind = json!({"label":"selected","case":3});
-    sqlx::query(
-        "INSERT INTO derivation.outputs(derivation,key,event_id) VALUES
-        ($1,$2,'01800000-0000-7000-8000-000000002002'),
-        ($1,$3,'01800000-0000-7000-8000-000000002001'),
-        ($1,$4,'01800000-0000-7000-8000-000000002259')",
-    )
-    .bind(NAME)
-    .bind(&selected)
-    .bind(&archived)
-    .bind(&wrong_kind)
-    .execute(&mut *tx)
-    .await
-    .unwrap();
-    let trigger = KeyInput {
-        id: uuid::Uuid::nil(),
-        event_type: "synthetic.selected",
-        ts_orig: None,
-        payload: &payload,
-    };
-    let first_keys =
-        sqlx::query_file_scalar!("src/admission/affected_key_page.sql", NAME, None::<&Value>)
-            .fetch_all(&mut *tx)
-            .await
-            .unwrap();
-    assert_eq!(first_keys.len(), 256);
-    assert!(!first_keys.contains(&selected));
-    let second_keys = sqlx::query_file_scalar!(
-        "src/admission/affected_key_page.sql",
-        NAME,
-        first_keys.last()
-    )
-    .fetch_all(&mut *tx)
-    .await
-    .unwrap();
-    assert!(second_keys.contains(&selected));
-    let matching = vec![selected.clone(), archived, wrong_kind];
-    let mut members = Vec::new();
-    for key in &matching {
-        members.extend(
-            sqlx::query_file!(
-                "src/admission/affected_output_page.sql",
-                NAME,
-                Some(key),
-                None::<&Value>,
-                None::<Uuid>
-            )
-            .fetch_all(&mut *tx)
-            .await
-            .unwrap(),
-        );
-    }
-    assert_eq!(members.len(), 3, "one member under each selected key");
-    assert!(members.iter().all(|row| matching.contains(&row.key)));
+    let mut probe = PgConnection::connect(&db.url(None)).await.unwrap();
     assert_eq!(
-        members.iter().filter(|row| !row.archived).count(),
-        2,
-        "only live members of selected keys reach the payload lookup"
+        dirtied(&mut probe, None).await,
+        labels(&[
+            "overlap",
+            "no_end",
+            "open",
+            "start_boundary",
+            "end_boundary"
+        ])
     );
-    let mixed = [trigger, inputs.pop().unwrap()];
-    assert_eq!(
-        derived::mark_inputs_dirty(&mut tx, &mixed, 3, &Ranges)
-            .await
-            .unwrap(),
-        301
-    );
+}
 
-    // A selected same-kind payload would fail its time conversion. A valid
-    // admission cannot inspect this unrelated key's payload in the first place.
-    let bad = uuid::Uuid::now_v7();
-    sqlx::query("INSERT INTO core.events(id,event_type,source,run_id,material_id,record_offset,ts_quality,commit_seq,payload,reading_order,record_hash,class)
-        VALUES ($1,$2,'synthetic-ranges',uuidv7(),uuidv7(),0,'unknown',4,jsonb_build_object('start','invalid'),1,decode(repeat('01',32),'hex'),'open')")
-        .bind(bad).bind(KIND).execute(&mut *tx).await.unwrap();
-    sqlx::query("INSERT INTO derivation.outputs(derivation,key,event_id) VALUES($1,$2,$3)")
-        .bind(NAME)
-        .bind(json!({"label":"unrelated"}))
-        .bind(bad)
-        .execute(&mut *tx)
+/// What bounds an output with no end, and bounds recorded or asked in the
+/// wrong order: a fence stands for a missing end, an end wins over a fence,
+/// an unreadable end is no end, and an output or a question that ends before
+/// it starts is compared by the bounds it states.
+#[devkit::test]
+async fn fences_and_reversed_bounds_keep_their_meaning(db: devkit::pg::TestDatabase) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
+    declare_kinds(&mut conn).await;
+    let outputs = [
+        ("fenced_before", json!({"start":at(0),"fence":at(5)})),
+        ("fenced_across", json!({"start":at(0),"fence":at(12)})),
+        (
+            "ended_before_fence",
+            json!({"start":at(0),"end":at(5),"fence":at(40)}),
+        ),
+        ("unreadable_end", json!({"start":at(0),"end":"soon"})),
+        ("unreadable_start", json!({"start":"soon","end":at(40)})),
+        ("reversed", json!({"start":at(14),"end":at(13)})),
+        ("reversed_outside", json!({"start":at(40),"end":at(13)})),
+    ]
+    .into_iter()
+    .map(|(label, mut payload)| {
+        payload["label"] = json!(label);
+        (json!({"label": label}), vec![event(KIND, payload)])
+    })
+    .collect();
+    admit_computed(&mut conn, &computed(NAME, outputs)).await;
+    let mut probe = PgConnection::connect(&db.url(None)).await.unwrap();
     assert_eq!(
-        derived::mark_inputs_dirty(&mut tx, &mixed[..1], 4, &Ranges)
+        dirtied(&mut probe, None).await,
+        labels(&["fenced_across", "unreadable_end", "reversed"])
+    );
+    // Asked from 20 back to 10: an output must start by 10 and end at or
+    // after 20, as the bounds state.
+    assert_eq!(
+        dirtied(&mut probe, Some((20, 10))).await,
+        labels(&["unreadable_end"])
+    );
+    assert_eq!(
+        dirtied(&mut probe, Some((60, 0))).await,
+        labels(&["unreadable_end"])
+    );
+}
+
+/// A range is kept per key and live output: written when the output joins a
+/// key, copied when an output already stored joins another key, unchanged
+/// when a recompute repeats it, and dropped for every key when the output is
+/// archived.
+#[devkit::test]
+async fn ranges_follow_membership_and_liveness(db: devkit::pg::TestDatabase) {
+    let mut conn = crate::AdmissionContext::connect(&db.url(None))
+        .await
+        .unwrap();
+    declare_kinds(&mut conn).await;
+    let output = event(KIND, json!({"label":"shared","start":at(10),"end":at(20)}));
+    let rows = "SELECT key->>'label', extract(epoch FROM ended_at - started_at)::bigint
+                FROM derivation.output_ranges WHERE derivation = $1 ORDER BY 1";
+    let first = vec![(json!({"label":"first"}), vec![output.clone()])];
+    assert_eq!(
+        admit_computed(&mut conn, &computed(NAME, first.clone()))
             .await
-            .unwrap(),
+            .admitted,
         1
     );
-    let updated: Vec<Value> = sqlx::query_scalar(
-        "SELECT key FROM derivation.dirty WHERE derivation=$1 AND last_dirty_seq=4",
-    )
-    .bind(NAME)
-    .fetch_all(&mut *tx)
-    .await
-    .unwrap();
-    assert_eq!(updated, [selected]);
-    assert!(!crate::writer_lock::try_claim(&mut competing).await.unwrap());
-    tx.rollback().await.unwrap();
-}
-
-const OTHER: &str = "fixture.other_ranges";
-
-struct TwoDerivations;
-impl DirtyKeys for TwoDerivations {
-    fn keys(&self, _: &KeyInput<'_>) -> Vec<(String, Value)> {
-        vec![]
-    }
-    fn affected_ranges(&self, _: &KeyInput<'_>) -> Vec<AffectedRange> {
-        [NAME, OTHER]
-            .into_iter()
-            .map(|derivation| AffectedRange {
-                key_match: None,
-                derivation,
-                output_type: KIND,
-                start_field: "start",
-                end_field: "end",
-                open_field: None,
-                fence_field: None,
-                start: at(12).0,
-                end: at(15).0,
-            })
-            .collect()
-    }
-}
-
-/// Blocks the membership scan of one page statement reads, from its plan.
-async fn page_blocks(
-    conn: &mut PgConnection,
-    key: Option<&Value>,
-    after: Option<(&Value, Uuid)>,
-) -> f64 {
-    let plan: Value = sqlx::query_scalar(&format!(
-        "EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON,TIMING OFF) {}",
-        include_str!("../affected_output_page.sql")
-    ))
-    .bind(NAME)
-    .bind(key)
-    .bind(after.map(|(key, _)| key))
-    .bind(after.map(|(_, id)| id))
-    .persistent(false)
-    .fetch_one(conn)
-    .await
-    .unwrap();
-    fn membership_scan(node: &Value) -> Option<&Value> {
-        if node["Relation Name"] == "outputs" {
-            return Some(node);
-        }
-        node["Plans"].as_array()?.iter().find_map(membership_scan)
-    }
-    let scan = membership_scan(&plan[0]["Plan"]).expect("the page reads memberships");
-    scan["Shared Hit Blocks"].as_f64().unwrap() + scan["Shared Read Blocks"].as_f64().unwrap()
-}
-
-#[devkit::test]
-async fn affected_output_pages_start_at_their_cursor(db: devkit::pg::TestDatabase) {
-    use sqlx::Executor;
-    const MEMBERS: i64 = 32_768;
-    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
-    // Every member overlaps the probed range. The first half is 257 small
-    // keys and the second half one large key, whose last 64 members belong to
-    // another derivation that is paged after the first. Members are stored in
-    // key order, so table reads are as local for a late page as for the first.
-    sqlx::query("INSERT INTO core.events(id,event_type,source,run_id,material_id,record_offset,ts_quality,commit_seq,payload,reading_order,record_hash,class)
-      SELECT ('01800000-0000-7000-8000-'||lpad(to_hex(n),12,'0'))::uuid,$1,
-        'synthetic-ranges',uuidv7(),uuidv7(),n,'unknown',1,
-        jsonb_build_object('start',$2::timestamptz,'end',$3::timestamptz),
-        1,decode(repeat('01',32),'hex'),'open' FROM generate_series(1,$4::bigint)n")
-        .bind(KIND).bind(at(10).0).bind(at(20).0).bind(MEMBERS).execute(&mut conn).await.unwrap();
-    sqlx::query(
-        "INSERT INTO derivation.outputs(derivation,key,event_id)
-      SELECT CASE WHEN n>$3-64 THEN $2 ELSE $1 END,
-        jsonb_build_object('label',CASE WHEN n<=$3/2 THEN n/64 ELSE 512 END),
-        ('01800000-0000-7000-8000-'||lpad(to_hex(n),12,'0'))::uuid
-      FROM generate_series(1,$3::bigint)n",
-    )
-    .bind(NAME)
-    .bind(OTHER)
-    .bind(MEMBERS)
-    .execute(&mut conn)
-    .await
-    .unwrap();
-    conn.execute("VACUUM (ANALYZE) derivation.outputs")
+    let stored: Vec<(String, i64)> = sqlx::query_as(rows)
+        .bind(NAME)
+        .fetch_all(&mut *conn)
         .await
         .unwrap();
+    assert_eq!(stored, [("first".to_owned(), 10)]);
 
-    // Paging one derivation visits each of its members once, in key order,
-    // and paging one key visits that key's members once.
-    let large = json!({"label":512});
-    for (key, expected) in [(None, MEMBERS - 64), (Some(&large), MEMBERS / 2 - 64)] {
-        let mut after: Option<(Value, Uuid)> = None;
-        let mut cursors: Vec<(String, Uuid)> = Vec::new();
-        let mut members = 0;
-        loop {
-            let page = sqlx::query_file!(
-                "src/admission/affected_output_page.sql",
-                NAME,
-                key,
-                after.as_ref().map(|(key, _)| key),
-                after.as_ref().map(|(_, id)| *id)
-            )
-            .fetch_all(&mut conn)
+    // The same reading again, under its key and then under another.
+    for label in ["first", "second"] {
+        let again = vec![(json!({"label": label}), vec![output.clone()])];
+        let repeated = admit_computed(&mut conn, &computed(NAME, again)).await;
+        assert_eq!((repeated.admitted, repeated.repeats), (0, 1));
+    }
+    let stored: Vec<(String, i64)> = sqlx::query_as(rows)
+        .bind(NAME)
+        .fetch_all(&mut *conn)
+        .await
+        .unwrap();
+    assert_eq!(
+        stored,
+        [("first".to_owned(), 10), ("second".to_owned(), 10)]
+    );
+    let mut probe = PgConnection::connect(&db.url(None)).await.unwrap();
+    assert_eq!(
+        dirtied(&mut probe, None).await,
+        labels(&["first", "second"])
+    );
+
+    crate::lifecycle::move_events(
+        &mut conn,
+        sinex_model::lifecycle::Act::Archive,
+        vec![output.id],
+        &NoDerivations,
+    )
+    .await;
+    let left: i64 = sqlx::query_scalar("SELECT count(*) FROM derivation.output_ranges")
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+    assert_eq!(left, 0);
+    assert!(dirtied(&mut probe, None).await.is_empty());
+}
+
+/// Rows the two lookup statements read from the range table, from their plans.
+async fn rows_read(conn: &mut PgConnection) -> (f64, f64) {
+    fn read(node: &Value) -> f64 {
+        let own = if node["Relation Name"] == "output_ranges" {
+            (node["Actual Rows"].as_f64().unwrap()
+                + node["Rows Removed by Filter"].as_f64().unwrap_or(0.0)
+                + node["Rows Removed by Index Recheck"]
+                    .as_f64()
+                    .unwrap_or(0.0))
+                * node["Actual Loops"].as_f64().unwrap()
+        } else {
+            0.0
+        };
+        own + node["Plans"]
+            .as_array()
+            .map_or(0.0, |plans| plans.iter().map(read).sum())
+    }
+    let overlapping: Value = sqlx::query_scalar(&format!(
+        "EXPLAIN (ANALYZE,FORMAT JSON,TIMING OFF) {}",
+        include_str!("../../output_ranges/affected_keys.sql")
+    ))
+    .bind(vec![NAME.to_owned()])
+    .bind(vec![KIND.to_owned()])
+    .bind(vec![at(1_000).0])
+    .bind(vec![at(1_025).0])
+    .persistent(false)
+    .fetch_one(&mut *conn)
+    .await
+    .unwrap();
+    let open: Value = sqlx::query_scalar(&format!(
+        "EXPLAIN (ANALYZE,FORMAT JSON,TIMING OFF) {}",
+        include_str!("../../output_ranges/open_keys.sql")
+    ))
+    .bind(NAME)
+    .bind(KIND)
+    .bind(at(1_025).0)
+    .persistent(false)
+    .fetch_one(&mut *conn)
+    .await
+    .unwrap();
+    (read(&overlapping[0]["Plan"]), read(&open[0]["Plan"]))
+}
+
+/// The lookup reads the ended outputs that overlap the asked range and one
+/// open output per key that has any, the same number whether the derivation
+/// has stored a few thousand outputs or sixteen times as many.
+#[devkit::test]
+async fn the_lookup_reads_what_overlaps_however_much_is_stored(db: devkit::pg::TestDatabase) {
+    use sqlx::Executor;
+    let mut conn = PgConnection::connect(&db.url(None)).await.unwrap();
+    // Output `n` is one of sixteen keys' outputs. The odd ones cover ten
+    // seconds from second `10 n`, so three or fewer overlap any 25 seconds;
+    // the even ones are open.
+    let store = "INSERT INTO derivation.output_ranges (derivation, key, event_id, event_type, started_at, ended_at)
+        SELECT $1, jsonb_build_object('label', n % 16), uuidv7(), $2,
+               $3::timestamptz + n * interval '10 seconds',
+               CASE WHEN n % 2 = 1 THEN $3::timestamptz + n * interval '10 seconds' + interval '10 seconds' END
+        FROM generate_series($4::bigint, $5::bigint) n";
+    let mut read = Vec::new();
+    for (from, through) in [(1, 4_096), (4_097, 65_536)] {
+        sqlx::query(store)
+            .bind(NAME)
+            .bind(KIND)
+            .bind(at(0).0)
+            .bind(from)
+            .bind(through)
+            .execute(&mut conn)
             .await
             .unwrap();
-            let Some(last) = page.last() else { break };
-            assert!(
-                page.iter()
-                    .all(|row| row.derivation == NAME && !row.archived)
-            );
-            assert!(page.iter().all(|row| key.is_none_or(|key| row.key == *key)));
-            members += page.len() as i64;
-            after = Some((last.key.clone(), last.event_id));
-            cursors.push((last.key.to_string(), last.event_id));
-        }
-        assert_eq!(members, expected);
-        let distinct: std::collections::HashSet<_> = cursors.iter().collect();
-        assert_eq!(distinct.len(), cursors.len());
+        conn.execute("VACUUM (ANALYZE) derivation.output_ranges")
+            .await
+            .unwrap();
+        read.push(rows_read(&mut conn).await);
     }
+    let (overlapping, open) = read[0];
+    assert!(
+        (1.0..=3.0).contains(&overlapping),
+        "{overlapping} ended outputs read for 25 seconds"
+    );
+    assert!(
+        (8.0..=9.0).contains(&open),
+        "{open} open outputs read for the eight keys that have one"
+    );
+    assert_eq!(read[1], read[0], "sixteen times the stored outputs");
 
-    // A page reads the same blocks wherever its cursor stands: the scan
-    // starts at the cursor, not at the first member of the derivation or key.
-    let member = |n: i64| Uuid::parse_str(&format!("01800000-0000-7000-8000-{n:012x}")).unwrap();
-    for key in [None, Some(&large)] {
-        let late = (&large, member(MEMBERS - 1024));
-        let first = page_blocks(&mut conn, key, None).await;
-        let late = page_blocks(&mut conn, key, Some(late)).await;
-        assert!(
-            first <= 64.0 && late <= first + 16.0,
-            "a late page read {late} blocks, the first page {first}"
-        );
-    }
-
-    // Both derivations' members reach the range test.
     let mut tx = conn.begin().await.unwrap();
-    let payload = json!({});
-    let marked = derived::mark_inputs_dirty(
+    let payload = json!({"asked": [1_000, 1_025]});
+    derived::mark_inputs_dirty(
         &mut tx,
         &[KeyInput {
             id: uuid::Uuid::nil(),
@@ -575,17 +450,18 @@ async fn affected_output_pages_start_at_their_cursor(db: devkit::pg::TestDatabas
             payload: &payload,
         }],
         2,
-        &TwoDerivations,
+        &Ranges,
     )
     .await
     .unwrap();
-    let dirty: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT derivation,count(*) FROM derivation.dirty GROUP BY derivation ORDER BY derivation",
-    )
-    .fetch_all(&mut *tx)
-    .await
-    .unwrap();
-    assert_eq!(dirty, [(NAME.to_owned(), 258), (OTHER.to_owned(), 1)]);
-    assert_eq!(marked, 258 + 1);
+    let dirty: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM derivation.dirty WHERE derivation=$1")
+            .bind(NAME)
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
+    // The eight even keys by an open output that started by second 1025, and
+    // the keys of outputs 99 and 101, which cover 990 to 1000 and 1010 to 1020.
+    assert_eq!(dirty, 8 + 2);
     tx.rollback().await.unwrap();
 }

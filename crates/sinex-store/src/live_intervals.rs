@@ -1,10 +1,12 @@
 //! The live intervals side table (`core.live_intervals`): for every live
-//! event of an interval kind that lasts longer than an instant, where it
-//! ends, so a window read finds the earlier intervals that reach it by index
-//! instead of reading the kind's history. Admission and restore add rows,
-//! archiving removes them, each in the transaction that changes liveness.
-//! The store computes every end with `core.interval_end`, so the rows a
-//! schema upgrade filled and the rows admission writes agree.
+//! event of an interval kind that lasts longer than an instant, how far it
+//! reaches, so a window read finds the earlier intervals that reach it by
+//! index instead of reading the kind's history. An interval reaches to its
+//! end, or to the bound its kind declares for an end left unknown. Admission
+//! and restore add rows, archiving removes them, each in the transaction
+//! that changes liveness. The store computes every end with
+//! `core.interval_end` and reads every bound with `core.payload_time`, so
+//! the rows a schema upgrade wrote and the rows admission writes agree.
 use crate::Result;
 use crate::derivations::{Kind, Window};
 use crate::event_row::EventRow;
@@ -20,6 +22,7 @@ struct Declared {
     end_fields: Vec<String>,
     end_rules: Vec<String>,
     narrowed_by: Vec<Option<String>>,
+    bounded_by: Vec<Option<String>>,
 }
 
 fn declared() -> Declared {
@@ -40,6 +43,10 @@ fn declared() -> Declared {
             .iter()
             .map(|k| k.narrowed_by.map(str::to_owned))
             .collect(),
+        bounded_by: INTERVAL_KINDS
+            .iter()
+            .map(|k| k.bounded_by.map(str::to_owned))
+            .collect(),
     }
 }
 
@@ -50,15 +57,18 @@ pub(crate) async fn admitted(conn: &mut PgConnection) -> Result<()> {
         r#"INSERT INTO core.live_intervals (event_id, event_type, narrowing, started_at, ended_at)
            SELECT s.id, s.event_type, s.payload->>k.narrowed_by, s.ts_orig, i.ended_at
            FROM admission_stage s
-           JOIN unnest($1::text[], $2::text[], $3::text[], $4::text[])
-             AS k(event_type, end_field, end_rule, narrowed_by) ON k.event_type = s.event_type
+           JOIN unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[])
+             AS k(event_type, end_field, end_rule, narrowed_by, bounded_by)
+             ON k.event_type = s.event_type
            CROSS JOIN LATERAL (
-             SELECT core.interval_end(k.end_rule, s.ts_orig, s.payload->k.end_field) AS ended_at) i
+             SELECT coalesce(core.interval_end(k.end_rule, s.ts_orig, s.payload->k.end_field),
+                             core.payload_time(s.payload->>k.bounded_by)) AS ended_at) i
            WHERE s.ts_orig IS NOT NULL AND (i.ended_at IS NULL OR i.ended_at > s.ts_orig)"#,
         &kinds.event_types,
         &kinds.end_fields,
         &kinds.end_rules,
         &kinds.narrowed_by as &[Option<String>],
+        &kinds.bounded_by as &[Option<String>],
     )
     .execute(&mut *conn)
     .await?;
@@ -75,10 +85,12 @@ pub(crate) async fn restored(conn: &mut PgConnection, events: &[Uuid]) -> Result
         r#"INSERT INTO core.live_intervals (event_id, event_type, narrowing, started_at, ended_at)
            SELECT e.id, e.event_type, e.payload->>k.narrowed_by, e.ts_orig, i.ended_at
            FROM core.events e
-           JOIN unnest($1::text[], $2::text[], $3::text[], $4::text[])
-             AS k(event_type, end_field, end_rule, narrowed_by) ON k.event_type = e.event_type
+           JOIN unnest($1::text[], $2::text[], $3::text[], $4::text[], $6::text[])
+             AS k(event_type, end_field, end_rule, narrowed_by, bounded_by)
+             ON k.event_type = e.event_type
            CROSS JOIN LATERAL (
-             SELECT core.interval_end(k.end_rule, e.ts_orig, e.payload->k.end_field) AS ended_at) i
+             SELECT coalesce(core.interval_end(k.end_rule, e.ts_orig, e.payload->k.end_field),
+                             core.payload_time(e.payload->>k.bounded_by)) AS ended_at) i
            WHERE e.id = ANY($5) AND e.event_type = ANY($1)
              AND e.ts_orig IS NOT NULL AND (i.ended_at IS NULL OR i.ended_at > e.ts_orig)"#,
         &kinds.event_types,
@@ -86,6 +98,7 @@ pub(crate) async fn restored(conn: &mut PgConnection, events: &[Uuid]) -> Result
         &kinds.end_rules,
         &kinds.narrowed_by as &[Option<String>],
         events,
+        &kinds.bounded_by as &[Option<String>],
     )
     .execute(&mut *conn)
     .await?;
@@ -139,7 +152,7 @@ fn asked(window: &Window) -> (Vec<String>, Vec<Option<String>>) {
 const ROWS_PER_READ: usize = 64;
 
 /// The live events of the window's interval kinds that started before the
-/// window and reach its start, or have no end. The index selects their
+/// window and reach its start, or are open. The index selects their
 /// identities; their rows are then read in small groups bounded by ID, kind
 /// and time, so compressed batches outside a group are skipped.
 pub(crate) async fn reaching(

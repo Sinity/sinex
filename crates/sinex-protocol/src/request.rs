@@ -268,6 +268,8 @@ pub enum Request {
     },
     Tombstone {
         #[serde(default)]
+        material_only: bool,
+        #[serde(default)]
         target: Option<String>,
         #[serde(default)]
         material: Vec<String>,

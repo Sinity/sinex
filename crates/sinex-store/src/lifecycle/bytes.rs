@@ -21,6 +21,8 @@ pub(super) async fn tombstone_events(
     if events.is_empty() {
         return Ok(Vec::new());
     }
+    let first = events.iter().min();
+    let last = events.iter().max();
     crate::read_models::lock_search_updates(conn).await?;
     sqlx::query!(
         r#"INSERT INTO core.event_tombstones (event_id, source, event_type, ts_orig, ts_quality, operation_id,
@@ -30,10 +32,12 @@ pub(super) async fn tombstone_events(
              CASE WHEN e.equivalence_key IS NOT NULL
                THEN encode(sha256(convert_to(e.equivalence_key, 'UTF8')), 'hex') END
            FROM core.events e LEFT JOIN audit.archived a ON a.event_id = e.id
-           WHERE e.id = ANY($1)"#,
+           WHERE e.id = ANY($1) AND e.id >= $4 AND e.id <= $5"#,
         events,
         operation.0,
         seq,
+        first,
+        last,
     )
     .execute(&mut *conn)
     .await?;
@@ -80,9 +84,12 @@ pub(super) async fn tombstone_events(
     .await?;
     sqlx::query!(
         r#"UPDATE core.runs r SET events = r.events - gone.n
-           FROM (SELECT run_id, count(*) AS n FROM core.events WHERE id = ANY($1) GROUP BY run_id) gone
+           FROM (SELECT run_id, count(*) AS n FROM core.events
+                 WHERE id = ANY($1) AND id >= $2 AND id <= $3 GROUP BY run_id) gone
            WHERE r.id = gone.run_id"#,
-        events
+        events,
+        first,
+        last
     )
     .execute(&mut *conn)
     .await?;
@@ -92,10 +99,15 @@ pub(super) async fn tombstone_events(
     )
     .fetch_one(&mut *conn)
     .await?;
-    let deleted = sqlx::query!("DELETE FROM core.events WHERE id = ANY($1)", events)
-        .execute(&mut *conn)
-        .await?
-        .rows_affected();
+    let deleted = sqlx::query!(
+        "DELETE FROM core.events WHERE id = ANY($1) AND id >= $2 AND id <= $3",
+        events,
+        first,
+        last,
+    )
+    .execute(&mut *conn)
+    .await?
+    .rows_affected();
     sqlx::query!("SELECT set_config('sinex.tombstone_operation', '', true)")
         .fetch_one(&mut *conn)
         .await?;

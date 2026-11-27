@@ -58,6 +58,7 @@ Each source has one declaration in Rust, with its parser and event kinds beside 
 | origin | an input of one of the [input shapes](#input-shapes), or requests through the API (records the operator or an agent writes, stored as the request's bytes); a producer is a transport, not an origin |
 | change model | one of the [change models](#change-models), carried by the shape's driver settings; a shape's typed change-model settings (for example the SQLite `deletion_check` cadence) are source options |
 | canonical locations and discovery rule | where the input lives and how its roots expand ([capture by default](#capture-by-default)) |
+| material-only records | a source can declare records it stores without emitting a reading |
 | source record key and reading-order rule | per event kind; the key kinds are defined in [events](events.md#identity) |
 | time quality | per event kind: which clock each time comes from, and its precision |
 | field hints | per payload field, from the [hint vocabulary](privacy.md#field-hints) |
@@ -92,6 +93,21 @@ readings as live capture. Live capture continues to read its timestamped
 spool through the separate `journald` format. The finite export source is
 `machine.journald-export`; the continuous `machine.journald` source retains
 its live freshness expectation.
+
+### Network flows
+
+The Sinnix lake's `network.netflow` parser stores each JSONL record in its
+material. Starting at parser version 5 it emits `lake.observed` for flows with
+a remote endpoint. A flow stays in the material only when both endpoints are
+loopback addresses (IPv4 `127.0.0.0/8` or IPv6 `::1`), or both are the same
+unicast address. IPv4-mapped IPv6 addresses are compared as IPv4 addresses.
+Two different non-loopback addresses stay as an event, since the file does
+not identify which interfaces the host owned when it recorded the flow.
+Missing or invalid addresses also keep their observations. The parser still
+tracks every record's sequence for capture gap reporting.
+
+The operator can apply the same rule to [earlier readings](lifecycle.md#material-only-readings).
+The original flow bytes remain readable in their material.
 
 ### Window managers and terminals
 

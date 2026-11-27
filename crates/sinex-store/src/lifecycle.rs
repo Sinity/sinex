@@ -26,8 +26,8 @@
 //! Keys dirtied by an operation are held until it ends, so no aggregate is
 //! derived between two of its batches.
 use crate::admission::{
-    DirtyKeys, KeyInput, archive_at, mark_dirty, mark_inputs_dirty, mark_selected_dirty, position,
-    remove_live, restore_at,
+    DirtyKeys, KeyInput, archive_at, live_chain, mark_dirty, mark_inputs_dirty,
+    mark_selected_dirty, position, remove_live, restore_at,
 };
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
@@ -198,6 +198,22 @@ pub async fn begin(
     scope: Scope,
 ) -> Result<Operation> {
     match (act, &scope) {
+        (
+            Act::Tombstone,
+            Scope::MaterialOnly {
+                after: Some(after),
+                before: Some(before),
+                ..
+            },
+        ) if after >= before => {
+            return Err(Error::Invalid("the time range is empty".into()));
+        }
+        (Act::Tombstone, Scope::MaterialOnly { .. }) => {}
+        (_, Scope::MaterialOnly { .. }) => {
+            return Err(Error::Invalid(
+                "material-only scope requires tombstone".into(),
+            ));
+        }
         (Act::Undo, Scope::Operation { .. }) => {}
         (Act::Undo, _) => return Err(Error::Invalid("undo takes an operation".into())),
         (Act::Archive, Scope::Operation { .. }) => {
@@ -350,6 +366,66 @@ pub fn source_roots<'a>(
     ))
 }
 
+/// Stream retained readings that the declared parser now leaves in material.
+pub fn material_only_roots<'a>(
+    conn: &'a mut PgConnection,
+    op: &'a Operation,
+    after: Option<Uuid>,
+    event_type: &str,
+    record_field: &str,
+    matches: fn(&serde_json::Value) -> bool,
+) -> Result<futures::stream::BoxStream<'a, Result<Uuid>>> {
+    use futures::TryStreamExt;
+    let Scope::MaterialOnly {
+        source,
+        after: from,
+        before,
+        ..
+    } = &op.scope
+    else {
+        return Err(Error::Invalid(
+            "material-only roots require a material-only scope".into(),
+        ));
+    };
+    let lower = after.unwrap_or(select::FIRST_V7);
+    Ok(Box::pin(
+        sqlx::query!(
+            r#"SELECT id, payload -> $3::text AS "record" FROM core.events
+           WHERE source = $1 AND event_type = $2 AND material_id IS NOT NULL
+             AND id >= $4 AND pg_catalog.uuid_cmp(id, $4) > 0 AND commit_seq <= $5
+             AND ($6::timestamptz IS NULL OR ts_orig >= $6)
+             AND ($7::timestamptz IS NULL OR ts_orig < $7)
+           ORDER BY id"#,
+            source,
+            event_type,
+            record_field,
+            lower,
+            op.start_seq,
+            from.map(|t| t.0),
+            before.map(|t| t.0),
+        )
+        .fetch(conn)
+        .map_err(Error::from)
+        .try_filter_map(move |row| {
+            futures::future::ready(Ok(row.record.filter(matches).map(|_| row.id)))
+        }),
+    ))
+}
+
+/// Limit each statement in the current writer transaction.
+pub async fn set_batch_statement_timeout(
+    conn: &mut PgConnection,
+    timeout: std::time::Duration,
+) -> Result<()> {
+    sqlx::query!(
+        "SELECT set_config('statement_timeout', $1, true)",
+        format!("{}ms", timeout.as_millis()),
+    )
+    .fetch_one(conn)
+    .await?;
+    Ok(())
+}
+
 /// Run one batch of `op` inside the caller's transaction: at most `roots`
 /// roots and their chains. On a refusal the caller rolls back.
 pub async fn step(
@@ -369,6 +445,7 @@ pub async fn step(
             });
         }
     }
+    let material_only = matches!(op.scope, Scope::MaterialOnly { .. });
     let seq = position(conn).await?;
     let mut counts = Counts::default();
     let mut remove = Vec::new();
@@ -392,7 +469,7 @@ pub async fn step(
                     "source roots belong to another operation".into(),
                 ));
             }
-            if !matches!(op.scope, Scope::Source { .. }) || op.act == Act::Undo {
+            if !op.scope.streamed_source() || op.act == Act::Undo {
                 return Err(Error::Invalid(
                     "prepared source roots require one source phase".into(),
                 ));
@@ -408,12 +485,21 @@ pub async fn step(
             }
             let found = select::source_batch(conn, op, phase, ids).await?;
             if !found.is_empty() {
-                let planned = plan(conn, phase, &found, &HashSet::new()).await?;
+                let planned = plan(conn, phase, &found, &HashSet::new(), material_only).await?;
                 if !planned.refusals.is_empty() {
                     return Ok(Step::Refused {
                         progress: committed,
                         refusals: planned.refusals,
                     });
+                }
+                if material_only {
+                    archive_members(conn, op, &planned.live, seq, keys).await?;
+                    for member in &planned.live {
+                        *counts
+                            .archived
+                            .entry(member.event_type.clone())
+                            .or_default() += 1;
+                    }
                 }
                 let moved = apply(conn, op, phase, &planned, seq, keys).await?;
                 counts.add(&moved.counts);
@@ -451,7 +537,7 @@ pub async fn step(
         if applied {
             break;
         }
-        let planned = plan(conn, phase, &found, &HashSet::new()).await?;
+        let planned = plan(conn, phase, &found, &HashSet::new(), false).await?;
         if !planned.refusals.is_empty() {
             return Ok(Step::Refused {
                 progress: committed,
@@ -652,7 +738,7 @@ pub async fn compare(conn: &mut PgConnection, op: &Operation, roots: i64) -> Res
                 break;
             };
             after = Some(last);
-            let planned = plan(conn, phase, &found, &leaving).await?;
+            let planned = plan(conn, phase, &found, &leaving, false).await?;
             comparison.refusals.extend(planned.refusals);
             for member in &planned.members {
                 if seen.insert((phase.takes_live(), member.id)) {
@@ -693,6 +779,8 @@ struct Member {
 /// One batch's chains and what refuses them. Read-only.
 struct Plan {
     members: Vec<Member>,
+    /// Live members selected for archiving before a material-only tombstone.
+    live: Vec<Member>,
     /// Keyed derivation outputs of a restored chain, left archived; their
     /// keys are derived again.
     derived_again: Vec<Uuid>,
@@ -704,69 +792,68 @@ async fn plan(
     phase: Phase,
     roots: &[Uuid],
     leaving: &HashSet<Uuid>,
+    material_only: bool,
 ) -> Result<Plan> {
     // Recursive cardinality estimates grow independently of the chain's real size.
-    // Keep lookups parameterized by each discovered ID. Live membership
-    // already carries the type, so archiving need not read event history.
+    // Keep lookups parameterized by each discovered ID.
     match phase {
-        Phase::Archive | Phase::ArchiveMadeLive => {
-            let rows = sqlx::query_as!(Member,
+        Phase::Archive | Phase::ArchiveMadeLive => Ok(Plan {
+            members: live_chain(conn, roots)
+                .await?
+                .into_iter()
+                .map(|(id, event_type)| Member { id, event_type })
+                .collect(),
+            live: Vec::new(),
+            derived_again: vec![],
+            refusals: vec![],
+        }),
+        Phase::Tombstone => {
+            let chain = sqlx::query_scalar!(
                 r#"WITH RECURSIVE chain(id) AS (
                      SELECT unnest($1::uuid[])
                      UNION
                      SELECT c.child FROM chain CROSS JOIN LATERAL (
                        SELECT child FROM core.event_children_of(chain.id) OFFSET 0) c)
-                   SELECT live.event_id AS "id!", live.event_type AS "event_type!"
-                   FROM chain CROSS JOIN LATERAL (
-                     SELECT event_id, event_type FROM core.live_locations WHERE event_id = chain.id
-                     UNION
-                     SELECT event_id, event_type FROM core.live_equivalence WHERE event_id = chain.id
-                     OFFSET 0) live"#,
+                   SELECT id AS "id!" FROM chain ORDER BY id"#,
                 roots
             )
             .fetch_all(&mut *conn)
             .await?;
-            Ok(Plan {
-                members: rows,
-                derived_again: vec![],
-                refusals: vec![],
-            })
-        }
-        Phase::Tombstone => {
             let rows = sqlx::query!(
-                r#"WITH RECURSIVE chain(id) AS (
-                     SELECT unnest($1::uuid[])
-                     UNION
-                     SELECT c.child FROM chain CROSS JOIN LATERAL (
-                       SELECT child FROM core.event_children_of(chain.id) OFFSET 0) c)
-                   SELECT e.id, e.event_type,
+                r#"SELECT e.id, e.event_type,
                      (EXISTS (SELECT 1 FROM core.live_locations l WHERE l.event_id = e.id)
                       OR EXISTS (SELECT 1 FROM core.live_equivalence l WHERE l.event_id = e.id)) AS "live!"
-                   FROM chain CROSS JOIN LATERAL (
-                     SELECT e.id, e.event_type FROM core.events e WHERE e.id = chain.id OFFSET 0) e"#,
-                roots
+                   FROM core.events e WHERE e.id = ANY($1) AND e.id >= $2 AND e.id <= $3"#,
+                &chain,
+                chain.first(),
+                chain.last(),
             )
             .fetch_all(&mut *conn)
             .await?;
-            let refusals = rows
-                .iter()
-                .filter(|r| r.live && !leaving.contains(&r.id))
-                .map(|r| Refusal {
-                    member: r.id,
-                    reason: "live; archive it first".into(),
-                })
-                .collect();
-            Ok(Plan {
-                members: rows
-                    .into_iter()
-                    .map(|r| Member {
-                        id: r.id,
-                        event_type: r.event_type,
-                    })
-                    .collect(),
-                derived_again: vec![],
-                refusals,
-            })
+            let mut planned = Plan {
+                members: Vec::with_capacity(rows.len()),
+                live: Vec::new(),
+                derived_again: Vec::new(),
+                refusals: Vec::new(),
+            };
+            for row in rows {
+                let member = Member {
+                    id: row.id,
+                    event_type: row.event_type,
+                };
+                if row.live {
+                    if material_only {
+                        planned.live.push(member.clone());
+                    } else if !leaving.contains(&row.id) {
+                        planned.refusals.push(Refusal {
+                            member: row.id,
+                            reason: "live; archive it first".into(),
+                        });
+                    }
+                }
+                planned.members.push(member);
+            }
+            Ok(planned)
         }
         Phase::Restore => plan_restore(conn, roots, leaving).await,
     }
@@ -895,6 +982,7 @@ async fn plan_restore(
                 event_type: r.event_type.clone(),
             })
             .collect(),
+        live: Vec::new(),
         derived_again: held.into_iter().collect(),
         refusals,
     })
@@ -903,6 +991,26 @@ async fn plan_restore(
 struct Applied {
     counts: Counts,
     remove: Vec<String>,
+}
+
+async fn archive_members(
+    conn: &mut PgConnection,
+    op: &Operation,
+    members: &[Member],
+    seq: i64,
+    keys: &dyn DirtyKeys,
+) -> Result<()> {
+    if members.is_empty() {
+        return Ok(());
+    }
+    let selected: Vec<_> = members
+        .iter()
+        .map(|member| (member.id, member.event_type.as_str()))
+        .collect();
+    let ids: Vec<_> = members.iter().map(|member| member.id).collect();
+    mark_selected_dirty(conn, &selected, seq, keys, None).await?;
+    archive_at(conn, &ids, seq, ArchiveReason::Archive, None, Some(op.id.0)).await?;
+    remove_live(conn, &ids).await
 }
 
 async fn apply(
@@ -923,15 +1031,7 @@ async fn apply(
     let mut remove = Vec::new();
     match phase {
         Phase::Archive | Phase::ArchiveMadeLive => {
-            let by = (ArchiveReason::Archive, Some(op.id.0));
-            let selected: Vec<_> = planned
-                .members
-                .iter()
-                .map(|member| (member.id, member.event_type.as_str()))
-                .collect();
-            mark_selected_dirty(conn, &selected, seq, keys).await?;
-            archive_at(conn, &members, seq, by.0, None, by.1).await?;
-            remove_live(conn, &members).await?;
+            archive_members(conn, op, &planned.members, seq, keys).await?;
             by_kind(&mut counts.archived);
         }
         Phase::Restore => {

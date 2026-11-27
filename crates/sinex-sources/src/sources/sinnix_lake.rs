@@ -21,6 +21,16 @@ pub struct LakeSource {
     pub dirs: &'static [&'static str],
     /// Accepted `lane` values; renamed lanes list both names.
     pub lane_values: &'static [&'static str],
+    /// Records this source stores without making an observation.
+    pub material_only: Option<MaterialOnly>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct MaterialOnly {
+    pub event_type: &'static str,
+    /// Where this observation keeps the record in the stored payload.
+    pub record_field: &'static str,
+    pub matches: fn(&Value) -> bool,
 }
 
 const fn spec(
@@ -59,6 +69,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
         ),
         dirs: &["activity/desktop/clipboard", "activity/desktop/selection"],
         lane_values: &["clipboard", "primary"],
+        material_only: None,
     },
     LakeSource {
         spec: spec(
@@ -69,6 +80,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
         ),
         dirs: &["activity/desktop/notification"],
         lane_values: &["notifications"],
+        material_only: None,
     },
     LakeSource {
         spec: spec(
@@ -79,6 +91,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
         ),
         dirs: &["activity/desktop/media"],
         lane_values: &["mpris"],
+        material_only: None,
     },
     LakeSource {
         spec: spec(
@@ -89,6 +102,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
         ),
         dirs: &["activity/desktop/accessibility"],
         lane_values: &["a11y"],
+        material_only: None,
     },
     LakeSource {
         spec: SourceSpec {
@@ -103,6 +117,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
         },
         dirs: &["activity/desktop/idle-inhibitor"],
         lane_values: &["idle-inhibitors"],
+        material_only: None,
     },
     LakeSource {
         spec: spec(
@@ -113,6 +128,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
         ),
         dirs: &["activity/desktop/frame"],
         lane_values: &["screen-frames"],
+        material_only: None,
     },
     LakeSource {
         spec: spec(
@@ -127,6 +143,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
             "activity/audio/index",
         ],
         lane_values: &["audio-devices", "audio-topology", "audio-index"],
+        material_only: None,
     },
     LakeSource {
         spec: spec(
@@ -137,6 +154,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
         ),
         dirs: &["activity/browser/navigation"],
         lane_values: &["browser-nav-edges"],
+        material_only: None,
     },
     LakeSource {
         spec: SourceSpec {
@@ -151,6 +169,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
         },
         dirs: &["activity/browser/reading"],
         lane_values: &["reading-stack"],
+        material_only: None,
     },
     LakeSource {
         spec: spec(
@@ -161,10 +180,11 @@ const LAKE_SOURCES: &[LakeSource] = &[
         ),
         dirs: &["device/{host}/monitor"],
         lane_values: &["monitor"],
+        material_only: None,
     },
     LakeSource {
         spec: SourceSpec {
-            parser_version: 4,
+            parser_version: 5,
             ..spec(
                 "network.netflow",
                 "sinnix-lake:network.netflow",
@@ -174,6 +194,11 @@ const LAKE_SOURCES: &[LakeSource] = &[
         },
         dirs: &["device/{host}/netflow"],
         lane_values: &["netflow"],
+        material_only: Some(MaterialOnly {
+            event_type: "lake.observed",
+            record_field: "payload",
+            matches: lanes::local_flow,
+        }),
     },
     LakeSource {
         spec: spec(
@@ -188,6 +213,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
             "device/{host}/peripheral/logitech",
         ],
         lane_values: &["bt-audio", "bt-battery", "logitech"],
+        material_only: None,
     },
     LakeSource {
         spec: spec(
@@ -198,6 +224,7 @@ const LAKE_SOURCES: &[LakeSource] = &[
         ),
         dirs: &["health/environment"],
         lane_values: &["awair", "environment"],
+        material_only: None,
     },
 ];
 
@@ -294,7 +321,15 @@ impl Parser for EnvelopeParser {
         _context: &sinex_source_core::RecordContext<'_>,
     ) -> Result<(Vec<lanes::LakeEvent>, sequence::Carry), RecordError> {
         let envelope = envelope(record, self.lake_source)?;
-        let mut events = lanes::events(&envelope)?;
+        let mut events = if self
+            .lake_source
+            .material_only
+            .is_some_and(|rule| (rule.matches)(&envelope.payload))
+        {
+            Vec::new()
+        } else {
+            lanes::events(&envelope)?
+        };
         let (gap, carry) = sequence::observe(carry, &envelope);
         if let Some(gap) = gap {
             events.push(lanes::LakeEvent::Gap(gap));

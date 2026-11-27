@@ -90,6 +90,7 @@ async fn a_key_computed_from_an_input_archived_meanwhile_is_computed_again(
                             woken_by: None,
                         }],
                         read: Default::default(),
+                        replaces_at_most: None,
                     }
                     .to_value(),
                 },

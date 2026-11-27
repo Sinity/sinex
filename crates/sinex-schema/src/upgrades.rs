@@ -63,6 +63,14 @@ pub(crate) const STEPS: &[Step] = &[
         name: "selection_by_version",
         statements: selection_by_version,
     },
+    Step {
+        name: "fenced_interval_bounds",
+        statements: crate::live_intervals::bound_fenced_intervals,
+    },
+    Step {
+        name: "output_ranges",
+        statements: crate::output_ranges::upgrade,
+    },
 ];
 
 /// A derivation's selection is its version. The build that ran it is on each

@@ -480,6 +480,7 @@ async fn a_key_dirtied_again_stays_dirty(db: devkit::pg::TestDatabase) {
                     woken_by: None,
                 }],
                 read: Default::default(),
+                replaces_at_most: None,
             }
             .to_value(),
         },

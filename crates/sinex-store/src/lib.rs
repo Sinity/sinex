@@ -23,6 +23,7 @@ pub mod lifecycle;
 pub mod live;
 mod live_intervals;
 pub mod material_bytes;
+mod output_ranges;
 pub mod payloads;
 pub mod positions;
 pub mod privacy;
@@ -46,7 +47,7 @@ pub mod writer_lock;
 
 pub use admission::{
     AffectedRange, ComputedKey, DerivedScope, DirtyKeys, KeyInput, NoDerivations, Outcome,
-    ReadMark, RefusedInput, RefusedWork,
+    OutputRange, ReadMark, RefusedInput, RefusedWork,
 };
 pub use blobs::Blobs;
 pub use blobs::Verified;
@@ -98,6 +99,11 @@ pub enum Error {
     RequestConflict,
     #[error("query result changed; start the query again")]
     StaleCursor,
+    /// A derived batch would archive more previous outputs than its scope
+    /// allows one transaction: these. Nothing was written; the caller
+    /// archives them in earlier transactions and submits the batch again.
+    #[error("the batch would archive {} previous outputs; archive them first", .0.len())]
+    ArchiveFirst(Vec<uuid::Uuid>),
     /// The signal checkpoint moved since it was read.
     #[error("signal checkpoint changed; evaluate the committed state again")]
     StaleCheckpoint,
