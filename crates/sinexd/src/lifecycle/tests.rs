@@ -68,23 +68,23 @@ async fn a_search_page_does_not_hold_the_writer_behind_a_tombstone(db: devkit::p
     let connection = PgConnection::connect(&url).await.unwrap();
     let mut read = PgConnection::connect(&url).await.unwrap();
     let mut search = PgConnection::connect(&url).await.unwrap();
+    let mut vectors = PgConnection::connect(&url).await.unwrap();
     let (writer, queues) = channels();
     let task = tokio::spawn(writer_run(
-        url,
+        url.clone(),
         claim(connection).await.unwrap(),
         queues,
         Arc::new(sinex_store::NoDerivations),
         None,
     ));
-    let event = reading(1, 1);
-    let id = event.id;
-    writer
-        .submit(Priority::Live, batch(vec![event]))
-        .await
-        .unwrap();
-    let scope = Scope::Events {
-        events: vec![id],
-        query: None,
+    let mut events: Vec<_> = (1..=3).map(|key| reading(key, key)).collect();
+    events.sort_by_key(|event| event.id.0);
+    let ids: Vec<_> = events.iter().map(|event| event.id.0).collect();
+    writer.submit(Priority::Live, batch(events)).await.unwrap();
+    let scope = Scope::Source {
+        source: "ops".into(),
+        after: None,
+        before: None,
     };
     assert!(matches!(
         run(
@@ -106,65 +106,96 @@ async fn a_search_page_does_not_hold_the_writer_behind_a_tombstone(db: devkit::p
     let page = sinex_store::commit_log::after(&mut search, 0, 64, i64::MAX)
         .await
         .unwrap();
+    let roots = |id| lifecycle::Roots::Source {
+        operation: operation.id,
+        ids: vec![id],
+        complete: false,
+    };
+    let first = writer
+        .lifecycle_step(&operation, roots(ids[0]))
+        .await
+        .unwrap();
+    let Step::Moved {
+        progress: saved,
+        done: false,
+        ..
+    } = first.step
+    else {
+        panic!("the first batch did not save a prefix");
+    };
+    assert_eq!(saved.after, Some(ids[0]));
+    assert_eq!(saved.batches, 1);
+
     let mut updating = search.begin().await.unwrap();
     sinex_store::read_models::apply_search_text(&mut updating, &page.events)
         .await
         .unwrap();
+    let mut vector_update = vectors.begin().await.unwrap();
+    sqlx::query("LOCK TABLE core.embedding_vectors IN SHARE ROW EXCLUSIVE MODE")
+        .execute(&mut *vector_update)
+        .await
+        .unwrap();
 
-    // Keep the real search transaction open until the writer has processed
-    // the attempted tombstone and then admitted an unrelated live event.
-    let attempt = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        writer.lifecycle_step(&operation, lifecycle::Roots::Query(1)),
-    )
-    .await
-    .expect("the writer waited on the search transaction")
-    .unwrap();
-    assert!(matches!(attempt.step, Step::ReadModelsBusy));
-    assert!(
-        lifecycle::recorded(&mut read, operation.id)
-            .await
-            .unwrap()
-            .is_none()
-    );
+    // Once a writer job is accepted, disconnecting the caller leaves the
+    // request running. Hold the index updates across that disconnect.
+    let (entered, deferred) = tokio::sync::oneshot::channel();
+    let (finished, receipt) = tokio::sync::oneshot::channel();
+    let worker = writer.clone();
+    let request = operation.clone();
+    let next = roots(ids[1]);
+    let mut client = Box::pin(crate::request_deadline::run(None, async move {
+        let mut conn = PgConnection::connect(&url).await?;
+        let attempt = worker.lifecycle_step(&request, next).await?;
+        assert!(matches!(attempt.step, Step::ReadModelsBusy));
+        entered.send(()).unwrap();
+        let answer = retry(&mut conn, &worker, &request).await?;
+        finished.send(answer).unwrap();
+        Ok(())
+    }));
+    tokio::select! {
+        ready = deferred => ready.unwrap(),
+        result = &mut client => panic!("the contended request ended: {result:?}"),
+        _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
+            panic!("the writer waited on the search transaction");
+        }
+    }
+    drop(client);
     writer
-        .submit(Priority::Live, batch(vec![reading(2, 2)]))
+        .submit(Priority::Live, batch(vec![reading(4, 4)]))
         .await
         .unwrap();
     assert_eq!(live(&mut read).await, 1);
     updating.commit().await.unwrap();
-    let search_rows: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM core.search_text WHERE event_id = $1")
-            .bind(id.0)
-            .fetch_one(&mut read)
-            .await
-            .unwrap();
-    assert!(search_rows > 0);
-
-    let mut vectors = search.begin().await.unwrap();
-    sqlx::query("LOCK TABLE core.embedding_vectors IN SHARE ROW EXCLUSIVE MODE")
-        .execute(&mut *vectors)
-        .await
-        .unwrap();
     let attempt = tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        writer.lifecycle_step(&operation, lifecycle::Roots::Query(1)),
+        writer.lifecycle_step(&operation, roots(ids[1])),
     )
     .await
     .expect("the writer waited on the embedding transaction")
     .unwrap();
     assert!(matches!(attempt.step, Step::ReadModelsBusy));
-    assert!(
-        lifecycle::recorded(&mut read, operation.id)
+    let recorded = lifecycle::recorded(&mut read, operation.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(recorded.progress, saved);
+    assert_eq!(recorded.counts.tombstoned.get("command.executed"), Some(&1));
+    assert!(recorded.result.is_none());
+    let search_rows: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM core.search_text WHERE event_id = ANY($1)")
+            .bind(&ids)
+            .fetch_one(&mut read)
             .await
-            .unwrap()
-            .is_none()
-    );
-    vectors.rollback().await.unwrap();
+            .unwrap();
+    assert_eq!(search_rows, 2);
+    vector_update.rollback().await.unwrap();
 
-    let report = retry(&mut read, &writer, &operation).await.unwrap();
+    let report = tokio::time::timeout(std::time::Duration::from_secs(5), receipt)
+        .await
+        .expect("the disconnected request did not finish")
+        .unwrap();
     assert!(
-        matches!(report, Answer::Done(ref r) if r["cascade"]["tombstoned"]["command.executed"] == 1),
+        matches!(report, Answer::Done(ref r) if r["cascade"]["tombstoned"]["command.executed"] == 3 && r["batches"] == 2),
         "{report:?}"
     );
     let repeated = retry(&mut read, &writer, &operation).await.unwrap();
@@ -174,10 +205,10 @@ async fn a_search_page_does_not_hold_the_writer_behind_a_tombstone(db: devkit::p
         .await
         .unwrap();
     delayed.commit().await.unwrap();
-    let state: (bool, bool, bool) = sqlx::query_as(
-        "SELECT EXISTS(SELECT 1 FROM core.event_tombstones WHERE event_id = $1),\n                EXISTS(SELECT 1 FROM core.events WHERE id = $1),\n                EXISTS(SELECT 1 FROM core.search_text WHERE event_id = $1)",
-    ).bind(id.0).fetch_one(&mut read).await.unwrap();
-    assert_eq!(state, (true, false, false));
+    let state: (i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM core.event_tombstones WHERE event_id = ANY($1)),\n                (SELECT count(*) FROM core.events WHERE id = ANY($1)),\n                (SELECT count(*) FROM core.search_text WHERE event_id = ANY($1))",
+    ).bind(&ids).fetch_one(&mut read).await.unwrap();
+    assert_eq!(state, (3, 0, 0));
     drop(writer);
     task.await.unwrap();
 }
