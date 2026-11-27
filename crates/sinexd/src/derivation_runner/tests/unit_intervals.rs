@@ -71,6 +71,29 @@ async fn keys(w: &World, table: &str) -> Vec<Value> {
 }
 
 #[devkit::test]
+async fn comparison_keeps_the_members_of_a_unit_key_created_in_rust(db: devkit::pg::TestDatabase) {
+    let w = World::with_keys(db, unit_keys()).await;
+    let mut runner = w.driver_with(unit_keys(), vec![]).await;
+    w.admit(vec![
+        unit("unit.started", 1, Some("box"), "a.service", "run-a"),
+        unit("unit.stopped", 2, Some("box"), "a.service", "run-a"),
+    ])
+    .await;
+    runner.catch_up().await.unwrap();
+    assert_eq!(runs(&w).await.len(), 1);
+
+    let comparison = runner
+        .compare("unit.intervals", Some((at(1), at(3))), 0)
+        .await
+        .unwrap();
+    assert_eq!(
+        (comparison.keys, comparison.same, comparison.removed),
+        (1, 1, 0)
+    );
+    runner.end_runs().await.unwrap();
+}
+
+#[devkit::test]
 async fn a_unit_event_recomputes_only_its_own_scope(db: devkit::pg::TestDatabase) {
     let w = World::with_keys(db, unit_keys()).await;
     let mut runner = w.driver_with(unit_keys(), vec![]).await;
