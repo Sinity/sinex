@@ -162,6 +162,109 @@ async fn imported_json_metadata_survives_writer_restart_and_replay(db: devkit::p
 }
 
 #[devkit::test]
+async fn malformed_transcript_cue_leaves_neighboring_cues_at_their_original_offsets(
+    db: devkit::pg::TestDatabase,
+) {
+    async fn readings(
+        conn: &mut sqlx::PgConnection,
+        locator: &str,
+    ) -> Vec<(uuid::Uuid, i64, Value)> {
+        sqlx::query_as(
+            "SELECT e.material_id,e.record_offset,e.payload FROM core.events e \
+             JOIN raw.materials m ON m.id=e.material_id \
+             JOIN core.live_locations l ON l.event_id=e.id \
+             WHERE e.event_type='transcript.cue' AND m.manifest->>'path'=$1 \
+             ORDER BY e.record_offset",
+        )
+        .bind(locator)
+        .fetch_all(conn)
+        .await
+        .unwrap()
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let mut ctx = ReaderContext::open(
+        &db.url(None),
+        &dir.path().join("store"),
+        sinex_model::time_settings::TimeSettings::new("Europe/Warsaw", 4, 0).unwrap(),
+    )
+    .await
+    .unwrap();
+    for (format, document, language) in [
+        (
+            &transcript::JSON_FORMAT,
+            br#"[ {"text":"before"}, {"text":42}, {"text":"after"} ]"#.as_slice(),
+            None,
+        ),
+        (
+            &transcript::WHISPER_FORMAT,
+            br#"{"segments":[ {"text":"before"}, {"text":42}, {"text":"after"} ],"language":"pl"}"#
+                .as_slice(),
+            Some("pl"),
+        ),
+    ] {
+        let path = dir.path().join(format!("{}.json", format.name));
+        std::fs::write(&path, document).unwrap();
+        let binding = ingest(&mut ctx, format, &path, json!({})).await;
+        let locator = path.to_str().unwrap();
+        let start = |cue: &[u8]| document.windows(cue.len()).position(|w| w == cue).unwrap();
+        let before = readings(&mut ctx.read_conn, locator).await;
+        assert_eq!(before.len(), 2, "{}", format.name);
+        for ((_, offset, payload), (cue, word)) in before.iter().zip([
+            (br#"{"text":"before"}"#.as_slice(), "before"),
+            (br#"{"text":"after"}"#.as_slice(), "after"),
+        ]) {
+            assert_eq!(*offset, start(cue) as i64);
+            assert_eq!(payload["text"], word);
+            assert_eq!(payload["language"].as_str(), language);
+        }
+        let malformed = br#"{"text":42}"#;
+        let (bad, reason, blob, manifest): (i64, String, String, Value) = sqlx::query_as(
+            "SELECT f.record_offset,f.reason,m.blob,m.manifest FROM raw.failures f \
+             JOIN raw.materials m ON m.id=f.material_id WHERE m.manifest->>'path'=$1",
+        )
+        .bind(locator)
+        .fetch_one(&mut ctx.read_conn)
+        .await
+        .unwrap();
+        assert_eq!(bad, start(malformed) as i64);
+        assert!(reason.contains("text"), "{reason}");
+        let manifest: sinex_model::Manifest = serde_json::from_value(manifest).unwrap();
+        let range = (bad as usize, bad as usize + malformed.len());
+        assert!(manifest.records.unwrap().contains(&range));
+        let stored = ctx.blobs.locate(&mut ctx.read_conn, &blob).await.unwrap();
+        assert_eq!(
+            ctx.blobs
+                .read_range(&stored, 0, document.len() as u64)
+                .unwrap(),
+            document
+        );
+
+        std::fs::remove_file(&path).unwrap();
+        let report = crate::replay::run(
+            &mut ctx.read_conn,
+            &ctx.blobs,
+            &ctx.writer,
+            Options {
+                scope: Scope {
+                    binding: Some(binding.name),
+                    ..Scope::default()
+                },
+                compare: false,
+                resume: None,
+                actor: "synthetic".into(),
+                unlock: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(report.events_read, 2);
+        assert_eq!(report.failures, 1);
+        assert_eq!(readings(&mut ctx.read_conn, locator).await, before);
+    }
+    ctx.close().await.unwrap();
+}
+
+#[devkit::test]
 async fn document_metadata_changes_keep_distinct_observations_of_the_same_bytes(
     db: devkit::pg::TestDatabase,
 ) {
