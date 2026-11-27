@@ -16,8 +16,7 @@ pub(crate) const COVERAGE_TABLE: &str = "CREATE TABLE core.coverage_readings (
 )";
 
 pub(crate) const COVERAGE_INDEXES: &[&str] = &[
-    "CREATE INDEX coverage_at_position ON core.coverage_readings (source, kind_version, commit_seq DESC)",
-    "CREATE INDEX live_coverage_ended ON core.coverage_readings (source, kind_version, class, commit_seq DESC) INCLUDE (ended_at) WHERE live",
+    "CREATE INDEX coverage_by_position ON core.coverage_readings (source, kind_version, live, class, commit_seq DESC) INCLUDE (ended_at)",
     "CREATE INDEX live_coverage_seen ON core.coverage_readings (source, kind_version, class, seen_at DESC NULLS LAST) WHERE live",
     "CREATE INDEX live_coverage_missing ON core.coverage_readings (source, kind_version, class, commit_seq DESC) INCLUDE (reason) WHERE live AND missing",
 ];

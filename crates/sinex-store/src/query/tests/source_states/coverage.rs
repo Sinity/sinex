@@ -309,7 +309,9 @@ async fn coverage_plan_does_not_scan_every_source_event(db: devkit::pg::TestData
        ANALYZE core.events;
        UPDATE core.counters SET value=6144 WHERE name='commit_seq'").await.unwrap();
     project_coverage(&mut conn).await;
-    set_grants(&mut conn, "").await.unwrap();
+    // Guarded coverage is visible to the caller but absent in this fixture.
+    // A seek must skip the open entries while checking that class.
+    set_grants(&mut conn, "guarded").await.unwrap();
     conn.execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .await
         .unwrap();

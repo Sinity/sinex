@@ -60,7 +60,7 @@ const SOURCES_SQL: &str = r#"(
         WHERE source = s.name AND kind_version = snapshot.version AND class = allowed.class AND live
         ORDER BY seen_at DESC NULLS LAST LIMIT 1
       ) sighting ON true
-      WHERE snapshot.current
+      WHERE snapshot.current AND core.class_visible(allowed.class)
       HAVING snapshot.current
       UNION ALL
       SELECT count(*) AS readings, bool_or(e.missing) AS missing,
