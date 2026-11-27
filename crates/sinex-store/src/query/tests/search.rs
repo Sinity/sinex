@@ -87,7 +87,7 @@ async fn word_phrase_and_prefix_obey_class_grants(db: devkit::pg::TestDatabase) 
 }
 
 #[devkit::test]
-async fn prefix_search_selects_matches_among_unrelated_readings(db: devkit::pg::TestDatabase) {
+async fn prefix_search_uses_the_word_index(db: devkit::pg::TestDatabase) {
     let mut conn = crate::AdmissionContext::connect(&db.url(None))
         .await
         .unwrap();
@@ -107,7 +107,52 @@ async fn prefix_search_selects_matches_among_unrelated_readings(db: devkit::pg::
     .execute(&mut conn)
     .await
     .unwrap();
-    assert_eq!(ask(&mut conn, "events where car*").await.total, 3);
+    let context = ctx();
+    let query = "events where car* | fields id";
+    let declared = sinex_query::bind(query, &context).unwrap();
+    let position = current_seq(&mut conn).await.unwrap();
+    sqlx::query("ANALYZE core.search_text")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    let compiled = compile::Compiler::new(&context, position)
+        .compile(&declared)
+        .unwrap();
+    let (statement, values) = compiled.answer.render();
+    let explain = format!("EXPLAIN (FORMAT JSON) {statement}");
+    let plan: serde_json::Value = sql::bind_scalar(sqlx::query_scalar(&explain), values)
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    fn has_node(node: &serde_json::Value, matches: &impl Fn(&serde_json::Value) -> bool) -> bool {
+        matches(node)
+            || node["Plans"]
+                .as_array()
+                .is_some_and(|children| children.iter().any(|child| has_node(child, matches)))
+    }
+    assert!(
+        has_node(&plan[0]["Plan"], &|node| node["Index Name"]
+            == "search_text_tsv"),
+        "{plan}"
+    );
+    assert!(
+        !has_node(&plan[0]["Plan"], &|node| {
+            node["Node Type"] == "Seq Scan" && node["Relation Name"] == "search_text"
+        }),
+        "{plan}"
+    );
+
+    let mut indexed = column(&ask(&mut conn, query).await, "id");
+    indexed.sort_by_key(ToString::to_string);
+    let previous: Vec<serde_json::Value> = sqlx::query_scalar(
+        "SELECT to_jsonb(event_id) FROM core.visible_search_text
+         WHERE text ~ '(^| )car' ORDER BY event_id",
+    )
+    .fetch_all(&mut conn)
+    .await
+    .unwrap();
+    assert_eq!(indexed.len(), 3);
+    assert_eq!(indexed, previous);
 }
 
 #[devkit::test]

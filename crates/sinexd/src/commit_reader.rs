@@ -67,9 +67,19 @@ pub(crate) async fn run(
         commits.borrow_and_update();
         let from = positions.iter().copied().min().unwrap_or(0);
         let read_started = std::time::Instant::now();
-        let page =
-            commit_log::after_in_one_snapshot(&mut conn, from, PAGE, sinex_store::PAGE_BYTES)
-                .await?;
+        let page = commit_log::after_in_one_snapshot(
+            &mut conn,
+            from,
+            PAGE,
+            sinex_store::PAGE_BYTES,
+            |seq, kind| {
+                consumers
+                    .iter()
+                    .zip(&positions)
+                    .any(|(consumer, position)| seq > *position && consumer.wants(kind))
+            },
+        )
+        .await?;
         let Some(up_to) = page.up_to else {
             tokio::select! {
                 _ = commits.changed() => {}

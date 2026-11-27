@@ -664,17 +664,25 @@ impl Compiler<'_> {
             );
             out.append(id.clone())
                 .push(" AND s.tsv @@ ")
-                .append(Self::word_query(w))
-                .push(")");
-            // Only split text can contain a match across two pieces. Match
-            // against the same normalized words joined in their stored order.
-            if w.words.len() > 1 {
-                let phrase = w
-                    .words
+                .append(Self::word_query(w));
+            let normalized_phrase = || {
+                w.words
                     .iter()
                     .map(|word| regex_escape(word))
                     .collect::<Vec<_>>()
-                    .join(" ");
+                    .join(" ")
+            };
+            // PostgreSQL may divide a normalized word differently. Require
+            // the prefix to start at the stored word boundary after the seek.
+            if w.prefix {
+                out.push(" AND s.text ~ ")
+                    .param(format!("(^| ){}", normalized_phrase()));
+            }
+            out.push(")");
+            // Only split text can contain a match across two pieces. Match
+            // against the same normalized words joined in their stored order.
+            if w.words.len() > 1 {
+                let phrase = normalized_phrase();
                 let end = if w.prefix { "" } else { "( |$)" };
                 out.push(" OR EXISTS (SELECT 1 FROM core.visible_search_text s WHERE s.event_id = ")
                     .append(id)

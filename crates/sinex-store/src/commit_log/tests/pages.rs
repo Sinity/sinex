@@ -90,6 +90,20 @@ async fn commit_pages_follow_commit_order_and_byte_bounds(db: devkit::pg::TestDa
         assert!(quiet.events.is_empty());
         assert_eq!(quiet.up_to, None);
         tx.rollback().await.unwrap();
+
+        let wanted = after_in_one_snapshot(&mut conn, 8444, 16, 1, |seq, kind| {
+            seq >= 8448 && kind == "synthetic.page"
+        })
+        .await
+        .unwrap();
+        assert_eq!(wanted.events.len(), 1);
+        assert_eq!(wanted.events[0].row.commit_seq, 8448);
+        assert_eq!(wanted.up_to, Some(8448));
+        let skipped = after_in_one_snapshot(&mut conn, 8444, 16, 1, |_, _| false)
+            .await
+            .unwrap();
+        assert!(skipped.events.is_empty());
+        assert_eq!(skipped.up_to, Some(8450));
     }
 }
 

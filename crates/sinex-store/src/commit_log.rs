@@ -84,6 +84,16 @@ pub struct Page {
 /// never at a later head, so a commit whose rows this read could not see is
 /// read by the next page.
 pub async fn after(conn: &mut PgConnection, after: i64, limit: i64, bytes: i64) -> Result<Page> {
+    after_wanted(conn, after, limit, bytes, |_, _| true).await
+}
+
+async fn after_wanted(
+    conn: &mut PgConnection,
+    after: i64,
+    limit: i64,
+    bytes: i64,
+    mut wants: impl FnMut(i64, &str) -> bool,
+) -> Result<Page> {
     if limit <= 0 {
         return Err(Error::Invalid("commit page limit must be positive".into()));
     }
@@ -91,13 +101,19 @@ pub async fn after(conn: &mut PgConnection, after: i64, limit: i64, bytes: i64) 
         .fetch_all(&mut *conn)
         .await?
         .into_iter()
-        .map(|row| Selected {
-            commit_seq: row.commit_seq,
-            event: row.id.map(|id| SelectedEvent {
-                id,
-                event_type: row.event_type.unwrap_or_default(),
-                ts_orig: row.ts_orig,
-            }),
+        .map(|row| {
+            let event_type = row.event_type.unwrap_or_default();
+            Selected {
+                commit_seq: row.commit_seq,
+                event: row
+                    .id
+                    .filter(|_| wants(row.commit_seq, &event_type))
+                    .map(|id| SelectedEvent {
+                        id,
+                        event_type,
+                        ts_orig: row.ts_orig,
+                    }),
+            }
         })
         .collect();
     let (rows, up_to) = fetch_selected(conn, &selected, bytes).await?;
@@ -116,17 +132,19 @@ pub async fn after(conn: &mut PgConnection, after: i64, limit: i64, bytes: i64) 
 /// are planned after that snapshot is taken, so the chunks they scan include
 /// every chunk holding rows the snapshot sees; a read-committed statement
 /// planned before a commit and run after it could miss that commit's new chunk.
+/// Unwanted event types count toward the position page but need no payload read.
 pub async fn after_in_one_snapshot(
     conn: &mut PgConnection,
     from: i64,
     limit: i64,
     bytes: i64,
+    wants: impl FnMut(i64, &str) -> bool,
 ) -> Result<Page> {
     let mut snapshot = sqlx::Connection::begin(&mut *conn).await?;
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *snapshot)
         .await?;
-    let page = after(&mut snapshot, from, limit, bytes).await?;
+    let page = after_wanted(&mut snapshot, from, limit, bytes, wants).await?;
     snapshot.commit().await?;
     Ok(page)
 }

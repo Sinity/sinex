@@ -191,8 +191,9 @@ fn expand_event_payload(input: &DeriveInput) -> syn::Result<proc_macro2::TokenSt
             } else if meta.path.is_ident("index_text") {
                 index_text = Some(meta.value()?.parse()?);
             } else if meta.path.is_ident("text_fields") {
+                let value = meta.value()?;
                 let fields;
-                syn::bracketed!(fields in meta.value()?);
+                syn::bracketed!(fields in value);
                 text_fields = fields
                     .parse_terminated(|p| p.parse::<LitStr>(), syn::Token![,])?
                     .into_iter()
