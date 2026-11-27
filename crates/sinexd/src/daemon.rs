@@ -413,7 +413,7 @@ async fn serve(
         )
         .await
         .map_err(|e| Error::from(e).within("read pool"))?;
-    let read_failures = crate::binding_runner::ReadFailures::default();
+    let source_status = crate::binding_runner::SourceStatus::default();
     let reader_api = Api {
         backup_copy: Default::default(),
         backup_producers: Some((
@@ -426,7 +426,7 @@ async fn serve(
                 .collect(),
         )),
         source_config: Arc::new(sources.clone()),
-        read_failures: read_failures.clone(),
+        source_status: source_status.clone(),
         running_stages: Default::default(),
         sql_cursors: Default::default(),
         stop: stop.clone(),
@@ -536,7 +536,7 @@ async fn serve(
             host,
             sources,
             BINDINGS_EVERY,
-            read_failures,
+            source_status,
             s,
         ),
     );

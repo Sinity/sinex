@@ -373,7 +373,7 @@ async fn admin_table(
         backup_copy: Default::default(),
         backup_producers: None,
         source_config: Default::default(),
-        read_failures: Default::default(),
+        source_status: Default::default(),
         running_stages: Default::default(),
         sql_cursors: Default::default(),
         stop,
