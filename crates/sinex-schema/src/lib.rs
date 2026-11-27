@@ -348,8 +348,6 @@ fn grants() -> Vec<String> {
             "core.visible_embedding_vectors",
             "core.counters",
             "core.source_counts",
-            "core.visible_coverage_readings",
-            "core.visible_fusion_counts",
         ][..],
     ] {
         out.push(format!(

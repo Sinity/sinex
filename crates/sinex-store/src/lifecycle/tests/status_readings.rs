@@ -13,7 +13,7 @@ async fn parts(conn: &mut PgConnection) -> (i64, i64, String) {
             .await
             .unwrap()
             .into_iter()
-            .find(|row| row["source"] == "fixture.inputs")
+            .find(|row| row["binding"] == "fixture.inputs")
             .unwrap();
     (
         fusion[0].undecided,

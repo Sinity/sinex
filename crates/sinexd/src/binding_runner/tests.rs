@@ -750,7 +750,6 @@ async fn an_input_not_present_yet_is_not_missing_coverage(db: devkit::pg::TestDa
             .find(|input| input.input.as_ref() == Some(&blocked))
             .unwrap()
             .availability
-            .clone()
     };
     assert!(
         matches!(availability(), Availability::Unavailable(cause) if cause != Cause::NotPresent)
