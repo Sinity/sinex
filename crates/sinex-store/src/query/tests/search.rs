@@ -114,7 +114,8 @@ async fn prefix_search_uses_the_word_index(db: devkit::pg::TestDatabase) {
     let query = "events where car* | fields id";
     let declared = sinex_query::bind(query, &context).unwrap();
     let position = current_seq(&mut conn).await.unwrap();
-    sqlx::query("ANALYZE core.search_text")
+    // Vacuum makes the index usable at its normal cost after the bulk fixture insert.
+    sqlx::query("VACUUM (ANALYZE) core.search_text")
         .execute(&mut conn)
         .await
         .unwrap();
