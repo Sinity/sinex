@@ -255,6 +255,7 @@ impl ShutdownFixture {
             serde_json::to_vec(&serde_json::json!({
                 "exclude": excluded,
                 "discovery": {"inputs": {"zsh": [history]}},
+                "sources": {"terminal.zsh-history": {"class": "open"}},
                 "derivations": derivations
             }))
             .unwrap(),
@@ -358,7 +359,7 @@ async fn wait_for_publication(conn: &mut PgConnection, commit_seq: i64) {
 #[devkit::test]
 async fn sigterm_during_nats_outage_preserves_confirmed_progress() {
     use sinex_protocol::{Confirmed, Subjects};
-    use tokio::io::{AsyncReadExt, copy_bidirectional};
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::{TcpListener, TcpStream};
 
     let db = devkit::pg::test_database().unwrap();
@@ -367,38 +368,42 @@ async fn sigterm_during_nats_outage_preserves_confirmed_progress() {
     let proxy = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let proxy_url = format!("nats://{}", proxy.local_addr().unwrap());
     let upstream = nats.url().strip_prefix("nats://").unwrap().to_owned();
-    let (disconnect, disconnected) = tokio::sync::oneshot::channel();
+    let subjects = Subjects::new(nats.prefix());
+    let stream_name = subjects.confirmed_stream();
+    let history_publish = format!(
+        "HPUB {} ",
+        subjects.confirmed_event("open", "command.imported")
+    );
+    let (hold, holding) = tokio::sync::watch::channel(false);
     let (request_seen, requested) = tokio::sync::oneshot::channel();
     let relay = tokio::spawn(async move {
-        let (mut client, _) = proxy.accept().await.unwrap();
-        let mut server = TcpStream::connect(upstream).await.unwrap();
-        tokio::select! {
-            result = copy_bidirectional(&mut client, &mut server) => panic!("broker relay closed: {result:?}"),
-            _ = disconnected => {}
-        }
-        // Keep the daemon socket open while the broker is unreachable from it.
-        // An actual JetStream request must be waiting when SIGTERM arrives.
-        let mut bytes = Vec::new();
-        let mut chunk = [0; 4096];
-        loop {
-            let read = client.read(&mut chunk).await.unwrap();
-            assert_ne!(read, 0);
-            bytes.extend_from_slice(&chunk[..read]);
-            if bytes
-                .windows(b"$JS.API.STREAM.INFO.".len())
-                .any(|window| window == b"$JS.API.STREAM.INFO.")
-            {
-                break;
+        let (client, _) = proxy.accept().await.unwrap();
+        let (client_read, mut client_write) = client.into_split();
+        let (mut server_read, mut server_write) =
+            TcpStream::connect(upstream).await.unwrap().into_split();
+        let send_to_broker = async {
+            let mut client = BufReader::new(client_read);
+            let mut line = Vec::new();
+            while client.read_until(b'\n', &mut line).await.unwrap() != 0 {
+                // Withhold the next history publish before the broker sees it.
+                // Keep the connection open so the real acknowledgment must wait.
+                if *holding.borrow() && line.starts_with(history_publish.as_bytes()) {
+                    request_seen.send(()).unwrap();
+                    std::future::pending::<()>().await;
+                    return;
+                }
+                server_write.write_all(&line).await.unwrap();
+                line.clear();
             }
+        };
+        tokio::select! {
+            () = send_to_broker => {}
+            result = tokio::io::copy(&mut server_read, &mut client_write) => { result.unwrap(); }
         }
-        request_seen.send(()).unwrap();
-        std::future::pending::<()>().await;
     });
 
     let mut conn = PgConnection::connect(&fixture.database).await.unwrap();
     let js = async_nats::jetstream::new(async_nats::connect(nats.url()).await.unwrap());
-    let subjects = Subjects::new(nats.prefix());
-    let stream_name = subjects.confirmed_stream();
     let daemon = fixture.start(&proxy_url, nats.prefix(), "outage").await;
     tokio::time::timeout(Duration::from_secs(15), async {
         while js.get_stream(&stream_name).await.is_err() {
@@ -411,12 +416,12 @@ async fn sigterm_during_nats_outage_preserves_confirmed_progress() {
     let first = wait_for_history(&mut conn, 1).await;
     wait_for_publication(&mut conn, first).await;
 
-    disconnect.send(()).unwrap();
+    hold.send(true).unwrap();
     fixture.append_history(": 1600000001:0;second synthetic command\n");
     let second = wait_for_history(&mut conn, 2).await;
     tokio::time::timeout(Duration::from_secs(5), requested)
         .await
-        .expect("publisher reached the unresponsive broker")
+        .expect("relay withheld the second history publish")
         .unwrap();
     let position = publisher_position(&mut conn).await;
     assert!((first..second).contains(&position));
