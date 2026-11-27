@@ -348,7 +348,13 @@ async fn inputs_committed_after_a_comparison_are_computed_by_the_switched_versio
     );
     // The selected version recomputes on request from here on: its two
     // logical days and the day the earlier version left outputs under.
-    assert_eq!(v2.recompute_all("test.days", None).await.unwrap(), 3);
+    assert_eq!(
+        v2.recompute_all("test.days", None)
+            .await
+            .unwrap()
+            .keys_marked,
+        3
+    );
 }
 
 /// A comparison holds nothing still: a key whose newest input the stored
@@ -423,7 +429,8 @@ async fn another_build_of_the_selected_version_recomputes_a_time_range(
         later
             .recompute_all("test.days", Some((at(-3_600), at(3_600))))
             .await
-            .unwrap(),
+            .unwrap()
+            .keys_marked,
         1
     );
     let dirty = derivations::dirty(&mut conn, &["test.days".to_owned()], 100)
