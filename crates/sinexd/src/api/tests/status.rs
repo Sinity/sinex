@@ -90,7 +90,7 @@ async fn status_derivation_backlog_counts_only_unprocessed_inputs(db: devkit::pg
             name: NAME.into(),
             kind: "per_event",
             version: 1,
-            inputs: vec![CommandImported::EVENT_TYPE.into()],
+            inputs: vec![CommandExecuted::EVENT_TYPE.into()],
             outputs: vec![],
         },
     )
@@ -167,8 +167,9 @@ async fn status_derivation_backlog_counts_only_unprocessed_inputs(db: devkit::pg
             .find(|reading| reading.name == NAME)
             .unwrap()
     };
+    let running = [(NAME, &[CommandImported::EVENT_TYPE][..])];
     let caught_up = derivation(
-        sinex_store::telemetry::read(&mut connection, None)
+        sinex_store::telemetry::read(&mut connection, None, &running)
             .await
             .unwrap(),
     );
@@ -196,21 +197,30 @@ async fn status_derivation_backlog_counts_only_unprocessed_inputs(db: devkit::pg
     )
     .await;
     let waiting = derivation(
-        sinex_store::telemetry::read(&mut connection, None)
+        sinex_store::telemetry::read(&mut connection, None, &running)
             .await
             .unwrap(),
     );
     admit_events(&world, sample_series(waiting, &[600, 300, 1])).await;
-    let status = status(&world).await;
-    let stalled = consumer(&status);
+    let report = status(&world).await;
+    let stalled = consumer(&report);
     assert_eq!(stalled["behind"], 1);
     assert_eq!(stalled["state"], "stalled");
-    assert!(status["reasons"].as_array().unwrap().iter().any(|reason| {
+    assert!(report["reasons"].as_array().unwrap().iter().any(|reason| {
         reason
             .as_str()
             .unwrap()
             .starts_with(&format!("derivation {NAME}: 1 behind, not advanced since "))
     }));
+    let paused = derivation(
+        sinex_store::telemetry::read(&mut connection, None, &[])
+            .await
+            .unwrap(),
+    );
+    admit_events(&world, sample_series(paused, &[0])).await;
+    let paused = consumer(&status(&world).await);
+    assert_eq!(paused["behind"], Value::Null);
+    assert_eq!(paused["state"], "unknown");
 }
 
 #[devkit::test]

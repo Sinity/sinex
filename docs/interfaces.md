@@ -559,7 +559,9 @@ Keyed derivations track dirty and waiting keys rather than a commit cursor; thei
 position, backlog and progress estimates are unknown. Per-event derivations start
 at position zero until they save their first cursor. For them, `behind` counts
 live input entries of their own kinds beyond that cursor, including restored
-inputs at their restore position. Status reads this as `waiting_inputs` in
+inputs at their restore position. Samples count the input kinds from the
+running declaration. A paused or unavailable derivation has no measured
+backlog. Status reads this as `waiting_inputs` in
 telemetry. Earlier samples measured whole-store positions and do not
 describe a derivation's backlog. Estimates are unknown when the samples cannot establish a
 positive catch-up rate. `last_advanced` is unknown until a sample shows an increase;

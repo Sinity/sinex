@@ -63,6 +63,10 @@ pub(crate) fn status_fields(
             {
                 samples.drain(..=end);
             }
+        } else if component == "derivation" {
+            if let Some(end) = samples.iter().rposition(|sample| !has_position(sample)) {
+                samples.drain(..=end);
+            }
         } else {
             samples.retain(has_position);
         }

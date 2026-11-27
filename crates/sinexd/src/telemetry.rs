@@ -35,6 +35,7 @@ pub(crate) async fn sample(
     conn: &mut PgConnection,
     writer: &mut SpoolWriter,
     broker: (&jetstream::Context, &str),
+    per_event: &[(&str, &[&str])],
 ) -> Result<usize, Error> {
     let publisher = match publisher::current_consumer(conn, broker.0, broker.1).await {
         Ok(consumer) => Some(consumer),
@@ -43,7 +44,7 @@ pub(crate) async fn sample(
             None
         }
     };
-    let readings = sinex_store::telemetry::read(conn, publisher.as_deref()).await?;
+    let readings = sinex_store::telemetry::read(conn, publisher.as_deref(), per_event).await?;
     let at = Timestamp::now();
     for r in &readings {
         let line = serde_json::to_vec(&Sample {
@@ -64,14 +65,15 @@ async fn sample_reconnecting(
     database: &str,
     writer: &mut SpoolWriter,
     broker: (&jetstream::Context, &str),
+    per_event: &[(&str, &[&str])],
 ) -> Result<usize, Error> {
-    match sample(conn, writer, broker).await {
+    match sample(conn, writer, broker, per_event).await {
         Err(Error::Read(error)) => {
             eprintln!("sinexd: telemetry read: {error}; reconnecting");
             *conn = PgConnection::connect(database)
                 .await
                 .map_err(sinex_store::Error::from)?;
-            sample(conn, writer, broker).await
+            sample(conn, writer, broker, per_event).await
         }
         result => result,
     }
@@ -84,14 +86,21 @@ pub(crate) async fn run(
     spool: PathBuf,
     js: jetstream::Context,
     confirmed: String,
+    per_event: Vec<(&'static str, &'static [&'static str])>,
     mut stop: watch::Receiver<bool>,
 ) -> Result<()> {
     let (mut conn, database) = connection;
     let mut writer = SpoolWriter::open(&spool, Rotation::default())
         .map_err(|e| crate::Error::file(&spool, e))?;
     loop {
-        if let Err(error) =
-            sample_reconnecting(&mut conn, &database, &mut writer, (&js, &confirmed)).await
+        if let Err(error) = sample_reconnecting(
+            &mut conn,
+            &database,
+            &mut writer,
+            (&js, &confirmed),
+            &per_event,
+        )
+        .await
         {
             eprintln!("sinexd: telemetry: {error}");
         }

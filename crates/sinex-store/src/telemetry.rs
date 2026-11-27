@@ -33,7 +33,11 @@ fn reading(component: &'static str, name: &str, measures: &[(&str, i64)]) -> Rea
 }
 
 /// Every part's numbers now.
-pub async fn read(conn: &mut PgConnection, publisher: Option<&str>) -> Result<Vec<Reading>> {
+pub async fn read(
+    conn: &mut PgConnection,
+    publisher: Option<&str>,
+    per_event: &[(&str, &[&str])],
+) -> Result<Vec<Reading>> {
     let mut tx = conn.begin().await?;
     sqlx::query!("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *tx)
@@ -80,9 +84,22 @@ pub async fn read(conn: &mut PgConnection, publisher: Option<&str>) -> Result<Ve
             ],
         ),
     ];
-    let derivations = sqlx::query_file!("src/telemetry/derivations.sql")
-        .fetch_all(&mut *tx)
-        .await?;
+    let mut names = Vec::new();
+    let mut inputs = Vec::new();
+    for (name, kinds) in per_event {
+        for input in std::iter::once(None).chain(kinds.iter().map(|kind| Some((*kind).to_owned())))
+        {
+            names.push((*name).to_owned());
+            inputs.push(input);
+        }
+    }
+    let derivations = sqlx::query_file!(
+        "src/telemetry/derivations.sql",
+        &names,
+        &inputs as &[Option<String>],
+    )
+    .fetch_all(&mut *tx)
+    .await?;
     for d in derivations {
         let mut measures = vec![
             ("dirty_keys", d.dirty),
