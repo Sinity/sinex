@@ -210,8 +210,8 @@ async fn older_versions_follow_the_current_declaration(db: devkit::pg::TestDatab
     historical.search = Search::WordsAndTrigram;
     sqlx::query(
         "INSERT INTO registry.event_types (name, version, declaring_producer, normalization,
-          field_hints, keep_known, owned_blobs, search, definition_hash)
-         VALUES ($1, 1, 'sinex', 'json', '[]', '{}', '[]', $2, $3)",
+          key_rule, time_rule, field_hints, removed_rule, keep_known, owned_blobs, search, definition_hash)
+         VALUES ($1, 1, 'sinex', 'json', 'null', 'null', '[]', 'null', '{}', '[]', $2, $3)",
     )
     .bind(&historical.kind.name)
     .bind(historical.search.as_db())
