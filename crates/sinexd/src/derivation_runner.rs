@@ -342,7 +342,7 @@ impl DerivationRunner {
         let types: Vec<String> = d.inputs_types().iter().map(|s| (*s).to_owned()).collect();
         let d = d.clone();
         let mut keys: Vec<Value> = Vec::new();
-        let mut seen: HashSet<String> = HashSet::new();
+        let mut seen = HashSet::new();
         // Fill missing list entries for inputs this request reads. Only a
         // whole-history operation can seed lists across the entire store.
         let mut stored: Vec<(Value, uuid::Uuid)> = Vec::new();
@@ -388,7 +388,7 @@ impl DerivationRunner {
                     if d.stores_inputs(&k) {
                         stored.push((k.clone(), c.event.id.0));
                     }
-                    if seen.insert(k.to_string()) {
+                    if seen.insert(key_identity(&k)) {
                         keys.push(k);
                     }
                 }
@@ -400,7 +400,7 @@ impl DerivationRunner {
         self.store_inputs(name, stored).await?;
         if range.is_none() {
             for k in derivations::output_keys(&mut self.read, name).await? {
-                if seen.insert(k.to_string()) {
+                if seen.insert(key_identity(&k)) {
                     keys.push(k);
                 }
             }
@@ -1618,9 +1618,9 @@ impl KeyComputation<'_> {
         // here. Another computation can diagnose it while this one is queued.
         let keys: Vec<_> = work.iter().map(|(key, _)| key.clone()).collect();
         let refused = derivations::refused_keys(self.read, self.derivation.name(), &keys).await?;
-        let blocked: HashSet<_> = refused.iter().map(|row| row.key.to_string()).collect();
+        let blocked: HashSet<_> = refused.iter().map(|row| key_identity(&row.key)).collect();
         self.counts.failed += blocked.len();
-        work.retain(|(key, _)| !blocked.contains(&key.to_string()));
+        work.retain(|(key, _)| !blocked.contains(&key_identity(key)));
         if work.is_empty() {
             return Ok(());
         }
@@ -2139,8 +2139,8 @@ pub(crate) async fn compute_now(
         keys = dirty;
     }
     let refused = derivations::refused_keys(conn, derivation.name(), &keys).await?;
-    let blocked: HashSet<String> = refused.iter().map(|row| row.key.to_string()).collect();
-    keys.retain(|key| !blocked.contains(&key.to_string()));
+    let blocked: HashSet<_> = refused.iter().map(|row| key_identity(&row.key)).collect();
+    keys.retain(|key| !blocked.contains(&key_identity(key)));
     if keys.is_empty() && !refused.is_empty() {
         return Err(Error::refused(format!(
             "{}: {}; change its inputs or request an explicit recompute",
@@ -2191,6 +2191,11 @@ pub(crate) async fn compute_now(
 /// The inputs of keys read by their stored lists, in the order of `keys`:
 /// each key's live stored events and what its query adds, by `ts_orig` then
 /// commit order.
+// PostgreSQL jsonb can reorder fields in a key the derivation serialized.
+fn key_identity(key: &Value) -> Vec<u8> {
+    canonical_json::canonical_json(key).expect("JSON key serializes")
+}
+
 async fn stored_inputs(
     conn: &mut PgConnection,
     derivation: &dyn AnyKeyed,
@@ -2199,10 +2204,10 @@ async fn stored_inputs(
 ) -> Result<Vec<Vec<Event>>> {
     let owned: Vec<Value> = keys.iter().map(|key| (*key).clone()).collect();
     let listed = derivations::stored_inputs(conn, derivation.name(), &owned).await?;
-    let mut ids_of: std::collections::HashMap<String, Vec<uuid::Uuid>> =
+    let mut ids_of: std::collections::HashMap<Vec<u8>, Vec<uuid::Uuid>> =
         std::collections::HashMap::new();
     for (key, event) in &listed {
-        ids_of.entry(key.to_string()).or_default().push(*event);
+        ids_of.entry(key_identity(key)).or_default().push(*event);
     }
     let ids = listed
         .iter()
@@ -2222,7 +2227,7 @@ async fn stored_inputs(
         std::collections::HashMap::new();
     for key in keys {
         let mut rows: Vec<derivations::Committed> = ids_of
-            .get(&key.to_string())
+            .get(&key_identity(key))
             .into_iter()
             .flatten()
             .filter_map(|id| live.get(id).cloned())
