@@ -19,11 +19,12 @@ use crate::{binding_runner, derivation_runner, ingress, publisher, telemetry, wr
 use sinex_protocol::Subjects;
 use sinex_store::Blobs;
 use sqlx::{Connection, PgConnection};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Notify, watch};
-use tokio::task::JoinSet;
+use tokio::task::{AbortHandle, Id, JoinSet};
 
 /// How often the derivation runner looks for work when no commit woke it:
 /// keys whose outputs wait on readings outside their window are decided as time passes.
@@ -31,6 +32,12 @@ const RUNNER_IDLE: Duration = Duration::from_secs(30);
 
 /// How often the binding runner reads every configured binding again.
 const BINDINGS_EVERY: Duration = Duration::from_secs(5);
+
+// Leave time within the ten-second stop bound for cancelled task joins,
+// runtime teardown and the service manager to reap the process.
+const STOP_GRACE: Duration = Duration::from_secs(7);
+const ABORT_GRACE: Duration = Duration::from_secs(1);
+pub(crate) const RUNTIME_STOP_GRACE: Duration = Duration::from_secs(1);
 
 #[derive(Default, serde::Serialize)]
 struct ShutdownSummary {
@@ -41,13 +48,12 @@ struct ShutdownSummary {
     panicked: usize,
     abort_requested: usize,
     writer_joined: bool,
-    writer_released: bool,
     tasks: Vec<StoppedTask>,
 }
 
 #[derive(serde::Serialize)]
 struct StoppedTask {
-    name: Option<&'static str>,
+    name: &'static str,
     outcome: StopOutcome,
 }
 
@@ -55,38 +61,100 @@ struct StoppedTask {
 #[serde(rename_all = "snake_case")]
 enum StopOutcome {
     Complete,
+    PublicationDeferred,
     Failed,
     Cancelled,
     Panicked,
     JoinError,
+    StillRunning,
 }
 
-impl ShutdownSummary {
-    fn record(&mut self, done: Result<(&'static str, Result<()>), tokio::task::JoinError>) {
-        self.joined += 1;
-        let (name, outcome) = match done {
-            Ok((name, Ok(()))) => {
-                self.writer_joined |= name == "writer";
-                (Some(name), StopOutcome::Complete)
+#[derive(Default)]
+struct Tasks {
+    running: JoinSet<Result<StopOutcome>>,
+    names: HashMap<Id, &'static str>,
+    shutdown: ShutdownSummary,
+}
+
+impl Tasks {
+    fn spawn<F>(&mut self, name: &'static str, task: F) -> AbortHandle
+    where
+        F: Future<Output = Result<()>> + Send + 'static,
+    {
+        self.spawn_with_outcome(
+            name,
+            async move { task.await.map(|()| StopOutcome::Complete) },
+        )
+    }
+
+    fn spawn_with_outcome<F>(&mut self, name: &'static str, task: F) -> AbortHandle
+    where
+        F: Future<Output = Result<StopOutcome>> + Send + 'static,
+    {
+        let task = self.running.spawn(task);
+        self.names.insert(task.id(), name);
+        self.shutdown.requested += 1;
+        task
+    }
+
+    async fn join_next(&mut self) -> Option<Result<&'static str>> {
+        let (id, outcome, error) = match self.running.join_next_with_id().await? {
+            Ok((id, Ok(outcome))) => (id, outcome, None),
+            Ok((id, Err(error))) => {
+                self.shutdown.failed += 1;
+                (
+                    id,
+                    StopOutcome::Failed,
+                    Some(Error::internal(error.to_string())),
+                )
             }
-            Ok((name, Err(_))) => {
-                self.failed += 1;
-                (Some(name), StopOutcome::Failed)
-            }
-            Err(error) if error.is_cancelled() => {
-                self.cancelled += 1;
-                (None, StopOutcome::Cancelled)
-            }
-            Err(error) if error.is_panic() => {
-                self.panicked += 1;
-                (None, StopOutcome::Panicked)
-            }
-            Err(_) => {
-                self.failed += 1;
-                (None, StopOutcome::JoinError)
+            Err(error) => {
+                let outcome = if error.is_cancelled() {
+                    self.shutdown.cancelled += 1;
+                    StopOutcome::Cancelled
+                } else if error.is_panic() {
+                    self.shutdown.panicked += 1;
+                    StopOutcome::Panicked
+                } else {
+                    self.shutdown.failed += 1;
+                    StopOutcome::JoinError
+                };
+                (
+                    error.id(),
+                    outcome,
+                    Some(Error::internal(error.to_string())),
+                )
             }
         };
-        self.tasks.push(StoppedTask { name, outcome });
+        let name = self.names.remove(&id).expect("supervised task has a name");
+        self.shutdown.joined += 1;
+        self.shutdown.writer_joined |= name == "writer" && matches!(outcome, StopOutcome::Complete);
+        self.shutdown.tasks.push(StoppedTask { name, outcome });
+        Some(match error {
+            Some(error) => Err(error.within(name)),
+            None => Ok(name),
+        })
+    }
+
+    async fn join_until(&mut self, grace: Duration) {
+        let _ =
+            tokio::time::timeout(grace, async { while self.join_next().await.is_some() {} }).await;
+    }
+
+    async fn finish(mut self, grace: Duration) -> ShutdownSummary {
+        self.join_until(grace).await;
+        self.shutdown.abort_requested = self.running.len();
+        self.running.abort_all();
+        self.join_until(ABORT_GRACE).await;
+        let mut remaining: Vec<_> = self.names.into_values().collect();
+        remaining.sort_unstable();
+        self.shutdown
+            .tasks
+            .extend(remaining.into_iter().map(|name| StoppedTask {
+                name,
+                outcome: StopOutcome::StillRunning,
+            }));
+        self.shutdown
     }
 }
 
@@ -132,35 +200,29 @@ pub(crate) async fn connect(url: &str, task: &str) -> Result<PgConnection> {
 
 pub(crate) async fn run(o: Options) -> Result<()> {
     let blobs = Blobs::open(&o.store)?;
-    let database = o.database.clone();
     let (stop_tx, stop) = watch::channel(false);
-    let mut tasks = JoinSet::new();
-    let mut writer_connected = false;
+    let mut tasks = Tasks::default();
     // Supervise startup too: it can already own a writer transaction before
     // the API and the complete task set are ready.
     let outcome = tokio::select! {
         biased;
         _ = shutdown_signal() => Ok(()),
-        result = serve(o, blobs.clone(), stop, &mut tasks, &mut writer_connected) => result,
+        result = serve(o, blobs, stop, &mut tasks) => result,
     };
-    let _ = stop_tx.send(true);
-    let stopped = finish_tasks(
-        &mut tasks,
-        Duration::from_secs(10),
-        &database,
-        &blobs,
-        writer_connected,
-    )
-    .await;
-    outcome.and(stopped)
+    stop_tx.send_replace(true);
+    let shutdown = tasks.finish(STOP_GRACE).await;
+    eprintln!(
+        "sinexd: shutdown {}",
+        serde_json::to_string(&shutdown).expect("shutdown result serializes")
+    );
+    outcome
 }
 
 async fn serve(
     o: Options,
     blobs: Blobs,
     stop: watch::Receiver<bool>,
-    tasks: &mut JoinSet<(&'static str, Result<()>)>,
-    writer_connected: &mut bool,
+    tasks: &mut Tasks,
 ) -> Result<()> {
     let subjects = Subjects::new(o.subject_root.clone());
     let tokens = api::Tokens::load(&o.api.tokens).map_err(|e| Error::file(&o.api.tokens, e))?;
@@ -174,7 +236,6 @@ async fn serve(
     let (mut handle, queues) = writer::channels();
     handle.class_recipient = o.class_recipient.clone();
     let writer_conn = connect(&o.database, "sinex.writer").await?;
-    *writer_connected = true;
     let mut writer_conn = writer::claim(writer_conn).await?;
     crate::backup::policy::recover(&mut writer_conn).await?;
     blobs.recover(&mut writer_conn).await?;
@@ -284,7 +345,7 @@ async fn serve(
     let writer_settings = time_settings.clone();
     let url = o.database.clone();
     let writer_store = blobs.clone();
-    tasks.spawn(async move {
+    tasks.spawn("writer", async move {
         writer::run_notifying(
             url,
             writer_conn,
@@ -294,7 +355,7 @@ async fn serve(
             commits_tx,
         )
         .await;
-        ("writer", Ok(()))
+        Ok(())
     });
 
     let runner = derivation_runner::DerivationRunner::start(
@@ -310,15 +371,15 @@ async fn serve(
     .with_blobs(blobs.clone());
     let wake = Arc::new(Notify::new());
     let (w, mut c, s) = (wake.clone(), commits.clone(), stop.clone());
-    tasks.spawn(async move {
+    tasks.spawn("derivation runner", async move {
         tokio::select! {
-            result = runner.run(w.clone(), RUNNER_IDLE, s) => ("derivation runner", result),
+            result = runner.run(w.clone(), RUNNER_IDLE, s) => result,
             // Every commit wakes the runner.
             () = async move {
                 while c.changed().await.is_ok() {
                     w.notify_one();
                 }
-            } => ("derivation runner wake", Ok(())),
+            } => Ok(()),
         }
     });
 
@@ -328,22 +389,22 @@ async fn serve(
     }
     let reader_conn = connect(&o.database, "sinex.read_models").await?;
     let (c, s) = (commits.clone(), stop.clone());
-    tasks.spawn(async move {
-        (
-            "commit-log reader",
-            commit_reader::run(reader_conn, consumers, c, read_models_tx, s).await,
-        )
-    });
+    tasks.spawn(
+        "commit-log reader",
+        commit_reader::run(reader_conn, consumers, c, read_models_tx, s),
+    );
 
     let telemetry_js = js.clone();
     let confirmed = subjects.confirmed_stream();
     let publisher_conn = connect(&o.database, "sinex.publisher").await?;
     let (c, s, sj) = (commits.clone(), stop.clone(), subjects.clone());
-    tasks.spawn(async move {
-        (
-            "publisher",
-            publisher::run(publisher_conn, js, sj, c, s).await,
-        )
+    tasks.spawn_with_outcome("publisher", async move {
+        let in_flight = publisher::run(publisher_conn, js, sj, c, s).await?;
+        Ok(if in_flight {
+            StopOutcome::PublicationDeferred
+        } else {
+            StopOutcome::Complete
+        })
     });
 
     // Readers never use the writer's connection.
@@ -414,12 +475,10 @@ async fn serve(
     )?;
     if let Some(settings_identity) = public_context.settings_identity.clone() {
         let (signals_api, c, s) = (reader_api.clone(), commits.clone(), stop.clone());
-        tasks.spawn(async move {
-            (
-                "signals",
-                crate::signals::run(signals_api, settings_identity, c, s).await,
-            )
-        });
+        tasks.spawn(
+            "signals",
+            crate::signals::run(signals_api, settings_identity, c, s),
+        );
     }
     let config = api::Config {
         socket: o.api.socket.clone(),
@@ -428,8 +487,8 @@ async fn serve(
     };
     let (c, mut s) = (commits.clone(), stop.clone());
     let (producer_requests_ready, ready) = tokio::sync::oneshot::channel();
-    tasks.spawn(async move {
-        let result = match ready.await {
+    tasks.spawn("API", async move {
+        match ready.await {
             Ok(()) => {
                 eprintln!("sinexd: API on {}", config.socket.display());
                 api::serve(config, reader_api, c, read_models, async move {
@@ -440,8 +499,7 @@ async fn serve(
             Err(_) => Err(Error::internal(
                 "producer request subscriptions did not become ready",
             )),
-        };
-        ("API", result)
+        }
     });
 
     // The daemon's own state, sampled into its telemetry spool.
@@ -450,20 +508,17 @@ async fn serve(
         o.database.clone(),
         stop.clone(),
     );
-    tasks.spawn(async move {
-        (
-            "telemetry",
-            telemetry::run(
-                (sample_conn, sample_database),
-                telemetry_spool,
-                telemetry_js,
-                confirmed,
-                sampled_derivations,
-                s,
-            )
-            .await,
-        )
-    });
+    tasks.spawn(
+        "telemetry",
+        telemetry::run(
+            (sample_conn, sample_database),
+            telemetry_spool,
+            telemetry_js,
+            confirmed,
+            sampled_derivations,
+            s,
+        ),
+    );
 
     // The configured sources and the telemetry spool, read continuously by
     // the binding runner. A configuration naming an unknown source or format
@@ -477,22 +532,19 @@ async fn serve(
         o.host.clone(),
         stop.clone(),
     );
-    tasks.spawn(async move {
-        (
-            "binding runner",
-            binding_runner::run(
-                (read_conn, database),
-                b,
-                w,
-                host,
-                sources,
-                BINDINGS_EVERY,
-                read_failures,
-                s,
-            )
-            .await,
-        )
-    });
+    tasks.spawn(
+        "binding runner",
+        binding_runner::run(
+            (read_conn, database),
+            b,
+            w,
+            host,
+            sources,
+            BINDINGS_EVERY,
+            read_failures,
+            s,
+        ),
+    );
 
     let producer_grants = Arc::new(o.producer_grants);
     let requests = ingress::Requests {
@@ -514,70 +566,18 @@ async fn serve(
         producer_grants,
     )?;
     let s = stop.clone();
-    tasks.spawn(async move {
-        (
-            "ingress",
-            ingress::run(client, ingest, requests, s, producer_requests_ready).await,
-        )
-    });
+    tasks.spawn(
+        "ingress",
+        ingress::run(client, ingest, requests, s, producer_requests_ready),
+    );
     // The writer stops when every handle is gone; the tasks above hold theirs.
     drop(handle);
 
     match tasks.join_next().await {
-        Some(Ok((name, Ok(())))) => Err(Error::internal(format!("{name} stopped"))),
-        Some(Ok((name, Err(error)))) => Err(Error::internal(format!("{name}: {error}"))),
-        Some(Err(error)) => Err(Error::internal(format!("a task panicked: {error}"))),
+        Some(Ok(name)) => Err(Error::internal(format!("{name} stopped"))),
+        Some(Err(error)) => Err(error),
         None => Err(Error::internal("daemon has no running tasks")),
     }
-}
-
-async fn finish_tasks(
-    tasks: &mut JoinSet<(&'static str, Result<()>)>,
-    grace: Duration,
-    database: &str,
-    blobs: &Blobs,
-    writer_connected: bool,
-) -> Result<()> {
-    let mut shutdown = ShutdownSummary {
-        requested: tasks.len(),
-        ..Default::default()
-    };
-    let _ = tokio::time::timeout(grace, async {
-        while let Some(done) = tasks.join_next().await {
-            shutdown.record(done);
-        }
-    })
-    .await;
-    shutdown.abort_requested = tasks.len();
-    tasks.abort_all();
-    // Joining releases the writer socket even when its future was interrupted
-    // inside SQL. PostgreSQL then notices the closed client and rolls back.
-    while let Some(done) = tasks.join_next().await {
-        shutdown.record(done);
-    }
-    let released = if writer_connected {
-        // Reacquiring the same session lock shows that the daemon's previous
-        // writer released its transaction and claim, including after abort.
-        forget_admitted(database, blobs).await
-    } else {
-        Ok(())
-    };
-    shutdown.writer_released = released.is_ok();
-    eprintln!(
-        "sinexd: shutdown {}",
-        serde_json::to_string(&shutdown).expect("shutdown result serializes")
-    );
-    released.map_err(|error| Error::internal(format!("writer shutdown did not finish: {error}")))
-}
-
-async fn forget_admitted(database: &str, blobs: &Blobs) -> Result<()> {
-    let mut conn = writer::claim(connect(database, "sinex.writer_shutdown").await?).await?;
-    let result = sinex_store::blobs::commit_pending_extents(&mut conn, blobs, &[])
-        .await
-        .map_err(Error::from);
-    // Closing the session releases its writer claim even when cleanup fails.
-    let closed = conn.close().await.map_err(Error::from);
-    result.and(closed)
 }
 
 async fn shutdown_signal() {

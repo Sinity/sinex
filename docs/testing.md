@@ -77,7 +77,12 @@ Sources are explicit in a development run: `--sources FILE` selects daemon bindi
 
 Crash cases share a two-slot nextest group, which bounds how many whole backfills compete for the test PostgreSQL at once while the rest of the suite runs beside them. The group changes scheduling only; per-test deadlines stay fixed.
 
-The daemon shutdown test reads the supervisor's task-join summary: every task, including a completed task not yet joined, must finish without failed joins or abort requests. It also checks process exit, writer-lock release and unchanged readings and source bytes across restart. Elapsed shutdown time is diagnostic; the production drain and test harness keep their own bounded deadlines.
+Daemon process tests send SIGTERM during normal capture, while a broker
+request receives no answer, and while a real PostgreSQL writer transaction
+waits on a lock. The tests check the shutdown summary and ten-second process
+deadline, then verify writer rollback, source retry, and confirmed-stream
+progress after restart. The normal-stop test also compares source bytes
+and readings across restart.
 
 `cargo xtask coverage --output DIR --format html -- -p CRATE` uses a separate instrumented build. Formats are `html`, `lcov` and `json`; `coverage.json` retains LLVM data and `summary.json` records arguments, line coverage and function regions. `--threshold PERCENT` is an optional caller-selected threshold. Output directories are new; failed children, empty selections and malformed or missing reports are errors. The shared runner mechanics belong to [devkit](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/devkit/README.md).
 
