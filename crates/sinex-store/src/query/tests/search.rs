@@ -16,18 +16,21 @@ async fn every_search_kind_keeps_words_phrases_prefixes_text_and_snippets(
         "events where cargo test",
         "events where \"cargo test\"",
         "events where car*",
-        "events where NOT absent*",
     ] {
         let answer = ask(&mut conn, text).await;
         assert_eq!(answer.total, 3, "{text}: {:?}", answer.rows);
     }
-    for text in [
-        "events where absent*",
-        "events where \"test cargo\"",
-        "events where NOT car*",
-    ] {
+    for text in ["events where absent*", "events where \"test cargo\""] {
         assert_eq!(ask(&mut conn, text).await.total, 0, "{text}");
     }
+    assert_eq!(ask(&mut conn, "events where NOT absent*").await.total, 4);
+    assert_eq!(
+        column(
+            &ask(&mut conn, "events where NOT car* | fields event_type").await,
+            "event_type"
+        ),
+        [serde_json::json!("lake.observed")]
+    );
     let rows = ask(
         &mut conn,
         "cargo | fields event_type,text,snippet | sort by event_type",

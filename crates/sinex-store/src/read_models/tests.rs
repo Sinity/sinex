@@ -1,4 +1,5 @@
 use super::*;
+use sqlx::Connection;
 
 /// Bring the search read model up to the newest commit without the daemon's
 /// reader, page by page with its position.

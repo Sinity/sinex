@@ -17,7 +17,7 @@ pub(crate) enum Step {
 }
 
 impl Step {
-    pub async fn run(self, connection: &mut sqlx::PgConnection) -> Result<(), crate::Error> {
+    pub(crate) async fn run(self, connection: &mut sqlx::PgConnection) -> Result<(), crate::Error> {
         use sqlx::Executor;
         match self {
             Self::Sql { name, statements } => {
