@@ -342,7 +342,7 @@ impl DerivationRunner {
         let types: Vec<String> = d.inputs_types().iter().map(|s| (*s).to_owned()).collect();
         let d = d.clone();
         let mut keys: Vec<Value> = Vec::new();
-        let mut seen: HashSet<String> = HashSet::new();
+        let mut seen = HashSet::new();
         // Fill missing list entries for inputs this request reads. Only a
         // whole-history operation can seed lists across the entire store.
         let mut stored: Vec<(Value, uuid::Uuid)> = Vec::new();
