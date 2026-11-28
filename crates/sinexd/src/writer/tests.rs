@@ -839,24 +839,21 @@ fn required_blob_refusals_stop_while_storage_io_remains_retryable() {
     ] {
         let error = sinex_store::Error::Blob(error);
         let expected = error.to_string();
+        let error = WriteError::from(error);
         assert!(
-            !content_error(&error),
+            error.content_refusal().is_none(),
             "integrity failures cannot become recorded content refusals"
         );
-        assert!(
-            matches!(WriteError::from(error), WriteError::StorageRefused(reason) if reason == expected)
-        );
+        assert!(matches!(error, WriteError::StorageRefused(reason) if reason == expected));
     }
     for kind in [
         std::io::ErrorKind::PermissionDenied,
         std::io::ErrorKind::ReadOnlyFilesystem,
     ] {
         let error = sinex_store::Error::Blob(hashed_blobs::Error::Io(std::io::Error::from(kind)));
-        assert!(!content_error(&error));
-        assert!(matches!(
-            WriteError::from(error),
-            WriteError::StorageRefused(_)
-        ));
+        let error = WriteError::from(error);
+        assert!(error.content_refusal().is_none());
+        assert!(matches!(error, WriteError::StorageRefused(_)));
     }
     let error = std::io::Error::from_raw_os_error(5);
     assert!(matches!(
