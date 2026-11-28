@@ -1003,7 +1003,10 @@ async fn answer<R>(
 ) -> bool {
     if matches!(
         &result,
-        Err(WriteError::Refused(_) | WriteError::InvalidData(_) | WriteError::Unavailable(_))
+        Err(WriteError::Refused(_)
+            | WriteError::InvalidData(_)
+            | WriteError::Unavailable(_)
+            | WriteError::Internal(_))
     ) && connection.ping().await.is_err()
         && let Ok(fresh) = PgConnection::connect(url).await
     {
