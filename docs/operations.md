@@ -250,9 +250,7 @@ A missing or contradictory format stops preparation. A missing producer
 list or a failed pause is refused before taking the core snapshot. Failed
 producer capture records `producer-snapshots.json` alongside the kept
 `boundary.json` and stops before either database dump or segment copying.
-Only a complete producer set can produce a published backup manifest. A
-preparation that fails after taking its hold releases that hold; the error
-names the hold and whether the release succeeded.
+Only a complete producer set can produce a published backup manifest.
 
 ### Holds and the boundary
 
@@ -289,7 +287,7 @@ sinexctl backup release HOLD
 
 These operations require the operator token. The daemon computes the operation's actor. `hold` commits the boundary and operation before returning its UUID; `release` records its own operation and preserves the original boundary. Open holds have no expiry. `status` reports their count and oldest creation time, and `backup list` pages through every open hold with `--cursor`.
 
-`prepare` is split between the daemon and the client that runs it. The daemon starts the copy job: it pauses the producers, creates a fresh hold and exports its snapshot inside the same writer job (after the hold commits and before another admission advances either counter), copies the producers' state into the output, and streams the job to the client. It keeps the exporting transaction open for as long as the client's connection stays open, and closes it when the client goes away or the daemon stops. Producer transfer writes and dump-file syncs run off the async workers, so file-system waits leave the daemon able to serve other tasks. The client copies the backup: `sinexctl backup prepare` runs `sinexd admin backup-copy` beside it, which imports the snapshot and runs both real `pg_dump` calls, the segment copy and the extent check. The bulk reads therefore belong to the client's process, run at its unit's priority (the deployment's backup class), and end with it. A database password, if the deployment uses one, comes from the client's environment. The new output directory must be absolute, private and writable by both the daemon and the client; an existing attempt is refused. A copy that fails releases its hold; a client that disappears leaves its hold open for the operator to release. The artifact contains:
+`prepare` is split between the daemon and the client that runs it. The daemon starts the copy job: it pauses the producers, creates a fresh hold and exports its snapshot inside the same writer job (after the hold commits and before another admission advances either counter), copies the producers' state into the output, and streams the job to the client. It keeps the exporting transaction open for as long as the client's connection stays open, and closes it when the client goes away or the daemon stops. Producer transfer writes and dump-file syncs run off the async workers, so file-system waits leave the daemon able to serve other tasks. The client copies the backup: `sinexctl backup prepare` runs `sinexd admin backup-copy` beside it, which imports the snapshot and runs both real `pg_dump` calls, the segment copy and the extent check. The bulk reads therefore belong to the client's process, run at its unit's priority (the deployment's backup class), and end with it. A database password, if the deployment uses one, comes from the client's environment. The new output directory must be absolute, private and writable by both the daemon and the client; an existing attempt is refused. The artifact contains:
 
 - `main/sinex.dump`, a zstd-compressed PostgreSQL custom archive, with wrapped-key table data and the rebuilt search tables' rows excluded;
 - `main/segments/`, containing only the committed prefixes, copied with bounded memory while later appends continue. On Linux filesystems that report data and hole ranges, the copy skips holes and preserves their logical zero bytes in the digest. Filesystems without range reporting use the same bounded dense copy. A short or truncated prefix is an error, never an inferred hole;
@@ -298,9 +296,15 @@ These operations require the operator token. The daemon computes the operation's
 
 Live extent descriptors are checked against the copied encoded bytes, including sealed encodings, before a root `manifest.json` is published and synced. The main dump still contains private database state, so both parts need protected staging and encrypted archives. No plaintext material keys are exported.
 
-Before publication, a lost exporter, short segment, corrupt extent, failed dump or cancellation leaves an incomplete directory and an open hold. The early `boundary.json` names the hold without claiming completion. A fresh SQL snapshot cannot be attached to an older hold, and an incomplete directory cannot silently become a different run. The operator can inspect the kept attempt, start a fresh one, and explicitly release abandoned holds. A prepared local artifact is not an acknowledgment from Borg or from a producer.
+A reported preparation or copy failure attempts to release its hold and
+reports the result. A killed client, lost connection or failed release can
+leave the hold open. Check the held state with `backup list` before releasing
+an abandoned hold. The early `boundary.json` names the hold. Completion of
+local preparation requires the published `manifest.json`, and archive
+completion requires the archive pair's receipt. A new run takes a fresh
+hold and SQL snapshot in a new output directory.
 
-On Linux, a segment artifact shares filesystem extents with the source when native cloning is supported. The clone is immediately truncated to the held committed end, then its logical bytes are hashed and its held extents validated as usual. Later source append or punching cannot change the artifact. An unsupported filesystem, a different filesystem or incompatible file attributes uses the ordinary sparse copy instead. This removes segment staging writes where sharing is available; manifest hashing, snapshot validation and the backup tool still read their normal bytes. The artifact remains an ordinary file with the same manifest and restore contract. An interruption before publication leaves the existing incomplete artifact and open hold.
+On Linux, a segment artifact shares filesystem extents with the source when native cloning is supported. The clone is immediately truncated to the held committed end, then its logical bytes are hashed and its held extents validated as usual. Later source append or punching cannot change the artifact. An unsupported filesystem, a different filesystem or incompatible file attributes uses the ordinary sparse copy instead. This removes segment staging writes where sharing is available; manifest hashing, snapshot validation and the backup tool still read their normal bytes. The artifact remains an ordinary file with the same manifest and restore contract. An interruption before publication leaves the existing incomplete artifact.
 
 Tombstoning and orphan cleanup do not punch any extent covered by an open hold. Multiple holds compose: release of the last covering hold dirties the deferred work, which the writer attempts at its next commit group without reopening the segment. Recovery checks the same saved holds before replaying a punch.
 
