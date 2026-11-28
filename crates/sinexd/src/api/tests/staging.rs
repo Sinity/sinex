@@ -223,12 +223,13 @@ async fn background_stage_writer_failure_ends_stopped_early(db: devkit::pg::Test
         .await
         .unwrap();
     completed.listen("stage_finished").await.unwrap();
-    for (name, condition) in [
+    for (name, condition, expected_materials) in [
         (
             "progress",
             "NEW.result IS NULL AND OLD.progress <> NEW.progress",
+            0,
         ),
-        ("end", "NEW.result = 'ok'"),
+        ("end", "NEW.result = 'ok'", 1),
     ] {
         sqlx::raw_sql(&format!(
             r#"
@@ -279,6 +280,21 @@ async fn background_stage_writer_failure_ends_stopped_early(db: devkit::pg::Test
             )],
             "{shown}"
         );
-        assert_eq!(shown["result"]["counts"]["stored_without_parser"], 1);
+        assert_eq!(
+            shown["result"]["counts"]["stored_without_parser"],
+            expected_materials,
+        );
+        assert_eq!(
+            shown["result"]["inventory"]["files"][0]["material"].is_string(),
+            expected_materials != 0,
+        );
+        let material_rows: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM raw.materials m JOIN raw.inputs i ON i.id=m.input_id WHERE i.locator=$1",
+        )
+        .bind(input.display().to_string())
+        .fetch_one(&w.reads)
+        .await
+        .unwrap();
+        assert_eq!(material_rows, expected_materials);
     }
 }

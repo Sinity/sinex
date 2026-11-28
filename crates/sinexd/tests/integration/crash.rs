@@ -944,6 +944,8 @@ async fn an_unparsed_stage_resumes_with_its_committed_material() {
         scalar(&mut conn, "SELECT count(*) FROM core.blob_extents").await,
         1
     );
+    std::fs::remove_file(&path).unwrap();
+    assert!(!path.exists());
     let blobs = sinex_store::Blobs::open(&target.store).unwrap();
     blobs.load(&mut conn).await.unwrap();
     assert_eq!(

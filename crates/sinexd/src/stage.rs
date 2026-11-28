@@ -508,7 +508,7 @@ impl Staging<'_> {
                 }
                 None
             };
-            let writing_material = unparsed.is_some();
+            let material = unparsed.as_ref().map(|unparsed| unparsed.id);
             if let Err(error) = self
                 .writer
                 .stage(StageWrite::Progress {
@@ -518,10 +518,22 @@ impl Staging<'_> {
                 })
                 .await
             {
-                if writing_material {
-                    // The write may have committed despite a failed response.
-                    // Resume from its saved inventory instead of finalizing here.
-                    return Err(error.into());
+                if let Some(material) = material {
+                    // A failed response can follow a commit. Finish using the
+                    // material named by durable progress, or leave it for resume
+                    // when the store cannot answer.
+                    let Ok(Some(saved)) =
+                        sinex_store::stages::show(self.read_conn, operation).await
+                    else {
+                        return Err(error.into());
+                    };
+                    progress.stored[index] = saved
+                        .inventory
+                        .inventory
+                        .files
+                        .iter()
+                        .any(|file| file.material == Some(material))
+                        .then_some(material);
                 }
                 failures.push(error.to_string());
                 break;
