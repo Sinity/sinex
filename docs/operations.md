@@ -150,10 +150,19 @@ Deleting an ordinary path changes the observations about that path. The
 material's own lifecycle governs removal of its retained bytes. A located
 file can become unavailable when its external copies disappear. Sinex's
 backup covers the retained observation and any bytes Sinex actually holds.
+For example, a file observation records its path and facts at the time of
+acquisition. If Sinex commits version A, finding version B later at that path
+produces a new observation. If the path is deleted, that records the absence
+while version A remains readable under its material's lifecycle. Archiving
+and tombstoning act on the retained material. A separately authorized move
+retires the original path only after Sinex has verified that it holds the
+bytes. Views can be written out on request.
+
 The default custody policy, eligible file families and rollout remain
-operator choices. A completed move leaves the old path empty. Views can be
-written out on request. Historical host capture files retain their exact
-bytes. See [materials](materials.md#the-material).
+operator choices. The ordinary capture path already retains admitted
+material independently of its source path. The managed-folder adoption
+workflow is target behaviour. Historical host capture files retain their
+exact bytes. See [materials](materials.md#the-material).
 
 ## Logical day
 
