@@ -4,7 +4,10 @@ Every computation from admitted evidence upward runs as a derivation: a declared
 
 ## Principles
 
-- **Every level is a stored event.** A derived event sits above its parents with exact parent links, so it is citable, archivable and derivable from, and the finest grain below it is kept ([the hierarchy](events.md#hierarchy)). There is no second analysis database, no separate result lifecycle and no "insights" stage. (ruling 2026-08-31, cc-queued:62b956ba-3ea3-4693-8d71-9a36321c37a9@2026-08-31T05:41:13Z).
+- **Published derivations are stored events.** A derived event cites its exact
+parents, can be archived, and provides evidence for further work. Core
+derivations and published application results share [the event lifecycle](lifecycle.md).
+Applications may keep rebuildable views of those events.
 - **Materialize when the inputs are admitted, not when someone asks.** A derivation computed on request names in its declaration why it cannot be maintained correctly as inputs arrive. (ruling 2026-06-27, cc-queued:1944721d-4531-41be-8093-13454b62ebd6@2026-06-27T17:03:47Z).
 - **Never make things up.** Unknown time stays unknown; missing coverage is never a measured zero; a time overlap does not establish ownership, authorship, causation or attention. There are no free-floating confidence numbers or scalar scores: a method states its evidence, denominator and measured precision instead. (ruling 2026-03-27, cc-queued:14ea730a-aa86-433a-9bba-8be973977d5c@2026-03-27T08:47:07Z).
 - **Labels need construct validity.** A derived label or detection ships only when its declaration says what it measures, from which structured fields, with which denominator, and what agreement evidence supports it. (ruling 2026-03-27, cc-queued:14ea730a-aa86-433a-9bba-8be973977d5c@2026-03-27T22:55:51Z).
@@ -46,7 +49,8 @@ maxima once, including archived and replaced outputs.
 - Keys dirtied by a lifecycle operation in progress recompute after its last batch.
 - A key that waits for evidence outside its inputs (an interval still open, a span whose end has not come) is a **waiting key**. A waiting key that names another key of its derivation as what wakes it recomputes when that key is dirty; the named key's mark clears only after the keys it woke were computed, so a stop in between wakes them again. A waiting key that names nothing recomputes whenever its derivation has a dirty key. Either recomputes once its refresh time has passed. A derivation with one waiting key per open run names what wakes them, because every pass would otherwise recompute every open run.
 
-The `analysis.products` derivation reads admitted `analysis.request` questions,
+The current in-daemon `analysis.products` derivation reads admitted
+`analysis.request` questions,
 selected daily figures and `source.coverage` observations. It stores panels,
 recipe answers, findings and daily context packs. An empty or not-estimable answer
 keeps its request as a parent. Questions reuse their identity; changed
@@ -55,9 +59,12 @@ read status per source binding and host, including failure reasons, alongside th
 declared intervals that overlap the question. A running process or a successful
 read without declared temporal bounds does not establish observed coverage.
 
-A figure or coverage observation dirties only the stored questions whose panel
-period it falls in; a question about another day stays clean. Interactive recall
-is a read at one commit position, not a derivation ([recall](recall.md)).
+The [analysis application](evidence.md) will own these questions and products.
+It must react to new evidence or coverage whose range overlaps a question,
+including previously missing evidence, and publish a replacement with its
+citations. The [public write contract](producers.md#application-writes) describes
+how it can replace a complete result. Interactive recall reads at one
+commit position ([recall](recall.md)).
 
 ## Declarations
 

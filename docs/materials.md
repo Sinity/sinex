@@ -21,7 +21,11 @@ I/O keeps the input available for retry.
 
 **Materials are source-shaped.** A material is a unit the source itself has: a file revision, a part of a growing file, a capture segment, an export member, a set of database rows. (ruling 2026-03-29, cc:ea2bf14e-10bb-42e9-9ff5-616882baaf1c:bbe835e2-4b30-498e-bc5b-d257f4d82323).
 
-- **Database rows, never database images.** A SQLite source is captured as rows; Sinex stores neither a whole database image nor periodic snapshots of one.
+- **Live databases are captured as rows.** Polls use a read transaction and
+  retain typed rows. An explicitly supplied SQLite file is an original input.
+  The staging target keeps that file as received and stores a rows part with
+  the readings' citations. The current staging path reads the rows, but keeping
+  the supplied image remains implementation work. See [imports](sources.md#imports-kept-as-received).
 - **Materials are large.** A growing input rotates into closed parts at a size or time bound declared per binding (default 100 MiB or one hour). A poll never makes its own material: a SQLite poller appends its rows to the binding's open part. One material per event is a defect.
 - **Imported originals are kept whole.** An export ZIP is one material, stored as received, with its members addressed inside it ([sources](sources.md)).
 - **A name is not identity.** Equal bytes may be several materials sharing one stored blob. The supplied name and declared type belong to the material, not to the bytes.
@@ -86,7 +90,7 @@ A source stores at least one material from which every event it emits can be re-
 
 - **Input**: something observed repeatedly, identified by binding, kind, locator and host. It outlives its readings.
 - **Observation**: one look that found a change. Unchanged looks advance a counter and the last-looked time only.
-- **Revision**: an input's content as of one observation (appended, rewritten, replaced, truncated, snapshot), chained per input. A revision's bytes are an ordered list of **extents** over immutable stored bytes, so an append costs only the new bytes. Older revisions stay readable forever, so "what did this file contain on Tuesday" has an answer.
+- **Revision**: an input's content as of one observation (appended, rewritten, replaced, truncated, snapshot), chained per input. A revision's bytes are an ordered list of **extents** over immutable stored bytes, so an append costs only the new bytes. Older retained revisions can answer what the input contained at a previous observation, subject to [the lifecycle](lifecycle.md#material-status).
 - **Events point into material parts,** never into a revision, so a later revision never moves a record offset.
 
 Each question is answered in one place, written once, in the transaction that learns it:
@@ -143,24 +147,30 @@ The step runs inside `sinexd admin upgrade` like any data step; a dry run of the
 
 ## Staging
 
-Everything enters Sinex by being **staged**: a generic element ingests it from a small configuration that names the parser, possibly autodetected. History and live input take the same path, and there is no second ingestion mechanism. (ruling 2026-10-27, cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:4d35819f-890c-4d5a-85cf-cd8ab46d62d7).
+**Staging** is the native acquisition path. It takes a declared binding or a
+one-shot input, chooses its driver and parser, and records what was acquired and
+admitted. Outside producers may instead supply their own materials and readings
+through [ingress](producers.md). They share the admission and material contracts.
 
 ```
-stage ──► acquire material ──► parse ──► admit
+native input ──► stage ──► acquire material ──► parse ──► admit
 ```
 
 ### Continuous bindings
 
-A continuous binding is a staged input declared in configuration: Sinex's own NixOS module, generated from the source's one declaration ([sources](sources.md)); a deployment sets only host values there. Enabling a source is configuration, not database state.
+A continuous binding is a staged input declared in deployment configuration
+from a [source declaration](sources.md). A binding resumes from its committed
+cursor. For a newly discovered input, the target distinguishes future activity
+from history already present at discovery. Existing history waits for an
+accepted [acquisition plan](operations.md#adopting-existing-files).
 
 ### One-shot staging
 
 **Decided target client surface:** `sinex stage PATH|URL|-…` uses the existing
 staging operation and inventory. `--parser NAME`, `--account NAME`, `--export-date
-DATE`, `--follow` and `--batch-events N` keep their meanings; `--parser library`
-selects media intake, and named sidecar parsers select library imports.
-`--reference` with `--root NAME` records library locations without retaining their
-bytes, under the library's explicit acquisition policy. URL staging retains
+DATE`, `--follow` and `--batch-events N` keep their meanings. Generic staging
+uses the declared acquisition policy for the input. Domain-specific media
+intake and sidecar import are owned by the [library application](library.md#adding-items). URL staging retains
 `--allow DOMAIN` (repeatable), redirect/subdomain validation, the source's network
 rules and `--pause S` per host. Reading a URL's history never fetches it. Web-fetch
 authority for agents remains an open operator question.
@@ -228,7 +238,12 @@ Live streams are always saved as material parts assembled as they arrive (the sp
 
 ### Re-staging identical content
 
-A re-stage of identical content is not imported twice, and it is still recorded. Byte-identical data staged again is a **new material**, not a replay; its records are suppressed against the live readings by their source record keys ([what admission does with a key](events.md#what-admission-does-with-a-key)). A one-shot file whose records have no identifying fields is keyed by its content digest and offset, so the re-stage is recognised whatever its path. (ruling 2025-06-12, cc:979c375c-989d-4b8a-8891-1541aaafe1d0:32f70e17-ab5f-4687-a6a3-ccff649985ae). (ruling 2026-05-30, cc:3c91049e-3702-4e99-be65-81620e1f7552:e73554d4-91ea-403d-ad9a-62f4d0bcf128).
+A new stage of byte-identical data records a new material and shares the
+existing bytes. A retry or continuation of one stage keeps its material
+identity. Replay retains the material and reads it again. Admission suppresses
+repeated readings by [record key](events.md#what-admission-does-with-a-key).
+A one-shot source without its own identifying fields uses the content digest
+and record offset, so a new path does not create a second occurrence.
 
 ### One-shot inputs finish
 

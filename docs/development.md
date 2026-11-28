@@ -6,13 +6,12 @@ rust-overlay input. Change the compiler version in common and both products
 together. Coverage uses that toolchain's LLVM tools; fuzz instrumentation
 uses its bundled sanitizer runtime.
 
-`cargo-nextest` comes from the pinned `devtools-nixpkgs` input because the
-primary nixpkgs snapshot predates devkit's minimum supported nextest. The
-project compiler and LLVM tools come from `rust-toolchain.toml`.
+The development shell gets `cargo-nextest` from its pinned nixpkgs input.
+The compiler and LLVM tools come from `rust-toolchain.toml`.
 
 | Command | Does |
 |---|---|
-| `cargo xtask check` | formatting, boundaries, workspace and reduced-capture Clippy against the schema database, including the fuzz harness |
+| `cargo xtask check` | formatting, boundaries and workspace Clippy for all targets against the schema database |
 | `cargo xtask compile -p <crate> [--tests]` | compile selected packages, preparing the schema database when needed |
 | `cargo xtask test -p <crate> -E 'test(<name>)'` | selected Rust tests under nextest |
 | `cargo xtask test` | every Rust test and bounded fuzz-corpus replay |

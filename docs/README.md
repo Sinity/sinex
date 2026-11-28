@@ -26,12 +26,12 @@ test.
 | [source-families.md](source-families.md) | every source family at full fidelity, and the catalog of sources |
 | [derivations.md](derivations.md) | the derivation model, fusion, intervals, documents and tags, model features |
 | [higher-layer.md](higher-layer.md) | presence, agency, activity, attention, project attribution, episodes and the resume card, figures, descriptions, packs and narratives |
-| [evidence.md](evidence.md) | personal evidence: constructs and metrics, figure cells, studies, experiments, forecasts and track records, places, money, retiring Lynchpin |
+| [evidence.md](evidence.md) | personal analysis application: constructs and metrics, figure cells, studies, experiments, forecasts and track records, places, money, retiring Lynchpin |
 | [query.md](query.md) | the query surface: tables, clocks and units, joins, paging, saved queries, kept results, citation forms, read, trace, related |
 | [recall.md](recall.md) | selections, the `recall` verb, recipes and packs, recall classes, lanes, notes, agent arrival |
 | [interfaces.md](interfaces.md) | the operation table and its transports, callers and powers, the CLI, MCP's three target tools, status, signals and the host deliverer, follow, latency budgets |
 | [web.md](web.md) | Today, the reader web, keys and counterparts |
-| [library.md](library.md) | the library: items with any locator, encounters, page captures, curation, rankings, the link to Polylogue |
+| [library.md](library.md) | media library application: items with any locator, encounters, page captures, curation, rankings, the link to Polylogue |
 | [operations.md](operations.md) | deployment, the NixOS and Home Manager modules, configuration, backup and restore |
 | [testing.md](testing.md) | the test database, the synthetic world, the properties tested, crash, VM and fuzz tests, benchmarks |
 | [development.md](development.md) | building, the dev shell, xtask, CI, the test database |

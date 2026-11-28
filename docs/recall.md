@@ -83,7 +83,10 @@ Text renderings start with a header naming the selection in plain words and the 
 
 A **recipe** is an ordered list of sections, each a named query over the derived layers with a render rule and a status rule. A **pack** is a recipe compiled for one selection under a budget: every line cited, every section's status stated, and what was left out counted with expand handles. Sinex stores a pack as the `context.pack` kind; the resume card, the moment overlay and the here card are boxed renderings of packs, and "card" names only such a rendering. The concept is the same as Polylogue's pack ([vocabulary](vocabulary.md)).
 
-The shipped recipes are `resume`, `moment`, `day`, `period`, `here`, `project`, `compare` and `today`, plus the evidence recipes `study` and `experiment` ([personal evidence](evidence.md)). Recipes are data; the operator and agents add their own.
+Core recipe designs are `resume`, `moment`, `day`, `period`, `here`,
+`project`, `compare` and `today`. The [analysis application](evidence.md)
+owns the study and experiment recipes. Recipes are data, and people and
+agents can add their own.
 
 - **Identity.** A pack's key is the recipe and its version, the canonical selection, settings, evidence identity and compiler version. Compiling the same evidence again returns the same pack.
 - **Lifecycle.** Packs are derived events and archive with their inputs. A pack for the current day is provisional until the day closes.
@@ -155,7 +158,9 @@ A **note** is an authored statement anchored in time or on events. It is the one
 - Links from an `at`-anchored note to what it was about arrive later as derived `reference.about` events, by source record keys and containing time.
 - `sinex notes` orders notes by noted time, newest first, with the ID as a stable tie-break; `sinex note:ID recall` recalls its moment.
 - A note is withdrawn by a withdrawal record, as every authored record is. A tripwire fires once per period its trigger holds, under the signals evaluator's rules. Notes are records about the substrate, never a second model of it, and they obey the [authored-record rules](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/authored/README.md).
-- Forms are declared data (`sinex forms` and `sinex form:NAME read`). Prompts for them are signal rules; none is sent until the operator decides which may be (default; open operator question). Personal evidence's forms are in [personal evidence](evidence.md#self-reports-and-intake).
+- Self-report forms belong to [personal analysis](evidence.md#self-reports-and-intake).
+  Sinex records their answers as authored evidence and delivers prompts only
+  when the operator has enabled their signal rules.
 
 ## Agent arrival
 

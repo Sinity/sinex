@@ -1,14 +1,12 @@
 # Sinex
 
-Sinex is a personal event substrate: it captures everything a person's
-digital life produces (shell and terminal history, window focus, D-Bus,
-input devices, browser history, mail, chat exports, media, audio, files, and
-the records of other programs such as Polylogue), keeps the original source
-bytes forever, and reads them into events that can be queried, derived from
-and cited. Above the captured events sit stored derived events at every level
-(sessions, episodes, figures, answers, findings, context packs), each with
-exact parents, so every result can be traced to the bytes it came from.
-Agents are primary users and get the same powers as the operator.
+Sinex captures a person's digital activity as source material and reads it
+into citable events. A material can retain the original bytes or record the
+facts about externally held bytes. Derived readings have exact parents, so a
+result can be traced back to its evidence. People and agents share interfaces.
+Credentials and grants authorize actions and reads, and Sinex records authorship
+separately. Media curation and personal analysis are separate applications in
+the [target architecture](docs/architecture.md#scope).
 
 This file explains how Sinex is designed and how work is done in this
 repository. Claude Code, Codex and any other agent read it; it holds the
@@ -41,9 +39,11 @@ concepts an agent needs before opening it.
   source-shaped bytes; a record is a datapoint inside it; a reading is the
   event one read of a record produced, and at most one reading of a record is
   live. See [materials](docs/materials.md) and [events](docs/events.md).
-- **Everything enters by being staged**, history and live input alike, and
-  live streams are saved as material as they arrive. See
-  [materials](docs/materials.md#staging) and [sources](docs/sources.md).
+- **Native inputs share staging.** Continuous capture and accepted historical
+  input share the acquisition, parsing and admission path. Outside producers
+  may supply their own materials and readings through ingress. See
+  [materials](docs/materials.md#staging), [sources](docs/sources.md) and
+  [producers](docs/producers.md).
 - **Events are hierarchical.** Derived events at every level are stored and
   citable, with exact parents, computed when their inputs are admitted. See
   [derivations](docs/derivations.md).
@@ -51,11 +51,12 @@ concepts an agent needs before opening it.
   (irreversible); whole chains move together and every act is an operation
   with its actor. See [lifecycle](docs/lifecycle.md).
 - **One admission path; NATS is integral.** Writes inside the daemon go to the
-  one admission function; writes from outside come through the NATS ingress,
-  and every committed event is published in commit order on the confirmed
-  stream. See [admission](docs/admission.md) and [producers](docs/producers.md).
-- **Privacy is configured by the operator and applied at output**, identically
-  on every surface; it never limits capture. See [privacy](docs/privacy.md).
+  one admission function. Outside producers send materials and readings through
+  NATS ingress. Client requests go through the public operation table. The
+  confirmed stream publishes committed references in commit order. See [admission](docs/admission.md) and [producers](docs/producers.md).
+- **Capture scope and disclosure are separate.** Output rules apply consistently
+  across reads. Sealing protects retained evidence at storage as well. See
+  [privacy](docs/privacy.md).
 - **One operation table drives every surface** (CLI, socket, HTTP, MCP). See
   [interfaces](docs/interfaces.md).
 

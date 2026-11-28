@@ -1,16 +1,18 @@
 # Sinex
 
-Sinex keeps a record of one person's digital life. It stores the
-original bytes of everything
- its sources produce (shell and terminal history,
-window focus, D-Bus, input devices, browser history, mail, chat exports,
-media, files, and the records of other programs such as
-[Polylogue](https://github.com/Sinity/polylogue)), reads those bytes into
-timestamped events, derives sessions, episodes, figures and answers from the
-events in stored layers, and answers questions about all of it. Every event
-points at the bytes it was read from or the events it was derived from, so
-any result can be traced back to its source and read again when a parser or
-rule changes. People and agents use it through the same commands.
+Sinex keeps a record of one person's digital life. It retains source
+material from shell and terminal history, the desktop, browsers, mail, chat
+exports, files and other programs such as
+[Polylogue](https://github.com/Sinity/polylogue). When a declared file policy
+keeps location facts alone, the recorded listing is the source material.
+Events cite the material they were read from or the events they were derived
+from. Sessions, periods of activity and figures can be traced back to that
+evidence and recomputed when a parser or rule changes. People and agents use
+the same commands under their credentials and grants.
+
+Media curation and personal analysis are designed as separate applications
+over Sinex's public interfaces. The current build still serves their existing
+commands through the daemon.
 
 ## Run it locally
 
@@ -67,8 +69,8 @@ sinex stages
 ```
 
 `sinex_read`, `sinex_write` and `sinex_act` share typed requests and answers,
-with access checked by the daemon. Domain designs, including future evidence,
-library and reader features, remain in their owning pages. See
+with access checked by the daemon. The [media library](docs/library.md) and [personal analysis](docs/evidence.md)
+own their domain surfaces. Sinex owns its [core reader](docs/web.md). See
 [the complete grammar and current-build distinction](docs/interfaces.md#cli).
 
 ## Read next

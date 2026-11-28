@@ -21,7 +21,12 @@ only when its underlying relation and observations exist.
 
 ## Capture by default
 
-`services.sinex.enable = true` captures every source whose canonical input exists on the host. There is no per-source enable option and no opt-in feature: a source that is built is on. (ruling 2025-06-27, cc:57547e40-5ef5-4e62-b089-a09820967865:e0902901-9329-4f3f-a320-461eca10109c). (ruling 2026-05-24, cc-queued:67eb2417-f1d1-4623-a652-ceb0e4c653e3@2026-05-24T10:09:42Z).
+`services.sinex.enable = true` enables discovery of implemented sources and
+automatic following of new activity at their eligible inputs. Earlier data
+found with a new input waits for the operator to accept its acquisition plan.
+An existing binding resumes its already accepted scope from its cursor
+after a gap. See [adopting existing files](operations.md#adopting-existing-files)
+for the target and the current implementation gap.
 
 **Discovery** finds applicable inputs at canonical locations: the host layout registry, XDG locations, each tool's own configuration and the configured accounts. A location names a root (home, XDG data or configuration, the runtime directory, an application's environment variable, a named root the host declares, the spool) and a path relative to it; where a source reads is never a per-source setting. It runs at start and during operation, so a new browser profile, mail folder, device, journal namespace or repository is captured when it appears, without a restart, and a passive notice names the new input. Existing roots expand by their provider's own rules (browser profiles, ledger includes, note attachments, archive members, git worktrees, device channels). There is no recursive search of the whole host; inputs are found where their programs put them.
 
@@ -29,23 +34,32 @@ Discovery gives every input one availability before any record is read: **captur
 
 **Discovery dry run**: the current `sinexctl sources-discover` (target `sinex inputs` and `sinex not-captured`) prints every input with its availability and reason, and the **unimplemented census**: catalog sources with no implementation whose provider's data exists on this host (a Firefox profile, a nushell history), found by checking only their canonical locations. How much of the catalog the host has becomes measurable, and source work can be ordered by what the host has.
 
-**Exclusion is the only per-source setting:** `exclude.<source> = { reason = "…"; }`, optionally narrowed to one input. Status lists every exclusion with its reason. No answer means everything; a subset needs a recorded reason. Content that should not be shown is handled by output rules in [privacy](privacy.md), which never limit capture.
+**Exclusion narrows capture scope:** `exclude.<source> = { reason = "…"; }`,
+optionally narrowed to one input. Status lists each exclusion and its reason.
+Typed source settings supply facts such as accounts, devices and declared roots.
+[Privacy](privacy.md) controls what can be read from captured evidence.
 
 **Unavailable is a state, never zero.** An unavailable credential, an unreadable path, a missing device or an inapplicable provider is shown as "awaiting credentials", "permission denied" (with the grant it needs), "not present" or "not applicable". None of these is out of scope, and none reads as an empty source.
 
-**What waits for the operator.** Only three things: a paid external API, a credential the host lacks, and capturing third parties in a way not done before. Until the operator answers, such a source spends nothing and shows "awaiting credentials" (default; open operator question). Capture breadth is otherwise never a question. (ruling 2026-10-27, cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:f1f39c29-7c7d-42e0-99ec-0c7a1b10b751).
+**What waits for the operator.** Existing history waits for plan acceptance.
+A paid external API, a missing credential and a new form of third-party capture
+also wait for the operator. Status names the specific reason, and the source
+makes no paid calls while it waits.
 
 **Volume is performance work.** No source has a daily cap on records, bytes, file size, history age, fields, attachments or text length. A stream that a host truly cannot admit may declare deterministic sampling of events only, with its raw capture kept whole ([streams](streams.md#sampling)).
 
 ## Staging is the entry
 
-Everything enters Sinex by being staged ([materials](materials.md#staging) defines staging). For sources this means:
+[Staging](materials.md#staging) covers native input. An [outside producer](producers.md)
+can acquire and parse at its own boundary. For native sources:
 
 - **Continuous bindings** are staged inputs generated from the source declarations; there is no second ingestion mechanism for them. `stage <path | directory | live database> [--parser NAME]` is the same act done once, as an operation and a run.
 - **Historical import and live sensing are one path.** A live source that restarts after a gap catches up by reading what accumulated.
 - **Staging without a parser keeps the bytes.** When no parser matches, or more than one does, the bytes are stored as material with no parser and the candidates are listed; nothing is guessed and nothing is refused. Status shows such material as stored, not interpreted, and [replay](lifecycle.md#replay) with `--parser NAME` reads it later.
 - **Live streams are staged as they arrive**, as material chunks in their spools, never only parsed in flight ([streams](streams.md)).
-- **No double import.** Re-staging identical content is suppressed by its content key. Re-importing byte-identical data as a deliberate new act creates a new material, not a replay.
+- **Storage sharing preserves acquisitions.** A new stage can share bytes with
+  an earlier material. A repeated source record is suppressed at admission,
+  and continuation keeps the existing stage. See [re-staging](materials.md#re-staging-identical-content).
 - **Replay is how stored data gets a new interpretation.** A changed parser replays the materials it reads; wiping the store is never the route for a parser change.
 
 ## One declaration per source

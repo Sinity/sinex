@@ -1,8 +1,15 @@
 # Personal evidence
 
-What Sinex computes about a life beyond "what was happening": figures over rest, body, intake, mood, money, places and work, each declaring the construct it stands for; usual ranges computed only from the past; studies of whether two things go together; randomized self-experiments; forecasts with a visible track record; and the rule by which Lynchpin's purposes are switched off one by one. The derivation model these products follow is in [derivations](derivations.md); presence, agency, attribution, episodes and the other descriptive products are in [the higher layer](higher-layer.md); notes and instruments are in [recall](recall.md#notes); coverage is in [sources](sources.md#completeness).
+What personal analysis computes from Sinex observations: figures over rest, body, intake, mood, money, places and work, each declaring the construct it stands for; usual ranges computed only from the past; studies of whether two things go together; randomized self-experiments; forecasts with a visible track record; and the rule by which Lynchpin's purposes are switched off one by one. The derivation model these products follow is in [derivations](derivations.md); presence, agency, attribution, episodes and the other descriptive products are in [the higher layer](higher-layer.md); notes and instruments are in [recall](recall.md#notes); coverage is in [sources](sources.md#completeness).
 
-Decided target (2026-11-01). Sinex already has the method core (`sinex-analysis`: cell states, findings with typed caveats, correlation with effective sample size, change points, trend, robust baseline, false-discovery control, binary Brier scoring) and the forecast kinds; the construct catalog, studies, experiments, method forecasters, places, money and the retirement ledger below are decided and not built. Personal evidence needs staged exports for its inputs ([staging](materials.md#staging)).
+Personal analysis is a separate application. It owns methods, constructs,
+study and experiment rules, forecasts and views. Sinex provides observations,
+coverage, provenance and [public reads and writes](producers.md#application-writes).
+Study results and forecasts published to Sinex remain citable readings. The
+current build has a method library (`sinex-analysis`), in-daemon analysis
+products and forecast commands. The construct catalog, studies, experiments,
+method forecasters, places, money and the retirement ledger describe target
+behaviour. Historical inputs enter through accepted [stages](materials.md#staging).
 
 ## Purpose
 
@@ -18,14 +25,14 @@ Five jobs:
 
 ## An example, on the synthetic world
 
-**Decided target, not built:** the example uses the selection-first surface.
+The example shows the target analysis application's selection and verbs.
 
 Iris's Today shows last night on the rest lane: `5 h 58 min asleep (band) · usual 6 h 30 – 7 h 40 (prior 28 nights, 25 observed)`, with a thinner bar for the phone app's session of the same night and the standing agreement between the two instruments (`bias −5 min, 95% of nights within −28 to +20 min, 180 paired nights`). Nothing calls the night poor.
 
 She asks whether late screen time goes with shorter sleep:
 
-```
-sinex study:late-screen note 'Does late screen time go with shorter sleep?' --as study \
+```text
+study:late-screen note 'Does late screen time go with shorter sleep?' --as study \
   --x 'activity.operator_seconds{hours 22-02}' --y rest.duration --lag 0
 ```
 
@@ -94,7 +101,9 @@ Self-reports are [notes](recall.md#notes) with an instrument value: instrument a
 - Ordinal scales are analysed with rank methods; a mean over an ordinal scale is refused unless the request asks for it, and then carries a caveat.
 - `intake.dose` normalizes each intake answer through a versioned substance table (configuration); an answer with unknown time keeps an unknown time.
 - `exposure.level` (role `modeled`) is a one-compartment model over doses with the table's absorption and half-life; doses with unknown time are excluded and counted, never placed at a default time, and every exposure figure carries the specification band across the table's half-life range.
-- Prompts for these instruments are signal rules, and none is sent until the operator decides which may be (open operator question). An experiment's own prompts are enabled by its start act and cover only its schedule (default; open operator question).
+- Prompts are signal rules. The operator enables individual self-report prompts.
+An experiment's start act is the proposed authorization for its own scheduled
+prompts.
 
 ### Studies
 
@@ -182,31 +191,31 @@ Rows whose purpose needs model calls are set aside while model features are off 
 
 ## Surfaces
 
-**Decided target (2026-11-18), not built.** Current generated help still exposes
-`analysis-*` and `forecast-*`. New domain capabilities below remain selected
-implementation work; an advertised refusal is not their completion.
+**Application surface target.** Current generated help exposes the daemon's
+`analysis-*` and `forecast-*` operations. These examples show application
+selections and verbs. Its executable and tool names are implementation choices.
 
-```sh
-sinex metrics
-sinex metric:rest.duration read
-sinex 'figures where metric in (rest.duration, activity.operator_seconds) since:90d | fill'
-sinex 'figures where since:90d | measure correlations'
-sinex study:late-screen note 'Does late screen time go with shorter sleep?' --as study \
+```text
+metrics
+metric:rest.duration read
+'figures where metric in (rest.duration, activity.operator_seconds) since:90d | fill'
+'figures where since:90d | measure correlations'
+study:late-screen note 'Does late screen time go with shorter sleep?' --as study \
   --x 'activity.operator_seconds{hours 22-02}' --y rest.duration --lag 0
-sinex study:late-screen read --view panel
-sinex study:late-screen recall
-sinex experiment:trial note 'Does the intervention change sleep?' --as experiment \
+study:late-screen read --view panel
+study:late-screen recall
+experiment:trial note 'Does the intervention change sleep?' --as experiment \
   --conditions 'A: intervention' --conditions 'B: control' --unit night \
   --assignment blocked:2 --washout 1 --length 40 --primary rest.duration:+15m --blinding coded
-sinex experiment:trial note 'protocol agreed' --as start
-sinex note 'The tests fail next week' --as forecast --p 0.35 \
+experiment:trial note 'protocol agreed' --as start
+note 'The tests fail next week' --as forecast --p 0.35 \
   --by 2030-01-14 --criteria 'A failed required check' --cutoff 2030-01-06
-sinex forecast:FORECAST_ID judge unknown --reason 'outcome not observed'
-sinex 'forecasts where backtest:true | measure track-record'
-sinex note 3 --as mood.valence
-sinex note complete --as intake.day
-sinex place:home note 'Home' --as place --center 52.23,21.01 --radius 75m
-sinex spending
+forecast:FORECAST_ID judge unknown --reason 'outcome not observed'
+'forecasts where backtest:true | measure track-record'
+note 3 --as mood.valence
+note complete --as intake.day
+place:home note 'Home' --as place --center 52.23,21.01 --radius 75m
+spending
 ```
 
 A forecast preserves its free-text target, probability, criteria, horizon,
@@ -228,11 +237,11 @@ the models described above. Experiment start retains its operator requirement.
 `not_estimable` is an answer state with a reason, not a fabricated number or an
 operation failure. Confirmatory status and role remain visible to agents.
 
-The three MCP tools use the same [typed requests](interfaces.md#mcp):
-`sinex_read` for queries, measures and packs, `sinex_write` for authored evidence,
-and `sinex_act` when an action reaches outside Sinex. Each declaration owns its
-required tool access; experiment operator restrictions apply independently.
-The evidence units and web designs remain part of the domain contract:
+The application exposes typed reads and writes using the shared request
+conventions. It applies method and experiment rules, and Sinex applies
+its [caller and evidence rules](interfaces.md#callers) when the application
+reads or writes Sinex observations. The units and web views below belong
+to the analysis application.
 
 | Unit | Rows | Notable fields |
 |---|---|---|

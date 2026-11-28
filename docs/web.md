@@ -5,8 +5,10 @@ query, browse and trace the substrate, with the keys and the counterparts that t
 Polylogue's web. The tokens, the page shell, shared keys, the
 palette and copy are the common
 [`web-shell`](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/web-shell/README.md);
-the operations every view calls are in [interfaces](interfaces.md), and the answers they
-render in [query](query.md) and [recall](recall.md).
+the operations every core view calls are in [interfaces](interfaces.md), and the
+answers they render in [query](query.md) and [recall](recall.md). The
+[library](library.md#surfaces) and [analysis](evidence.md#surfaces) applications
+own their own views. They may reuse the shell and link to core evidence.
 
 ## Technology
 
@@ -84,7 +86,7 @@ note returned: "check bench"     1 library comparison               typing time 
 | open loops | unfinished things gathered from episodes, failing checks with no later pass, waits, unanswered threads where the operator was addressed, tripwire notes; each with its evidence and a dismiss that is itself a recorded note. A recall section, not a queue to empty |
 | today | the day's lanes so far, with the coverage strip |
 | signals | passive notices not yet seen, from both products in primary mode, with an attention line (interruptions today, by whom, opened, dismissed at once) |
-| awaiting you | Sinex's review queue (`query:review`): duplicate pairs, library comparisons, judging proposals |
+| awaiting you | Sinex's review queue (`query:review`), with links to application-owned reviews such as library comparisons |
 | worth a look | lines chosen by declared selection rules, each naming its rule ([descriptions](higher-layer.md#descriptions-not-insights)); `query:resurface` items |
 
 - Today-so-far, a completed logical day, an as-of historical view and a current
@@ -124,8 +126,6 @@ Every view has a data contract: the operation it calls and what it must show. Ev
 | Search and object | the query box with completion and `read_as`; any object's full view ([read](query.md#read-trace-related)) |
 | Firehose | `follow` over all events or a saved scope at full detail, as server fragments over SSE with a resumable position |
 | Narratives | `narrative.period` products and the accumulating narrative corpus, with their citations |
-| Library | grid, item, reader, judge, collection and duplicates ([library](library.md#surfaces)) |
-| Evidence | figures, studies, experiments, forecasts, money and places ([personal evidence](evidence.md#surfaces)) |
 
 - A **coverage strip** under every timeline (Day, Trace, recall) shows each source's coverage for the visible span, so absence is visible where the eye already is.
 - In primary mode, Day and Timeline gain the AI lanes (agent sessions by live interval, prompts, notices) from Polylogue's kinds already in Sinex; **Add as lane** pins any query with times; a selection's second tab shows the AI work in that span through Polylogue; and `g o` goes to the matching place in Polylogue ([counterparts](#keys-and-counterparts)).

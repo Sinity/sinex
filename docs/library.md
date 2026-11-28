@@ -1,17 +1,29 @@
 # Media library
 
-The library is how the operator and agents keep, describe, organize, find, judge and use anything they have seen, saved or made, inside Sinex: files, web pages, documents, images, videos, books and tracks, and catalog objects such as a video or a paper. It covers items and their locators, encounters, copies, revisions and renditions, page captures, tags and properties, notes, collections, ratings, comparisons and rankings, the link to Polylogue's sessions, and exact opening. This page owns the library's model, and its features. Neighbouring pages own the mechanisms it rests on: [materials](materials.md) and [admission](admission.md) store and admit every library input; [the lifecycle](lifecycle.md) archives and tombstones them; [sources](sources.md) owns acquisition (scans, imports, page capture); [derivations](derivations.md) owns the runner that computes items and shown values; [the query surface](query.md) and [interfaces](interfaces.md) own the query language, the operation table and the CLI and MCP spelling of the library operations.
+The media library is a separate application over Sinex. It owns item identity,
+locators, copies and renditions, curation, rankings, browsing and exact opening.
+Sinex owns [source capture](sources.md), [materials](materials.md),
+[admission](admission.md), [provenance and lifecycle](lifecycle.md), and the
+[public interfaces](interfaces.md) the library uses to read and write.
+The current build still has library handlers, write jobs and derivations
+inside `sinexd`. Their public replacements are [target
+work](producers.md#application-writes).
 
 ## Purpose
 
-The library is Sinex's own workflow that makes other library applications dispensable. Importing another tool's files alone does not deliver it; adding, describing, organizing, finding, comparing and using media inside Sinex does. It is a general media library, not tied to any one tool. (ruling 2026-10-18, cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:afc6b7b2-5100-4255-8ace-7d6b09ec801e).
+The library lets people and agents add, describe, organize, find, compare and
+use media. Imports make evidence available for that workflow. Seeing an
+item's history, curation and verified copies is part of the workflow itself.
 
 The principles that shape every feature below:
 
 - **Exact bytes and acquisition context are kept.** Item identity, byte identity and evidence that two copies correspond are three separate things.
 - **Primary data is on disk as materials, and the library is rebuildable from them by replay.** (ruling 2026-06-04, cc-queued:6785a302-980f-4cd0-bc7c-b5e4b3f0f1e9@2026-06-04T16:15:54Z).
 - **Generated outputs are kept and reused, not regenerated.** (ruling 2026-06-09, cc-queued:70929a29-e133-4051-9646-34e8505cb67f@2026-06-09T12:21:22Z).
-- **The library is built from the same sources and derivations as the rest of Sinex**, and authored curation is Sinex's own authored input. There is no library service, database or plugin framework beside Sinex.
+- **The library uses the same evidence and admission contracts as other
+  applications.** Library code owns curation and result semantics. Sinex
+  stores the evidence, authored records and published derived readings. The
+  application can cache or index its views as rebuildable state.
 - **Rendering uses existing media tools; queries use the one query language and its paging.** Nothing truncates a valid selection.
 - **Missing content, uncertainty and conflicts are reported, never hidden.** A successful command or an imported catalog is not evidence of a useful library.
 - **Nothing expires.** There is no media tiering or retention: media is kept until the operator archives it.
@@ -53,10 +65,14 @@ time.
 
 ### Requests and authorship
 
-Every library change is a **request** of one or more acts (`library-curate`: tag, untag, reject, set, note, rate, collect, uncollect, move, judge, define_scale, define_property, define_tag, relate, dismiss, withdraw, undo). The daemon plans the acts against one snapshot of the live curation records, stores the planned records as the request's material, and admits them through the one writer with that material as their origin, like every other input ([admission](admission.md)).
+Every library change is a **request** of one or more acts (`library-curate`: tag, untag, reject, set, note, rate, collect, uncollect, move, judge, define_scale, define_property, define_tag, relate, dismiss, withdraw, undo). In the target architecture, the library plans acts from a fixed Sinex read
+context and submits the request material, records and expected revisions
+through the [public write contract](producers.md#application-writes). The
+current daemon plans and admits these requests internally.
 
 - Write *n* of a request of several writes gets the revision `<request>.<n>`; a request of one write uses the request ID. A request commits all its records or none.
-- Inside the admitting transaction the planned records are checked again against the stored ones, by the uniqueness keys and bases: every base still current, no other record holding a slot a record claims, every withdrawal target live. A request that fails is refused naming the record, and can be sent again. Requests from one daemon are planned one at a time.
+- Inside the admitting transaction the planned records are checked again against the stored ones, by the uniqueness keys and bases: every base still current, no other record holding a slot a record claims, every withdrawal target live. A stale plan is refused with the affected record or slot. The application
+can read again and plan a new request.
 - The caller may name the request ID and reuse it on retry: the same ID with the same content answers the original records without writing; the same ID with other content is refused.
 - The **author** of each record (the operator, an agent) and the channel are computed by the daemon from the caller and stored in the material's manifest, which the request parser reads; no request field names an author ([callers](interfaces.md#callers)).
 - A curation record cites its subject (an item, revision, rendition or part; a collection by its root) as a **typed reference in its payload**. It is never a derived event of the reading it describes or corrects, so replaying the subject does not break it; the reference resolves to the subject's new reading by its key.
@@ -377,7 +393,13 @@ Decided target (2026-11-01). Agents fetch pages, sessions mention URLs and files
 
 ## Agents
 
-Agents have every library power the operator has: add, import, open, preview, curate, judge. No library operation is operator-only, and every one is exposed over MCP; only the daemon-computed authorship differs, and with it the precedence of shown values. CLI, MCP and web compile the same typed request, so curation rules exist once ([interfaces](interfaces.md)). Responses return stable subject and action references, the state and revision used, progress and completeness where applicable, and structured conflict, unsupported and unavailable outcomes.
+People and agents use the same library operations, including adding items,
+opening and previewing copies, curation and judging. The application's CLI,
+MCP and web surfaces share its typed requests. Reads from Sinex use the
+caller's grants, and authored writes preserve the caller's attribution.
+The resulting author affects precedence of shown values. Responses return
+stable references, revisions, progress or completeness when applicable, and
+structured conflict, unsupported and unavailable outcomes.
 
 ## Sources, derivations and the lifecycle
 
@@ -390,30 +412,32 @@ Agents have every library power the operator has: add, import, open, preview, cu
 
 ## Surfaces
 
-**Decided target (2026-11-18), not built.** Library rows use the same selections,
-verbs and typed requests as other evidence. The current build retains its
-`sinexctl library-*` operations; generated help and tools describe those calls.
-Intake becomes `stage`, curation becomes authored verbs, ranking remains a read
-measure, and opening uses `read --to app`:
+**Application surface target.** The examples give the library's selection
+and verb shapes. Its executable and tool names are implementation choices.
+The current build retains `sinexctl library-*` operations. Generated help
+describes those calls.
 
-```sh
-sinex stage ~/Pictures --parser library
-sinex stage ~/exports/items.json --parser gallery-dl
-sinex stage https://example.org/paper --allow example.org --pause 2
-sinex 'items where tag:place:norway' tag mood:calm --all
-sinex item:ITEM_ID tag status:reading
-sinex item:ITEM_ID tag caption --empty
-sinex item:ITEM_ID note 'check the original colour' --part page:2
-sinex item:ITEM_ID judge 4 --on stars
-sinex 'item:FIRST,item:SECOND' judge item:FIRST --on quality
-sinex 'items where in:collection:wallpapers | measure ranking quality'
-sinex 'items where tag:place:norway' pick save collection:wallpapers
-sinex entry:ENTRY_ID save collection:wallpapers --after entry:OTHER_ID
-sinex item:ITEM_ID read --view compare --blind --seed 17
-sinex item:ITEM_ID read --to app
-sinex item:ITEM_ID resume
-sinex scale:quality note 'Which is better made?' --as scale --range 0..5
-sinex collection:wallpapers note 'Wallpapers' --as collection
+The application uses Sinex staging for generic acquisition. Its domain
+operations include curation, ranking and exact opening.
+
+```text
+stage ~/Pictures --parser library
+stage ~/exports/items.json --parser gallery-dl
+stage https://example.org/paper --allow example.org --pause 2
+'items where tag:place:norway' tag mood:calm --all
+item:ITEM_ID tag status:reading
+item:ITEM_ID tag caption --empty
+item:ITEM_ID note 'check the original colour' --part page:2
+item:ITEM_ID judge 4 --on stars
+'item:FIRST,item:SECOND' judge item:FIRST --on quality
+'items where in:collection:wallpapers | measure ranking quality'
+'items where tag:place:norway' pick save collection:wallpapers
+entry:ENTRY_ID save collection:wallpapers --after entry:OTHER_ID
+item:ITEM_ID read --view compare --blind --seed 17
+item:ITEM_ID read --to app
+item:ITEM_ID resume
+scale:quality note 'Which is better made?' --as scale --range 0..5
+collection:wallpapers note 'Wallpapers' --as collection
 ```
 
 `tag NAME:VALUE` sets a declared property; `--remove` withdraws a tag and `--empty`
@@ -434,11 +458,10 @@ exact rendition/part and last recorded position; a view is recorded only after
 actual display. `note '' --as view --seconds N --player P` preserves an external
 view report without invented text.
 
-MCP has three target tools: reads and rankings through `sinex_read`, authored
-curation and staging local paths/text through `sinex_write`, URL staging and
-host application opening through `sinex_act`. Their [typed line contract](interfaces.md#mcp) supplies ordered
-references, caller metadata, access validation and retry. No separate
-library-specific request schema or reconstruction path is introduced.
+The library's typed operations reuse the [selection and caller
+contract](interfaces.md#mcp). Underlying Sinex reads and writes are authenticated.
+The library owns its ranking, curation and opening actions, including which
+application requests are exposed through MCP.
 
 | Unit | Rows |
 |---|---|
@@ -446,7 +469,7 @@ library-specific request schema or reconstruction path is introduced.
 | `copies`, `encounters`, `captures` | copies, encounters and captures with their grades |
 | `curation`, `collections`, `entries`, `comparisons`, `scales`, `tags` | curation records and their views |
 
-Curation predicates: `tag:x`, `tag_direct:x`, `tag_by:(operator|agent|import)`, `prop(name) = v`, `rating(scale) >= 4`, `rank(scale) <= 10` with `judges:`, `conflict:any`, `value_state(prop) = unknown|empty|conflict|withheld`. Relations: `encountered_by:ACTOR`, `encountered during(Q)`, `corresponds(rel, REF)`, `captured: during|after|archive|none`. Bare words search titles, tags, notes and extracted content, and hits carry their rendition and selector, so `sinex @1 read --to app` lands at the hit. References: `sinex:item/<id>[@<rev>][#selector]`, `sinex:collection/<id>[@<rev>]`, `sinex:scale/<name>`, `sinex:content/<blake3>`, `sinex:curation/<root>@<rev>`; a pasted URL resolves to its item through the canonicalizer.
+Curation predicates: `tag:x`, `tag_direct:x`, `tag_by:(operator|agent|import)`, `prop(name) = v`, `rating(scale) >= 4`, `rank(scale) <= 10` with `judges:`, `conflict:any`, `value_state(prop) = unknown|empty|conflict|withheld`. Relations: `encountered_by:ACTOR`, `encountered during(Q)`, `corresponds(rel, REF)`, `captured: during|after|archive|none`. Bare words search titles, tags, notes and extracted content, and hits carry their rendition and selector, so the application's opener can land at the hit. References: `sinex:item/<id>[@<rev>][#selector]`, `sinex:collection/<id>[@<rev>]`, `sinex:scale/<name>`, `sinex:content/<blake3>`, `sinex:curation/<root>@<rev>`; a pasted URL resolves to its item through the canonicalizer.
 
 Web views come from common `web-shell` and print the CLI and MCP call that reproduces them: the **grid** over any `items` query (`/q?q=…&layout=grid`, thumbnails loaded only for visible tiles, video tiles scrubbing sprite sheets, audio only on explicit request, facets including the origin of shown values); the **item** page (preview, values with level and supporting records, the encounter strip, captures with grades, copies and availability, correspondences, collections, *In AI sessions*, notes, history); the **reader** (`/item/<id>/read`); **judge** (`/judge?q=…&scale=…`, two-up or up to six-up with the scale's question on top, `←`/`→` or `1`–`6`, `=` tie, `s` skip, `u` undo, `b` blind, the ranking panel updating after each comparison); **collection** and **duplicates**.
 
@@ -455,7 +478,10 @@ Web views come from common `web-shell` and print the CLI and MCP call that repro
 The library is private. (ruling 2026-10-11, cc-queued:56c7f026-fd50-4480-b484-72f1299a534c@2026-10-11T17:33:01Z). Library content stays out of public artifacts, and test fixtures are synthetic.
 
 - Library kinds declare [field hints](privacy.md#field-hints): `path` on copy paths, `free_text` on notes and descriptions, `caption` on captions, `person` on face labels, `url` on site URLs, `media` on renditions.
-- No library field is hidden by default. When the operator configures rules, the one output transform ([output parity](privacy.md#output-parity)) applies to every library read: items, shown values, search, previews, thumbnails, cached handoffs and old references.
+- Library reads preserve [Sinex's disclosure rules](privacy.md#output-parity).
+  Items, shown values, search, previews, thumbnails, cached handoffs and old
+  references respect the caller's current access. A cache is scoped to what
+  its reader may see.
 
 ## Performance
 

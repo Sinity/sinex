@@ -192,7 +192,11 @@ NixOS VM tests boot the shipped modules
 
 Run `cargo xtask vm --output DIR`, optionally repeating `--scenario NAME`, on committed source so Nix and the run record use the same input. The runner attempts every selected scenario and preserves original build logs plus `results.json`.
 
-The Rust suite run outside Nix tests GNU tar restoration of sparse files, file names as stored, extended attributes and access ACLs. The Nix package check excludes only that setter-dependent restoration test because the builder's syscall filter prevents setting xattrs and ACLs; those assertions remain enabled outside Nix. Its existing peak-RSS test also runs under nextest outside Nix, which gives it the separate process required by its measurement. Package checks do not replace the suite run outside Nix.
+The Rust suite tests GNU tar restoration of sparse files, file names,
+extended attributes and access ACLs. Nextest runs the peak-RSS test in a
+separate process. The Nix runtime package builds the binaries with package
+tests disabled. The required `check` and `test` jobs and the VM checks
+provide the corresponding verification.
 
 ## Fuzzing
 

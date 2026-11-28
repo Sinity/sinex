@@ -70,7 +70,7 @@ cache = "none"
 unit_properties = ["MemoryHigh=8G"]
 
 [operations.package]
-description = "Build the Nix package (runs the tests that need no database inside the builder)"
+description = "Build the Nix runtime package. Required checks and tests run separately."
 exec = ["nix", "build", "--no-link", ".#default", "--print-build-logs", "--max-jobs", "1"]
 pool = "bulk"
 result = "exit"

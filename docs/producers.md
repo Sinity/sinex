@@ -4,9 +4,14 @@ This page is the public contract for any program outside the Sinex daemon that w
 
 ## The ingress
 
-**Writes inside the daemon go straight to admission; writes from outside come through NATS.** The daemon's own sources, derivations, replay, lifecycle operations and API requests call the one admission function directly. Everything else (Polylogue, `sinex-session`, `sinex-capture`, an outside derivation, any program in any language) sends frames to the NATS ingress, and Sinex admits them through the same function. Every committed change is then published, in commit order, to [the confirmed stream](#the-confirmed-stream). (ruling 2026-10-27, cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:bb282e5a-2cb6-49e9-abf8-62afd8f19287).
-
-**NATS is integral.** Without it there are no outside producers, no frame acknowledgments, no confirmed stream and no language-neutral way to derive from Sinex. PostgreSQL stays the store of record, every position included; NATS is the delivery path to and from everything outside the daemon. (ruling 2026-10-18, cc:ee52794c-8a9e-43b6-9fbc-9749c7e78e8f:be2768ea-de74-48a0-8c8d-26a318191069).
+**One admission owner serves in-daemon writes and producer frames.** Native
+sources, core derivations and [typed client requests](interfaces.md) submit
+through the daemon. Outside producers use NATS to deliver their own materials
+and readings and receive durable admission receipts. The daemon publishes
+committed changes in order on [the confirmed stream](#the-confirmed-stream).
+NATS provides the producer queue and the outside change feed. PostgreSQL records
+Sinex's committed progress, and outside consumers record the progress they
+have applied.
 
 The daemon binds its public API socket after NATS acknowledges all producer request subscriptions on that connection. This startup boundary lets a client issue its first producer RPC immediately after the new socket becomes available, including after a daemon restart. Subscription startup failures propagate through daemon supervision.
 
@@ -46,7 +51,7 @@ Producer positions and unacknowledged journals use the same encoding and one syn
 - **Each frame has one saved identity and immutable contents.** A producer prepares a write, saves it, and only then sends it. A retry reuses the identity and the contents; a later write gets a new identity even when its contents are equal.
 - **A redelivered or resent frame gets its recorded outcome** and is never admitted twice. Sinex records each frame's outcome in the transaction that admits it, so the answer to a resend after any crash or outage is the original answer.
 - **Material digests deduplicate bytes**: the same bytes sent twice are stored once; whether they make one material or two follows [materials](materials.md).
-- **Reading order** for a stable key is assigned or checked by Sinex and never taken from a producer's clock ([reading order](events.md#identity)). A frame may offer `reading_order: null` for writer assignment. In the admission transaction, each `(source, kind, record key)` advances an order counter; retrying the same acknowledged frame returns its saved result without advancing it. An explicit integer keeps the source's reading order and raises the counter to it when higher. Every frame records each offered key's counter in its admission transaction, so once a source and kind has any counter, its counters hold the order of every reading of that pair, and a key without a counter is new: it starts from no order without reading event history. Only the first frame of a source and kind seeds its missing counters from per-key maxima across all stored versions, including archived readings, in one pass over that pair's stored metadata shared across equivalence keys and record locations.
+- **Reading order** for a stable key is assigned or checked by Sinex and never taken from a producer's clock ([reading order](events.md#identity)). A frame may offer `reading_order: null` for writer assignment. In the admission transaction, each `(source, kind, record key)` advances an order counter; retrying the same acknowledged frame returns its saved result without advancing it. An explicit integer keeps the source's reading order and raises the counter to it when higher. Each counter must cover the history of its own key, including archived readings. With no counter for an offered key, Sinex must establish that key's prior order before treating it as new. The current implementation seeds only keys offered in the first counter-bearing frame of each source and kind. Completing historical order for later offered keys is implementation work.
 
 ### Producer identity and credentials
 
@@ -157,6 +162,39 @@ It then behaves as follows:
 - **A filter or version change** requires an explicit start decision, with the resulting lag visible in status.
 - **An irrecoverable position** (one whose history is unavailable) stops the handler with a named gap; it never silently starts from now.
 - **Lag and failures** of every outside consumer appear in [status](interfaces.md#status).
+
+### Application writes
+
+The current ingress registers kinds and materials, admits frames of readings
+with parent citations, and records frame receipts. Frame retry by itself cannot
+replace a complete keyed result or prove that a read used to plan a write is
+still current. Core derivations use a separate, in-daemon batch for that
+purpose. Its availability in the daemon does not make it a public capability.
+
+The target public contract uses the existing admission and operation owners.
+An application reads a fixed context and submits its input references and
+selected scope, the expected current records or slots, and an operation
+identity. Preconditions can express absence as well as an expected revision.
+The read boundary and scope must cover new qualifying inputs as well as
+changes to the records returned. A
+keyed replacement also supplies its producer namespace, version, key and
+complete output set, including an empty set. Sinex checks preconditions and
+input changes relevant to the offered scope at admission. When accepted, it
+commits outputs, retires superseded memberships, and records the receipt with
+the write. If it applies a very large replacement in batches, it keeps the
+key pending through intermediate commits and reports only actual progress.
+A change outside the relevant scope leaves the submission valid. A stale
+submission receives a conflict and can read again. An identical retry gets
+its original receipt, and different content using the same operation identity
+is refused.
+
+Application code decides its domain rules and evidence. Sinex owns authority,
+provenance, atomic precondition checks and retry. This lets an application
+publish a changed result even when its new computation yields no outputs,
+and keeps concurrent curation requests from overwriting one another. These
+public writes are target work. Their implementation belongs in the generic
+operation and producer interfaces, without application-specific writer jobs,
+dispatch handlers or daemon-loaded application code.
 
 ## Kind registration
 

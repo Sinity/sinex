@@ -96,14 +96,13 @@ through its registered bindings.
 | `saved` | one saved query definition and name |
 | `result:<id>` | a kept result, read as a relation |
 
-Further units belong to the pages that own their concepts: `packs`, `notes`, `lanes` and
-`forms` ([recall](recall.md)); `items`, `copies`, `encounters`, `captures`,
-`curation`, `collections`, `entries`, `comparisons`, `scales` and `tags`
-([library](library.md#surfaces)); `figures`, `metrics`, `constructs`, `studies`,
-`findings`, `forecasts`, `places`, `visits` and `intakes`
-([personal evidence](evidence.md#surfaces)); `watches`, `deliveries` and `prompts`
-([signals](interfaces.md#signals)). Every event row carries `recall_class` (its kind's
-[recall class](recall.md#recall-classes)) and `host`; act and span rows carry `agency`.
+Core units include `packs`, `notes` and `lanes` ([recall](recall.md)),
+and `watches`, `deliveries` and `prompts` ([signals](interfaces.md#signals)).
+Applications own their domain units and measures. Their inputs and published
+readings are available through declared kinds and ordinary queries. The
+[library](library.md#surfaces) and [analysis](evidence.md#surfaces) pages
+describe their views. Every event row carries `recall_class` and `host`.
+Act and span rows carry `agency`.
 
 Sinex's catalog extensions (decided target): `holding at T` and `holding during W`
 select interval rows whose span contains T or overlaps W, served by the span index (the
@@ -285,10 +284,17 @@ keep their original position.
   grouped results retain their complete group identity even when fields hide a key.
   The seal key belongs to the database and is unavailable through public read-only SQL.
   Paging Open records works while sealed payload classes are locked.
-- Event continuations retain their selected commit position, declarations and current
-  tombstone count. Mutable metadata also carries an atomic metadata epoch;
-  a run finishing invalidates its old metadata view without scanning prior result rows.
-  Stored recall continuations cite one immutable pack and a row coordinate in that pack.
+- A continuation retains the event position, query clock, declarations and
+  every dependency that affected the first result, including projections or
+  mutable metadata reached through a join, predicate or ranking. Reopen
+  the same dependency versions where supported. If a required version has
+  changed and cannot be reopened, report `stale_cursor` before returning rows
+  at a different version. An unrelated change leaves the cursor usable.
+  A tombstone or a grant change can invalidate a cursor even at a fixed
+  event position. Stored recall continuations cite one immutable pack and a
+  row coordinate. The current event cursor pins the event position and
+  checks tombstones, but does not yet cover every projection and joined
+  metadata dependency.
 
 - **Four budgets stay apart:**
 

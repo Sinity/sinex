@@ -75,11 +75,18 @@ The module keeps PostgreSQL's stock memory and checkpoint defaults and sets `log
 
 Each binary loads one typed configuration ([how it is read](architecture.md#configuration-and-clocks)). The NixOS and Home Manager modules write that file and set those variables; a deployment without Nix sets them directly. Current flags are described by `sinexd run --help` and Nix options by the [module declarations](../nix/module.nix).
 
-The NixOS module writes daemon settings to `/etc/sinex/sources.json`, including `services.sinex.stagingRoots`, which limits agent staging. Session and capture-node producers receive `/etc/sinex/session-sources.json` and `/etc/sinex/capture-sources.json`: source settings, exclusions and discovery inputs, with their own spool and watch paths. Staging decisions stay with the daemon. Agent library additions and sidecar imports use the same declared source locations and staging roots; the operator may select any readable path.
+The NixOS module writes daemon settings to `/etc/sinex/sources.json`, including `services.sinex.stagingRoots`, which limits agent staging. Session and capture-node producers receive `/etc/sinex/session-sources.json` and `/etc/sinex/capture-sources.json`: source settings, exclusions and discovery inputs, with their own spool and watch paths. The daemon checks generic staging roots. The current daemon's library additions
+and sidecar imports use those roots as well, and the operator may select any
+readable path. The separate library application will use the public staging
+and producer boundaries.
 
 **What deployment configuration holds:** the logical day, the API's listen address and authentication, desktop notifications and the optional away command ([signals](interfaces.md#the-host-deliverer)), the database and NATS endpoints, the content store location, this host's name, and per-user facts such as account names on each service. Settings any author may change at run time (quiet hours, the interrupt budget, briefing switches) are the changeable catalog of [architecture.md](architecture.md#configuration-and-clocks), not deployment configuration.
 
-The session and capture binaries take one snapshot of their process environment for discovery. XDG directories, the session socket and desktop notification availability come from that snapshot. The daemon resolves its library cache at startup as `XDG_CACHE_HOME/sinex/library`, or `HOME/.cache/sinex/library` when XDG cache is unset; neither variable being set is a startup error. `SINEX_CLASS_KEY_FILE` supplies the optional public age recipient, parsed once at startup and passed to material writes.
+The session and capture binaries take one snapshot of their process environment for discovery. XDG directories, the session socket and desktop notification availability come from that snapshot. The current daemon resolves its library cache at startup as
+`XDG_CACHE_HOME/sinex/library`, or `HOME/.cache/sinex/library` when XDG cache is
+unset. Cache setup moves with the library application. The current
+`SINEX_CLASS_KEY_FILE` supplies the optional public age recipient for material
+writes.
 
 ### Listen address and authentication
 
@@ -127,6 +134,24 @@ services.sinex.captureNode = { enable = true; nats = "<sinex host>:4222"; keyFil
 - The deployment's private network must let each capture host reach the Sinex host's NATS port, and nothing more is needed for capture.
 - A capture node only uploads over the link. The current mode in which a satellite mounts `sinexd`'s content store, and its `upload` flag, go: a capture host is never coupled to Sinex's storage layout or group IDs.
 - Whether a backup copy is kept off the Sinex host is the deployment's choice ([backup and restore](#backup-and-restore)).
+
+## Adopting existing files
+
+Discovery follows new activity and presents existing history with a plan
+before taking its bytes. The plan identifies the inputs, which bytes Sinex
+would hold, the read and space cost, and which originals stay in place. Until
+the operator accepts it, the discovered backlog remains visible and unread.
+An already accepted input resumes from its committed position. The current
+build has paths that read existing history on discovery. The acceptance
+boundary is target behaviour.
+
+An acquired input can leave a retained material, or a retained observation of
+a file held elsewhere. A located file can move or disappear independently of
+Sinex, and Sinex's backup covers the observation and any other bytes Sinex
+actually holds. File families that should be held, and what deleting inside a
+managed folder should do, remain operator choices. A completed move leaves the
+old path empty. Views can be written out on request. Historical host capture
+files retain their exact bytes. See [materials](materials.md#the-material).
 
 ## Logical day
 

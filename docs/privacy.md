@@ -4,12 +4,23 @@ Privacy in Sinex is an optional output feature the operator configures: field hi
 
 ## Stance
 
-- **Privacy never limits capture.** Captured bytes and stored payloads are exact and are never rewritten for privacy. "Never this input" is a recorded source or input exclusion ([sources](sources.md)); everything else is an output rule.
-- **With no operator configuration, every output is complete and unaltered for every caller.** No rule, class, detector or minimum is active by default, and no secret, credential, personal-data or content category is detected or hidden unless the operator configures it. There is no built-in censoring and no credential masking: a secret in history that matters is edited out of its source by the operator, or by an agent he asks, as an exceptional act rather than a system.
-- **Rules act at output, not at admission.** Stored payloads stay raw, so a rule change takes effect at the next read with nothing to reclassify, replay or rewrite. Sealing is the one action applied when a reading is stored ([sealing](#sealing)).
-- **Confidentiality comes from the deployment**: one machine, the service user, file permissions and authenticated services.
-- **Sending data to model providers or archive APIs is acceptable**; privacy is no reason to leave a feature unused. (ruling 2026-08-12, cc:049c6f6c-9252-44c7-a0b2-3a585f63b686:891f917e-080f-4506-835b-5f8eaa94e456).
-- **Privacy is low priority** next to capture, storage and performance. (ruling 2026-06-15, cc:1cb95099-0044-4613-97e1-1bac25f8077a:6a77d81c-0e0f-47fa-9e60-715826cd3e6f).
+- **Capture scope and output policy are separate.** A recorded source or input
+  exclusion defines what to capture. Ordinary output rules change what the
+  caller sees while preserving the stored evidence. [Sealing](#sealing) is
+  the storage action that protects chosen evidence.
+- **Output rules are opt-in.** With no effective rule or access restriction,
+  a caller sees the complete answer. Hints and detector declarations have no
+  effect until a rule uses them.
+- **Current build.** The daemon still has source classes, credential grants,
+  admission-time payload rewriting and a whole-material sealing path. Output
+  rules and per-value sealing are target work. Removing rewriting must
+  preserve effective access until the operator chooses different defaults.
+  Agent access to guarded sources and distribution of the operator token
+  remain open decisions.
+- **Credential and store access come from the deployment.** The service user,
+  file permissions and authenticated services define who can read tokens or
+  reach storage directly. A field rule controls Sinex output, while the
+  deployment controls access to the original source outside Sinex.
 
 ## Surface
 
@@ -26,14 +37,10 @@ sinex e:EVENT_SUFFIX read --view privacy
 sinex rule:card-numbers withdraw
 ```
 
-Adding protection and weakening it are distinct permissions. The proposed
-operator default allows agents to add rules or raise a class; ending a rule or
-lowering a class stays with the operator (open operator question). Same-user
-readability of an operator token is a separate unresolved boundary. These target
-examples change no live grants. `status` lists non-operator changes and readings
-below their configured class; explicit replay can reclassify them. Current
-`sinexctl privacy-*` help describes the deployed command forms. Credential roles
-and tool access are checked independently as [interfaces](interfaces.md#mcp) specifies.
+Agents may add a rule or raise a class floor. Ending a rule or lowering a
+floor uses the operator credential. Status lists non-operator changes.
+Current `sinexctl privacy-*` help describes shipped commands. The
+[caller contract](interfaces.md#callers) defines access and authorship.
 
 ## Field hints
 
@@ -78,7 +85,7 @@ Each detector has a version; an edit is a new version.
 
 ## Rules, classes, grants and actions
 
-**Rules are database rows the operator (or anyone) writes, not code.** (ruling 2026-06-01, codex:019e7fe3-c012-7a50-a128-cb9f3ba376d4@2026-06-01T02:23Z).
+Authorized callers write versioned rule rows.
 
 ### Rules
 
@@ -90,9 +97,11 @@ A rule is an insert-only, versioned row with author and time:
 | condition | optional: which detector hits must be present on the field |
 | outcome | a class, or a direct action |
 
-- **A rule applies from any author.** Agents write rules with the same commands as the operator, and a rule takes effect when written, whoever wrote it. Authorship, computed by the daemon, is recorded on every version.
+- **A committed rule applies at the next read.** The daemon records the
+  computed author on every version and applies the permissions described in
+  [Surface](#surface) to the request.
 - `status` and `privacy rules` list rules written or changed by anyone but the operator as non-operator changes until he next looks.
-- **Nothing ships enabled**: with no rule written, nothing is withheld. Rules are opt-in.
+- **Rules are opt-in.** The deployment's grants also govern access.
 
 ### Actions
 
@@ -103,7 +112,10 @@ A rule is an insert-only, versioned row with author and time:
 | `withhold` | the field is absent, with a marker saying it was withheld |
 | `seal` | the value is stored encrypted ([sealing](#sealing)) |
 
-A query alias shows the same withheld marker in each promoted payload field. Filtering and sorting still use the typed value, so withholding does not turn the marker into searchable text.
+A query alias shows the same withheld marker in each promoted payload field.
+Selection, ordering, grouping, ranking, totals and snippets must respect the
+values visible under the caller's grants. A caller cannot recover a protected
+value through predicates or counts.
 
 ### Classes
 
@@ -111,7 +123,9 @@ A class is a named outcome the operator defines: an action plus the grants that 
 
 ### Grants
 
-**Grants belong to tokens** and are configured by the operator. A new token starts with every grant. No rule names "agent" as a category and no output is refused because the caller is an agent: a token's grants decide, the same way for every caller ([callers](interfaces.md)).
+**Grants belong to credentials.** The operator configures them and the same
+rules apply to every caller holding those grants. Provisioning and current
+access levels are described under [callers](interfaces.md#callers).
 
 ### Evaluation
 
@@ -144,18 +158,36 @@ The SQL reader role receives the public event views and explicit registry and co
 
 ### Keys
 
-- Admission encrypts the selected values under the **material's data key**. The data key is wrapped by an **age class key**, whose public half lets capture continue while Sinex is locked.
-- **A key never spans materials**, and unrelated records and fields in the same material stay open: sealing one value never seals another alongside it.
-- The class key's secret is held by the operator (a YubiKey or a passphrase file); Sinex never stores it. Unlock is a time-limited, revocable act by the key holder.
-- Blob names, source record keys and record hashes derived from sealed content are keyed, so plaintext names never reveal sealed data.
-- The wrapped-key table is backed up separately from the stores it unlocks ([backup](operations.md)).
+- Admission encrypts selected values with data keys wrapped by an age class
+  key. Its public half lets capture continue while Sinex is locked. A data
+  key never spans materials. The operator holds the private key. Unlock is
+  time-limited and revocable.
+- Blob names, source record keys and record hashes derived from protected
+  plaintext are keyed. Key comparison across independently sealed domains
+  remains an operator decision.
+- The wrapped-key table is backed up separately from the stores it unlocks
+  ([backup](operations.md#backup-and-restore)).
 
 ### When sealing applies
 
-- **Sealing is applied when a reading is stored.** A later sealing rule reaches older readings by replay, after which the old readings can be archived and tombstoned. While the material stays open, the plaintext remains in its bytes, and status says so.
-- **Material bytes are stored sealed only when every record in the material is sealed.** A material that also holds open records stays open.
-- Per-source sealing is a rule whose selector is a source; there is no separate per-source mode. Producer materials (Polylogue's) follow the same rule action.
-- **Replay of sealed records while locked** is deferred and listed, not failed.
+- Sealing protects both the admitted value and every route to its retained
+  source bytes. An authorized read or replay reconstructs the exact original
+  byte stream. For a format whose parts can be reconstructed separately,
+  access to an unrelated part can stay open. When the encoding requires an
+  indivisible extent or original material to recover a selected value, that
+  extent or material is the minimum protected raw unit. Report that granularity
+  and keep unrelated values available where their bytes can be served safely.
+- Raw range reads, shared-store descriptors, search, indexes, ordinary exports
+  and producer fetches enforce the same boundary. A span crossing protected
+  bytes can be read only with authorization for those bytes.
+- A later rule reaches previously retained readings and materials through
+  migration or replay. Status shows any plaintext still present in retained
+  originals or older readings. The change reports known older backup copies
+  separately. An encrypted replacement alone does not establish that the old
+  plaintext is gone.
+- A source selector uses the same rule as a field or record selector.
+  Producer materials follow the same contract. Replay requiring a key while
+  locked waits for unlock and reports that state.
 
 ### Tombstoning sealed data
 

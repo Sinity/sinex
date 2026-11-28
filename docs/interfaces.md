@@ -21,8 +21,9 @@ function are common
 - **One entry point for questions.** The query is the entry point; a new capability
   arrives as a table, an alias, a stage or a verb on rows, never as a top-level
   command that restates a query. (ruling 2026-05-25, cc-queued:c2404522-7bba-4de3-936d-e08deb14262c@2026-05-25T00:40Z).
-- **Agents are primary users** and get no fewer powers than the operator; what
-  distinguishes the operator is authorship, which the daemon computes. (ruling 2026-06-01, journal 2026-06-01 06:54).
+- **Agents are primary users.** People and agents use the same operation
+  definitions, with access checked and authorship recorded for each caller.
+
 - **Legible and honest.** Every answer says what was observed, what was derived, what is
   unknown and what was left out of the display. A quiet source is not a failed one; a
   running process is not evidence of capture; a command with no recorded end is "end
@@ -155,23 +156,23 @@ the existing command-first handlers; selection lines retain the typed envelope.
 
 ### One command set
 
-The operator and agents hold the same command set; there are no ordered access tiers.
-(ruling 2026-07-03, cc-queued:30f5e650-7033-4423-9f91-2b66ebd1e6b2@2026-07-03T13:20Z).
+The operation table has one definition per operation. The current daemon
+checks the caller's read, agent or operator credential, and separately
+applies the credential's grants to disclosed evidence. MCP read, write and
+act describe what a tool call may do. They cannot supply a missing credential
+or grant. Authorship records who did the work.
 
-- **Grants are per-credential configuration**, seeded with defaults by the NixOS
-  module, never code constants. Which output a caller sees is decided by the output
-  rules, which are the same for every caller ([privacy](privacy.md)); nothing is
-  refused because the caller is an agent. Privacy rules may be written by any author;
-  status lists those written by anyone but the operator as non-operator changes.
-- The credential carries grants; it is not an identity.
-- **An act reserved to the operator is an explicit configured rule with its reason**,
-  listed in configuration and in `help`, never inferred from the token. The seeded
-  reserved acts:
+The operator credential confirms tombstones. Other callers can obtain a
+preview and hand it over. Every caller can record duplicate decisions. The
+operator's decisions govern core fusion by default, and configuration can
+admit others by family ([fusion](derivations.md#fusion)). Agents can interrupt
+within the shared interrupt budget. The operator enables individual
+self-report prompts. The rules for adding or weakening protection are in
+[privacy](privacy.md#surface).
 
-| Act | Rule | Reason |
-|---|---|---|
-| confirming a tombstone's cascade preview | any caller requests and previews; the operator confirms interactively (default; open operator question) | tombstoning is the one irreversible deletion ([tombstone](lifecycle.md#tombstone)) |
-| `same`/`distinct` duplicate decisions that govern fusion | every caller records decisions; the operator's govern, and a per-family setting admits others' | duplicate decisions shape every fused record ([fusion](derivations.md#fusion)) |
+The host's distribution of the operator credential is a separate access
+boundary. An agent process that can read the token file can exercise that
+credential. The deployment's account separation remains an operator decision.
 
 ### Computed authorship
 
@@ -247,7 +248,10 @@ that one page and retains the typed answer and ready requests. Continuations
 keep the original statement, caller grants, database snapshot, deadline and
 request options. Sealed values are unsealed before publishing the continuation.
 Native SQLSTATE and constraint diagnostics retain the database failure mapping
-above; SQL never changes grants or escapes the reader role.
+above. The current SQL declaration permits a read credential and uses the
+restricted reader role. The intended access for agent callers remains an
+operator decision, as does the future agent URL-fetch policy. Existing URL
+staging checks the configured hosts and redirects.
 
 ### Current selection lines
 
@@ -503,7 +507,7 @@ wire data independently of the runtime and performs no I/O.
 |---|---|
 | `sinex_read` | reads, including rows, recall, status, help and read-only SQL |
 | `sinex_write` | reads, authored writes, reversible lifecycle steps, and staging paths/text |
-| `sinex_act` | reads/writes plus URL staging, work resume, tombstone, interruption requests and host application opening |
+| `sinex_act` | reads and writes plus URL staging, work resume, tombstone preview or confirmation, and interruption requests, subject to the operation's credential checks |
 
 They carry the shared envelope `{operation?, arguments, request_id?, deadline?,
 budget_tokens?, cursor?}`. `operation` defaults to `rows`; a rows call is, for example:
@@ -517,11 +521,12 @@ exclusive. MCP never reads a terminal's `@N` file. The connection supplies calle
 session metadata, while the daemon computes authorship. Credential roles
 (read/agent/operator) remain separate from tool read/write/act access. Dispatch
 checks both before effects; a higher-access tool does not grant a higher credential.
-A line requires its highest step access. Interrupting notes and host-opening reads
-require act access. Paths/text stage as writes; URLs stage as acts.
+A line requires its highest step access. Interrupting notes require act access.
+Paths and text stage as writes, while URLs stage as acts. External applications
+own their domain actions and use Sinex's grant-checked read and write interfaces.
 Read-only SQL retains the reader role, current output rules and caller-bound
-paging. Host-opening `read.to` requires act access and one idempotent launch;
-FILE/DIR, pager and clipboard destinations belong to the calling process.
+paging. File, directory, pager and clipboard destinations belong to the
+calling process.
 
 Existing common declarations generate the compact tool-list projection and
 validate the complete typed arguments at dispatch. Handwritten examples do not
@@ -797,8 +802,8 @@ Self-report prompts are deliveries of rules with `deliver: ask` and an instrumen
 ([elicitation](https://github.com/Sinity/polylogue-sinex-common/blob/master/crates/signals/README.md#elicitation)).
 The answer is a [note](recall.md#notes) with the delivery as parent and its latency;
 `sinex delivery:ID note 4` and `sinex note 3 --as mood` answer from the CLI,
-and notification actions answer with one click. Nothing is asked until the operator
-decides which prompts may be sent (default; open operator question).
+and notification actions answer with one click. The operator enables each prompt
+before it can be sent.
 
 ### Stall alerts
 
@@ -819,11 +824,13 @@ decides which prompts may be sent (default; open operator question).
 - The initial data notice follows initialization of the subscription's watch and
   commit cursor. A matching commit admitted after that notice is beyond the initial
   cursor position and is delivered once.
-- Event follows wait for the search read model's saved position, including queries
-  without an explicit text predicate. Read-model lag delays delivery. Long text is
-  indexed in pieces, each with a bounded word vector. Read-model completion
-  wakes subscriptions, and each captured batch stays within its lower
-  exclusive and upper inclusive commit positions across every page.
+- Follow and standing watches use the same committed result boundary in the
+  target evaluator. Before evaluating a position, each waits for the projections
+  its query uses. A projection advancing can wake it even when there is no new
+  writer commit. Search is also a dependency when projected text appears in a
+  follow result. A captured batch keeps the same lower-exclusive and
+  upper-inclusive positions across its pages. The current follow path waits for
+  search, but standing watches can advance before indexing catches up.
 - Each message carries its commit position as the SSE `id`. A reconnect with
   `Last-Event-ID` receives everything after it, read from PostgreSQL, including
   lifecycle changes (archive, restore, replay, tombstone) that affect matching rows. A position whose history is unavailable refuses with a named

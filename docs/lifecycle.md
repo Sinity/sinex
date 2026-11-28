@@ -174,11 +174,10 @@ A material is `live`, `archived` or `tombstoned`, and its status cascades to eve
 
 ## Tombstone
 
-**Proposed operator default (open operator question):** the operator confirms the
-preview by typing its count on a terminal; operator scripts use `--yes`. Other
-callers receive the preview and a line to hand the operator. A credential label
-alone does not isolate a token readable by same-user agents. This documentation
-does not grant new deletion authority or change the deployed access policy.
+The operator credential confirms the cascade preview. The operator confirms
+its count interactively or supplies `--yes` in an operator script. Other
+callers receive the preview and a line to hand over. Credential distribution
+is a separate [deployment boundary](interfaces.md#callers).
 
 Tombstone (archived → tombstoned) is irreversible and allowed only on archived chains. A live member refuses a plain tombstone request. The [material-only scope](#material-only-readings) archives its live members before tombstoning them.
 

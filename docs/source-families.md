@@ -370,7 +370,8 @@ Elicitation is how Sinex asks the operator for facts no sensor records.
 - An **answer** is a request material plus an event: instrument and version, each question's exact response with unit and scale, answer time and the operator as author. A correction is a new answer naming the one it corrects; both stay live.
 - Substance use is served by an instrument triggered from journal mentions plus a derivation over the journal; title classifications are a derivation with model provenance when model features are on. Scoring and interpretation are derivations, never source facts.
 
-No prompts are sent until the operator designs instruments for them; spontaneous self-reports are accepted (default; open operator question).
+People may submit spontaneous self-reports. The operator enables individual
+prompts under the [signal rules](interfaces.md#elicitation).
 
 ## Sources beyond the catalog
 
