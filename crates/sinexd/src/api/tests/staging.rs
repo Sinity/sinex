@@ -275,9 +275,7 @@ async fn background_stage_writer_failure_ends_stopped_early(db: devkit::pg::Test
         let failures = shown["result"]["failures"].as_array().unwrap();
         assert_eq!(
             failures,
-            &vec![json!(
-                "admission refused the batch: database refused invalid data (P0001)"
-            )],
+            &vec![json!("database operation failed (P0001)")],
             "{shown}"
         );
         assert_eq!(

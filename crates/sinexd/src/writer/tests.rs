@@ -613,12 +613,16 @@ async fn only_transient_sqlstates_are_retryable(db: devkit::pg::TestDatabase) {
             code.starts_with("22"),
             "{code}"
         );
-        if temporary || code.starts_with("22") {
-            assert!(
-                !error.to_string().contains("synthetic admission failure"),
-                "database details must stay private"
-            );
-        }
+        assert!(
+            !error.to_string().contains("synthetic admission failure"),
+            "database details must stay private"
+        );
+        let refusal = error.content_refusal();
+        assert_eq!(
+            refusal.is_some(),
+            matches!(code, "22021" | "22P05" | "23505" | "54000"),
+            "{code}"
+        );
         let failure = command_surface::Failure::from(error);
         assert_eq!(failure.retryable, temporary, "{code}");
     }
@@ -835,24 +839,21 @@ fn required_blob_refusals_stop_while_storage_io_remains_retryable() {
     ] {
         let error = sinex_store::Error::Blob(error);
         let expected = error.to_string();
+        let error = WriteError::from(error);
         assert!(
-            !content_error(&error),
+            error.content_refusal().is_none(),
             "integrity failures cannot become recorded content refusals"
         );
-        assert!(
-            matches!(WriteError::from(error), WriteError::StorageRefused(reason) if reason == expected)
-        );
+        assert!(matches!(error, WriteError::StorageRefused(reason) if reason == expected));
     }
     for kind in [
         std::io::ErrorKind::PermissionDenied,
         std::io::ErrorKind::ReadOnlyFilesystem,
     ] {
         let error = sinex_store::Error::Blob(hashed_blobs::Error::Io(std::io::Error::from(kind)));
-        assert!(!content_error(&error));
-        assert!(matches!(
-            WriteError::from(error),
-            WriteError::StorageRefused(_)
-        ));
+        let error = WriteError::from(error);
+        assert!(error.content_refusal().is_none());
+        assert!(matches!(error, WriteError::StorageRefused(_)));
     }
     let error = std::io::Error::from_raw_os_error(5);
     assert!(matches!(

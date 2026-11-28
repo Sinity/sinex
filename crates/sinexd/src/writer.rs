@@ -1001,7 +1001,10 @@ async fn answer<R>(
 ) -> bool {
     if matches!(
         &result,
-        Err(WriteError::Refused(_) | WriteError::InvalidData(_) | WriteError::Unavailable(_))
+        Err(WriteError::Refused(_)
+            | WriteError::InvalidData(_)
+            | WriteError::Unavailable(_)
+            | WriteError::Internal(_))
     ) && connection.ping().await.is_err()
         && let Ok(fresh) = PgConnection::connect(url).await
     {
@@ -1184,9 +1187,11 @@ async fn admit_with_checkpoint(
         }
         Err(error) => {
             tx.rollback().await?;
-            let recordable = record_refusals && content_error(&error);
+            // An unsealed input requires a new material, rather than a
+            // failed record attached to the old source cursor.
+            let may_record = record_refusals && !matches!(error, sinex_store::Error::Unsealed(_));
             let error = WriteError::from(error);
-            if recordable
+            if may_record
                 && let Some(reason) = error.content_refusal()
                 && let Some(failed) = refused_source(batch, &reason)
             {
@@ -1318,20 +1323,6 @@ async fn signal_step(
     Ok(outcome)
 }
 
-fn content_error(error: &sinex_store::Error) -> bool {
-    match error {
-        sinex_store::Error::Invalid(_)
-        | sinex_store::Error::Schema(sinex_schema::Error::Declaration(_)) => true,
-        sinex_store::Error::Database(error) => error
-            .as_database_error()
-            .and_then(|error| error.code())
-            .is_some_and(|code| {
-                code.starts_with("22") || code.starts_with("23") || code.starts_with("54")
-            }),
-        _ => false,
-    }
-}
-
 fn refused_source(batch: &Batch, reason: &str) -> Option<Batch> {
     if !matches!(batch.kind, sinex_model::BatchKind::Source(_))
         || batch.events().any(|event| !event.owned_blobs.is_empty())
@@ -1361,68 +1352,49 @@ impl From<sqlx::Error> for WriteError {
 
 impl From<sinex_store::Error> for WriteError {
     fn from(error: sinex_store::Error) -> Self {
-        if let sinex_store::Error::RequestConflict = error {
-            return WriteError::RequestConflict;
-        }
-        if let sinex_store::Error::StaleCheckpoint = error {
-            return WriteError::Stale("signal checkpoint changed");
-        }
-        let error = match error {
-            sinex_store::Error::ArchiveFirst(outputs) => return WriteError::ArchiveFirst(outputs),
-            error => error,
-        };
-        let storage_refused = match &error {
-            sinex_store::Error::Blob(
-                hashed_blobs::Error::Refused(_) | hashed_blobs::Error::Corrupt { .. },
-            ) => true,
-            sinex_store::Error::Blob(hashed_blobs::Error::Io(error)) => matches!(
-                error.kind(),
-                std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::ReadOnlyFilesystem
-            ),
-            _ => false,
-        };
-        if storage_refused {
-            return WriteError::StorageRefused(error.to_string());
-        }
-        let temporary = match &error {
-            sinex_store::Error::Database(sqlx::Error::Database(error)) => {
-                error.code().is_some_and(|code| {
-                    ["08", "40", "53", "57", "58"]
-                        .iter()
-                        .any(|class| code.starts_with(class))
-                })
-            }
-            sinex_store::Error::Database(error) => matches!(
-                error,
-                sqlx::Error::Io(_)
-                    | sqlx::Error::Tls(_)
-                    | sqlx::Error::PoolTimedOut
-                    | sqlx::Error::PoolClosed
-                    | sqlx::Error::WorkerCrashed
-            ),
-            sinex_store::Error::Blob(_) => true,
-            _ => false,
-        };
-        if temporary {
-            match &error {
-                sinex_store::Error::Database(sqlx::Error::Database(database)) => {
-                    WriteError::Unavailable(format!(
-                        "database reported {}",
-                        database.code().as_deref().unwrap_or("unknown SQLSTATE")
-                    ))
+        use sinex_store::Error;
+        use sinex_store::failure::{AdmissionDatabaseFailure, admission_database_failure};
+
+        if let Some(database) = admission_database_failure(&error) {
+            return match database {
+                AdmissionDatabaseFailure::Unavailable(Some(code))
+                | AdmissionDatabaseFailure::Cancelled(code) => {
+                    Self::Unavailable(format!("database reported {code}"))
                 }
-                _ => WriteError::Unavailable(error.to_string()),
-            }
-        } else if let sinex_store::Error::Database(database) = &error {
-            match database.as_database_error().and_then(|error| error.code()) {
-                Some(code) if code.starts_with("22") => WriteError::InvalidData(code.into_owned()),
-                Some(code) => {
-                    WriteError::Refused(format!("database refused invalid data ({code})"))
+                AdmissionDatabaseFailure::Unavailable(None) => Self::Unavailable(error.to_string()),
+                AdmissionDatabaseFailure::InvalidData(code) => Self::InvalidData(code.into_owned()),
+                AdmissionDatabaseFailure::Content(code) => {
+                    Self::Refused(format!("database refused invalid data ({code})"))
                 }
-                None => WriteError::Refused(error.to_string()),
+                AdmissionDatabaseFailure::Internal(Some(code)) => {
+                    Self::Internal(format!("database operation failed ({code})"))
+                }
+                AdmissionDatabaseFailure::Internal(None) => {
+                    Self::Internal("database operation failed".into())
+                }
+            };
+        }
+        match error {
+            Error::RequestConflict => Self::RequestConflict,
+            Error::StaleCheckpoint => Self::Stale("signal checkpoint changed"),
+            Error::ArchiveFirst(outputs) => Self::ArchiveFirst(outputs),
+            Error::Blob(hashed_blobs::Error::Refused(_) | hashed_blobs::Error::Corrupt { .. }) => {
+                Self::StorageRefused(error.to_string())
             }
-        } else {
-            WriteError::Refused(error.to_string())
+            Error::Blob(hashed_blobs::Error::Io(ref cause))
+                if matches!(
+                    cause.kind(),
+                    std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::ReadOnlyFilesystem
+                ) =>
+            {
+                Self::StorageRefused(error.to_string())
+            }
+            Error::Blob(_) => Self::Unavailable(error.to_string()),
+            Error::Invalid(_) | Error::Schema(sinex_schema::Error::Declaration(_)) => {
+                Self::Refused(error.to_string())
+            }
+            Error::Unsealed(_) => Self::Refused(error.to_string()),
+            _ => Self::Internal(error.to_string()),
         }
     }
 }
@@ -1745,8 +1717,10 @@ async fn lifecycle_step(
         Err(error) => {
             tx.rollback().await?;
             if material_only
-                && matches!(&error, sinex_store::Error::Database(sqlx::Error::Database(database))
-                    if database.code().as_deref() == Some("57014"))
+                && matches!(
+                    sinex_store::failure::admission_database_failure(&error),
+                    Some(sinex_store::failure::AdmissionDatabaseFailure::Cancelled(_))
+                )
             {
                 return Err(WriteError::LifecycleBatchTimeout);
             }
