@@ -613,12 +613,16 @@ async fn only_transient_sqlstates_are_retryable(db: devkit::pg::TestDatabase) {
             code.starts_with("22"),
             "{code}"
         );
-        if temporary || code.starts_with("22") {
-            assert!(
-                !error.to_string().contains("synthetic admission failure"),
-                "database details must stay private"
-            );
-        }
+        assert!(
+            !error.to_string().contains("synthetic admission failure"),
+            "database details must stay private"
+        );
+        let refusal = error.content_refusal();
+        assert_eq!(
+            refusal.is_some(),
+            matches!(code, "22021" | "22P05" | "23505" | "54000"),
+            "{code}"
+        );
         let failure = command_surface::Failure::from(error);
         assert_eq!(failure.retryable, temporary, "{code}");
     }

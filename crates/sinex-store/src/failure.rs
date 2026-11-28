@@ -3,6 +3,7 @@
 //! wait for.
 use crate::Error;
 use command_surface::{Failure, FailureKind};
+use std::borrow::Cow;
 
 /// A database error's shared kind, retryability and code. The SQLSTATE is
 /// kept as the code wherever a constraint name does not say more.
@@ -15,22 +16,17 @@ pub fn database_failure(error: &sqlx::Error) -> Failure {
         sqlx::Error::PoolTimedOut => {
             Failure::new(FailureKind::Timeout, message).with_code("read_pool_busy")
         }
-        sqlx::Error::PoolClosed
-        | sqlx::Error::Io(_)
-        | sqlx::Error::Tls(_)
-        | sqlx::Error::WorkerCrashed => {
+        error if database_disconnected(error) => {
             Failure::new(FailureKind::NotRunning, message).with_code("database_unavailable")
         }
         sqlx::Error::Database(database) => {
             let state = database.code().map(|code| code.into_owned());
             let constraint = database.constraint().map(str::to_owned);
-            let (kind, retryable) = sqlstate_kind(state.as_deref().unwrap_or_default());
-            let code = match state.as_deref() {
-                Some("23505" | "23503" | "23502" | "23514") => constraint.or(state),
-                Some("57014") => Some("statement_timeout".into()),
-                Some(class) if class.starts_with("08") || class.starts_with("57P") => {
-                    Some("database_unavailable".into())
-                }
+            let (kind, retryable, _) = sqlstate_kind(state.as_deref().unwrap_or_default());
+            let code = match (kind, retryable) {
+                (FailureKind::Conflict, false) | (FailureKind::BadValue, _) => constraint.or(state),
+                (FailureKind::Timeout, _) => Some("statement_timeout".into()),
+                (FailureKind::NotRunning, _) => Some("database_unavailable".into()),
                 _ => state,
             };
             let mut failure = Failure::new(kind, message);
@@ -42,17 +38,80 @@ pub fn database_failure(error: &sqlx::Error) -> Failure {
     }
 }
 
-fn sqlstate_kind(state: &str) -> (FailureKind, bool) {
+enum AdmissionKind {
+    Unavailable,
+    Cancelled,
+    InvalidData,
+    Content,
+    Internal,
+}
+
+// Reads preserve their typed diagnostics. Admission also needs to know when
+// PostgreSQL refused the offered content and when there is no outcome yet.
+fn sqlstate_kind(state: &str) -> (FailureKind, bool, AdmissionKind) {
+    use AdmissionKind::*;
     match state {
-        "23505" | "40001" | "40P01" => (FailureKind::Conflict, state != "23505"),
-        "23503" | "23502" | "23514" => (FailureKind::BadValue, false),
-        "57014" => (FailureKind::Timeout, true),
-        "42501" => (FailureKind::Refused, false),
+        "40001" | "40P01" => (FailureKind::Conflict, true, Unavailable),
+        "57014" => (FailureKind::Timeout, true, Cancelled),
+        "23505" => (FailureKind::Conflict, false, Content),
+        "23503" | "23502" | "23514" => (FailureKind::BadValue, false, Content),
+        "42501" => (FailureKind::Refused, false, Internal),
         class if class.starts_with("08") || class.starts_with("57P") => {
-            (FailureKind::NotRunning, true)
+            (FailureKind::NotRunning, true, Unavailable)
         }
-        _ => (FailureKind::Internal, false),
+        class if matches!(class.get(..2), Some("40" | "53" | "57" | "58")) => {
+            (FailureKind::Internal, false, Unavailable)
+        }
+        class if class.starts_with("22") => (FailureKind::Internal, false, InvalidData),
+        class if matches!(class.get(..2), Some("23" | "54")) => {
+            (FailureKind::Internal, false, Content)
+        }
+        _ => (FailureKind::Internal, false, Internal),
     }
+}
+
+fn database_disconnected(error: &sqlx::Error) -> bool {
+    matches!(
+        error,
+        sqlx::Error::PoolClosed
+            | sqlx::Error::Io(_)
+            | sqlx::Error::Tls(_)
+            | sqlx::Error::WorkerCrashed
+    )
+}
+
+/// What a database failure means for an admission. Server diagnostics can
+/// include input values, so the writer receives only the SQLSTATE.
+pub enum AdmissionDatabaseFailure<'a> {
+    Unavailable(Option<Cow<'a, str>>),
+    Cancelled(Cow<'a, str>),
+    InvalidData(Cow<'a, str>),
+    Content(Cow<'a, str>),
+    Internal(Option<Cow<'a, str>>),
+}
+
+/// Schema queries can fail during admission before the writer reaches any
+/// event rows. Their database errors follow the same rules as other statements.
+pub fn admission_database_failure(error: &Error) -> Option<AdmissionDatabaseFailure<'_>> {
+    use AdmissionDatabaseFailure::*;
+    let database = match error {
+        Error::Database(error) | Error::Schema(sinex_schema::Error::Database(error)) => error,
+        _ => return None,
+    };
+    if database_disconnected(database) || matches!(database, sqlx::Error::PoolTimedOut) {
+        return Some(Unavailable(None));
+    }
+    let Some(code) = database.as_database_error().and_then(|error| error.code()) else {
+        return Some(Internal(None));
+    };
+    let failure = match sqlstate_kind(&code).2 {
+        AdmissionKind::Unavailable => Unavailable(Some(code)),
+        AdmissionKind::Cancelled => Cancelled(code),
+        AdmissionKind::InvalidData => InvalidData(code),
+        AdmissionKind::Content => Content(code),
+        AdmissionKind::Internal => Internal(Some(code)),
+    };
+    Some(failure)
 }
 
 /// Native diagnostics of the database operation. Constraint failures may carry

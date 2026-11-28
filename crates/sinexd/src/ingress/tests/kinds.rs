@@ -67,6 +67,52 @@ async fn scope_for(
 }
 
 #[devkit::test]
+async fn a_transient_kind_registration_stays_pending_until_redelivery(
+    db: devkit::pg::TestDatabase,
+) {
+    let d = declaration("example.reading");
+    let h = Harness::start_with_source(db, "example", vec![d.clone()]).await;
+    let mut conn = PgConnection::connect(&h.url).await.unwrap();
+    // The counter survives rollback. The first schema write reports a
+    // statement cancellation, and the next can finish on redelivery.
+    sqlx::raw_sql(
+        "CREATE SEQUENCE test_kind_attempt;
+         CREATE FUNCTION test_kind_write() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN
+             IF nextval('test_kind_attempt') = 1 THEN
+                 RAISE EXCEPTION 'synthetic kind write cancellation' USING ERRCODE = '57014';
+             END IF;
+             RETURN NEW;
+         END $$;
+         CREATE TRIGGER test_kind_write BEFORE INSERT ON registry.event_types
+         FOR EACH ROW WHEN (NEW.name = 'example.reading') EXECUTE FUNCTION test_kind_write();",
+    )
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    let frame = Ingress::RegisterKinds {
+        frame: "retry-declaration".into(),
+        declarations: vec![d.clone()],
+    };
+
+    let ack = h.send("example", &frame).await;
+    assert_eq!(ack.refusal(), None, "{ack:?}");
+    assert_eq!(kinds(&ack), json!([[d.kind, d.definition_hash()]]));
+    assert_eq!(h.send("example", &frame).await, ack);
+    assert_eq!(h.count("SELECT last_value FROM test_kind_attempt").await, 2);
+    assert_eq!(
+        h.count("SELECT count(*) FROM core.ingress_frames WHERE frame = 'retry-declaration'")
+            .await,
+        1
+    );
+    assert_eq!(
+        h.count("SELECT count(*) FROM registry.event_types WHERE name = 'example.reading'")
+            .await,
+        1
+    );
+}
+
+#[devkit::test]
 async fn registration_is_atomic_and_a_reconnect_gets_the_saved_hashes(
     db: devkit::pg::TestDatabase,
 ) {
