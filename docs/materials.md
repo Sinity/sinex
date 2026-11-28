@@ -17,7 +17,11 @@ or permission refusal leaves source progress and producer acknowledgement
 uncommitted; it is distinct from a recorded content refusal. Transient storage
 I/O keeps the input available for retry.
 
-**A path is never a material.** A file referred to by path can change or disappear, and then nothing could be read again. (ruling 2026-03-29, cc-queued:ea2bf14e-10bb-42e9-9ff5-616882baaf1c@2026-03-29T19:12Z).
+**A path records a location.** Moving or deleting the source path changes
+where its contents can be found. Once Sinex has retained the bytes, their
+removal is governed by the [material lifecycle](lifecycle.md#material-status).
+A location-only observation remains readable when the externally held file
+disappears, even though the file's bytes may then be unavailable.
 
 **Materials are source-shaped.** A material is a unit the source itself has: a file revision, a part of a growing file, a capture segment, an export member, a set of database rows. (ruling 2026-03-29, cc:ea2bf14e-10bb-42e9-9ff5-616882baaf1c:bbe835e2-4b30-498e-bc5b-d257f4d82323).
 

@@ -145,13 +145,15 @@ An already accepted input resumes from its committed position. The current
 build has paths that read existing history on discovery. The acceptance
 boundary is target behaviour.
 
-An acquired input can leave a retained material, or a retained observation of
-a file held elsewhere. A located file can move or disappear independently of
-Sinex, and Sinex's backup covers the observation and any other bytes Sinex
-actually holds. File families that should be held, and what deleting inside a
-managed folder should do, remain operator choices. A completed move leaves the
-old path empty. Views can be written out on request. Historical host capture
-files retain their exact bytes. See [materials](materials.md#the-material).
+A retained material stays in Sinex when its original path moves or disappears.
+Deleting an ordinary path changes the observations about that path. The
+material's own lifecycle governs removal of its retained bytes. A located
+file can become unavailable when its external copies disappear. Sinex's
+backup covers the retained observation and any bytes Sinex actually holds.
+The default custody policy, eligible file families and rollout remain
+operator choices. A completed move leaves the old path empty. Views can be
+written out on request. Historical host capture files retain their exact
+bytes. See [materials](materials.md#the-material).
 
 ## Logical day
 
