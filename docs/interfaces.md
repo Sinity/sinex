@@ -163,9 +163,9 @@ act describe what a tool call may do. They cannot supply a missing credential
 or grant. Authorship records who did the work.
 
 The operator credential confirms tombstones. Other callers can obtain a
-preview and hand it over. Every caller can record duplicate decisions. The
-operator's decisions govern core fusion by default, and configuration can
-admit others by family ([fusion](derivations.md#fusion)). Agents can interrupt
+preview and hand it over. Operator and agent credentials can record duplicate
+decisions. The operator's decisions govern core fusion by default, and
+configuration can admit others by family ([fusion](derivations.md#fusion)). Agents can interrupt
 within the shared interrupt budget. The operator enables individual
 self-report prompts. The rules for adding or weakening protection are in
 [privacy](privacy.md#surface).
