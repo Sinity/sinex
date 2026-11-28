@@ -840,6 +840,120 @@ stage_steps! { Inputs::multiple_batches();
         "SELECT 1 FROM raw.positions WHERE binding LIKE 'terminal.atuin-history:%@crash' FOR UPDATE";
 }
 
+#[devkit::test]
+async fn an_unparsed_stage_resumes_with_its_committed_material() {
+    let inputs = Inputs::first_transaction();
+    let target = Target::new(&inputs);
+    let path = inputs.dir.join("unknown.bin");
+    let bytes = b"synthetic bytes no parser declares";
+    std::fs::write(&path, bytes).unwrap();
+
+    let mut conn = target.connect().await;
+    // Stop at the first inventory update following a committed material.
+    // An update in the material's own transaction must finish before the kill.
+    sqlx::raw_sql(
+        "CREATE FUNCTION core.pause_after_unparsed_material() RETURNS trigger LANGUAGE plpgsql AS $$
+           BEGIN
+             IF EXISTS (SELECT 1 FROM raw.materials WHERE parser IS NULL
+                        AND xmin <> pg_current_xact_id()::text::xid) THEN
+               PERFORM pg_advisory_xact_lock(hashtextextended('sinex.test.unparsed_material',0));
+             END IF;
+             RETURN NEW;
+           END $$;
+         CREATE TRIGGER pause_after_unparsed_material BEFORE UPDATE ON core.operations
+         FOR EACH ROW WHEN (NEW.kind = 'stage')
+         EXECUTE FUNCTION core.pause_after_unparsed_material();",
+    )
+    .execute(&mut conn)
+    .await
+    .unwrap();
+
+    let stage = || {
+        let mut command = target.sinexd(&["admin", "stage", "--host", HOST]);
+        command.arg(&path);
+        command
+    };
+    kill_at(
+        &target,
+        &mut stage(),
+        None,
+        "SELECT pg_advisory_xact_lock(hashtextextended('sinex.test.unparsed_material',0))",
+    )
+    .await;
+
+    assert_eq!(
+        scalar(&mut conn, "SELECT count(*) FROM raw.materials").await,
+        1
+    );
+    let (material, blob): (uuid::Uuid, String) =
+        sqlx::query_as("SELECT id, blob FROM raw.materials")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    let operation: uuid::Uuid = sqlx::query_scalar(
+        "SELECT id FROM core.operations WHERE kind = 'stage' AND result IS NULL",
+    )
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    let interrupted = sinex_store::stages::show(&mut conn, operation.into())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        interrupted.inventory.inventory.files[0].material,
+        Some(material.into())
+    );
+
+    // The writer and store are reopened by the resume command.
+    finish(&mut target.lifecycle("resume", &[&operation.to_string()]));
+    let resumed = sinex_store::stages::show(&mut conn, operation.into())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        resumed.result,
+        Some(sinex_model::lifecycle::OperationResult::Ok)
+    );
+    assert_eq!(
+        resumed.inventory.inventory.files[0].material,
+        Some(material.into())
+    );
+    assert_eq!(
+        scalar(&mut conn, "SELECT count(*) FROM raw.materials").await,
+        1
+    );
+
+    assert_eq!(
+        scalar(&mut conn, "SELECT count(*) FROM core.blob_extents").await,
+        1,
+    );
+    finish(&mut stage());
+    let other: (uuid::Uuid, String) =
+        sqlx::query_as("SELECT id, blob FROM raw.materials WHERE id <> $1")
+            .bind(material)
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(other.1, blob, "a separate stage shares the stored bytes");
+    assert_eq!(
+        scalar(&mut conn, "SELECT count(*) FROM raw.materials").await,
+        2
+    );
+    assert_eq!(
+        scalar(&mut conn, "SELECT count(*) FROM core.blob_extents").await,
+        1
+    );
+    let blobs = sinex_store::Blobs::open(&target.store).unwrap();
+    blobs.load(&mut conn).await.unwrap();
+    assert_eq!(
+        blobs
+            .read(&blobs.locate(&mut conn, &blob).await.unwrap())
+            .unwrap(),
+        bytes
+    );
+}
+
 /// Kill a replay at a step; then run it again and compare with an
 /// uninterrupted replay: the same live readings, every event once.
 async fn replay_survives(lock_sql: &str) {

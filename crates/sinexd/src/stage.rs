@@ -29,7 +29,7 @@ use sinex_sources::sources;
 use sinex_sources::stage::{Item, StagePlan};
 use sinex_store::{Blobs, bindings, positions};
 use sqlx::PgConnection;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use tokio::sync::watch;
@@ -80,32 +80,50 @@ pub(crate) fn items(paths: &[String], parsers: &[String]) -> Result<Vec<Item>> {
         .collect())
 }
 
-/// The bindings the daemon's stages are reading now, by name: a binding has
-/// one reader at a time, or two would race its cursor.
-pub(crate) type Running = std::sync::Arc<std::sync::Mutex<BTreeSet<String>>>;
+/// The operations and source bindings currently being staged.
+#[derive(Default)]
+pub(crate) struct ActiveStages {
+    operations: BTreeSet<OperationId>,
+    bindings: BTreeSet<String>,
+}
 
-/// A stage's hold on its bindings, released when it ends, however it ends.
+pub(crate) type Running = std::sync::Arc<std::sync::Mutex<ActiveStages>>;
+
+/// A stage's hold on its operation and bindings, released when it ends.
 pub(crate) struct Claim {
     running: Running,
-    names: Vec<String>,
+    operation: OperationId,
+    bindings: Vec<String>,
 }
 
 impl Claim {
-    /// Hold every binding of `plan`, or none when one is being read.
-    pub(crate) fn take(running: &Running, plan: &StagePlan) -> Result<Self> {
-        let names: Vec<String> = plan.bindings().map(|(_, b)| b.name.clone()).collect();
+    /// Hold the operation and all bindings. Even a plan with no bindings
+    /// has one reader advancing its inventory.
+    pub(crate) fn take(
+        running: &Running,
+        operation: OperationId,
+        plan: &StagePlan,
+    ) -> Result<Self> {
+        let bindings: Vec<String> = plan.bindings().map(|(_, b)| b.name.clone()).collect();
         let mut held = running
             .lock()
             .expect("the running stages are never poisoned");
-        if let Some(busy) = names.iter().find(|name| held.contains(*name)) {
+        if held.operations.contains(&operation) {
+            return Err(Error::conflict(format!(
+                "stage {operation} is already running"
+            )));
+        }
+        if let Some(busy) = bindings.iter().find(|name| held.bindings.contains(*name)) {
             return Err(Error::bad_request(format!(
                 "{busy} is being read by another stage now"
             )));
         }
-        held.extend(names.iter().cloned());
+        held.operations.insert(operation);
+        held.bindings.extend(bindings.iter().cloned());
         Ok(Self {
             running: running.clone(),
-            names,
+            operation,
+            bindings,
         })
     }
 }
@@ -116,8 +134,9 @@ impl Drop for Claim {
             .running
             .lock()
             .expect("the running stages are never poisoned");
-        for name in &self.names {
-            held.remove(name);
+        held.operations.remove(&self.operation);
+        for name in &self.bindings {
+            held.bindings.remove(name);
         }
     }
 }
@@ -252,8 +271,12 @@ impl Progress {
             .iter()
             .map(|(binding, checkpoint)| (binding.clone(), checkpoint.accounting.clone()))
             .collect();
+        let mut previous = BTreeMap::<_, VecDeque<_>>::new();
+        for file in &saved.inventory.files {
+            previous.entry(&file.path).or_default().push_back(file);
+        }
         for (index, file) in progress.plan.files.iter().enumerate() {
-            let Some(before) = saved.inventory.files.iter().find(|f| f.path == file.path) else {
+            let Some(before) = previous.get_mut(&file.path).and_then(VecDeque::pop_front) else {
                 continue;
             };
             progress.stored[index] = before.material;
@@ -360,11 +383,15 @@ impl Staging<'_> {
         operation: OperationId,
         request: &Request,
         plan: StagePlan,
-        saved: &SavedProgress,
         begun: tokio::sync::oneshot::Sender<Report>,
     ) -> Result<Report> {
-        let progress = Progress::resumed(plan, saved);
         self.writer.stage(StageWrite::Reopen { operation }).await?;
+        // Read progress under the stage's claim, after any previous attempt
+        // has released it. Initial request lookup may predate those commits.
+        let stored = sinex_store::stages::show(self.read_conn, operation)
+            .await?
+            .ok_or_else(|| Error::not_found(format!("no stage operation {operation}")))?;
+        let progress = Progress::resumed(plan, &stored.inventory);
         self.read(operation, request, progress, begun).await
     }
 
@@ -391,13 +418,22 @@ impl Staging<'_> {
         for index in 0..progress.plan.files.len() {
             let path = progress.plan.files[index].path.clone();
             let planned = progress.plan.files[index].bindings.clone();
-            if planned.is_empty() {
+            let unparsed = if planned.is_empty() {
                 if progress.stored[index].is_some() {
                     continue;
                 }
-                match self.store_unparsed(request, index, &progress).await {
-                    Ok(material) => progress.stored[index] = Some(material),
-                    Err(error) => failures.push(format!("{}: {error}", path.display())),
+                match self
+                    .prepare_unparsed(request, &progress.plan.files[index])
+                    .await
+                {
+                    Ok(unparsed) => {
+                        progress.stored[index] = Some(unparsed.id);
+                        Some(Box::new(unparsed))
+                    }
+                    Err(error) => {
+                        failures.push(format!("{}: {error}", path.display()));
+                        continue;
+                    }
                 }
             } else {
                 if progress.file_read(index) {
@@ -470,15 +506,23 @@ impl Staging<'_> {
                         ),
                     }
                 }
-            }
+                None
+            };
+            let writing_material = unparsed.is_some();
             if let Err(error) = self
                 .writer
                 .stage(StageWrite::Progress {
                     operation,
                     inventory: progress.inventory(),
+                    unparsed,
                 })
                 .await
             {
+                if writing_material {
+                    // The write may have committed despite a failed response.
+                    // Resume from its saved inventory instead of finalizing here.
+                    return Err(error.into());
+                }
                 failures.push(error.to_string());
                 break;
             }
@@ -538,17 +582,13 @@ impl Staging<'_> {
         })
     }
 
-    /// Store a file no parser reads, byte for byte, as material with no
-    /// parser. Each stage of it is a new material of the same input. A file
-    /// a sealed source would read is not stored in the clear: it is staged
-    /// with that source's parser named.
-    async fn store_unparsed(
+    /// Prepare the exact bytes of an unparsed file for this stage. A file
+    /// a sealed source would read needs its parser named when staged.
+    async fn prepare_unparsed(
         &mut self,
         request: &Request,
-        index: usize,
-        progress: &Progress,
-    ) -> Result<MaterialId> {
-        let file = &progress.plan.files[index];
+        file: &sinex_sources::stage::StagedFile,
+    ) -> Result<sinex_store::stages::Unparsed> {
         let candidates = match &file.reading {
             FileReading::Unparsed { candidates } => candidates.clone(),
             FileReading::Parsed { .. } => vec![],
@@ -591,25 +631,19 @@ impl Staging<'_> {
             details,
             ..Manifest::default()
         };
-        let id = MaterialId::new();
-        self.writer
-            .stage(StageWrite::Unparsed(Box::new(
-                sinex_store::stages::Unparsed {
-                    id,
-                    binding: format!("stage:{locator}@{}", request.host),
-                    input: InputRef {
-                        kind: "file".into(),
-                        locator,
-                        host: request.host.clone(),
-                    },
-                    length: observation.size.unwrap_or(0),
-                    observation,
-                    blob,
-                    manifest,
-                },
-            )))
-            .await?;
-        Ok(id)
+        Ok(sinex_store::stages::Unparsed {
+            id: MaterialId::new(),
+            binding: format!("stage:{locator}@{}", request.host),
+            input: InputRef {
+                kind: "file".into(),
+                locator,
+                host: request.host.clone(),
+            },
+            length: observation.size.unwrap_or(0),
+            observation,
+            blob,
+            manifest,
+        })
     }
 }
 

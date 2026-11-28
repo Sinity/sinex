@@ -205,11 +205,35 @@ async fn segment_copy_keeps_holes_and_the_hold_state_while_the_writer_advances(
     }).await.expect("real pg_dump holds admission template while waiting on dump_pause");
     let later = b"post-boundary append must not be copied";
     let later_blob = blobs.put(later).unwrap();
+    let stage = sinex_model::OperationId::new();
+    let mut inventory = sinex_model::stage::Inventory {
+        files: vec![sinex_model::stage::File {
+            path: "synthetic-after-hold".into(),
+            container: None,
+            size: Some(later.len() as u64),
+            reading: sinex_model::stage::FileReading::Unparsed { candidates: vec![] },
+            members: vec![],
+            products: Default::default(),
+            material: None,
+        }],
+    };
     let outcome = tokio::time::timeout(std::time::Duration::from_secs(10), async {
         writer
-            .stage(crate::writer::StageWrite::Unparsed(Box::new(
-                sinex_store::stages::Unparsed {
-                    id: sinex_model::MaterialId::new(),
+            .stage(crate::writer::StageWrite::Begin {
+                operation: stage,
+                actor: "operator".into(),
+                scope: serde_json::json!({"items": [{"path": "synthetic-after-hold"}]}),
+                inventory: inventory.clone(),
+            })
+            .await?;
+        let id = sinex_model::MaterialId::new();
+        inventory.files[0].material = Some(id);
+        writer
+            .stage(crate::writer::StageWrite::Progress {
+                operation: stage,
+                inventory,
+                unparsed: Some(Box::new(sinex_store::stages::Unparsed {
+                    id,
                     binding: "synthetic-after-hold".into(),
                     input: sinex_model::InputRef {
                         kind: "file".into(),
@@ -220,8 +244,8 @@ async fn segment_copy_keeps_holes_and_the_hold_state_while_the_writer_advances(
                     blob: later_blob,
                     length: later.len() as u64,
                     manifest: Default::default(),
-                },
-            )))
+                })),
+            })
             .await?;
         writer
             .submit(

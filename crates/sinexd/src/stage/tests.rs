@@ -474,13 +474,7 @@ async fn a_resumed_stage_keeps_what_it_finished(db: devkit::pg::TestDatabase) {
         access: Access::default(),
         stop,
     }
-    .resume(
-        interrupted,
-        &request,
-        plan,
-        &first.inventory.clone().into(),
-        begun,
-    )
+    .resume(interrupted, &request, plan, begun)
     .await
     .unwrap();
     assert!(resumed.failures.is_empty(), "{:?}", resumed.failures);
@@ -606,13 +600,7 @@ async fn a_stage_interrupted_inside_a_file_accounts_for_all_of_it_once_resumed(
         access: Access::default(),
         stop,
     }
-    .resume(
-        operation,
-        &request,
-        request.plan().unwrap(),
-        &saved.inventory,
-        begun,
-    )
+    .resume(operation, &request, request.plan().unwrap(), begun)
     .await
     .unwrap();
     assert!(resumed.failures.is_empty(), "{:?}", resumed.failures);

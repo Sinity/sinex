@@ -257,11 +257,10 @@ pub(crate) enum StageWrite {
     Progress {
         operation: OperationId,
         inventory: sinex_model::stage::Inventory,
+        unparsed: Option<Box<sinex_store::stages::Unparsed>>,
     },
     /// A stage that stopped early is being resumed: it has no result again.
-    Reopen {
-        operation: OperationId,
-    },
+    Reopen { operation: OperationId },
     End {
         operation: OperationId,
         result: sinex_model::lifecycle::OperationResult,
@@ -269,7 +268,6 @@ pub(crate) enum StageWrite {
         inventory: sinex_model::stage::Inventory,
         refusals: Vec<String>,
     },
-    Unparsed(Box<sinex_store::stages::Unparsed>),
 }
 
 pub(crate) struct LifecycleStep {
@@ -497,7 +495,7 @@ impl WriterHandle {
         .await
     }
 
-    /// Write a stage's log entry or unparsed file in its own transaction.
+    /// Commit a stage update, including any new material and its extents.
     pub(crate) async fn stage(&self, write: StageWrite) -> Result<(), WriteError> {
         self.ask(Priority::Derived, |reply| WriterJob::Stage(write, reply))
             .await
@@ -1570,7 +1568,6 @@ async fn stage_write(
     use sinex_store::stages;
     let mut tx = connection.begin().await?;
     let written = match &write {
-        StageWrite::Unparsed(unparsed) => tx.register_unparsed(unparsed).await,
         StageWrite::Begin {
             operation,
             actor,
@@ -1580,7 +1577,16 @@ async fn stage_write(
         StageWrite::Progress {
             operation,
             inventory,
-        } => stages::progress(tx.connection(), *operation, inventory).await,
+            unparsed,
+        } => {
+            async {
+                if let Some(unparsed) = unparsed {
+                    tx.register_unparsed(unparsed).await?;
+                }
+                stages::progress(tx.connection(), *operation, inventory).await
+            }
+            .await
+        }
         StageWrite::Reopen { operation } => stages::reopen(tx.connection(), *operation).await,
         StageWrite::End {
             operation,

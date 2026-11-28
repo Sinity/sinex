@@ -523,7 +523,7 @@ impl Api {
             zone: self.zone.iana_name().map(str::to_owned),
             batch_events,
         };
-        self.start_stage(caller, OperationId::new(), request, None, follow)
+        self.start_stage(caller, OperationId::new(), request, false, follow)
             .await
     }
 
@@ -542,18 +542,17 @@ impl Api {
             )));
         }
         let request = crate::stage::Request::from_scope(&stored.scope)?;
-        self.start_stage(caller, operation, request, Some(stored.inventory), true)
+        self.start_stage(caller, operation, request, true, true)
             .await
     }
 
-    /// Plan, claim the bindings, and read in a task of its own; `saved` is
-    /// the progress of a stage being resumed.
+    /// Plan and claim the stage, then read in a task of its own.
     async fn start_stage(
         &self,
         caller: &Caller,
         operation: OperationId,
         request: crate::stage::Request,
-        saved: Option<sinex_model::stage::SavedProgress>,
+        resume: bool,
         follow: bool,
     ) -> Result<Reply> {
         let writer = self.writer()?.clone();
@@ -572,7 +571,7 @@ impl Api {
             Ok::<_, Error>(plan)
         })
         .await??;
-        let claim = crate::stage::Claim::take(&self.running_stages, &plan)?;
+        let claim = crate::stage::Claim::take(&self.running_stages, operation, &plan)?;
         let unlock = if caller.actor == "operator" {
             self.unlock
                 .lock()
@@ -602,13 +601,10 @@ impl Api {
                 },
                 stop,
             };
-            let outcome = match saved {
-                Some(saved) => {
-                    staging
-                        .resume(operation, &request, plan, &saved, begun)
-                        .await
-                }
-                None => staging.run(operation, &actor, &request, plan, begun).await,
+            let outcome = if resume {
+                staging.resume(operation, &request, plan, begun).await
+            } else {
+                staging.run(operation, &actor, &request, plan, begun).await
             };
             match &outcome {
                 Ok(report) if !report.failures.is_empty() => {
